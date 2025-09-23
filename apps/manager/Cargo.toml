@@ -20,3 +20,6 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 urlencoding = { workspace = true }
 nexus-types = { path = "../../crates/nexus-types" }
+
+[dev-dependencies]
+wiremock = "0.6"

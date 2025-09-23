@@ -11,7 +11,7 @@ pub async fn create(
     super::service::create_and_start(&st, id, req)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"id": id})))
+    Ok(Json(serde_json::json!({ "id": id })))
 }
 
 pub async fn list(
@@ -20,7 +20,7 @@ pub async fn list(
     let items = super::repo::list(&st.db)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"items": items})))
+    Ok(Json(serde_json::json!({ "items": items })))
 }
 
 pub async fn get(
@@ -30,7 +30,7 @@ pub async fn get(
     let row = super::repo::get(&st.db, id)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::json!({"item": row})))
+    Ok(Json(serde_json::json!({ "item": row })))
 }
 
 pub async fn stop(
@@ -40,7 +40,7 @@ pub async fn stop(
     super::service::stop_only(&st, id)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"ok": true})))
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn delete(
@@ -50,7 +50,7 @@ pub async fn delete(
     super::service::stop_and_delete(&st, id)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"ok": true})))
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[cfg(test)]
@@ -59,6 +59,7 @@ mod tests {
     use axum::{extract::Path, Extension};
     use serde_json::json;
 
+    // Uses SQLx runtime DB with the same migrations as prod code.
     #[sqlx::test(migrations = "./migrations")]
     async fn delete_route_removes_vm(pool: sqlx::PgPool) {
         let id = Uuid::new_v4();
@@ -67,7 +68,7 @@ mod tests {
             id,
             name: "test-vm".into(),
             state: "running".into(),
-            host_addr: "http://127.0.0.1:1".into(),
+            host_addr: "http://127.0.0.1:1".into(), // unreachable; delete path ignores stop errors
             api_sock: "/tmp/test.sock".into(),
             tap: "tap-test".into(),
             log_path: "/tmp/log".into(),
@@ -84,7 +85,7 @@ mod tests {
         };
 
         let Json(body) = super::delete(Extension(state), Path(id)).await.unwrap();
-        assert_eq!(body, json!({"ok": true}));
+        assert_eq!(body, json!({ "ok": true }));
 
         let fetched = super::super::repo::get(&pool, id).await;
         assert!(matches!(fetched, Err(sqlx::Error::RowNotFound)));
@@ -99,6 +100,6 @@ mod tests {
         let Json(body) = super::delete(Extension(state), Path(Uuid::new_v4()))
             .await
             .unwrap();
-        assert_eq!(body, json!({"ok": true}));
+        assert_eq!(body, json!({ "ok": true }));
     }
 }
