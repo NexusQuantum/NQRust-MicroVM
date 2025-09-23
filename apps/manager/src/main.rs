@@ -1,7 +1,6 @@
 pub mod core;
 mod features;
 
-use axum::Router;
 use sqlx::PgPool;
 use tracing::info;
 
