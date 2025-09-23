@@ -21,3 +21,6 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyperlocal = "0.9"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["client", "http1", "tokio"] }
+
+[dev-dependencies]
+tempfile = "3"
