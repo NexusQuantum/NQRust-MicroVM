@@ -1,7 +1,7 @@
 use crate::core::{net, systemd};
 use crate::AppState;
 use axum::http::StatusCode;
-use axum::{routing::post, Json, Router, Extension};
+use axum::{routing::post, Extension, Json, Router};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -11,7 +11,9 @@ struct StopReq {
     fc_unit: String,
 }
 
-pub fn router() -> Router { Router::new().route("/:id/stop", post(stop_vm)) }
+pub fn router() -> Router {
+    Router::new().route("/:id/stop", post(stop_vm))
+}
 
 async fn stop_vm(
     Extension(_st): Extension<AppState>,

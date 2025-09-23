@@ -1,5 +1,4 @@
 use axum::{response::IntoResponse, routing::get, Json, Router};
-use crate::AppState;
 
 pub fn router() -> Router {
     Router::new()

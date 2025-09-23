@@ -1,12 +1,8 @@
 use crate::core::net;
 use crate::AppState;
 use axum::http::StatusCode;
-use axum::{
-    extract::Path,
-    routing::post,
-    Json, Router,
-};
 use axum::Extension;
+use axum::{extract::Path, routing::post, Json, Router};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

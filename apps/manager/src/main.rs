@@ -4,10 +4,12 @@ mod features;
 use sqlx::PgPool;
 use tracing::info;
 
+use features::hosts::repo::HostRepository;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    pub agent_base: String,
+    pub hosts: HostRepository,
 }
 
 #[tokio::main]
@@ -17,10 +19,8 @@ async fn main() -> anyhow::Result<()> {
     let db = PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
 
-    let state = AppState {
-        db,
-        agent_base: std::env::var("AGENT_BASE").unwrap_or_else(|_| "http://127.0.0.1:9090".into()),
-    };
+    let hosts = HostRepository::new(db.clone());
+    let state = AppState { db, hosts };
 
     let app = features::router(state.clone());
     let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());

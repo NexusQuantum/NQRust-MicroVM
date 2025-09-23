@@ -7,6 +7,7 @@ pub struct VmRow {
     pub id: Uuid,
     pub name: String,
     pub state: String,
+    pub host_id: Uuid,
     pub host_addr: String,
     pub api_sock: String,
     pub tap: String,
@@ -20,13 +21,13 @@ pub struct VmRow {
 #[cfg(not(test))]
 pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO vm (id,name,state,host_addr,api_sock,tap,log_path,http_port,fc_unit)
+        r#"INSERT INTO vm (id,name,state,host_id,api_sock,tap,log_path,http_port,fc_unit)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
     )
     .bind(row.id)
     .bind(&row.name)
     .bind(&row.state)
-    .bind(&row.host_addr)
+    .bind(row.host_id)
     .bind(&row.api_sock)
     .bind(&row.tap)
     .bind(&row.log_path)
@@ -45,9 +46,27 @@ pub async fn insert(_: &PgPool, row: &VmRow) -> sqlx::Result<()> {
 
 #[cfg(not(test))]
 pub async fn list(db: &PgPool) -> sqlx::Result<Vec<VmRow>> {
-    sqlx::query_as::<_, VmRow>(r#"SELECT * FROM vm ORDER BY created_at DESC"#)
-        .fetch_all(db)
-        .await
+    sqlx::query_as::<_, VmRow>(
+        r#"
+        SELECT vm.id,
+               vm.name,
+               vm.state,
+               vm.host_id,
+               host.addr AS host_addr,
+               vm.api_sock,
+               vm.tap,
+               vm.log_path,
+               vm.http_port,
+               vm.fc_unit,
+               vm.created_at,
+               vm.updated_at
+        FROM vm
+        JOIN host ON host.id = vm.host_id
+        ORDER BY vm.created_at DESC
+        "#,
+    )
+    .fetch_all(db)
+    .await
 }
 
 #[cfg(test)]
@@ -59,10 +78,28 @@ pub async fn list(_: &PgPool) -> sqlx::Result<Vec<VmRow>> {
 
 #[cfg(not(test))]
 pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
-    sqlx::query_as::<_, VmRow>(r#"SELECT * FROM vm WHERE id=$1"#)
-        .bind(id)
-        .fetch_one(db)
-        .await
+    sqlx::query_as::<_, VmRow>(
+        r#"
+        SELECT vm.id,
+               vm.name,
+               vm.state,
+               vm.host_id,
+               host.addr AS host_addr,
+               vm.api_sock,
+               vm.tap,
+               vm.log_path,
+               vm.http_port,
+               vm.fc_unit,
+               vm.created_at,
+               vm.updated_at
+        FROM vm
+        JOIN host ON host.id = vm.host_id
+        WHERE vm.id=$1
+        "#,
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
 }
 
 #[cfg(test)]
