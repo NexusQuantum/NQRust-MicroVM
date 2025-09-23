@@ -3,6 +3,7 @@ use axum::{Extension, Router};
 
 pub mod hosts;
 pub mod logs; // A3 starter
+pub mod reconciler;
 pub mod vms; // A2 core
 
 pub fn router(state: AppState) -> Router {
