@@ -81,6 +81,10 @@ mod tests {
             log_path: "/tmp/log".into(),
             http_port: 0,
             fc_unit: "fc-test.scope".into(),
+            vcpu: 1,
+            mem_mib: 512,
+            kernel_path: "/tmp/kernel".into(),
+            rootfs_path: "/tmp/rootfs".into(),
             created_at: now,
             updated_at: now,
         };

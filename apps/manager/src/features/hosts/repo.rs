@@ -84,6 +84,18 @@ impl HostRepository {
         .fetch_one(&self.pool)
         .await
     }
+
+    pub async fn list_healthy(&self) -> sqlx::Result<Vec<HostRow>> {
+        sqlx::query_as::<_, HostRow>(
+            r#"
+            SELECT * FROM host
+            WHERE last_seen_at > now() - INTERVAL '30 seconds'
+            ORDER BY last_seen_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

@@ -19,6 +19,7 @@ sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio",
 chrono = { workspace = true }
 uuid = { workspace = true }
 urlencoding = { workspace = true }
+metrics = { workspace = true }
 nexus-types = { path = "../../crates/nexus-types" }
 
 [dev-dependencies]

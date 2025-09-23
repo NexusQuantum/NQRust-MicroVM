@@ -14,6 +14,10 @@ pub struct VmRow {
     pub log_path: String,
     pub http_port: i32,
     pub fc_unit: String,
+    pub vcpu: i32,
+    pub mem_mib: i32,
+    pub kernel_path: String,
+    pub rootfs_path: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -21,8 +25,8 @@ pub struct VmRow {
 #[cfg(not(test))]
 pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO vm (id,name,state,host_id,api_sock,tap,log_path,http_port,fc_unit)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+        r#"INSERT INTO vm (id,name,state,host_id,api_sock,tap,log_path,http_port,fc_unit,vcpu,mem_mib,kernel_path,rootfs_path)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
     )
     .bind(row.id)
     .bind(&row.name)
@@ -33,6 +37,10 @@ pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     .bind(&row.log_path)
     .bind(row.http_port)
     .bind(&row.fc_unit)
+    .bind(row.vcpu)
+    .bind(row.mem_mib)
+    .bind(&row.kernel_path)
+    .bind(&row.rootfs_path)
     .execute(db)
     .await?;
     Ok(())
@@ -58,6 +66,10 @@ pub async fn list(db: &PgPool) -> sqlx::Result<Vec<VmRow>> {
                vm.log_path,
                vm.http_port,
                vm.fc_unit,
+               vm.vcpu,
+               vm.mem_mib,
+               vm.kernel_path,
+               vm.rootfs_path,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -77,6 +89,50 @@ pub async fn list(_: &PgPool) -> sqlx::Result<Vec<VmRow>> {
 }
 
 #[cfg(not(test))]
+pub async fn list_by_host(db: &PgPool, host_id: Uuid) -> sqlx::Result<Vec<VmRow>> {
+    sqlx::query_as::<_, VmRow>(
+        r#"
+        SELECT vm.id,
+               vm.name,
+               vm.state,
+               vm.host_id,
+               host.addr AS host_addr,
+               vm.api_sock,
+               vm.tap,
+               vm.log_path,
+               vm.http_port,
+               vm.fc_unit,
+               vm.vcpu,
+               vm.mem_mib,
+               vm.kernel_path,
+               vm.rootfs_path,
+               vm.created_at,
+               vm.updated_at
+        FROM vm
+        JOIN host ON host.id = vm.host_id
+        WHERE vm.host_id = $1
+        ORDER BY vm.created_at DESC
+        "#,
+    )
+    .bind(host_id)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(test)]
+pub async fn list_by_host(_: &PgPool, host_id: Uuid) -> sqlx::Result<Vec<VmRow>> {
+    let mut rows: Vec<VmRow> = store()
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|row| row.host_id == host_id)
+        .cloned()
+        .collect();
+    rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(rows)
+}
+
+#[cfg(not(test))]
 pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
     sqlx::query_as::<_, VmRow>(
         r#"
@@ -90,6 +146,10 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
                vm.log_path,
                vm.http_port,
                vm.fc_unit,
+               vm.vcpu,
+               vm.mem_mib,
+               vm.kernel_path,
+               vm.rootfs_path,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -146,6 +206,32 @@ pub async fn delete_row(_: &PgPool, id: Uuid) -> sqlx::Result<()> {
     Ok(())
 }
 
+#[cfg(not(test))]
+pub async fn insert_event(
+    db: &PgPool,
+    vm_id: Uuid,
+    level: &str,
+    message: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(r#"INSERT INTO vm_event (vm_id, level, message) VALUES ($1,$2,$3)"#)
+        .bind(vm_id)
+        .bind(level)
+        .bind(message)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub async fn insert_event(_: &PgPool, vm_id: Uuid, level: &str, message: &str) -> sqlx::Result<()> {
+    events_store().lock().unwrap().push(TestVmEvent {
+        vm_id,
+        level: level.to_string(),
+        message: message.to_string(),
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -158,6 +244,29 @@ fn store() -> &'static Mutex<HashMap<Uuid, VmRow>> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn reset_store() {
     store().lock().unwrap().clear();
+    events_store().lock().unwrap().clear();
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct TestVmEvent {
+    pub vm_id: Uuid,
+    pub level: String,
+    pub message: String,
+}
+
+#[cfg(test)]
+fn events_store() -> &'static Mutex<Vec<TestVmEvent>> {
+    static STORE: OnceLock<Mutex<Vec<TestVmEvent>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn event_store_snapshot() -> Vec<TestVmEvent> {
+    events_store().lock().unwrap().clone()
 }

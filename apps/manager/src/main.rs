@@ -22,6 +22,8 @@ async fn main() -> anyhow::Result<()> {
     let hosts = HostRepository::new(db.clone());
     let state = AppState { db, hosts };
 
+    let _reconciler_handle = features::reconciler::spawn(state.clone());
+
     let app = features::router(state.clone());
     let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
     info!(%bind, "manager listening");
