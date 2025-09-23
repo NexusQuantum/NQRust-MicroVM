@@ -2,9 +2,9 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::Response;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::{Request};
-use hyperlocal::UnixConnector;
+use hyper::Request;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+use hyperlocal::UnixConnector;
 
 /// Forward HTTP over Unix-domain socket to Firecracker API without socat.
 pub async fn forward(
@@ -14,7 +14,8 @@ pub async fn forward(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, (StatusCode, String)> {
-    let client: Client<UnixConnector, Full<Bytes>> = Client::builder(TokioExecutor::new()).build(UnixConnector);
+    let client: Client<UnixConnector, Full<Bytes>> =
+        Client::builder(TokioExecutor::new()).build(UnixConnector);
     let uri = hyperlocal::Uri::new(sock_path, path);
     let mut req = Request::builder().method(method).uri(uri);
     if let Some(headers_mut) = req.headers_mut() {

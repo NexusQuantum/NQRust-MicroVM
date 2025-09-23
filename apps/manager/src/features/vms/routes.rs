@@ -56,6 +56,7 @@ pub async fn delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::hosts::repo::HostRepository;
     use axum::{extract::Path, Extension};
     use serde_json::json;
 
@@ -64,11 +65,17 @@ mod tests {
     async fn delete_route_removes_vm(pool: sqlx::PgPool) {
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
+        let hosts = HostRepository::new(pool.clone());
+        let host_row = hosts
+            .register("test-host", "http://127.0.0.1:1", json!({}))
+            .await
+            .unwrap();
         let row = super::super::repo::VmRow {
             id,
             name: "test-vm".into(),
             state: "running".into(),
-            host_addr: "http://127.0.0.1:1".into(), // unreachable; delete path ignores stop errors
+            host_id: host_row.id,
+            host_addr: host_row.addr.clone(), // unreachable; delete path ignores stop errors
             api_sock: "/tmp/test.sock".into(),
             tap: "tap-test".into(),
             log_path: "/tmp/log".into(),
@@ -81,7 +88,7 @@ mod tests {
 
         let state = crate::AppState {
             db: pool.clone(),
-            agent_base: row.host_addr.clone(),
+            hosts: hosts.clone(),
         };
 
         let Json(body) = super::delete(Extension(state), Path(id)).await.unwrap();
@@ -93,10 +100,8 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn delete_route_unknown_id_returns_ok(pool: sqlx::PgPool) {
-        let state = crate::AppState {
-            db: pool,
-            agent_base: "http://127.0.0.1:1".into(),
-        };
+        let hosts = HostRepository::new(pool.clone());
+        let state = crate::AppState { db: pool, hosts };
         let Json(body) = super::delete(Extension(state), Path(Uuid::new_v4()))
             .await
             .unwrap();

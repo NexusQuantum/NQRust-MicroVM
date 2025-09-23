@@ -1,13 +1,7 @@
 use crate::core::systemd;
 use crate::AppState;
 use axum::http::StatusCode;
-use axum::{
-    extract::Path,
-    routing::post,
-    Router,
-    Json,
-    Extension,
-};
+use axum::{extract::Path, routing::post, Extension, Json, Router};
 use serde::Deserialize;
 use tokio::{fs, io::AsyncWriteExt};
 
@@ -17,7 +11,9 @@ struct SpawnReq {
     log_path: String,
 }
 
-pub fn router() -> Router { Router::new().route("/:id/spawn", post(spawn_fc)) }
+pub fn router() -> Router {
+    Router::new().route("/:id/spawn", post(spawn_fc))
+}
 
 async fn spawn_fc(
     Extension(_st): Extension<AppState>,

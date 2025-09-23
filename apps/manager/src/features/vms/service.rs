@@ -5,7 +5,11 @@ use reqwest::Client;
 use uuid::Uuid;
 
 pub async fn create_and_start(st: &AppState, id: Uuid, req: CreateVmReq) -> Result<()> {
-    let host = st.agent_base.clone();
+    let host = st
+        .hosts
+        .first_healthy()
+        .await
+        .context("no healthy hosts available")?;
     let vm_dir = format!("/srv/fc/vms/{id}");
     let sock = format!("{vm_dir}/sock/fc.sock");
     let log_path = format!("{vm_dir}/logs/firecracker.log");
@@ -13,7 +17,7 @@ pub async fn create_and_start(st: &AppState, id: Uuid, req: CreateVmReq) -> Resu
 
     // 1) create tap on agent
     reqwest::Client::new()
-        .post(format!("{host}/agent/v1/vms/{id}/tap"))
+        .post(format!("{}/agent/v1/vms/{id}/tap", host.addr))
         .json(&serde_json::json!({"bridge": "fcbr0", "owner_user": serde_json::Value::Null}))
         .send()
         .await?
@@ -21,14 +25,14 @@ pub async fn create_and_start(st: &AppState, id: Uuid, req: CreateVmReq) -> Resu
 
     // 2) spawn firecracker
     reqwest::Client::new()
-        .post(format!("{host}/agent/v1/vms/{id}/spawn"))
+        .post(format!("{}/agent/v1/vms/{id}/spawn", host.addr))
         .json(&serde_json::json!({"sock": sock, "log_path": log_path}))
         .send()
         .await?
         .error_for_status()?;
 
     // 3) configure via proxy
-    let base = format!("{host}/agent/v1/vms/{id}/proxy");
+    let base = format!("{}/agent/v1/vms/{id}/proxy", host.addr);
     let qs = format!("?sock={}", urlencoding::encode(&sock));
     let http = Client::new();
 
@@ -105,7 +109,8 @@ pub async fn create_and_start(st: &AppState, id: Uuid, req: CreateVmReq) -> Resu
             id,
             name: req.name,
             state: "running".into(),
-            host_addr: host.clone(),
+            host_id: host.id,
+            host_addr: host.addr.clone(),
             api_sock: sock,
             tap: format!("tap-{id}"),
             log_path,
