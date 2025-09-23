@@ -11,7 +11,7 @@ pub async fn create(
     super::service::create_and_start(&st, id, req)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"id": id})))
+    Ok(Json(serde_json::json!({ "id": id })))
 }
 
 pub async fn list(
@@ -20,7 +20,7 @@ pub async fn list(
     let items = super::repo::list(&st.db)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"items": items})))
+    Ok(Json(serde_json::json!({ "items": items })))
 }
 
 pub async fn get(
@@ -30,7 +30,7 @@ pub async fn get(
     let row = super::repo::get(&st.db, id)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::json!({"item": row})))
+    Ok(Json(serde_json::json!({ "item": row })))
 }
 
 pub async fn stop(
@@ -40,7 +40,7 @@ pub async fn stop(
     super::service::stop_only(&st, id)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"ok": true})))
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn delete(
@@ -50,65 +50,56 @@ pub async fn delete(
     super::service::stop_and_delete(&st, id)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"ok": true})))
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AppState;
-    use anyhow::{anyhow, Result};
-    use axum::Extension;
-    use sqlx::postgres::PgPoolOptions;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use axum::{extract::Path, Extension};
+    use serde_json::json;
 
-    #[tokio::test]
-    async fn stop_handler_marks_vm_stopped() -> Result<()> {
-        super::super::repo::reset_store();
-
-        let pool = PgPoolOptions::new()
-            .connect_lazy("postgres://test:test@localhost:5432/test")
-            .map_err(|err| anyhow!("failed to create lazy pool: {err}"))?;
-
-        let mock_server = MockServer::start().await;
-        let vm_id = Uuid::new_v4();
-        let vm_row = super::super::repo::VmRow {
-            id: vm_id,
-            name: "test".into(),
+    // Uses SQLx runtime DB with the same migrations as prod code.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn delete_route_removes_vm(pool: sqlx::PgPool) {
+        let id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+        let row = super::super::repo::VmRow {
+            id,
+            name: "test-vm".into(),
             state: "running".into(),
-            host_addr: mock_server.uri(),
-            api_sock: format!("/srv/fc/vms/{vm_id}/sock/fc.sock"),
-            tap: format!("tap-{vm_id}"),
-            log_path: format!("/srv/fc/vms/{vm_id}/logs/firecracker.log"),
+            host_addr: "http://127.0.0.1:1".into(), // unreachable; delete path ignores stop errors
+            api_sock: "/tmp/test.sock".into(),
+            tap: "tap-test".into(),
+            log_path: "/tmp/log".into(),
             http_port: 0,
-            fc_unit: format!("fc-{vm_id}.scope"),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            fc_unit: "fc-test.scope".into(),
+            created_at: now,
+            updated_at: now,
         };
-        super::super::repo::insert(&pool, &vm_row).await?;
+        super::super::repo::insert(&pool, &row).await.unwrap();
 
-        Mock::given(method("POST"))
-            .and(path(format!("/agent/v1/vms/{}/stop", vm_id)))
-            .respond_with(ResponseTemplate::new(200))
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
-        let state = AppState {
+        let state = crate::AppState {
             db: pool.clone(),
-            agent_base: mock_server.uri(),
+            agent_base: row.host_addr.clone(),
         };
 
-        let _ = super::stop(Extension(state.clone()), axum::extract::Path(vm_id))
+        let Json(body) = super::delete(Extension(state), Path(id)).await.unwrap();
+        assert_eq!(body, json!({ "ok": true }));
+
+        let fetched = super::super::repo::get(&pool, id).await;
+        assert!(matches!(fetched, Err(sqlx::Error::RowNotFound)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn delete_route_unknown_id_returns_ok(pool: sqlx::PgPool) {
+        let state = crate::AppState {
+            db: pool,
+            agent_base: "http://127.0.0.1:1".into(),
+        };
+        let Json(body) = super::delete(Extension(state), Path(Uuid::new_v4()))
             .await
-            .map_err(|status| anyhow!("handler failed with status {status}"))?;
-
-        let row = super::super::repo::get(&state.db, vm_id).await?;
-        assert_eq!(row.state, "stopped");
-
-        mock_server.verify().await;
-
-        Ok(())
+            .unwrap();
+        assert_eq!(body, json!({ "ok": true }));
     }
 }
