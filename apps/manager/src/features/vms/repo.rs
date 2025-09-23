@@ -1,5 +1,5 @@
 use serde::Serialize;
-use sqlx::{PgPool, FromRow};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Serialize, sqlx::FromRow)]
