@@ -125,7 +125,7 @@ async fn list_sockets(run_dir: &str) -> anyhow::Result<Vec<SocketInventory>> {
         let vm_path = entry.path();
 
         let sockets = collect_dir_files(vm_path.join("sock")).await;
-        let logs = collect_dir_files(vm_path.join("log")).await;
+        let logs = collect_dir_files(vm_path.join("logs")).await;
 
         inventories.push(SocketInventory {
             vm_id,
@@ -194,7 +194,7 @@ mod tests {
         let run_dir = tmp.path().join("fc");
         let vm_dir = run_dir.join("vms").join("vm-01");
         let sock_dir = vm_dir.join("sock");
-        let log_dir = vm_dir.join("log");
+        let log_dir = vm_dir.join("logs");
         tokio::fs::create_dir_all(&sock_dir).await.unwrap();
         tokio::fs::create_dir_all(&log_dir).await.unwrap();
 
