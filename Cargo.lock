@@ -32,6 +32,7 @@ dependencies = [
  "num_cpus",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
