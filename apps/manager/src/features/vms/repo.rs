@@ -8,6 +8,7 @@ pub struct VmRow {
     pub name: String,
     pub state: String,
     pub host_id: Uuid,
+    pub template_id: Option<Uuid>,
     pub host_addr: String,
     pub api_sock: String,
     pub tap: String,
@@ -25,13 +26,14 @@ pub struct VmRow {
 #[cfg(not(test))]
 pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO vm (id,name,state,host_id,api_sock,tap,log_path,http_port,fc_unit,vcpu,mem_mib,kernel_path,rootfs_path)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+        r#"INSERT INTO vm (id,name,state,host_id,template_id,api_sock,tap,log_path,http_port,fc_unit,vcpu,mem_mib,kernel_path,rootfs_path)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
     )
     .bind(row.id)
     .bind(&row.name)
     .bind(&row.state)
     .bind(row.host_id)
+    .bind(row.template_id)
     .bind(&row.api_sock)
     .bind(&row.tap)
     .bind(&row.log_path)
@@ -60,6 +62,7 @@ pub async fn list(db: &PgPool) -> sqlx::Result<Vec<VmRow>> {
                vm.name,
                vm.state,
                vm.host_id,
+               vm.template_id,
                host.addr AS host_addr,
                vm.api_sock,
                vm.tap,
@@ -96,6 +99,7 @@ pub async fn list_by_host(db: &PgPool, host_id: Uuid) -> sqlx::Result<Vec<VmRow>
                vm.name,
                vm.state,
                vm.host_id,
+               vm.template_id,
                host.addr AS host_addr,
                vm.api_sock,
                vm.tap,
@@ -140,6 +144,7 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
                vm.name,
                vm.state,
                vm.host_id,
+               vm.template_id,
                host.addr AS host_addr,
                vm.api_sock,
                vm.tap,

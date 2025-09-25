@@ -1,11 +1,18 @@
 use crate::AppState;
 use anyhow::*;
 use nexus_types::CreateVmReq;
+#[cfg(not(test))]
 use reqwest::Client;
+#[cfg(not(test))]
 use serde_json::json;
 use uuid::Uuid;
 
-pub async fn create_and_start(st: &AppState, id: Uuid, req: CreateVmReq) -> Result<()> {
+pub async fn create_and_start(
+    st: &AppState,
+    id: Uuid,
+    req: CreateVmReq,
+    template_id: Option<Uuid>,
+) -> Result<()> {
     let host = st
         .hosts
         .first_healthy()
@@ -25,6 +32,7 @@ pub async fn create_and_start(st: &AppState, id: Uuid, req: CreateVmReq) -> Resu
             name: req.name,
             state: "running".into(),
             host_id: host.id,
+            template_id,
             host_addr: host.addr.clone(),
             api_sock: paths.sock.clone(),
             tap: paths.tap.clone(),
@@ -87,6 +95,7 @@ pub async fn stop_and_delete(st: &AppState, id: Uuid) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(test, allow(dead_code))]
 struct VmPaths {
     sock: String,
     log_path: String,
@@ -117,6 +126,7 @@ impl VmPaths {
     }
 }
 
+#[cfg(not(test))]
 async fn create_tap(host_addr: &str, id: Uuid) -> Result<()> {
     reqwest::Client::new()
         .post(format!("{host_addr}/agent/v1/vms/{id}/tap"))
@@ -127,6 +137,12 @@ async fn create_tap(host_addr: &str, id: Uuid) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+async fn create_tap(_: &str, _: Uuid) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(test))]
 async fn spawn_firecracker(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
     reqwest::Client::new()
         .post(format!("{host_addr}/agent/v1/vms/{id}/spawn"))
@@ -137,6 +153,12 @@ async fn spawn_firecracker(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result
     Ok(())
 }
 
+#[cfg(test)]
+async fn spawn_firecracker(_: &str, _: Uuid, _: &VmPaths) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(test))]
 async fn configure_vm(host_addr: &str, id: Uuid, req: &CreateVmReq, paths: &VmPaths) -> Result<()> {
     let base = format!("{host_addr}/agent/v1/vms/{id}/proxy");
     let qs = format!("?sock={}", urlencoding::encode(&paths.sock));
@@ -204,6 +226,12 @@ async fn configure_vm(host_addr: &str, id: Uuid, req: &CreateVmReq, paths: &VmPa
     Ok(())
 }
 
+#[cfg(test)]
+async fn configure_vm(_: &str, _: Uuid, _: &CreateVmReq, _: &VmPaths) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(test))]
 async fn start_vm(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
     let base = format!("{host_addr}/agent/v1/vms/{id}/proxy");
     let qs = format!("?sock={}", urlencoding::encode(&paths.sock));
@@ -213,5 +241,10 @@ async fn start_vm(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
         .send()
         .await?
         .error_for_status()?;
+    Ok(())
+}
+
+#[cfg(test)]
+async fn start_vm(_: &str, _: Uuid, _: &VmPaths) -> Result<()> {
     Ok(())
 }

@@ -8,7 +8,7 @@ pub async fn create(
     Json(req): Json<CreateVmReq>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let id = Uuid::new_v4();
-    super::service::create_and_start(&st, id, req)
+    super::service::create_and_start(&st, id, req, None)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "id": id })))
@@ -75,6 +75,7 @@ mod tests {
             name: "test-vm".into(),
             state: "running".into(),
             host_id: host_row.id,
+            template_id: None,
             host_addr: host_row.addr.clone(), // unreachable; delete path ignores stop errors
             api_sock: "/tmp/test.sock".into(),
             tap: "tap-test".into(),
