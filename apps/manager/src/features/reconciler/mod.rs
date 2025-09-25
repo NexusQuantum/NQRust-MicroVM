@@ -278,6 +278,7 @@ mod tests {
             name: format!("vm-{id}"),
             state: "running".into(),
             host_id: Uuid::new_v4(),
+            template_id: None,
             host_addr: "http://127.0.0.1".into(),
             api_sock: format!("/srv/fc/vms/{id}/sock/fc.sock"),
             tap: format!("tap-{id}"),
