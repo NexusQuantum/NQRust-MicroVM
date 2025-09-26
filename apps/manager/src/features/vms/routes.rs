@@ -91,9 +91,13 @@ mod tests {
         };
         super::super::repo::insert(&pool, &row).await.unwrap();
 
+        let images =
+            crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
+            images,
+            allow_direct_image_paths: true,
         };
 
         let Json(body) = super::delete(Extension(state), Path(id)).await.unwrap();
@@ -106,7 +110,14 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn delete_route_unknown_id_returns_ok(pool: sqlx::PgPool) {
         let hosts = HostRepository::new(pool.clone());
-        let state = crate::AppState { db: pool, hosts };
+        let images =
+            crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
+        let state = crate::AppState {
+            db: pool,
+            hosts,
+            images,
+            allow_direct_image_paths: true,
+        };
         let Json(body) = super::delete(Extension(state), Path(Uuid::new_v4()))
             .await
             .unwrap();
