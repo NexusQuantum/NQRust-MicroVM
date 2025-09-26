@@ -86,6 +86,7 @@ mod tests {
             mem_mib: 512,
             kernel_path: "/tmp/kernel".into(),
             rootfs_path: "/tmp/rootfs".into(),
+            source_snapshot_id: None,
             created_at: now,
             updated_at: now,
         };
@@ -93,10 +94,12 @@ mod tests {
 
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
             images,
+            snapshots,
             allow_direct_image_paths: true,
         };
 
@@ -112,10 +115,12 @@ mod tests {
         let hosts = HostRepository::new(pool.clone());
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool,
             hosts,
             images,
+            snapshots,
             allow_direct_image_paths: true,
         };
         let Json(body) = super::delete(Extension(state), Path(Uuid::new_v4()))

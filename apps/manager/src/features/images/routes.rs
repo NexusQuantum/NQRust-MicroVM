@@ -78,10 +78,12 @@ mod tests {
     async fn create_and_list_images(pool: sqlx::PgPool) {
         let hosts = HostRepository::new(pool.clone());
         let images = ImageRepository::new(pool.clone(), "/srv/images");
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool.clone(),
             hosts,
             images: images.clone(),
+            snapshots,
             allow_direct_image_paths: true,
         };
 
@@ -119,10 +121,12 @@ mod tests {
     async fn reject_out_of_root_path(pool: sqlx::PgPool) {
         let hosts = HostRepository::new(pool.clone());
         let images = ImageRepository::new(pool.clone(), "/srv/images");
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool,
             hosts,
             images,
+            snapshots,
             allow_direct_image_paths: true,
         };
 

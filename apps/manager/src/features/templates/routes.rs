@@ -80,10 +80,12 @@ mod tests {
             .unwrap();
         let images = crate::features::images::repo::ImageRepository::new(pool.clone(), "/tmp");
 
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
             images: images.clone(),
+            snapshots,
             allow_direct_image_paths: true,
         };
 

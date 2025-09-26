@@ -45,6 +45,7 @@ pub async fn create_and_start(
             mem_mib: spec.mem_mib as i32,
             kernel_path: spec.kernel_path.clone(),
             rootfs_path: spec.rootfs_path.clone(),
+            source_snapshot_id: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -232,10 +233,12 @@ mod tests {
             .await
             .unwrap();
 
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
             images: images.clone(),
+            snapshots,
             allow_direct_image_paths: false,
         };
 
@@ -273,10 +276,12 @@ mod tests {
             .unwrap();
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool,
             hosts,
             images,
+            snapshots,
             allow_direct_image_paths: false,
         };
 
@@ -310,10 +315,12 @@ mod tests {
             .unwrap();
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
+        let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool,
             hosts,
             images,
+            snapshots,
             allow_direct_image_paths: false,
         };
 
@@ -333,6 +340,7 @@ mod tests {
             mem_mib: 512,
             kernel_path: "/etc/passwd".into(),
             rootfs_path: "/srv/images/rootfs".into(),
+            source_snapshot_id: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
