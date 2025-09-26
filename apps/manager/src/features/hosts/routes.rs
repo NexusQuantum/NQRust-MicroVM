@@ -55,9 +55,13 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn register_creates_host(pool: sqlx::PgPool) {
         let repo = crate::features::hosts::repo::HostRepository::new(pool.clone());
+        let images =
+            crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let state = crate::AppState {
             db: pool.clone(),
             hosts: repo.clone(),
+            images,
+            allow_direct_image_paths: true,
         };
 
         let req = RegisterHostRequest {
@@ -76,9 +80,13 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn heartbeat_updates_last_seen_and_capabilities(pool: sqlx::PgPool) {
         let repo = crate::features::hosts::repo::HostRepository::new(pool.clone());
+        let images =
+            crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let state = crate::AppState {
             db: pool.clone(),
             hosts: repo.clone(),
+            images,
+            allow_direct_image_paths: true,
         };
 
         let req = RegisterHostRequest {

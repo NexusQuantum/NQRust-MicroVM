@@ -78,10 +78,13 @@ mod tests {
             .register("test-host", "http://127.0.0.1:1", json!({}))
             .await
             .unwrap();
+        let images = crate::features::images::repo::ImageRepository::new(pool.clone(), "/tmp");
 
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
+            images: images.clone(),
+            allow_direct_image_paths: true,
         };
 
         let create_req = CreateTemplateReq {
@@ -89,8 +92,10 @@ mod tests {
             spec: TemplateSpec {
                 vcpu: 2,
                 mem_mib: 2048,
-                kernel_path: "/tmp/kernel".into(),
-                rootfs_path: "/tmp/rootfs".into(),
+                kernel_image_id: None,
+                rootfs_image_id: None,
+                kernel_path: Some("/tmp/kernel".into()),
+                rootfs_path: Some("/tmp/rootfs".into()),
             },
         };
         let spec = create_req.spec.clone();
@@ -117,7 +122,7 @@ mod tests {
         assert_eq!(vm.name, "vm-from-template");
         assert_eq!(vm.vcpu, i32::from(spec.vcpu));
         assert_eq!(vm.mem_mib, i32::try_from(spec.mem_mib).unwrap());
-        assert_eq!(vm.kernel_path, spec.kernel_path);
-        assert_eq!(vm.rootfs_path, spec.rootfs_path);
+        assert_eq!(vm.kernel_path, spec.kernel_path.unwrap());
+        assert_eq!(vm.rootfs_path, spec.rootfs_path.unwrap());
     }
 }

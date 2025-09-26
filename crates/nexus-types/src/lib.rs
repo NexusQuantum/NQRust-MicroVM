@@ -5,16 +5,28 @@ pub struct CreateVmReq {
     pub name: String,
     pub vcpu: u8,
     pub mem_mib: u32,
-    pub kernel_path: String,
-    pub rootfs_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_image_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_image_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateSpec {
     pub vcpu: u8,
     pub mem_mib: u32,
-    pub kernel_path: String,
-    pub rootfs_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_image_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_image_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_path: Option<String>,
 }
 
 impl TemplateSpec {
@@ -23,6 +35,8 @@ impl TemplateSpec {
             name,
             vcpu: self.vcpu,
             mem_mib: self.mem_mib,
+            kernel_image_id: self.kernel_image_id,
+            rootfs_image_id: self.rootfs_image_id,
             kernel_path: self.kernel_path,
             rootfs_path: self.rootfs_path,
         }
@@ -74,6 +88,56 @@ pub struct VmSummary {
     pub id: uuid::Uuid,
     pub name: String,
     pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub id: uuid::Uuid,
+    pub kind: String,
+    pub name: String,
+    pub host_path: String,
+    pub sha256: String,
+    pub size: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateImageReq {
+    pub kind: String,
+    pub name: String,
+    pub host_path: String,
+    pub sha256: String,
+    pub size: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateImageResp {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImageFilter {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListImagesResp {
+    pub items: Vec<Image>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetImageResp {
+    pub item: Image,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
