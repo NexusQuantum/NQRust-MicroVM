@@ -1,8 +1,8 @@
 use crate::AppState;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
 use nexus_types::{
-    CreateSnapshotRequest, CreateSnapshotResponse, GetSnapshotResponse, ListSnapshotsResponse,
-    Snapshot,
+    CreateSnapshotRequest, CreateSnapshotResponse, GetSnapshotResponse, InstantiateSnapshotReq,
+    InstantiateSnapshotResp, ListSnapshotsResponse, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -137,6 +137,42 @@ pub async fn get(
         .map_err(|_| StatusCode::NOT_FOUND)?
         .into();
     Ok(Json(GetSnapshotResponse { item }))
+}
+
+pub async fn instantiate(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    body: Option<Json<InstantiateSnapshotReq>>,
+) -> Result<Json<InstantiateSnapshotResp>, StatusCode> {
+    let payload = body.map(|Json(req)| req).unwrap_or_default();
+    let repo = st.snapshots.clone();
+    let snapshot = repo.get(id).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let source_vm = crate::features::vms::repo::get(&st.db, snapshot.vm_id)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    let vm_id = Uuid::new_v4();
+    let name = payload.name.unwrap_or_else(|| {
+        let suffix = vm_id.to_string();
+        let suffix = &suffix[..8];
+        format!("{}-clone-{suffix}", source_vm.name)
+    });
+
+    crate::features::vms::service::create_from_snapshot(
+        &st,
+        vm_id,
+        name.clone(),
+        None,
+        snapshot,
+        Some(source_vm),
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(snapshot_id = %id, error = ?err, "failed to instantiate snapshot");
+        StatusCode::BAD_GATEWAY
+    })?;
+
+    Ok(Json(InstantiateSnapshotResp { id: vm_id, name }))
 }
 
 #[derive(Serialize)]

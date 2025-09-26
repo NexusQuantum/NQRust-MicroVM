@@ -13,6 +13,8 @@ pub struct CreateVmReq {
     pub kernel_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rootfs_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_snapshot_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +41,7 @@ impl TemplateSpec {
             rootfs_image_id: self.rootfs_image_id,
             kernel_path: self.kernel_path,
             rootfs_path: self.rootfs_path,
+            source_snapshot_id: None,
         }
     }
 }
@@ -118,6 +121,18 @@ pub struct ListSnapshotsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetSnapshotResponse {
     pub item: Snapshot,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InstantiateSnapshotReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstantiateSnapshotResp {
+    pub id: uuid::Uuid,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
