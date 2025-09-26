@@ -289,6 +289,7 @@ mod tests {
             mem_mib: 512,
             kernel_path: "/tmp/kernel".into(),
             rootfs_path: "/tmp/rootfs".into(),
+            source_snapshot_id: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

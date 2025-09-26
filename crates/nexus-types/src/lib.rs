@@ -91,6 +91,36 @@ pub struct VmSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub id: uuid::Uuid,
+    pub vm_id: uuid::Uuid,
+    pub snapshot_path: String,
+    pub mem_path: String,
+    pub size_bytes: i64,
+    pub state: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateSnapshotRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSnapshotResponse {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListSnapshotsResponse {
+    pub items: Vec<Snapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetSnapshotResponse {
+    pub item: Snapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Image {
     pub id: uuid::Uuid,
     pub kind: String,

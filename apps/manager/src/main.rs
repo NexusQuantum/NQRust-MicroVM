@@ -6,12 +6,14 @@ use tracing::info;
 
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
+use features::snapshots::repo::SnapshotRepository;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub hosts: HostRepository,
     pub images: ImageRepository,
+    pub snapshots: SnapshotRepository,
     pub allow_direct_image_paths: bool,
 }
 
@@ -26,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let image_root =
         std::env::var("MANAGER_IMAGE_ROOT").unwrap_or_else(|_| "/srv/images".to_string());
     let images = ImageRepository::new(db.clone(), image_root);
+    let snapshots = SnapshotRepository::new(db.clone());
     let allow_direct_image_paths = std::env::var("MANAGER_ALLOW_IMAGE_PATHS")
         .map(|value| matches_ignore_case(value.trim()))
         .unwrap_or(false);
@@ -33,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         hosts,
         images,
+        snapshots,
         allow_direct_image_paths,
     };
 
