@@ -21,7 +21,10 @@ uuid = { workspace = true }
 urlencoding = { workspace = true }
 metrics = { workspace = true }
 nexus-types = { path = "../../crates/nexus-types" }
-utoipa = { workspace = true }
+utoipa = { workspace = true, features = ["chrono", "uuid"] }
+utoipa-axum = "0.1"
+utoipa-swagger-ui = { version = "7", features = ["axum"] }
+serde_yaml = "0.9"
 
 [dev-dependencies]
 wiremock = "0.6"

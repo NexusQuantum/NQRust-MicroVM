@@ -11,6 +11,17 @@ use nexus_types::{
     OkResponse,
 };
 
+#[utoipa::path(
+    post,
+    path = "/v1/images",
+    request_body = CreateImageReq,
+    responses(
+        (status = 200, description = "Image registered", body = CreateImageResp),
+        (status = 400, description = "Invalid image path"),
+        (status = 500, description = "Failed to store image metadata"),
+    ),
+    tag = "Images"
+)]
 pub async fn create(
     Extension(st): Extension<AppState>,
     Json(req): Json<CreateImageReq>,
@@ -28,6 +39,16 @@ pub async fn create(
     Ok(Json(CreateImageResp { id: image.id }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/images",
+    params(ImageFilter),
+    responses(
+        (status = 200, description = "Images listed", body = ListImagesResp),
+        (status = 500, description = "Failed to list images"),
+    ),
+    tag = "Images"
+)]
 pub async fn list(
     Extension(st): Extension<AppState>,
     Query(filter): Query<ImageFilter>,
@@ -40,6 +61,17 @@ pub async fn list(
     Ok(Json(ListImagesResp { items }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/images/{id}",
+    params(ImagePathParams),
+    responses(
+        (status = 200, description = "Image fetched", body = GetImageResp),
+        (status = 404, description = "Image not found"),
+        (status = 500, description = "Failed to fetch image"),
+    ),
+    tag = "Images"
+)]
 pub async fn get(
     Extension(st): Extension<AppState>,
     Path(ImagePathParams { id }): Path<ImagePathParams>,
@@ -48,6 +80,17 @@ pub async fn get(
     Ok(Json(GetImageResp { item }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/images/{id}",
+    params(ImagePathParams),
+    responses(
+        (status = 200, description = "Image deleted", body = OkResponse),
+        (status = 404, description = "Image not found"),
+        (status = 500, description = "Failed to delete image"),
+    ),
+    tag = "Images"
+)]
 pub async fn delete(
     Extension(st): Extension<AppState>,
     Path(ImagePathParams { id }): Path<ImagePathParams>,

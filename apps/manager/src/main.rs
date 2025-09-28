@@ -1,8 +1,10 @@
 pub mod core;
+mod docs;
 mod features;
 
 use sqlx::PgPool;
-use tracing::info;
+use tracing::{info, warn};
+use utoipa::OpenApi as _;
 
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
@@ -42,7 +44,12 @@ async fn main() -> anyhow::Result<()> {
 
     let _reconciler_handle = features::reconciler::spawn(state.clone());
 
-    let app = features::router(state.clone());
+    let openapi = docs::ApiDoc::openapi();
+    if let Err(err) = docs::write_openapi_yaml(&openapi).await {
+        warn!(error = ?err, "failed to write OpenAPI specification to disk");
+    }
+
+    let app = features::router(state.clone()).merge(docs::router(openapi));
     let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
     info!(%bind, "manager listening");
     let listener = tokio::net::TcpListener::bind(&bind).await?;
