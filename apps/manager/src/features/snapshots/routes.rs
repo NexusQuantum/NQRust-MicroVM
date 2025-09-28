@@ -10,6 +10,23 @@ use uuid::Uuid;
 
 use super::repo::{NewSnapshotRow, SnapshotRepository};
 
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/snapshots",
+    params(VmPathParams),
+    request_body(
+        content = CreateSnapshotRequest,
+        content_type = "application/json",
+        description = "Optional agent snapshot configuration"
+    ),
+    responses(
+        (status = 200, description = "Snapshot created", body = CreateSnapshotResponse),
+        (status = 404, description = "VM not found"),
+        (status = 500, description = "Failed to record snapshot"),
+        (status = 502, description = "Agent interaction failed"),
+    ),
+    tag = "Snapshots"
+)]
 pub async fn create(
     Extension(st): Extension<AppState>,
     Path(VmPathParams { id: vm_id }): Path<VmPathParams>,
@@ -111,6 +128,16 @@ pub async fn create(
     Ok(Json(CreateSnapshotResponse { id: row.id }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/vms/{id}/snapshots",
+    params(VmPathParams),
+    responses(
+        (status = 200, description = "Snapshots listed", body = ListSnapshotsResponse),
+        (status = 500, description = "Failed to list snapshots"),
+    ),
+    tag = "Snapshots"
+)]
 pub async fn list_for_vm(
     Extension(st): Extension<AppState>,
     Path(VmPathParams { id: vm_id }): Path<VmPathParams>,
@@ -126,6 +153,16 @@ pub async fn list_for_vm(
     Ok(Json(ListSnapshotsResponse { items }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/snapshots/{id}",
+    params(SnapshotPathParams),
+    responses(
+        (status = 200, description = "Snapshot fetched", body = GetSnapshotResponse),
+        (status = 404, description = "Snapshot not found"),
+    ),
+    tag = "Snapshots"
+)]
 pub async fn get(
     Extension(st): Extension<AppState>,
     Path(SnapshotPathParams { id }): Path<SnapshotPathParams>,
@@ -139,6 +176,22 @@ pub async fn get(
     Ok(Json(GetSnapshotResponse { item }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/snapshots/{id}/instantiate",
+    params(SnapshotPathParams),
+    request_body(
+        content = InstantiateSnapshotReq,
+        content_type = "application/json",
+        description = "Optional overrides when instantiating a snapshot"
+    ),
+    responses(
+        (status = 200, description = "Snapshot instantiated", body = InstantiateSnapshotResp),
+        (status = 404, description = "Snapshot not found"),
+        (status = 502, description = "Failed to instantiate snapshot"),
+    ),
+    tag = "Snapshots"
+)]
 pub async fn instantiate(
     Extension(st): Extension<AppState>,
     Path(SnapshotPathParams { id }): Path<SnapshotPathParams>,

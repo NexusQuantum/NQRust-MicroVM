@@ -6,6 +6,16 @@ use nexus_types::{
 };
 use uuid::Uuid;
 
+#[utoipa::path(
+    post,
+    path = "/v1/templates",
+    request_body = CreateTemplateReq,
+    responses(
+        (status = 200, description = "Template created", body = CreateTemplateResp),
+        (status = 500, description = "Failed to create template"),
+    ),
+    tag = "Templates"
+)]
 pub async fn create(
     Extension(st): Extension<AppState>,
     Json(req): Json<CreateTemplateReq>,
@@ -16,6 +26,15 @@ pub async fn create(
     Ok(Json(CreateTemplateResp { id: template.id }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/templates",
+    responses(
+        (status = 200, description = "Templates listed", body = ListTemplatesResp),
+        (status = 500, description = "Failed to list templates"),
+    ),
+    tag = "Templates"
+)]
 pub async fn list(
     Extension(st): Extension<AppState>,
 ) -> Result<Json<ListTemplatesResp>, StatusCode> {
@@ -25,6 +44,17 @@ pub async fn list(
     Ok(Json(ListTemplatesResp { items }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/templates/{id}",
+    params(TemplatePathParams),
+    responses(
+        (status = 200, description = "Template fetched", body = GetTemplateResp),
+        (status = 404, description = "Template not found"),
+        (status = 500, description = "Failed to fetch template"),
+    ),
+    tag = "Templates"
+)]
 pub async fn get(
     Extension(st): Extension<AppState>,
     Path(TemplatePathParams { id }): Path<TemplatePathParams>,
@@ -38,6 +68,18 @@ pub async fn get(
     Ok(Json(GetTemplateResp { item: template }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/templates/{id}/instantiate",
+    params(TemplatePathParams),
+    request_body = InstantiateTemplateReq,
+    responses(
+        (status = 200, description = "Template instantiated", body = InstantiateTemplateResp),
+        (status = 404, description = "Template not found"),
+        (status = 500, description = "Failed to instantiate template"),
+    ),
+    tag = "Templates"
+)]
 pub async fn instantiate(
     Extension(st): Extension<AppState>,
     Path(TemplatePathParams { id }): Path<TemplatePathParams>,

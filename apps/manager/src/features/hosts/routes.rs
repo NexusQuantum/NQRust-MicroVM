@@ -5,6 +5,16 @@ use nexus_types::{
 };
 use tracing::error;
 
+#[utoipa::path(
+    post,
+    path = "/v1/hosts/register",
+    request_body = RegisterHostRequest,
+    responses(
+        (status = 200, description = "Host registered", body = RegisterHostResponse),
+        (status = 500, description = "Failed to register host"),
+    ),
+    tag = "Hosts"
+)]
 pub async fn register(
     Extension(st): Extension<AppState>,
     Json(req): Json<RegisterHostRequest>,
@@ -27,6 +37,18 @@ pub async fn register(
     Ok(Json(RegisterHostResponse { id: row.id }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/hosts/{id}/heartbeat",
+    params(HostPathParams),
+    request_body = HostHeartbeatRequest,
+    responses(
+        (status = 200, description = "Heartbeat recorded", body = OkResponse),
+        (status = 404, description = "Host not found"),
+        (status = 500, description = "Failed to record heartbeat"),
+    ),
+    tag = "Hosts"
+)]
 pub async fn heartbeat(
     Extension(st): Extension<AppState>,
     Path(HostPathParams { id }): Path<HostPathParams>,

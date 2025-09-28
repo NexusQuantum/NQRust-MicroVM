@@ -5,6 +5,16 @@ use nexus_types::{
 };
 use uuid::Uuid;
 
+#[utoipa::path(
+    post,
+    path = "/v1/vms",
+    request_body = CreateVmReq,
+    responses(
+        (status = 200, description = "VM created", body = CreateVmResponse),
+        (status = 500, description = "Failed to create VM"),
+    ),
+    tag = "VMs"
+)]
 pub async fn create(
     Extension(st): Extension<AppState>,
     Json(req): Json<CreateVmReq>,
@@ -16,6 +26,15 @@ pub async fn create(
     Ok(Json(CreateVmResponse { id }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/vms",
+    responses(
+        (status = 200, description = "VMs listed", body = ListVmsResponse),
+        (status = 500, description = "Failed to list VMs"),
+    ),
+    tag = "VMs"
+)]
 pub async fn list(
     Extension(st): Extension<AppState>,
 ) -> Result<Json<ListVmsResponse>, axum::http::StatusCode> {
@@ -26,6 +45,17 @@ pub async fn list(
     Ok(Json(ListVmsResponse { items }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/vms/{id}",
+    params(VmPathParams),
+    responses(
+        (status = 200, description = "VM fetched", body = GetVmResponse),
+        (status = 404, description = "VM not found"),
+        (status = 500, description = "Failed to fetch VM"),
+    ),
+    tag = "VMs"
+)]
 pub async fn get(
     Extension(st): Extension<AppState>,
     Path(VmPathParams { id }): Path<VmPathParams>,
@@ -36,6 +66,16 @@ pub async fn get(
     Ok(Json(GetVmResponse { item: row.into() }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/stop",
+    params(VmPathParams),
+    responses(
+        (status = 200, description = "VM stopped", body = OkResponse),
+        (status = 500, description = "Failed to stop VM"),
+    ),
+    tag = "VMs"
+)]
 pub async fn stop(
     Extension(st): Extension<AppState>,
     Path(VmPathParams { id }): Path<VmPathParams>,
@@ -46,6 +86,16 @@ pub async fn stop(
     Ok(Json(OkResponse::default()))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/vms/{id}",
+    params(VmPathParams),
+    responses(
+        (status = 200, description = "VM deleted", body = OkResponse),
+        (status = 500, description = "Failed to delete VM"),
+    ),
+    tag = "VMs"
+)]
 pub async fn delete(
     Extension(st): Extension<AppState>,
     Path(VmPathParams { id }): Path<VmPathParams>,
