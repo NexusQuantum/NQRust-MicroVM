@@ -2,7 +2,7 @@ use crate::AppState;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
 use nexus_types::{
     CreateTemplateReq, CreateTemplateResp, GetTemplateResp, InstantiateTemplateReq,
-    InstantiateTemplateResp, ListTemplatesResp,
+    InstantiateTemplateResp, ListTemplatesResp, TemplatePathParams,
 };
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ pub async fn list(
 
 pub async fn get(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
+    Path(TemplatePathParams { id }): Path<TemplatePathParams>,
 ) -> Result<Json<GetTemplateResp>, StatusCode> {
     let template = super::repo::get(&st.db, id)
         .await
@@ -40,7 +40,7 @@ pub async fn get(
 
 pub async fn instantiate(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
+    Path(TemplatePathParams { id }): Path<TemplatePathParams>,
     Json(req): Json<InstantiateTemplateReq>,
 ) -> Result<Json<InstantiateTemplateResp>, StatusCode> {
     let template = super::repo::get(&st.db, id)
@@ -109,7 +109,7 @@ mod tests {
 
         let Json(inst_resp) = super::instantiate(
             Extension(state.clone()),
-            Path(template_id),
+            Path(TemplatePathParams { id: template_id }),
             Json(InstantiateTemplateReq {
                 name: "vm-from-template".into(),
             }),

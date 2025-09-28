@@ -1,19 +1,21 @@
-use std::path::Path;
+use std::path::Path as StdPath;
 
 use crate::AppState;
 use axum::{
-    extract::{Path as PathParam, Query},
+    extract::{Path, Query},
     http::StatusCode,
     Extension, Json,
 };
-use nexus_types::{CreateImageReq, CreateImageResp, GetImageResp, ImageFilter, ListImagesResp};
-use uuid::Uuid;
+use nexus_types::{
+    CreateImageReq, CreateImageResp, GetImageResp, ImageFilter, ImagePathParams, ListImagesResp,
+    OkResponse,
+};
 
 pub async fn create(
     Extension(st): Extension<AppState>,
     Json(req): Json<CreateImageReq>,
 ) -> Result<Json<CreateImageResp>, StatusCode> {
-    if !st.images.is_path_allowed(Path::new(&req.host_path)) {
+    if !st.images.is_path_allowed(StdPath::new(&req.host_path)) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -40,7 +42,7 @@ pub async fn list(
 
 pub async fn get(
     Extension(st): Extension<AppState>,
-    PathParam(id): PathParam<Uuid>,
+    Path(ImagePathParams { id }): Path<ImagePathParams>,
 ) -> Result<Json<GetImageResp>, StatusCode> {
     let item = st.images.get(id).await.map_err(|err| map_repo_error(err))?;
     Ok(Json(GetImageResp { item }))
@@ -48,13 +50,13 @@ pub async fn get(
 
 pub async fn delete(
     Extension(st): Extension<AppState>,
-    PathParam(id): PathParam<Uuid>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+    Path(ImagePathParams { id }): Path<ImagePathParams>,
+) -> Result<Json<OkResponse>, StatusCode> {
     st.images
         .delete(id)
         .await
         .map_err(|err| map_repo_error(err))?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(OkResponse::default()))
 }
 
 fn map_repo_error(err: super::repo::ImageRepoError) -> StatusCode {
@@ -70,9 +72,8 @@ mod tests {
     use super::*;
     use crate::features::hosts::repo::HostRepository;
     use crate::features::images::repo::ImageRepository;
-    use axum::Extension;
+    use axum::{extract::Path, Extension};
     use nexus_types::CreateImageReq;
-    use serde_json::json;
 
     #[sqlx::test(migrations = "./migrations")]
     async fn create_and_list_images(pool: sqlx::PgPool) {
@@ -106,15 +107,21 @@ mod tests {
         assert_eq!(list.items.len(), 1);
         assert_eq!(list.items[0].id, resp.id);
 
-        let Json(item) = super::get(Extension(state.clone()), PathParam(resp.id))
-            .await
-            .unwrap();
+        let Json(item) = super::get(
+            Extension(state.clone()),
+            Path(ImagePathParams { id: resp.id }),
+        )
+        .await
+        .unwrap();
         assert_eq!(item.item.name, req.name);
 
-        let Json(ok) = super::delete(Extension(state.clone()), PathParam(resp.id))
-            .await
-            .unwrap();
-        assert_eq!(ok, json!({"ok": true }));
+        let Json(ok) = super::delete(
+            Extension(state.clone()),
+            Path(ImagePathParams { id: resp.id }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ok, OkResponse::default());
     }
 
     #[sqlx::test(migrations = "./migrations")]

@@ -1,9 +1,9 @@
 use crate::AppState;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
-use nexus_types::{HostHeartbeatRequest, RegisterHostRequest, RegisterHostResponse};
-use serde_json::json;
+use nexus_types::{
+    HostHeartbeatRequest, HostPathParams, OkResponse, RegisterHostRequest, RegisterHostResponse,
+};
 use tracing::error;
-use uuid::Uuid;
 
 pub async fn register(
     Extension(st): Extension<AppState>,
@@ -29,9 +29,9 @@ pub async fn register(
 
 pub async fn heartbeat(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
+    Path(HostPathParams { id }): Path<HostPathParams>,
     Json(req): Json<HostHeartbeatRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<OkResponse>, StatusCode> {
     st.hosts
         .heartbeat(id, req.capabilities)
         .await
@@ -43,7 +43,7 @@ pub async fn heartbeat(
             }
         })?;
 
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(OkResponse::default()))
 }
 
 #[cfg(test)]
@@ -113,7 +113,9 @@ mod tests {
 
         let Json(response) = super::heartbeat(
             Extension(state),
-            Path(register_resp.id),
+            Path(HostPathParams {
+                id: register_resp.id,
+            }),
             Json(HostHeartbeatRequest {
                 capabilities: Some(json!({"memory": 8192})),
             }),
@@ -121,7 +123,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(response, json!({"ok": true}));
+        assert_eq!(response, OkResponse::default());
 
         let after = repo.get(register_resp.id).await.unwrap();
         assert!(after.last_seen_at > before.last_seen_at);
