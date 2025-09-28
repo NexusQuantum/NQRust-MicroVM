@@ -21,6 +21,7 @@ uuid = { workspace = true }
 urlencoding = { workspace = true }
 metrics = { workspace = true }
 nexus-types = { path = "../../crates/nexus-types" }
+utoipa = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"

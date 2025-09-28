@@ -2,7 +2,7 @@ use crate::AppState;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
 use nexus_types::{
     CreateSnapshotRequest, CreateSnapshotResponse, GetSnapshotResponse, InstantiateSnapshotReq,
-    InstantiateSnapshotResp, ListSnapshotsResponse, Snapshot,
+    InstantiateSnapshotResp, ListSnapshotsResponse, Snapshot, SnapshotPathParams, VmPathParams,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -12,7 +12,7 @@ use super::repo::{NewSnapshotRow, SnapshotRepository};
 
 pub async fn create(
     Extension(st): Extension<AppState>,
-    Path(vm_id): Path<Uuid>,
+    Path(VmPathParams { id: vm_id }): Path<VmPathParams>,
     _body: Option<Json<CreateSnapshotRequest>>,
 ) -> Result<Json<CreateSnapshotResponse>, StatusCode> {
     let vm = crate::features::vms::repo::get(&st.db, vm_id)
@@ -113,7 +113,7 @@ pub async fn create(
 
 pub async fn list_for_vm(
     Extension(st): Extension<AppState>,
-    Path(vm_id): Path<Uuid>,
+    Path(VmPathParams { id: vm_id }): Path<VmPathParams>,
 ) -> Result<Json<ListSnapshotsResponse>, StatusCode> {
     let repo = st.snapshots.clone();
     let items = repo
@@ -128,7 +128,7 @@ pub async fn list_for_vm(
 
 pub async fn get(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
+    Path(SnapshotPathParams { id }): Path<SnapshotPathParams>,
 ) -> Result<Json<GetSnapshotResponse>, StatusCode> {
     let repo = st.snapshots.clone();
     let item = repo
@@ -141,7 +141,7 @@ pub async fn get(
 
 pub async fn instantiate(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
+    Path(SnapshotPathParams { id }): Path<SnapshotPathParams>,
     body: Option<Json<InstantiateSnapshotReq>>,
 ) -> Result<Json<InstantiateSnapshotResp>, StatusCode> {
     let payload = body.map(|Json(req)| req).unwrap_or_default();

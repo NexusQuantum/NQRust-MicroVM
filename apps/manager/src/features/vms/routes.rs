@@ -1,56 +1,84 @@
 use crate::AppState;
 use axum::{extract::Path, Extension, Json};
-use nexus_types::CreateVmReq;
+use nexus_types::{
+    CreateVmReq, CreateVmResponse, GetVmResponse, ListVmsResponse, OkResponse, Vm, VmPathParams,
+};
 use uuid::Uuid;
 
 pub async fn create(
     Extension(st): Extension<AppState>,
     Json(req): Json<CreateVmReq>,
-) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+) -> Result<Json<CreateVmResponse>, axum::http::StatusCode> {
     let id = Uuid::new_v4();
     super::service::create_and_start(&st, id, req, None)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "id": id })))
+    Ok(Json(CreateVmResponse { id }))
 }
 
 pub async fn list(
     Extension(st): Extension<AppState>,
-) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+) -> Result<Json<ListVmsResponse>, axum::http::StatusCode> {
     let items = super::repo::list(&st.db)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "items": items })))
+    let items = items.into_iter().map(Vm::from).collect();
+    Ok(Json(ListVmsResponse { items }))
 }
 
 pub async fn get(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    Path(VmPathParams { id }): Path<VmPathParams>,
+) -> Result<Json<GetVmResponse>, axum::http::StatusCode> {
     let row = super::repo::get(&st.db, id)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::json!({ "item": row })))
+    Ok(Json(GetVmResponse { item: row.into() }))
 }
 
 pub async fn stop(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    Path(VmPathParams { id }): Path<VmPathParams>,
+) -> Result<Json<OkResponse>, axum::http::StatusCode> {
     super::service::stop_only(&st, id)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(OkResponse::default()))
 }
 
 pub async fn delete(
     Extension(st): Extension<AppState>,
-    Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    Path(VmPathParams { id }): Path<VmPathParams>,
+) -> Result<Json<OkResponse>, axum::http::StatusCode> {
     super::service::stop_and_delete(&st, id)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(OkResponse::default()))
+}
+
+impl From<super::repo::VmRow> for Vm {
+    fn from(row: super::repo::VmRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            state: row.state,
+            host_id: row.host_id,
+            template_id: row.template_id,
+            host_addr: row.host_addr,
+            api_sock: row.api_sock,
+            tap: row.tap,
+            log_path: row.log_path,
+            http_port: row.http_port,
+            fc_unit: row.fc_unit,
+            vcpu: row.vcpu,
+            mem_mib: row.mem_mib,
+            kernel_path: row.kernel_path,
+            rootfs_path: row.rootfs_path,
+            source_snapshot_id: row.source_snapshot_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -103,8 +131,10 @@ mod tests {
             allow_direct_image_paths: true,
         };
 
-        let Json(body) = super::delete(Extension(state), Path(id)).await.unwrap();
-        assert_eq!(body, json!({ "ok": true }));
+        let Json(body) = super::delete(Extension(state), Path(VmPathParams { id }))
+            .await
+            .unwrap();
+        assert_eq!(body, OkResponse::default());
 
         let fetched = super::super::repo::get(&pool, id).await;
         assert!(matches!(fetched, Err(sqlx::Error::RowNotFound)));
@@ -123,9 +153,9 @@ mod tests {
             snapshots,
             allow_direct_image_paths: true,
         };
-        let Json(body) = super::delete(Extension(state), Path(Uuid::new_v4()))
+        let Json(body) = super::delete(Extension(state), Path(VmPathParams { id: Uuid::new_v4() }))
             .await
             .unwrap();
-        assert_eq!(body, json!({ "ok": true }));
+        assert_eq!(body, OkResponse::default());
     }
 }
