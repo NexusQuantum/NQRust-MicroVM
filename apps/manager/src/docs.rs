@@ -1,4 +1,4 @@
-use axum::{routing::get, Json, Router};
+use axum::Router;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -72,15 +72,7 @@ use utoipa_swagger_ui::SwaggerUi;
 pub struct ApiDoc;
 
 pub fn router(openapi: OpenApiDoc) -> Router {
-    let spec = openapi.clone();
     Router::new()
-        .route(
-            "/docs/openapi.json",
-            get(move || {
-                let spec = spec.clone();
-                async move { Json(spec) }
-            }),
-        )
         .merge(SwaggerUi::new("/docs").url("/docs/openapi.json", openapi))
 }
 

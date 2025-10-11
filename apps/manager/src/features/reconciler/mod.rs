@@ -105,7 +105,7 @@ async fn cleanup_orphan(host_addr: &str, orphan: &OrphanArtifacts) -> Result<()>
     let tap = orphan
         .tap
         .clone()
-        .unwrap_or_else(|| format!("tap-{}", orphan.vm_id));
+        .unwrap_or_else(|| format!("tap-{}", &orphan.vm_id.to_string()[..8]));
     let fc_unit = orphan
         .scope
         .clone()
@@ -281,7 +281,7 @@ mod tests {
             template_id: None,
             host_addr: "http://127.0.0.1".into(),
             api_sock: format!("/srv/fc/vms/{id}/sock/fc.sock"),
-            tap: format!("tap-{id}"),
+            tap: format!("tap-{}", &id.to_string()[..8]),
             log_path: format!("/srv/fc/vms/{id}/logs/firecracker.log"),
             http_port: 0,
             fc_unit: format!("fc-{id}.scope"),
@@ -301,7 +301,7 @@ mod tests {
         let vm = make_vm(vm_id);
         let inv = AgentInventory {
             scopes: vec![],
-            taps: vec![format!("tap-{vm_id}")],
+            taps: vec![format!("tap-{}", &vm_id.to_string()[..8])],
             sockets: vec![SocketInventory {
                 vm_id: vm_id.to_string(),
                 sockets: vec![vm.api_sock.clone()],
@@ -320,7 +320,7 @@ mod tests {
         let vm = make_vm(vm_id);
         let inv = AgentInventory {
             scopes: vec![format!("fc-{vm_id}.scope")],
-            taps: vec![format!("tap-{vm_id}")],
+            taps: vec![format!("tap-{}", &vm_id.to_string()[..8])],
             sockets: vec![],
         };
 

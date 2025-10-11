@@ -6,6 +6,9 @@ use reqwest::Client;
 #[cfg(not(test))]
 use serde_json::json;
 use std::path::Path;
+use serde::Deserialize;
+use std::time::{Duration, Instant};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 pub async fn create_and_start(
@@ -34,8 +37,16 @@ pub async fn create_and_start(
 
     create_tap(&host.addr, id).await?;
     spawn_firecracker(&host.addr, id, &paths).await?;
-    configure_vm(&host.addr, id, &spec, &paths).await?;
-    start_vm(&host.addr, id, &paths).await?;
+    if std::env::var("MANAGER_TEST_MODE").is_ok() {
+        eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
+    } else {
+        configure_vm(&host.addr, id, &spec, &paths).await?;
+    }
+    if std::env::var("MANAGER_TEST_MODE").is_ok() {
+        eprintln!("MANAGER_TEST_MODE: Skipping VM start");
+    } else {
+        start_vm(&host.addr, id, &paths).await?;
+    }
 
     super::repo::insert(
         &st.db,
@@ -112,9 +123,17 @@ pub async fn create_from_snapshot(
 
     create_tap(&host.addr, id).await?;
     spawn_firecracker(&host.addr, id, &paths).await?;
-    configure_vm(&host.addr, id, &spec, &paths).await?;
+    if std::env::var("MANAGER_TEST_MODE").is_ok() {
+        eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
+    } else {
+        configure_vm(&host.addr, id, &spec, &paths).await?;
+    }
     load_snapshot(&host.addr, id, &paths).await?;
-    start_vm(&host.addr, id, &paths).await?;
+    if std::env::var("MANAGER_TEST_MODE").is_ok() {
+        eprintln!("MANAGER_TEST_MODE: Skipping VM start");
+    } else {
+        start_vm(&host.addr, id, &paths).await?;
+    }
 
     super::repo::insert(
         &st.db,
@@ -209,7 +228,7 @@ impl VmPaths {
             sock: format!("/srv/fc/vms/{id}/sock/fc.sock"),
             log_path: format!("/srv/fc/vms/{id}/logs/firecracker.log"),
             metrics_path: format!("/srv/fc/vms/{id}/logs/metrics.json"),
-            tap: format!("tap-{id}"),
+            tap: format!("tap-{}", &id.to_string()[..8]),
             fc_unit: format!("fc-{id}.scope"),
             snapshot_path: None,
             mem_path: None,
@@ -547,12 +566,21 @@ mod tests {
 
 #[cfg(not(test))]
 async fn create_tap(host_addr: &str, id: Uuid) -> Result<()> {
-    reqwest::Client::new()
+    let http = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .context("failed to build reqwest client (create_tap)")?;
+    let tap = format!("tap-{}", &id.to_string()[..8]);
+    info!(vm_id=%id, step="tap", %tap, "creating tap on agent");
+    http
         .post(format!("{host_addr}/agent/v1/vms/{id}/tap"))
         .json(&json!({"bridge": "fcbr0", "owner_user": serde_json::Value::Null}))
         .send()
-        .await?
-        .error_for_status()?;
+        .await
+        .context("create_tap request failed to send")?
+        .error_for_status()
+        .context("create_tap returned error status")?;
+    info!(vm_id=%id, step="tap", "ok");
     Ok(())
 }
 
@@ -563,13 +591,74 @@ async fn create_tap(_: &str, _: Uuid) -> Result<()> {
 
 #[cfg(not(test))]
 async fn spawn_firecracker(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
-    reqwest::Client::new()
+    let http = Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .context("failed to build reqwest client (spawn)")?;
+
+    info!(vm_id=%id, step="spawn", sock=%paths.sock, "requesting firecracker spawn on agent");
+    // Fire-and-forget: do not block the creation flow on systemd-run latency
+    match http
         .post(format!("{host_addr}/agent/v1/vms/{id}/spawn"))
         .json(&json!({"sock": paths.sock, "log_path": paths.log_path}))
         .send()
-        .await?
-        .error_for_status()?;
+        .await
+    {
+        Ok(resp) => {
+            if let Err(err) = resp.error_for_status_ref() {
+                warn!(vm_id=%id, error=%err.to_string(), "spawn returned non-2xx; will poll socket");
+            }
+        }
+        Err(err) => {
+            warn!(vm_id=%id, error=%err.to_string(), "spawn request failed; will poll socket");
+        }
+    }
+
+    // Poll agent inventory for the expected socket to become available
+    let ready = poll_socket_ready(host_addr, id, &paths.sock, Duration::from_secs(45)).await?;
+    if !ready {
+        anyhow::bail!("spawn: socket not ready after timeout");
+    }
+    info!(vm_id=%id, step="spawn", "socket ready");
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct InvSocket { vm_id: String, sockets: Vec<String> }
+#[derive(Deserialize)]
+struct Inventory { sockets: Vec<InvSocket> }
+
+async fn poll_socket_ready(
+    host_addr: &str,
+    id: Uuid,
+    expected_sock: &str,
+    timeout: Duration,
+) -> Result<bool> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .context("failed to build reqwest client (inventory)")?;
+    let id_str = id.to_string();
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let resp = client
+            .get(format!("{host_addr}/agent/v1/inventory"))
+            .send()
+            .await;
+        if let Ok(ok) = resp {
+            if let Ok(inv) = ok.error_for_status()?.json::<Inventory>().await {
+                let found = inv
+                    .sockets
+                    .into_iter()
+                    .any(|s| s.vm_id == id_str && s.sockets.iter().any(|p| p == expected_sock));
+                if found {
+                    return Ok(true);
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -586,8 +675,12 @@ async fn configure_vm(
 ) -> Result<()> {
     let base = format!("{host_addr}/agent/v1/vms/{id}/proxy");
     let qs = format!("?sock={}", urlencoding::encode(&paths.sock));
-    let http = Client::new();
+    let http = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .context("failed to build reqwest client")?;
 
+    info!(vm_id=%id, step="machine-config", vcpu=%spec.vcpu, mem_mib=%spec.mem_mib, "configuring machine");
     http.put(format!("{base}/machine-config{qs}"))
         .json(&json!({
             "vcpu_count": spec.vcpu,
@@ -595,19 +688,27 @@ async fn configure_vm(
             "smt": false
         }))
         .send()
-        .await?
-        .error_for_status()?;
+        .await
+        .context("machine-config request failed to send")?
+        .error_for_status()
+        .context("machine-config returned error status")?;
+    info!(vm_id=%id, step="machine-config", "ok");
 
     if paths.snapshot_path.is_none() {
+        info!(vm_id=%id, step="boot-source", kernel_path=%spec.kernel_path, "configuring boot source");
         http.put(format!("{base}/boot-source{qs}"))
             .json(&json!({
                 "kernel_image_path": spec.kernel_path,
                 "boot_args": "console=ttyS0 reboot=k panic=1 pci=off",
             }))
             .send()
-            .await?
-            .error_for_status()?;
+            .await
+            .context("boot-source request failed to send")?
+            .error_for_status()
+            .context("boot-source returned error status")?;
+        info!(vm_id=%id, step="boot-source", "ok");
 
+        info!(vm_id=%id, step="drives", rootfs_path=%spec.rootfs_path, "attaching rootfs drive");
         http.put(format!("{base}/drives/rootfs{qs}"))
             .json(&json!({
                 "drive_id": "rootfs",
@@ -616,19 +717,27 @@ async fn configure_vm(
                 "is_read_only": false
             }))
             .send()
-            .await?
-            .error_for_status()?;
+            .await
+            .context("drives request failed to send")?
+            .error_for_status()
+            .context("drives returned error status")?;
+        info!(vm_id=%id, step="drives", "ok");
     }
 
+    info!(vm_id=%id, step="network-interfaces", tap=%paths.tap, "configuring network interface");
     http.put(format!("{base}/network-interfaces/eth0{qs}"))
         .json(&json!({
             "iface_id": "eth0",
             "host_dev_name": paths.tap
         }))
         .send()
-        .await?
-        .error_for_status()?;
+        .await
+        .context("network-interfaces request failed to send")?
+        .error_for_status()
+        .context("network-interfaces returned error status")?;
+    info!(vm_id=%id, step="network-interfaces", "ok");
 
+    info!(vm_id=%id, step="logger", log_path=%paths.log_path, "configuring logger");
     http.put(format!("{base}/logger{qs}"))
         .json(&json!({
             "log_path": paths.log_path,
@@ -637,17 +746,48 @@ async fn configure_vm(
             "show_log_origin": false
         }))
         .send()
-        .await?
-        .error_for_status()?;
+        .await
+        .context("logger request failed to send")?
+        .error_for_status()
+        .context("logger returned error status")?;
+    info!(vm_id=%id, step="logger", "ok");
 
-    http.put(format!("{base}/metrics{qs}"))
-        .json(&json!({
-            "metrics_path": paths.metrics_path,
-            "level": "Info"
-        }))
-        .send()
-        .await?
-        .error_for_status()?;
+    // Metrics are optional; Firecracker expects a FIFO. Skip unless explicitly enabled.
+    let enable_metrics = std::env::var("MANAGER_ENABLE_METRICS")
+        .map(|v| {
+            let l = v.to_ascii_lowercase();
+            l == "1" || l == "true" || l == "yes" || l == "on"
+        })
+        .unwrap_or(false);
+    if enable_metrics {
+        // Ensure FIFO exists on the agent before configuring Firecracker metrics
+        info!(vm_id=%id, step="metrics", metrics_path=%paths.metrics_path, "preparing metrics fifo");
+        Client::new()
+            .post(format!("{host_addr}/agent/v1/vms/{id}/metrics/prepare"))
+            .json(&json!({
+                "metrics_path": paths.metrics_path
+            }))
+            .send()
+            .await
+            .context("metrics prepare request failed to send")?
+            .error_for_status()
+            .context("metrics prepare returned error status")?;
+
+        info!(vm_id=%id, step="metrics", metrics_path=%paths.metrics_path, "configuring metrics");
+        http.put(format!("{base}/metrics{qs}"))
+            .json(&json!({
+                "metrics_path": paths.metrics_path,
+                "level": "Info"
+            }))
+            .send()
+            .await
+            .context("metrics request failed to send")?
+            .error_for_status()
+            .context("metrics returned error status")?;
+        info!(vm_id=%id, step="metrics", "ok");
+    } else {
+        info!(vm_id=%id, step="metrics", "skipped (MANAGER_ENABLE_METRICS not set)");
+    }
 
     Ok(())
 }

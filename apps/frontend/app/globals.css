@@ -1,0 +1,266 @@
+/* Global styles and design tokens */
+
+:root {
+  /* Brand tokens */
+  --brand-primary: #1e3a8a; /* deep blue */
+  --brand-emerald: #059669; /* emerald */
+  --brand-amber: #d97706;   /* amber */
+  --brand-purple: #7c3aed;  /* purple */
+  --brand-neutral: #6b7280; /* gray */
+  /* NexusRust Brand Tokens - Light Mode */
+  --background: 210 40% 98%;
+  --foreground: 222.2 84% 4.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+  --primary: 222.2 47.4% 11.2%; /* #1e3a8a */
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222.2 84% 4.9%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96%;
+  --accent-foreground: 222.2 84% 4.9%;
+  --destructive: 0 84.2% 60.2%; /* #dc2626 */
+  --destructive-foreground: 210 40% 98%;
+  --warning: 25 95% 53%; /* #d97706 */
+  --warning-foreground: 210 40% 98%;
+  --success: 142.1 76.2% 36.3%; /* #059669 */
+  --success-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 222.2 47.4% 11.2%; /* #1e3a8a */
+  --radius: 1.25rem; /* card radius */
+  --radius-sm: 0.875rem; /* button radius */
+  
+  /* Flow gradient */
+  --flow-gradient: linear-gradient(135deg, #1e3a8a 0%, #0ea5e9 50%, #059669 100%);
+  
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: 210 40% 98%;
+  --sidebar-foreground: 222.2 84% 4.9%;
+  --sidebar-primary: 222.2 47.4% 11.2%;
+  --sidebar-primary-foreground: 210 40% 98%;
+  --sidebar-accent: 210 40% 96%;
+  --sidebar-accent-foreground: 222.2 84% 4.9%;
+  --sidebar-border: 214.3 31.8% 91.4%;
+  --sidebar-ring: 222.2 47.4% 11.2%;
+  
+  /* Functional brand tokens and soft ramps */
+  --brand-success: var(--brand-emerald);
+  --brand-warning: var(--brand-amber);
+  --brand-danger: #e11d48; /* rose-600 */
+  /* Ramps: primary/purple/emerald/amber/neutral/danger */
+  --brand-primary-50: color-mix(in oklab, var(--brand-primary) 10%, white);
+  --brand-primary-200: color-mix(in oklab, var(--brand-primary) 30%, white);
+  --brand-primary-700: color-mix(in oklab, var(--brand-primary) 40%, black);
+  --brand-purple-50: color-mix(in oklab, var(--brand-purple) 10%, white);
+  --brand-purple-200: color-mix(in oklab, var(--brand-purple) 30%, white);
+  --brand-purple-700: color-mix(in oklab, var(--brand-purple) 40%, black);
+  --brand-emerald-50: color-mix(in oklab, var(--brand-emerald) 10%, white);
+  --brand-emerald-200: color-mix(in oklab, var(--brand-emerald) 30%, white);
+  --brand-emerald-700: color-mix(in oklab, var(--brand-emerald) 40%, black);
+  --brand-amber-50: color-mix(in oklab, var(--brand-amber) 10%, white);
+  --brand-amber-200: color-mix(in oklab, var(--brand-amber) 30%, white);
+  --brand-amber-700: color-mix(in oklab, var(--brand-amber) 40%, black);
+  --brand-neutral-50: color-mix(in oklab, var(--brand-neutral) 10%, white);
+  --brand-neutral-200: color-mix(in oklab, var(--brand-neutral) 30%, white);
+  --brand-neutral-700: color-mix(in oklab, var(--brand-neutral) 40%, black);
+  --brand-danger-50: color-mix(in oklab, var(--brand-danger) 10%, white);
+  --brand-danger-200: color-mix(in oklab, var(--brand-danger) 30%, white);
+  --brand-danger-700: color-mix(in oklab, var(--brand-danger) 40%, black);
+}
+
+.dark {
+  /* Keep same brand tokens for dark; adjust if theming requires */
+  --brand-primary: #1e3a8a;
+  --brand-emerald: #059669;
+  --brand-amber: #d97706;
+  --brand-purple: #7c3aed;
+  --brand-neutral: #6b7280;
+  /* NexusRust Brand Tokens - Dark Mode */
+  --background: 224 71.4% 4.1%; /* #0b1020 canvas */
+  --foreground: 210 40% 98%; /* #e5e7eb primary text */
+  --card: 224 71.4% 4.1%; /* #111827 card */
+  --card-foreground: 210 40% 98%;
+  --popover: 224 71.4% 4.1%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 222.2 47.4% 11.2%; /* #1e3a8a */
+  --primary-foreground: 210 40% 98%;
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%; /* #9ca3af secondary text */
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 84.2% 60.2%; /* #dc2626 */
+  --destructive-foreground: 210 40% 98%;
+  --warning: 25 95% 53%; /* #d97706 */
+  --warning-foreground: 210 40% 98%;
+  --success: 142.1 76.2% 36.3%; /* #059669 */
+  --success-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 222.2 47.4% 11.2%; /* #1e3a8a */
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+  
+  /* Functional brand tokens (dark) */
+  --brand-success: var(--brand-emerald);
+  --brand-warning: var(--brand-amber);
+  --brand-danger: #f43f5e; /* rose-500 */
+}
+
+/* Tailwind scanning and plugins are configured in tailwind.config.ts */
+@import "tailwindcss";
+
+/* Removed Tailwind @theme block; tokens are defined at :root and .dark */
+
+/* Base resets and body styling */
+* {
+  border-color: hsl(var(--border));
+  outline-color: color-mix(in oklab, hsl(var(--ring)) 50%, transparent);
+}
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+  /* Respect reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Typography */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 600;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Droid Sans Mono', 'Cascadia Code', monospace;
+  }
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background-color: hsl(var(--muted)); }
+::-webkit-scrollbar-thumb { background-color: hsl(var(--border)); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in oklab, hsl(var(--muted-foreground)) 50%, transparent); }
+
+/* Add utility classes for VM states */
+.vm-state-running { color: hsl(var(--success)); background-color: color-mix(in oklab, hsl(var(--success)) 10%, transparent); border-color: color-mix(in oklab, hsl(var(--success)) 20%, transparent); }
+.vm-state-stopped { color: hsl(var(--muted-foreground)); background-color: hsl(var(--muted)); border-color: hsl(var(--border)); }
+.vm-state-paused { color: hsl(var(--warning)); background-color: color-mix(in oklab, hsl(var(--warning)) 10%, transparent); border-color: color-mix(in oklab, hsl(var(--warning)) 20%, transparent); }
+
+/* Add animation classes */
+.animate-pulse-slow {
+  animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Brand gradient utilities */
+.brand-gradient {
+  background-image: var(--flow-gradient);
+}
+
+.gradient-underline {
+  position: relative;
+}
+.gradient-underline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -6px;
+  width: 100%;
+  height: 2px;
+  background-image: var(--flow-gradient);
+  border-radius: 1px;
+}
+
+/* Animated gradient background blob for empty states */
+.flow-blob {
+  position: relative;
+  overflow: hidden;
+}
+.flow-blob::before {
+  content: "";
+  position: absolute;
+  inset: -25%;
+  background-image: var(--flow-gradient);
+  filter: blur(60px);
+  opacity: 0.15;
+  animation: flowShift 8s ease-in-out infinite alternate;
+}
+
+@keyframes flowShift {
+  0% { transform: translateX(-5%) translateY(-5%) rotate(0deg); }
+  100% { transform: translateX(5%) translateY(5%) rotate(10deg); }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Subtle per-state card background tints */
+.card-tint-running { background-color: color-mix(in oklab, var(--brand-success) 7%, transparent); }
+.card-tint-paused  { background-color: color-mix(in oklab, var(--brand-warning) 7%, transparent); }
+.card-tint-stopped { background-color: color-mix(in oklab, var(--brand-danger) 7%, transparent); }
+
+/* Minimal token utility fallbacks (in case Tailwind doesn't emit them) */
+.bg-background { background-color: hsl(var(--background)) !important; }
+.text-foreground { color: hsl(var(--foreground)) !important; }
+.bg-card { background-color: hsl(var(--card)) !important; }
+.text-card-foreground { color: hsl(var(--card-foreground)) !important; }
+.bg-popover { background-color: hsl(var(--popover)) !important; }
+.text-popover-foreground { color: hsl(var(--popover-foreground)) !important; }
+.bg-primary { background-color: hsl(var(--primary)) !important; }
+.text-primary-foreground { color: hsl(var(--primary-foreground)) !important; }
+.bg-secondary { background-color: hsl(var(--secondary)) !important; }
+.text-secondary-foreground { color: hsl(var(--secondary-foreground)) !important; }
+.bg-muted { background-color: hsl(var(--muted)) !important; }
+.text-muted-foreground { color: hsl(var(--muted-foreground)) !important; }
+.bg-accent { background-color: hsl(var(--accent)) !important; }
+.text-accent-foreground { color: hsl(var(--accent-foreground)) !important; }
+.bg-destructive { background-color: hsl(var(--destructive)) !important; }
+.text-destructive-foreground { color: hsl(var(--destructive-foreground)) !important; }
+.bg-success { background-color: hsl(var(--success)) !important; }
+.text-success-foreground { color: hsl(var(--success-foreground)) !important; }
+.bg-warning { background-color: hsl(var(--warning)) !important; }
+.text-warning-foreground { color: hsl(var(--warning-foreground)) !important; }
+.border-border { border-color: hsl(var(--border)) !important; }
+.border-input { border-color: hsl(var(--input)) !important; }
+.outline-ring\/50 { outline-color: color-mix(in oklab, hsl(var(--ring)) 50%, transparent) !important; }

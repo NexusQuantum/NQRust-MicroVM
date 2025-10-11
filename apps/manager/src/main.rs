@@ -4,7 +4,9 @@ mod features;
 
 use sqlx::PgPool;
 use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi as _;
+use tower_http::cors::{CorsLayer, Any};
 
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
@@ -21,7 +23,8 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let db = PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
@@ -42,15 +45,30 @@ async fn main() -> anyhow::Result<()> {
         allow_direct_image_paths,
     };
 
-    let _reconciler_handle = features::reconciler::spawn(state.clone());
+    // Allow disabling the reconciler via env for test/debug to avoid races during VM creation
+    let reconciler_disabled = std::env::var("MANAGER_RECONCILER_DISABLED")
+    .map(|v| matches_ignore_case(v.trim()))
+    .unwrap_or(false);
+    if !reconciler_disabled {
+        let _reconciler_handle = features::reconciler::spawn(state.clone());
+    } else {
+        warn!("reconciler disabled by MANAGER_RECONCILER_DISABLED");
+    }
 
     let openapi = docs::ApiDoc::openapi();
     if let Err(err) = docs::write_openapi_yaml(&openapi).await {
         warn!(error = ?err, "failed to write OpenAPI specification to disk");
     }
 
-    let app = features::router(state.clone()).merge(docs::router(openapi));
-    let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
+    let app = features::router(state.clone())
+        .merge(docs::router(openapi))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        );
+    let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".into());
     info!(%bind, "manager listening");
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, app.into_make_service()).await?;

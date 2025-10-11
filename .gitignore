@@ -1,4 +1,53 @@
 /target
+**/target
+
 **/node_modules
+
 **/.DS_Store
+Thumbs.db
+
+# Environment files
 .env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!.env.*.example
+
+# Rust
+**/*.rs.bk
+
+# Frontend build artifacts
+**/.next
+**/.turbo
+**/.vercel
+**/.vite
+**/out
+**/dist
+**/build
+**/.cache
+
+# Package manager logs
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+**/lerna-debug.log*
+
+# Test and coverage output
+coverage/
+**/coverage/
+**/.nyc_output
+**/.vitest
+
+# Logs
+*.log
+logs/
+logs/**
+
+# Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

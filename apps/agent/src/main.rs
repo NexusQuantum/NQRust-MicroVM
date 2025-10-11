@@ -14,11 +14,11 @@ pub struct AppState {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let bind = std::env::var("AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:9090".into());
+    let bind = std::env::var("AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:19090".into());
     let advertise_addr =
         std::env::var("AGENT_ADVERTISE_ADDR").unwrap_or_else(|_| format!("http://{bind}"));
     let manager_base =
-        std::env::var("MANAGER_BASE").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
+        std::env::var("MANAGER_BASE").unwrap_or_else(|_| "http://127.0.0.1:18080".into());
     let host_name = std::env::var("AGENT_NAME").unwrap_or_else(|_| advertise_addr.clone());
     let state = AppState {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),

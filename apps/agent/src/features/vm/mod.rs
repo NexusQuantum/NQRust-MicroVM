@@ -4,6 +4,7 @@ pub mod proxy;
 pub mod snapshot;
 pub mod spawn;
 pub mod stop;
+pub mod metrics;
 
 pub fn router() -> Router {
     Router::new()
@@ -11,4 +12,5 @@ pub fn router() -> Router {
         .merge(stop::router())
         .merge(proxy::router())
         .merge(snapshot::router())
+        .merge(metrics::router())
 }

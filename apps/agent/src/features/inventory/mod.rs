@@ -5,6 +5,8 @@ use serde::Serialize;
 use tokio::process::Command;
 
 use crate::AppState;
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt as _;
 
 pub fn router() -> Router {
     Router::new().route("/agent/v1/inventory", get(inventory))
@@ -144,12 +146,23 @@ async fn collect_dir_files(path: impl AsRef<Path>) -> Vec<String> {
 
     if let Ok(mut dir) = tokio::fs::read_dir(&path).await {
         while let Ok(Some(entry)) = dir.next_entry().await {
-            if entry
-                .file_type()
-                .await
-                .map(|ft| ft.is_file())
-                .unwrap_or(false)
+            let mut include = false;
+            if let Ok(ft) = entry.file_type().await {
+                if ft.is_file() {
+                    include = true;
+                }
+            }
+            #[cfg(unix)]
             {
+                if !include {
+                    if let Ok(md) = entry.metadata().await {
+                        if md.file_type().is_socket() {
+                            include = true;
+                        }
+                    }
+                }
+            }
+            if include {
                 if let Some(path_str) = entry.path().to_str() {
                     files.push(path_str.to_string());
                 }

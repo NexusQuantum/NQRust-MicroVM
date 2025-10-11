@@ -1,0 +1,372 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Activity, Cpu, HardDrive, Network, Play, Square } from "lucide-react"
+import { useMetricsWebSocket } from "@/lib/ws"
+import { Line } from "react-chartjs-2"
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  type ChartOptions,
+} from "chart.js"
+import type { VM } from "@/types/firecracker"
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend)
+
+interface MetricsTabProps {
+  vm: any
+}
+
+interface MetricsData {
+  timestamp: number
+  cpu: number
+  memory: number
+  networkIn: number
+  networkOut: number
+  diskRead: number
+  diskWrite: number
+}
+
+type IncomingMetrics = {
+  cpu_usage_percent?: number
+  memory_usage_percent?: number
+  network_in_bytes?: number
+  network_out_bytes?: number
+  disk_read_bytes?: number
+  disk_write_bytes?: number
+}
+
+const MAX_DATA_POINTS = 60 // Keep last 60 data points (1 minute at 1s intervals)
+
+export function MetricsTab({ vm }: MetricsTabProps) {
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [metricsData, setMetricsData] = useState<MetricsData[]>([])
+  const { connect, disconnect, isConnected } = useMetricsWebSocket(vm.id)
+
+  useEffect(() => {
+    const handleMetrics = (data: IncomingMetrics) => {
+      const newMetric: MetricsData = {
+        timestamp: Date.now(),
+        cpu: data.cpu_usage_percent || 0,
+        memory: data.memory_usage_percent || 0,
+        networkIn: data.network_in_bytes || 0,
+        networkOut: data.network_out_bytes || 0,
+        diskRead: data.disk_read_bytes || 0,
+        diskWrite: data.disk_write_bytes || 0,
+      }
+
+      setMetricsData((prev) => {
+        const updated = [...prev, newMetric]
+        return updated.slice(-MAX_DATA_POINTS)
+      })
+    }
+
+  if (isStreaming && vm.state === "running") {
+      connect(handleMetrics)
+    } else {
+      disconnect()
+    }
+
+    return () => disconnect()
+  }, [isStreaming, vm.state, connect, disconnect])
+
+  const toggleStreaming = () => {
+    setIsStreaming(!isStreaming)
+    if (isStreaming) {
+      setMetricsData([])
+    }
+  }
+
+  const chartOptions: ChartOptions<"line"> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false,
+      },
+    },
+    scales: {
+      x: {
+        display: false,
+      },
+      y: {
+        beginAtZero: true,
+        max: 100,
+        ticks: {
+          callback: (value) => `${value}%`,
+        },
+      },
+    },
+    elements: {
+      point: {
+        radius: 0,
+      },
+      line: {
+        tension: 0.4,
+      },
+    },
+  }
+
+  const networkChartOptions: ChartOptions<"line"> = {
+    ...chartOptions,
+    scales: {
+      ...chartOptions.scales,
+      y: {
+        beginAtZero: true,
+        ticks: {
+          callback: (value) => {
+            const bytes = value as number
+            if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB/s`
+            if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)}KB/s`
+            return `${bytes}B/s`
+          },
+        },
+      },
+    },
+  }
+
+  const labels = metricsData.map((_, index) => index.toString())
+
+  const cpuData = {
+    labels,
+    datasets: [
+      {
+        data: metricsData.map((d) => d.cpu),
+        borderColor: "hsl(var(--primary))",
+        backgroundColor: "hsl(var(--primary) / 0.1)",
+        fill: true,
+      },
+    ],
+  }
+
+  const memoryData = {
+    labels,
+    datasets: [
+      {
+        data: metricsData.map((d) => d.memory),
+  borderColor: "hsl(var(--success))",
+  backgroundColor: "hsl(var(--success) / 0.1)",
+        fill: true,
+      },
+    ],
+  }
+
+  const networkData = {
+    labels,
+    datasets: [
+      {
+        label: "In",
+        data: metricsData.map((d) => d.networkIn),
+  borderColor: "hsl(262 83% 58%)",
+  backgroundColor: "hsl(262 83% 58% / 0.12)",
+        fill: false,
+      },
+      {
+        label: "Out",
+        data: metricsData.map((d) => d.networkOut),
+  borderColor: "hsl(262 83% 58% / 0.6)",
+  backgroundColor: "hsl(262 83% 58% / 0.08)",
+  borderDash: [4, 4] as unknown as number[],
+        fill: false,
+      },
+    ],
+  }
+
+  const diskData = {
+    labels,
+    datasets: [
+      {
+        label: "Read",
+        data: metricsData.map((d) => d.diskRead),
+  borderColor: "hsl(var(--warning))",
+  backgroundColor: "hsl(var(--warning) / 0.12)",
+        fill: false,
+      },
+      {
+        label: "Write",
+        data: metricsData.map((d) => d.diskWrite),
+  borderColor: "hsl(var(--warning) / 0.7)",
+  backgroundColor: "hsl(var(--warning) / 0.06)",
+  borderDash: [4, 4] as unknown as number[],
+        fill: false,
+      },
+    ],
+  }
+
+  const latestMetrics = metricsData[metricsData.length - 1]
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Real-time Metrics</h3>
+          <p className="text-sm text-muted-foreground">Monitor VM performance and resource usage</p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Badge variant={isConnected ? "default" : "secondary"} className="gap-1">
+            <Activity className="h-3 w-3" />
+            {isConnected ? "Connected" : "Disconnected"}
+          </Badge>
+          <Button
+            onClick={toggleStreaming}
+            disabled={vm.state !== "running"}
+            variant={isStreaming ? "destructive" : "default"}
+            className="gap-2"
+          >
+            {isStreaming ? (
+              <>
+                <Square className="h-4 w-4" />
+                Stop Monitoring
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" />
+                Start Monitoring
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+
+  {vm.state !== "running" && (
+        <Card>
+          <CardContent className="flex items-center justify-center py-8">
+            <div className="text-center">
+              <Activity className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">VM Not Running</h3>
+              <p className="text-muted-foreground">Start the VM to view real-time metrics</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+  {vm.state === "running" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* CPU Usage */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Cpu className="h-4 w-4" />
+                CPU Usage
+                {latestMetrics && (
+                  <Badge variant="outline" className="ml-auto">
+                    {latestMetrics.cpu.toFixed(1)}%
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-32">
+                {metricsData.length > 0 ? (
+                  <Line data={cpuData} options={chartOptions} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground">
+                    {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Memory Usage */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <HardDrive className="h-4 w-4" />
+                Memory Usage
+                {latestMetrics && (
+                  <Badge variant="outline" className="ml-auto">
+                    {latestMetrics.memory.toFixed(1)}%
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-32">
+                {metricsData.length > 0 ? (
+                  <Line data={memoryData} options={chartOptions} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground">
+                    {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Network I/O */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Network className="h-4 w-4" />
+                Network I/O
+                {latestMetrics && (
+                  <div className="ml-auto flex gap-2">
+                    <Badge variant="outline" className="text-xs">
+                      ↓ {(latestMetrics.networkIn / 1024).toFixed(1)}KB/s
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      ↑ {(latestMetrics.networkOut / 1024).toFixed(1)}KB/s
+                    </Badge>
+                  </div>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-32">
+                {metricsData.length > 0 ? (
+                  <Line data={networkData} options={networkChartOptions} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground">
+                    {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Disk I/O */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <HardDrive className="h-4 w-4" />
+                Disk I/O
+                {latestMetrics && (
+                  <div className="ml-auto flex gap-2">
+                    <Badge variant="outline" className="text-xs">
+                      R {(latestMetrics.diskRead / 1024).toFixed(1)}KB/s
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      W {(latestMetrics.diskWrite / 1024).toFixed(1)}KB/s
+                    </Badge>
+                  </div>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-32">
+                {metricsData.length > 0 ? (
+                  <Line data={diskData} options={networkChartOptions} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground">
+                    {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -20,7 +20,7 @@ async fn create_tap(
     Path(id): Path<String>,
     Json(req): Json<TapReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let tap = format!("tap-{id}");
+    let tap = format!("tap-{}", &id[..8]);
     let bridge = req.bridge.unwrap_or(st.bridge.clone());
     net::ensure_bridge(&bridge, None).await.map_err(internal)?;
     net::create_tap(&tap, &bridge, req.owner_user.as_deref())
