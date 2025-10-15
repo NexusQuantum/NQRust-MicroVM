@@ -22,6 +22,14 @@ import type {
   InstantiateTemplateReq,
   InstantiateTemplateResp,
   OkResponse,
+  VmDrive,
+  CreateDriveReq,
+  UpdateDriveReq,
+  ListDrivesResponse,
+  VmNic,
+  CreateNicReq,
+  UpdateNicReq,
+  ListNicsResponse,
 } from "@/types/nexus"
 
 /**
@@ -233,6 +241,54 @@ export class FacadeApi {
       default:
         throw new Error(`Unknown action: ${action}`)
     }
+  }
+
+  /**
+   * Drive Management - Database-backed persistent drives
+   */
+  async getVMDrives(vmId: string): Promise<VmDrive[]> {
+    const res = await apiClient.get<ListDrivesResponse>(`/vms/${vmId}/drives`)
+    return res.items
+  }
+
+  async getVMDrive(vmId: string, driveId: string): Promise<VmDrive> {
+    return apiClient.get<VmDrive>(`/vms/${vmId}/drives/${driveId}`)
+  }
+
+  async createVMDrive(vmId: string, drive: CreateDriveReq): Promise<VmDrive> {
+    return apiClient.post<VmDrive>(`/vms/${vmId}/drives`, drive)
+  }
+
+  async updateVMDrive(vmId: string, driveId: string, drive: UpdateDriveReq): Promise<VmDrive> {
+    return apiClient.patch<VmDrive>(`/vms/${vmId}/drives/${driveId}`, drive)
+  }
+
+  async deleteVMDrive(vmId: string, driveId: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/vms/${vmId}/drives/${driveId}`)
+  }
+
+  /**
+   * Network Interface Management - Database-backed persistent NICs
+   */
+  async getVMNics(vmId: string): Promise<VmNic[]> {
+    const res = await apiClient.get<ListNicsResponse>(`/vms/${vmId}/nics`)
+    return res.items
+  }
+
+  async getVMNic(vmId: string, nicId: string): Promise<VmNic> {
+    return apiClient.get<VmNic>(`/vms/${vmId}/nics/${nicId}`)
+  }
+
+  async createVMNic(vmId: string, nic: CreateNicReq): Promise<VmNic> {
+    return apiClient.post<VmNic>(`/vms/${vmId}/nics`, nic)
+  }
+
+  async updateVMNic(vmId: string, nicId: string, nic: UpdateNicReq): Promise<VmNic> {
+    return apiClient.patch<VmNic>(`/vms/${vmId}/nics/${nicId}`, nic)
+  }
+
+  async deleteVMNic(vmId: string, nicId: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/vms/${vmId}/nics/${nicId}`)
   }
 }
 

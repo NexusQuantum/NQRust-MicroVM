@@ -1,8 +1,9 @@
 // app/api/invoke/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import vm from "node:vm";
+import type { NextRequest } from "next/server";
+const { NextResponse } = require("next/server");
+const vm = require("node:vm");
 
-export const runtime = "nodejs"; // penting: gunakan Node runtime, bukan edge
+const runtime = "nodejs"; // penting: gunakan Node runtime, bukan edge
 
 type LambdaResponse = {
   statusCode: number;
@@ -23,7 +24,7 @@ function normalizeResult(result: any): LambdaResponse {
   };
 }
 
-export async function POST(req: NextRequest) {
+async function POST(req: NextRequest) {
   try {
     const { code, event } = (await req.json()) as { code: string; event: any };
 
@@ -109,3 +110,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+module.exports = { runtime, POST };

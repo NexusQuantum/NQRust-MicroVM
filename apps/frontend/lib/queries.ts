@@ -9,6 +9,8 @@ export const queryKeys = {
   vms: ["vms"] as const,
   vm: (id: string) => ["vms", id] as const,
   vmMetrics: (id: string) => ["vms", id, "metrics"] as const,
+  vmDrives: (vmId: string) => ["vms", vmId, "drives"] as const,
+  vmNics: (vmId: string) => ["vms", vmId, "nics"] as const,
   snapshots: (vmId: string) => ["vms", vmId, "snapshots"] as const,
   registryImages: ["registry", "images"] as const,
   registryVolumes: ["registry", "volumes"] as const,
@@ -463,6 +465,179 @@ export function useVmStatePatch() {
         toast.error(e.error || 'Action failed', { description: e.suggestion || e.fault_message })
       } catch {
         toast.error('Action failed')
+      }
+    },
+  })
+}
+
+// VM Delete
+export function useDeleteVM() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.deleteVM(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms })
+      toast.success('VM deleted')
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || 'Delete failed', { description: e.suggestion || e.fault_message })
+      } catch {
+        toast.error('Failed to delete VM')
+      }
+    },
+  })
+}
+
+// Drive Management Queries and Mutations
+export function useVMDrives(vmId: string) {
+  return useQuery({
+    queryKey: queryKeys.vmDrives(vmId),
+    queryFn: () => facadeApi.getVMDrives(vmId),
+    enabled: !!vmId,
+    staleTime: 30 * 1000, // 30 seconds
+  })
+}
+
+export function useCreateVMDrive() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ vmId, drive }: { vmId: string; drive: any }) =>
+      facadeApi.createVMDrive(vmId, drive),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) })
+      toast.success('Drive created')
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || 'Failed to create drive', { description: e.suggestion || e.fault_message })
+      } catch {
+        toast.error('Failed to create drive')
+      }
+    },
+  })
+}
+
+export function useUpdateVMDrive() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ vmId, driveId, drive }: { vmId: string; driveId: string; drive: any }) =>
+      facadeApi.updateVMDrive(vmId, driveId, drive),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) })
+      toast.success('Drive updated')
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || 'Failed to update drive', { description: e.suggestion || e.fault_message })
+      } catch {
+        toast.error('Failed to update drive')
+      }
+    },
+  })
+}
+
+export function useDeleteVMDrive() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ vmId, driveId }: { vmId: string; driveId: string }) =>
+      facadeApi.deleteVMDrive(vmId, driveId),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) })
+      toast.success('Drive deleted')
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || 'Failed to delete drive', { description: e.suggestion || e.fault_message })
+      } catch {
+        toast.error('Failed to delete drive')
+      }
+    },
+  })
+}
+
+// Network Interface Management Queries and Mutations
+export function useVMNics(vmId: string) {
+  return useQuery({
+    queryKey: queryKeys.vmNics(vmId),
+    queryFn: () => facadeApi.getVMNics(vmId),
+    enabled: !!vmId,
+    staleTime: 30 * 1000, // 30 seconds
+  })
+}
+
+export function useCreateVMNic() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ vmId, nic }: { vmId: string; nic: any }) =>
+      facadeApi.createVMNic(vmId, nic),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) })
+      toast.success('Network interface created')
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || 'Failed to create NIC', { description: e.suggestion || e.fault_message })
+      } catch {
+        toast.error('Failed to create NIC')
+      }
+    },
+  })
+}
+
+export function useUpdateVMNic() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ vmId, nicId, nic }: { vmId: string; nicId: string; nic: any }) =>
+      facadeApi.updateVMNic(vmId, nicId, nic),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) })
+      toast.success('Network interface updated')
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || 'Failed to update NIC', { description: e.suggestion || e.fault_message })
+      } catch {
+        toast.error('Failed to update NIC')
+      }
+    },
+  })
+}
+
+export function useDeleteVMNic() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ vmId, nicId }: { vmId: string; nicId: string }) =>
+      facadeApi.deleteVMNic(vmId, nicId),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) })
+      toast.success('Network interface deleted')
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || 'Failed to delete NIC', { description: e.suggestion || e.fault_message })
+      } catch {
+        toast.error('Failed to delete NIC')
       }
     },
   })
