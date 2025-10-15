@@ -1,82 +1,100 @@
 "use client"
 
+import { useState } from "react"
 import { useForm } from "react-hook-form"
-import { zodResolver } from "@hookform/resolvers/zod"
-import type { DriveConfig, VMState } from "@/types/firecracker"
-import { driveConfigSchema } from "@/lib/validators"
-import { useCreateDrive, usePatchDriveRateLimit } from "@/lib/queries"
+import type { VmDrive, CreateDriveReq } from "@/types/nexus"
+import { useCreateVMDrive, useUpdateVMDrive } from "@/lib/queries"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { AlertBanner } from "@/components/alert-banner"
-import { Save, X } from "lucide-react"
-import type { z } from "zod"
+import { Save, X, Info } from "lucide-react"
 
 interface DriveEditorDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  drive?: DriveConfig | null
+  drive?: VmDrive | null
   mode: "create" | "edit" | "rate-limit"
-  vmState: VMState
+  vmState: string
+  vmId?: string  // Required for creating drives
 }
 
-type DriveForm = z.infer<typeof driveConfigSchema>
+interface DriveFormData {
+  drive_id: string
+  path_on_host?: string
+  size_bytes?: number
+  is_root_device: boolean
+  is_read_only: boolean
+}
 
-export function DriveEditorDialog({ open, onOpenChange, drive, mode, vmState }: DriveEditorDialogProps) {
-  const createDrive = useCreateDrive()
-  const patchDriveRateLimit = usePatchDriveRateLimit()
+export function DriveEditorDialog({ open, onOpenChange, drive, mode, vmState, vmId }: DriveEditorDialogProps) {
+  const createDrive = useCreateVMDrive()
+  const updateDrive = useUpdateVMDrive()
+
+  const [pathMode, setPathMode] = useState<"auto" | "manual">("auto")
 
   const isRateLimitMode = mode === "rate-limit"
-  const canEdit = vmState === "stopped" || isRateLimitMode
+  const canEdit = true // Drives are database-backed, can be modified at any time
 
-  const form = useForm<DriveForm>({
-    resolver: zodResolver(driveConfigSchema),
-    defaultValues: drive || {
+  const { register, handleSubmit, watch, formState: { errors } } = useForm<DriveFormData>({
+    defaultValues: drive ? {
+      drive_id: drive.drive_id,
+      path_on_host: drive.path_on_host,
+      is_root_device: drive.is_root_device,
+      is_read_only: drive.is_read_only,
+    } : {
       drive_id: "",
       path_on_host: "",
+      size_bytes: 10 * 1024 * 1024 * 1024, // 10GB default
       is_root_device: false,
       is_read_only: false,
-      cache_type: "Unsafe",
-      io_engine: "Async",
-      rate_limiter: {
-        bandwidth: {
-          size: 0,
-          one_time_burst: 0,
-          refill_time: 100,
-        },
-        ops: {
-          size: 0,
-          one_time_burst: 0,
-          refill_time: 100,
-        },
-      },
     },
   })
 
-  const onSubmit = (data: DriveForm) => {
+  const onSubmit = (data: DriveFormData) => {
     if (isRateLimitMode && drive) {
-      // Only submit rate limiter data
-      patchDriveRateLimit.mutate(
-        {
-          id: drive.drive_id,
-          config: { rate_limiter: data.rate_limiter },
-        },
-        {
-          onSuccess: () => onOpenChange(false),
-        },
-      )
+      // Rate limit mode not fully implemented yet
+      return
+    }
+
+    // Build the drive request - use explicit object building to control what's sent
+    const driveReq: Record<string, any> = {}
+
+    // Always include these
+    driveReq.drive_id = data.drive_id
+    driveReq.is_root_device = data.is_root_device ?? false
+    driveReq.is_read_only = data.is_read_only ?? false
+
+    // Add path or size based on mode
+    if (pathMode === "manual") {
+      // Manual mode: must provide a path
+      if (data.path_on_host && data.path_on_host.trim() !== "") {
+        driveReq.path_on_host = data.path_on_host.trim()
+      } else {
+        // If in manual mode but no path, that's an error
+        alert("Please provide a path for manual mode")
+        return
+      }
     } else {
-      // Create or update full drive config
+      // Auto-provision mode: provide size_bytes, DO NOT send path_on_host at all
+      driveReq.size_bytes = data.size_bytes || 10737418240 // Default 10GB
+    }
+
+    console.log("Submitting drive request:", JSON.stringify(driveReq, null, 2))
+
+    if (mode === "create" && vmId) {
       createDrive.mutate(
-        { id: data.drive_id, config: data },
-        {
-          onSuccess: () => onOpenChange(false),
-        },
+        { vmId, drive: driveReq },
+        { onSuccess: () => onOpenChange(false) }
+      )
+    } else if (mode === "edit" && drive) {
+      updateDrive.mutate(
+        { vmId: drive.vm_id, driveId: drive.id, drive: { path_on_host: data.path_on_host } },
+        { onSuccess: () => onOpenChange(false) }
       )
     }
   }
@@ -101,80 +119,98 @@ export function DriveEditorDialog({ open, onOpenChange, drive, mode, vmState }: 
           <DialogTitle>{getTitle()}</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* Guardrail Alert */}
-          {!canEdit && (
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          {/* Info banner for create mode */}
+          {mode === "create" && (
             <AlertBanner
-              type="warning"
-              title="Configuration Locked"
-              message="VM must be stopped to modify drive configuration."
+              type="info"
+              title="Database-Backed Drive Management"
+              message="This drive will be saved to the database immediately and attached to Firecracker on the next VM start or restart. Changes take effect after restart."
+              icon={Info}
             />
           )}
 
-          {isRateLimitMode && (
+          {/* Info banner for edit mode */}
+          {mode === "edit" && vmState !== "stopped" && (
             <AlertBanner
               type="info"
-              title="Runtime Rate Limit Editing"
-              message="You can modify rate limiters while the VM is running."
+              title="Changes Apply on Restart"
+              message="Drive changes are saved to the database immediately but will take effect when the VM is restarted."
+              icon={Info}
             />
           )}
 
           {/* Basic Drive Configuration */}
           {!isRateLimitMode && (
             <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="drive_id">Drive ID</Label>
-                  <Input id="drive_id" disabled={!canEdit || mode === "edit"} {...form.register("drive_id")} />
-                  {form.formState.errors.drive_id && (
-                    <p className="text-sm text-destructive">{form.formState.errors.drive_id.message}</p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="path_on_host">Host Path</Label>
-                  <Input id="path_on_host" disabled={!canEdit} {...form.register("path_on_host")} />
-                  {form.formState.errors.path_on_host && (
-                    <p className="text-sm text-destructive">{form.formState.errors.path_on_host.message}</p>
-                  )}
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="drive_id">Drive ID</Label>
+                <Input
+                  id="drive_id"
+                  disabled={!canEdit || mode === "edit"}
+                  {...register("drive_id", { required: "Drive ID is required" })}
+                />
+                {errors.drive_id && (
+                  <p className="text-sm text-destructive">{errors.drive_id.message}</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Unique identifier for this drive (e.g., "data", "scratch")
+                </p>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="cache_type">Cache Type</Label>
-                  <Select
-                    disabled={!canEdit}
-                    value={form.watch("cache_type")}
-                    onValueChange={(value: "Unsafe" | "Writeback") => form.setValue("cache_type", value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Unsafe">Unsafe</SelectItem>
-                      <SelectItem value="Writeback">Writeback</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              {mode === "create" && (
+                <>
+                  <Separator />
 
-                <div className="space-y-2">
-                  <Label htmlFor="io_engine">I/O Engine</Label>
-                  <Select
-                    disabled={!canEdit}
-                    value={form.watch("io_engine")}
-                    onValueChange={(value: "Sync" | "Async") => form.setValue("io_engine", value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Sync">Sync</SelectItem>
-                      <SelectItem value="Async">Async</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+                  <div className="space-y-3">
+                    <Label>Storage Mode</Label>
+                    <RadioGroup value={pathMode} onValueChange={(v) => setPathMode(v as "auto" | "manual")}>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="auto" id="auto" />
+                        <Label htmlFor="auto" className="font-normal cursor-pointer">
+                          Auto-provision (Recommended) - Manager creates and manages storage automatically
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="manual" id="manual" />
+                        <Label htmlFor="manual" className="font-normal cursor-pointer">
+                          Manual path - Specify an existing file path
+                        </Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
+
+                  {pathMode === "auto" ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="size_bytes">Disk Size (bytes)</Label>
+                      <Input
+                        id="size_bytes"
+                        type="number"
+                        disabled={!canEdit}
+                        {...register("size_bytes", { valueAsNumber: true })}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Hint: 10737418240 = 10GB, 107374182400 = 100GB
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label htmlFor="path_on_host">Host Path</Label>
+                      <Input
+                        id="path_on_host"
+                        disabled={!canEdit}
+                        {...register("path_on_host")}
+                        placeholder="/path/to/disk.img"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Full path to an existing disk image file
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <Separator />
 
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
@@ -184,8 +220,7 @@ export function DriveEditorDialog({ open, onOpenChange, drive, mode, vmState }: 
                 <Switch
                   id="is_root_device"
                   disabled={!canEdit}
-                  checked={form.watch("is_root_device")}
-                  onCheckedChange={(checked) => form.setValue("is_root_device", checked)}
+                  {...register("is_root_device")}
                 />
               </div>
 
@@ -197,98 +232,11 @@ export function DriveEditorDialog({ open, onOpenChange, drive, mode, vmState }: 
                 <Switch
                   id="is_read_only"
                   disabled={!canEdit}
-                  checked={form.watch("is_read_only")}
-                  onCheckedChange={(checked) => form.setValue("is_read_only", checked)}
+                  {...register("is_read_only")}
                 />
               </div>
-
-              <Separator />
             </div>
           )}
-
-          {/* Rate Limiter Configuration */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Rate Limiters</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Bandwidth Rate Limiter */}
-              <div className="space-y-4">
-                <h4 className="font-medium">Bandwidth Limiter</h4>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="bandwidth_size">Size (bytes/sec)</Label>
-                    <Input
-                      id="bandwidth_size"
-                      type="number"
-                      min="0"
-                      disabled={!canEdit && !isRateLimitMode}
-                      {...form.register("rate_limiter.bandwidth.size", { valueAsNumber: true })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="bandwidth_burst">One-time Burst</Label>
-                    <Input
-                      id="bandwidth_burst"
-                      type="number"
-                      min="0"
-                      disabled={!canEdit && !isRateLimitMode}
-                      {...form.register("rate_limiter.bandwidth.one_time_burst", { valueAsNumber: true })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="bandwidth_refill">Refill Time (ms)</Label>
-                    <Input
-                      id="bandwidth_refill"
-                      type="number"
-                      min="0"
-                      disabled={!canEdit && !isRateLimitMode}
-                      {...form.register("rate_limiter.bandwidth.refill_time", { valueAsNumber: true })}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Operations Rate Limiter */}
-              <div className="space-y-4">
-                <h4 className="font-medium">Operations Limiter</h4>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="ops_size">Size (ops/sec)</Label>
-                    <Input
-                      id="ops_size"
-                      type="number"
-                      min="0"
-                      disabled={!canEdit && !isRateLimitMode}
-                      {...form.register("rate_limiter.ops.size", { valueAsNumber: true })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ops_burst">One-time Burst</Label>
-                    <Input
-                      id="ops_burst"
-                      type="number"
-                      min="0"
-                      disabled={!canEdit && !isRateLimitMode}
-                      {...form.register("rate_limiter.ops.one_time_burst", { valueAsNumber: true })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ops_refill">Refill Time (ms)</Label>
-                    <Input
-                      id="ops_refill"
-                      type="number"
-                      min="0"
-                      disabled={!canEdit && !isRateLimitMode}
-                      {...form.register("rate_limiter.ops.refill_time", { valueAsNumber: true })}
-                    />
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
 
           {/* Form Actions */}
           <div className="flex justify-end gap-2">
@@ -298,10 +246,10 @@ export function DriveEditorDialog({ open, onOpenChange, drive, mode, vmState }: 
             </Button>
             <Button
               type="submit"
-              disabled={(!canEdit && !isRateLimitMode) || createDrive.isPending || patchDriveRateLimit.isPending}
+              disabled={(!canEdit && !isRateLimitMode) || createDrive.isPending || updateDrive.isPending}
             >
               <Save className="h-4 w-4 mr-2" />
-              {createDrive.isPending || patchDriveRateLimit.isPending ? "Saving..." : "Save"}
+              {createDrive.isPending || updateDrive.isPending ? "Saving..." : "Save"}
             </Button>
           </div>
         </form>

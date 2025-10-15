@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -19,9 +19,9 @@ import type { VM } from "@/types/firecracker"
 import type { Vm } from "@/types/nexus"
 
 const createSnapshotSchema = z.object({
-  snapshot_path: z.string().min(1, "Snapshot path is required"),
-  mem_file_path: z.string().min(1, "Memory file path is required"),
+  name: z.string().min(1, "Snapshot name is required"),
   snapshot_type: z.enum(["Full", "Diff"]).default("Full"),
+  track_dirty_pages: z.enum(["true", "false"]).transform((val) => val === "true"),
   version: z.string().optional(),
 })
 
@@ -38,13 +38,25 @@ export function SnapshotsTab({ vm }: SnapshotsTabProps) {
   const restoreSnapshot = useRestoreSnapshot()
   const deleteSnapshot = useDeleteSnapshot()
 
+  const defaultName = useMemo(() => {
+    const prefix = `${vm.name.replace(/[^a-zA-Z0-9-]/g, "-") || "snapshot"}`
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+    return `${prefix}-${timestamp}`.toLowerCase()
+  }, [vm.name])
+
   const {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<CreateSnapshotForm>({
     resolver: zodResolver(createSnapshotSchema),
+    defaultValues: {
+      name: defaultName,
+      snapshot_type: "Full",
+      track_dirty_pages: "false",
+    },
   })
 
   const canCreateSnapshot = vm.state === "running" || vm.state === "paused"
@@ -54,9 +66,9 @@ export function SnapshotsTab({ vm }: SnapshotsTabProps) {
     try {
       await createSnapshot.mutateAsync({
         vmId: vm.id,
-        snapshot_path: data.snapshot_path,
-        mem_file_path: data.mem_file_path,
+        name: data.name,
         snapshot_type: data.snapshot_type,
+        track_dirty_pages: data.snapshot_type === "Diff" ? data.track_dirty_pages : undefined,
         version: data.version,
       })
       toast.success("Snapshot created successfully")
@@ -129,15 +141,9 @@ export function SnapshotsTab({ vm }: SnapshotsTabProps) {
             </DialogHeader>
             <form onSubmit={handleSubmit(onCreateSnapshot)} className="space-y-4">
               <div>
-                <Label htmlFor="snapshot_path">Snapshot File Path</Label>
-                <Input id="snapshot_path" {...register("snapshot_path")} placeholder="/var/lib/vms/vm-123/snapshots/snap1.fc" />
-                {errors.snapshot_path && <p className="text-sm text-destructive mt-1">{errors.snapshot_path.message}</p>}
-              </div>
-
-              <div>
-                <Label htmlFor="mem_file_path">Memory File Path</Label>
-                <Input id="mem_file_path" {...register("mem_file_path")} placeholder="/var/lib/vms/vm-123/snapshots/snap1.mem" />
-                {errors.mem_file_path && <p className="text-sm text-destructive mt-1">{errors.mem_file_path.message}</p>}
+                <Label htmlFor="name">Snapshot Name</Label>
+                <Input id="name" {...register("name")} placeholder={defaultName} />
+                {errors.name && <p className="text-sm text-destructive mt-1">{errors.name.message}</p>}
               </div>
 
               <div className="grid md:grid-cols-2 gap-3">
@@ -149,9 +155,21 @@ export function SnapshotsTab({ vm }: SnapshotsTabProps) {
                   </select>
                 </div>
                 <div>
-                  <Label htmlFor="version">Version (Optional)</Label>
-                  <Input id="version" {...register("version")} placeholder="1.0.0" />
+                  <Label htmlFor="track_dirty_pages">Track Dirty Pages (Diff only)</Label>
+                  <select
+                    id="track_dirty_pages"
+                    {...register("track_dirty_pages")}
+                    className="w-full border rounded-md h-9 px-2"
+                    disabled={watch("snapshot_type") !== "Diff"}
+                  >
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
                 </div>
+              <div>
+                <Label htmlFor="version">Version (Optional)</Label>
+                <Input id="version" {...register("version")} placeholder="1.0.0" />
+              </div>
               </div>
 
               <div className="flex justify-end gap-2">
@@ -188,13 +206,15 @@ export function SnapshotsTab({ vm }: SnapshotsTabProps) {
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle className="text-base">{snapshot.name}</CardTitle>
+                    <CardTitle className="text-base">{snapshot.name || snapshot.id}</CardTitle>
                     <div className="flex items-center gap-2 mt-1">
                       <Badge variant="secondary" className="text-xs">
-                        {new Date(snapshot.createdAt).toLocaleString()}
+                        {snapshot.created_at ? new Date(snapshot.created_at).toLocaleString() : "Unknown"}
                       </Badge>
                       <Badge variant="outline" className="text-xs">
-                        {(snapshot.size / 1024 / 1024).toFixed(1)} MB
+                        {typeof snapshot.size_bytes === "number" && Number.isFinite(snapshot.size_bytes)
+                          ? (snapshot.size_bytes / 1024 / 1024).toFixed(1)
+                          : "0.0"} MB
                       </Badge>
                     </div>
                   </div>
@@ -203,7 +223,7 @@ export function SnapshotsTab({ vm }: SnapshotsTabProps) {
                       size="sm"
                       variant="outline"
                       disabled={!canRestore || restoreSnapshot.isPending}
-                      onClick={() => handleRestore(snapshot.id, snapshot.name)}
+                      onClick={() => handleRestore(snapshot.id, snapshot.name || snapshot.id)}
                       className="gap-2"
                     >
                       <Download className="h-4 w-4" />

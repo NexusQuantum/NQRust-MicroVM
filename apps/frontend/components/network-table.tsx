@@ -1,10 +1,12 @@
 "use client"
 
-import { useState } from "react"
-import type { VM, NetworkConfig } from "@/types/firecracker"
+import { useMemo, useState } from "react"
+import type { Vm, VmNic } from "@/types/nexus"
+import { useVMNics, useDeleteVMNic } from "@/lib/queries"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   DropdownMenu,
@@ -19,37 +21,50 @@ import { Network, Plus, MoreHorizontal, Edit, Trash2, Settings, Wifi } from "luc
 import { formatBytes } from "@/lib/utils"
 
 interface NetworkTableProps {
-  vm: VM
+  vm: Vm
 }
 
-// Mock network interface data
-const mockNetworkInterfaces: NetworkConfig[] = [
-  {
-    iface_id: "eth0",
-    host_dev_name: "tap0",
-    guest_mac: "02:FC:00:00:00:05",
-    allow_mmds_requests: true,
-    rx_rate_limiter: {
-      size: 1000000,
-      one_time_burst: 1000000,
-      refill_time: 100,
-    },
-    tx_rate_limiter: {
-      size: 1000000,
-      one_time_burst: 1000000,
-      refill_time: 100,
-    },
-  },
-]
-
 export function NetworkTable({ vm }: NetworkTableProps) {
-  const [interfaces] = useState<NetworkConfig[]>(mockNetworkInterfaces)
-  const [selectedInterface, setSelectedInterface] = useState<NetworkConfig | null>(null)
+  const { data: interfaces = [], isLoading } = useVMNics(vm.id)
+  const deleteNic = useDeleteVMNic()
+  const [selectedInterface, setSelectedInterface] = useState<VmNic | null>(null)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const [editorMode, setEditorMode] = useState<"create" | "edit" | "rate-limit">("create")
 
-  const canCreateInterfaces = vm.state === "stopped"
-  const canEditRateLimits = vm.state === "running"
+  const canCreateInterfaces = true // NICs are database-backed, can be managed at any time
+  const canEditRateLimits = true // Rate limiters can be updated at any time
+
+  const nextIfaceId = useMemo(() => {
+    const ids = interfaces.map((iface) => iface.iface_id.toLowerCase())
+    let index = 1
+    while (ids.includes(`eth${index}`)) {
+      index += 1
+    }
+    return `eth${index}`
+  }, [interfaces])
+
+  const nextHostDevice = useMemo(() => {
+    const existingHosts = interfaces.map((iface) => iface.host_dev_name.toLowerCase())
+    const ifaceSuffix = nextIfaceId.replace(/^eth/i, "") || "1"
+
+    const generate = (attempt: number) => {
+      const extra = attempt === 0 ? "" : `${attempt}`
+      const suffix = `${ifaceSuffix}${extra}`
+      const maxPrefixLen = Math.max(0, 15 - suffix.length)
+      const prefix = vm.tap.slice(0, maxPrefixLen)
+      return `${prefix}${suffix}`.slice(0, 15)
+    }
+
+    let attempt = 0
+    while (attempt < 100) {
+      const candidate = generate(attempt)
+      if (!existingHosts.includes(candidate.toLowerCase()) && candidate.length >= 3) {
+        return candidate
+      }
+      attempt += 1
+    }
+    return vm.tap.slice(0, 15)
+  }, [interfaces, nextIfaceId, vm.tap])
 
   const handleCreateInterface = () => {
     setSelectedInterface(null)
@@ -57,16 +72,22 @@ export function NetworkTable({ vm }: NetworkTableProps) {
     setIsEditorOpen(true)
   }
 
-  const handleEditInterface = (iface: NetworkConfig) => {
+  const handleEditInterface = (iface: VmNic) => {
     setSelectedInterface(iface)
     setEditorMode("edit")
     setIsEditorOpen(true)
   }
 
-  const handleEditRateLimits = (iface: NetworkConfig) => {
+  const handleEditRateLimits = (iface: VmNic) => {
     setSelectedInterface(iface)
     setEditorMode("rate-limit")
     setIsEditorOpen(true)
+  }
+
+  const handleDeleteInterface = (iface: VmNic) => {
+    if (confirm(`Are you sure you want to delete interface "${iface.iface_id}"?`)) {
+      deleteNic.mutate({ vmId: vm.id, nicId: iface.id })
+    }
   }
 
   const generateMacAddress = () => {
@@ -78,22 +99,31 @@ export function NetworkTable({ vm }: NetworkTableProps) {
     return `02:FC:${mac.slice(6)}`
   }
 
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Network className="h-5 w-5" />
+            <CardTitle>Network Interfaces</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      {/* Guardrail Alerts */}
-      {vm.state === "running" && (
+      {/* Info Alert */}
+      {(vm.state === "running" || vm.state === "paused") && (
         <AlertBanner
           type="info"
-          title="Runtime Mode"
-          message="VM is running. You can only modify rate limiters. Stop the VM to create or modify network interfaces."
-        />
-      )}
-
-      {vm.state === "paused" && (
-        <AlertBanner
-          type="warning"
-          title="VM Paused"
-          message="VM is paused. Stop the VM to modify network configuration."
+          title="Network Changes on Restart"
+          message="Network interfaces are stored in the database and will be attached when the VM starts. Any changes you make will take effect on the next VM restart."
         />
       )}
 
@@ -148,20 +178,22 @@ export function NetworkTable({ vm }: NetworkTableProps) {
                       </code>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={iface.allow_mmds_requests ? "default" : "secondary"}>
-                        {iface.allow_mmds_requests ? "Enabled" : "Disabled"}
-                      </Badge>
+                      <Badge variant="secondary">N/A</Badge>
                     </TableCell>
                     <TableCell>
                       {iface.rx_rate_limiter ? (
-                        <div className="text-xs">{formatBytes(iface.rx_rate_limiter.size)}/s</div>
+                        <div className="text-xs">
+                          {iface.rx_rate_limiter.size ? formatBytes(iface.rx_rate_limiter.size) + "/s" : "Configured"}
+                        </div>
                       ) : (
                         <span className="text-muted-foreground text-sm">None</span>
                       )}
                     </TableCell>
                     <TableCell>
                       {iface.tx_rate_limiter ? (
-                        <div className="text-xs">{formatBytes(iface.tx_rate_limiter.size)}/s</div>
+                        <div className="text-xs">
+                          {iface.tx_rate_limiter.size ? formatBytes(iface.tx_rate_limiter.size) + "/s" : "Configured"}
+                        </div>
                       ) : (
                         <span className="text-muted-foreground text-sm">None</span>
                       )}
@@ -188,7 +220,10 @@ export function NetworkTable({ vm }: NetworkTableProps) {
                                 Edit Interface
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive">
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => handleDeleteInterface(iface)}
+                              >
                                 <Trash2 className="h-4 w-4" />
                                 Remove Interface
                               </DropdownMenuItem>
@@ -209,9 +244,27 @@ export function NetworkTable({ vm }: NetworkTableProps) {
       <NicEditorDialog
         open={isEditorOpen}
         onOpenChange={setIsEditorOpen}
-        networkInterface={selectedInterface}
+        networkInterface={editorMode === "create"
+          ? {
+              iface_id: nextIfaceId,
+              host_dev_name: nextHostDevice,
+              guest_mac: "",
+              allow_mmds_requests: true,
+              rx_rate_limiter: {
+                size: 125000000,
+                one_time_burst: 125000000,
+                refill_time: 1000,
+              },
+              tx_rate_limiter: {
+                size: 125000000,
+                one_time_burst: 125000000,
+                refill_time: 1000,
+              },
+            }
+          : (selectedInterface as any)}
         mode={editorMode}
-        vmState={vm.state}
+        vmState={vm.state as any}
+        vmId={vm.id}
         onGenerateMac={generateMacAddress}
       />
     </div>

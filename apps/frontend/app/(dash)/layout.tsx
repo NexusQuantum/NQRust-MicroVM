@@ -37,6 +37,12 @@ const navigation: { title: string; href: Route; icon: any }[] = [
     href: "/registry",
     icon: Database,
   },
+  {
+    title: "Function",
+    href: "/function",
+    icon: Database,
+  },
+
 ]
 
 export default function DashboardLayout({

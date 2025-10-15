@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Play, Square, Pause, MoreHorizontal, Settings, Camera, Trash2, Cpu, HardDrive, Clock, Check, StopCircle } from "lucide-react"
 import { cn, formatBytes } from "@/lib/utils"
-import { useVmStatePatch } from "@/lib/queries"
+import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
 import Link from "next/link"
 
 interface VMCardProps {
@@ -42,10 +42,23 @@ function formatRelativeTime(input: string | number | Date): string {
 
 export function VMCard({ vm, onSelect, isSelected }: VMCardProps) {
   const actionsMutation = useVmStatePatch()
+  const deleteMutation = useDeleteVM()
 
   const handleAction = (actionType: 'start'|'stop'|'pause'|'resume') => {
     actionsMutation.mutate({ id: (vm as any).id, action: actionType })
   }
+
+  const handleDelete = () => {
+    const id = (vm as any).id
+    const name = vm.name || id
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(`Delete VM "${name}"? This cannot be undone.`)
+      if (!confirmed) return
+    }
+    deleteMutation.mutate(id)
+  }
+
+  const isBusy = (actionsMutation as any).isPending || deleteMutation.isPending
 
   // Normalize state from backend (Running/Paused/NotStarted) to UI (running/paused/stopped)
   const normalizedState: "running" | "paused" | "stopped" = (
@@ -140,7 +153,7 @@ export function VMCard({ vm, onSelect, isSelected }: VMCardProps) {
                   Create Snapshot
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive">
+                <DropdownMenuItem className="text-destructive" onClick={handleDelete} aria-label={`Delete ${vm.name}`} disabled={deleteMutation.isPending}>
                   <Trash2 className="h-4 w-4" />
                   Delete VM
                 </DropdownMenuItem>

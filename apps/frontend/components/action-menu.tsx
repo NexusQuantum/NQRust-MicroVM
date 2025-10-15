@@ -10,20 +10,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Play,
-  Square,
-  Pause,
-  MoreHorizontal,
-  Settings,
-  Camera,
-  Trash2,
-  RotateCcw,
-  Terminal,
-  Download,
-} from "lucide-react"
+import { Play, Square, Pause, MoreHorizontal, Settings, Camera, Trash2, RotateCcw, Terminal, Download, Monitor } from "lucide-react"
 import { useVmStatePatch } from "@/lib/queries"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 
 interface ActionMenuProps {
   vm: VM | Vm
@@ -32,12 +22,17 @@ interface ActionMenuProps {
 
 export function ActionMenu({ vm, variant = "icon" }: ActionMenuProps) {
   const facadeActions = useVmStatePatch()
+  const router = useRouter()
 
-  const handleFacadeAction = (action: 'start'|'pause'|'resume'|'stop') => {
+  const handleFacadeAction = (action: 'start'|'pause'|'resume'|'stop'|'ctrl_alt_del'|'flush_metrics') => {
     facadeActions.mutate({ id: vm.id, action })
   }
 
+  const canStart = vm.state === "not_started" || vm.state === "stopped"
   const canStop = vm.state === "running"
+  const canPause = vm.state === "running"
+  const canResume = vm.state === "paused"
+  const canSendCtrlAltDel = vm.state === "running"
 
   const TriggerButton =
     variant === "button" ? (
@@ -57,6 +52,13 @@ export function ActionMenu({ vm, variant = "icon" }: ActionMenuProps) {
       <DropdownMenuTrigger asChild>{TriggerButton}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
         {/* VM Control Actions */}
+        {canStart && (
+          <DropdownMenuItem onClick={() => handleFacadeAction("start")} disabled={facadeActions.isPending}>
+            <Play className="h-4 w-4" />
+            Start VM
+          </DropdownMenuItem>
+        )}
+
         {canStop && (
           <DropdownMenuItem onClick={() => handleFacadeAction("stop")} disabled={facadeActions.isPending}>
             <Square className="h-4 w-4" />
@@ -64,12 +66,38 @@ export function ActionMenu({ vm, variant = "icon" }: ActionMenuProps) {
           </DropdownMenuItem>
         )}
 
+        {canPause && (
+          <DropdownMenuItem onClick={() => handleFacadeAction("pause")} disabled={facadeActions.isPending}>
+            <Pause className="h-4 w-4" />
+            Pause VM
+          </DropdownMenuItem>
+        )}
+
+        {canResume && (
+          <DropdownMenuItem onClick={() => handleFacadeAction("resume")} disabled={facadeActions.isPending}>
+            <Play className="h-4 w-4" />
+            Resume VM
+          </DropdownMenuItem>
+        )}
+
         {(canStart || canStop || canPause || canResume) && <DropdownMenuSeparator />}
 
         {/* VM Management Actions */}
-        {/* No Ctrl+Alt+Del or FlushMetrics in current backend */}
+        {canSendCtrlAltDel && (
+          <DropdownMenuItem onClick={() => handleFacadeAction("ctrl_alt_del")} disabled={facadeActions.isPending}>
+            <Terminal className="h-4 w-4" />
+            Send Ctrl+Alt+Del
+          </DropdownMenuItem>
+        )}
 
-        <DropdownMenuSeparator />
+        {vm.state === "running" && (
+          <DropdownMenuItem onClick={() => handleFacadeAction("flush_metrics")} disabled={facadeActions.isPending}>
+            <Download className="h-4 w-4" />
+            Flush Metrics
+          </DropdownMenuItem>
+        )}
+
+        {canSendCtrlAltDel && <DropdownMenuSeparator />}
 
         {/* Navigation Actions */}
         <DropdownMenuItem asChild>
@@ -77,6 +105,11 @@ export function ActionMenu({ vm, variant = "icon" }: ActionMenuProps) {
             <Settings className="h-4 w-4" />
             Configure VM
           </Link>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem onClick={() => router.push(`/vms/${vm.id}/shell`)}>
+          <Monitor className="h-4 w-4" />
+          Open Shell
         </DropdownMenuItem>
 
         <DropdownMenuItem>

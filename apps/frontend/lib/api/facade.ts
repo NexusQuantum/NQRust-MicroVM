@@ -1,10 +1,9 @@
 import { apiClient } from "./http"
-import type { DriveConfig, NetworkConfig } from "@/types/firecracker"
-import type { 
-  CreateVmReq, 
-  CreateVmResponse, 
-  ListVmsResponse, 
-  GetVmResponse, 
+import type {
+  CreateVmReq,
+  CreateVmResponse,
+  ListVmsResponse,
+  GetVmResponse,
   Vm,
   CreateSnapshotRequest,
   CreateSnapshotResponse,
@@ -22,7 +21,7 @@ import type {
   CreateTemplateResp,
   InstantiateTemplateReq,
   InstantiateTemplateResp,
-  OkResponse
+  OkResponse,
 } from "@/types/nexus"
 
 /**
@@ -211,12 +210,29 @@ export class FacadeApi {
   /**
    * VM state transitions - using new backend endpoints
    */
-  async updateVMState(id: string, action: 'start'|'stop'|'pause'|'resume'): Promise<void> {
-    if (action === 'stop') {
-      await apiClient.post<OkResponse>(`/vms/${id}/stop`, {})
-      return
+  async updateVMState(id: string, action: 'start'|'stop'|'pause'|'resume'|'flush_metrics'|'ctrl_alt_del'): Promise<void> {
+    switch (action) {
+      case 'start':
+        await apiClient.post<OkResponse>(`/vms/${id}/start`, {})
+        break
+      case 'stop':
+        await apiClient.post<OkResponse>(`/vms/${id}/stop`, {})
+        break
+      case 'pause':
+        await apiClient.post<OkResponse>(`/vms/${id}/pause`, {})
+        break
+      case 'resume':
+        await apiClient.post<OkResponse>(`/vms/${id}/resume`, {})
+        break
+      case 'flush_metrics':
+        await apiClient.post<OkResponse>(`/vms/${id}/flush-metrics`, {})
+        break
+      case 'ctrl_alt_del':
+        await apiClient.post<OkResponse>(`/vms/${id}/ctrl-alt-del`, {})
+        break
+      default:
+        throw new Error(`Unknown action: ${action}`)
     }
-    throw new Error(`Action ${action} not yet supported in current backend`)
   }
 }
 

@@ -26,9 +26,22 @@ pub async fn spawn_fc_scope(unit: &str, sock: &str) -> Result<()> {
 }
 
 pub async fn stop_unit(unit: &str) -> Result<()> {
-    let _ = Command::new("sudo")
-        .args(["systemctl", "stop", unit])
-        .status()
+    let output = Command::new("sudo")
+        .args(["-n", "systemctl", "stop", unit])
+        .output()
         .await?;
-    Ok(())
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr_trimmed = stderr.trim();
+    if stderr_trimmed.contains("not loaded") || stderr_trimmed.contains("could not be found") {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "failed to stop systemd unit {unit}: {stderr_trimmed}"
+    ))
 }

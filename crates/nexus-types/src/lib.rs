@@ -96,6 +96,192 @@ impl TemplateSpec {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct VmDrive {
+    pub id: uuid::Uuid,
+    pub vm_id: uuid::Uuid,
+    pub drive_id: String,
+    pub path_on_host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<i64>,
+    pub is_root_device: bool,
+    pub is_read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub io_engine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limiter: Option<serde_json::Value>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct VmNic {
+    pub id: uuid::Uuid,
+    pub vm_id: uuid::Uuid,
+    pub iface_id: String,
+    pub host_dev_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_mac: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rx_rate_limiter: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_rate_limiter: Option<serde_json::Value>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateDriveReq {
+    pub drive_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_on_host: Option<String>,
+    #[serde(default)]
+    pub is_root_device: bool,
+    #[serde(default)]
+    pub is_read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub io_engine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limiter: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateDriveReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_on_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limiter: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateNicReq {
+    pub iface_id: String,
+    pub host_dev_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_mac: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rx_rate_limiter: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_rate_limiter: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateNicReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rx_rate_limiter: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_rate_limiter: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListDrivesResponse {
+    pub items: Vec<VmDrive>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListNicsResponse {
+    pub items: Vec<VmNic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MachineConfigPatchReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcpu_count: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem_size_mib: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smt: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_dirty_pages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_template: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub huge_pages: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CpuConfigReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpuid_modifiers: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub msr_modifiers: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reg_modifiers: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcpu_features: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kvm_capabilities: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MmdsDataReq {
+    pub data: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MmdsConfigReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_interfaces: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ipv4_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imds_compat: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct VsockConfigReq {
+    pub guest_cid: u32,
+    pub uds_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vsock_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EntropyConfigReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limiter: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SerialConfigReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LoggerUpdateReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_level: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_log_origin: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct VmDrivePathParams {
+    pub id: uuid::Uuid,
+    pub drive_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct VmNicPathParams {
+    pub id: uuid::Uuid,
+    pub nic_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateTemplateReq {
     pub name: String,
     pub spec: TemplateSpec,
@@ -150,16 +336,35 @@ pub struct Snapshot {
     pub mem_path: String,
     pub size_bytes: i64,
     pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub track_dirty_pages: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
-pub struct CreateSnapshotRequest {}
+pub struct CreateSnapshotRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_dirty_pages: Option<bool>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct CreateSnapshotResponse {
     pub id: uuid::Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -281,4 +486,18 @@ pub struct ImagePathParams {
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 pub struct HostPathParams {
     pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BalloonConfig {
+    pub amount_mib: u64,
+    pub deflate_on_oom: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats_polling_interval_s: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BalloonStatsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats_polling_interval_s: Option<u64>,
 }

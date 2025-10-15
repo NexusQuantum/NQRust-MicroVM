@@ -103,6 +103,7 @@ export interface Snapshot {
   mem_path: string
   size_bytes: number
   state: string
+  name?: string
   created_at: string
   updated_at: string
 }
@@ -208,6 +209,116 @@ export interface ImagePathParams {
 
 export interface HostPathParams {
   id: string
+}
+
+// VM Device types
+export interface VmDrive {
+  id: string
+  vm_id: string
+  drive_id: string
+  path_on_host: string
+  is_root_device: boolean
+  is_read_only: boolean
+  cache_type?: string
+  io_engine?: string
+  rate_limiter?: any
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateDriveReq {
+  drive_id: string
+  path_on_host?: string | null  // Optional - manager will auto-provision if omitted
+  size_bytes?: number | null     // Size hint for auto-provisioned disks
+  is_root_device?: boolean
+  is_read_only?: boolean
+  cache_type?: string
+  io_engine?: string
+  rate_limiter?: any
+}
+
+export interface UpdateDriveReq {
+  path_on_host?: string
+  rate_limiter?: any
+}
+
+export interface ListDrivesResponse {
+  items: VmDrive[]
+}
+
+export interface VmNic {
+  id: string
+  vm_id: string
+  iface_id: string
+  host_dev_name: string
+  guest_mac?: string
+  rx_rate_limiter?: any
+  tx_rate_limiter?: any
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateNicReq {
+  iface_id: string
+  host_dev_name: string
+  guest_mac?: string
+  rx_rate_limiter?: {
+    size?: number
+    one_time_burst?: number
+    refill_time?: number
+  }
+  tx_rate_limiter?: {
+    size?: number
+    one_time_burst?: number
+    refill_time?: number
+  }
+}
+
+export interface UpdateNicReq {
+  rx_rate_limiter?: {
+    size?: number
+    one_time_burst?: number
+    refill_time?: number
+  }
+  tx_rate_limiter?: {
+    size?: number
+    one_time_burst?: number
+    refill_time?: number
+  }
+}
+
+export interface ListNicsResponse {
+  items: VmNic[]
+}
+
+// Balloon device types
+export interface BalloonConfig {
+  amount_mib: number
+  deflate_on_oom: boolean
+  stats_polling_interval_s?: number
+}
+
+export interface BalloonStatsConfig {
+  stats_polling_interval_s?: number
+}
+
+// Entropy device types
+export interface EntropyConfigReq {
+  // Add fields as needed from OpenAPI spec
+}
+
+// Serial device types
+export interface SerialConfigReq {
+  // Add fields as needed from OpenAPI spec
+}
+
+// Logger types
+export interface LoggerUpdateReq {
+  level?: string
+  log_path?: string
+  module?: string
+  show_level?: boolean
+  show_log_origin?: boolean
 }
 
 // Error types

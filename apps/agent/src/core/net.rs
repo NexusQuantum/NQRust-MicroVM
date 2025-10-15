@@ -97,9 +97,24 @@ pub async fn create_tap(name: &str, bridge: &str, owner: Option<&str>) -> Result
 }
 
 pub async fn delete_tap(name: &str) -> Result<()> {
-    let _ = Command::new("sudo")
+    let output = Command::new("sudo")
         .args(["-n", "ip", "link", "del", name])
-        .status()
+        .output()
         .await?;
-    Ok(())
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr_trimmed = stderr.trim();
+
+    if stderr_trimmed.contains("Cannot find device")
+        || stderr_trimmed.contains("does not exist")
+        || stderr_trimmed.is_empty()
+    {
+        return Ok(());
+    }
+
+    Err(anyhow!("failed to delete tap {name}: {stderr_trimmed}"))
 }

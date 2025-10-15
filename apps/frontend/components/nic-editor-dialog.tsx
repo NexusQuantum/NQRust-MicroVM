@@ -1,10 +1,11 @@
 "use client"
 
+import { useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import type { NetworkConfig, VMState } from "@/types/firecracker"
 import { networkConfigSchema } from "@/lib/validators"
-import { useCreateNic, usePatchNicRateLimit } from "@/lib/queries"
+import { useCreateVMNic, useUpdateVMNic } from "@/lib/queries"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,7 +14,7 @@ import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { AlertBanner } from "@/components/alert-banner"
-import { Save, X, Shuffle } from "lucide-react"
+import { Save, Shuffle, X } from "lucide-react"
 import type { z } from "zod"
 
 interface NicEditorDialogProps {
@@ -22,6 +23,7 @@ interface NicEditorDialogProps {
   networkInterface?: NetworkConfig | null
   mode: "create" | "edit" | "rate-limit"
   vmState: VMState
+  vmId: string
   onGenerateMac: () => string
 }
 
@@ -33,41 +35,55 @@ export function NicEditorDialog({
   networkInterface,
   mode,
   vmState,
+  vmId,
   onGenerateMac,
 }: NicEditorDialogProps) {
-  const createNic = useCreateNic()
-  const patchNicRateLimit = usePatchNicRateLimit()
+  const createNic = useCreateVMNic()
+  const updateNic = useUpdateVMNic()
 
   const isRateLimitMode = mode === "rate-limit"
-  const canEdit = vmState === "stopped" || isRateLimitMode
+  const canEdit = true // NICs are database-backed, can be modified at any time
+
+  const defaultLimiter = () => ({
+    size: 125000000,
+    one_time_burst: 125000000,
+    refill_time: 1000,
+  })
+
+  const baseDefaults: NetworkForm = {
+    iface_id: "",
+    host_dev_name: "",
+    guest_mac: "",
+    allow_mmds_requests: true,
+    rx_rate_limiter: defaultLimiter(),
+    tx_rate_limiter: defaultLimiter(),
+  }
 
   const form = useForm<NetworkForm>({
     resolver: zodResolver(networkConfigSchema),
-    defaultValues: networkInterface || {
-      iface_id: "",
-      host_dev_name: "",
-      guest_mac: "",
-      allow_mmds_requests: true,
-      rx_rate_limiter: {
-        size: 0,
-        one_time_burst: 0,
-        refill_time: 100,
-      },
-      tx_rate_limiter: {
-        size: 0,
-        one_time_burst: 0,
-        refill_time: 100,
-      },
-    },
+    defaultValues: baseDefaults,
   })
+
+  useEffect(() => {
+    const source = networkInterface ?? {}
+    const values: NetworkForm = {
+      ...baseDefaults,
+      ...source,
+      guest_mac: source.guest_mac ?? "",
+      rx_rate_limiter: source.rx_rate_limiter ?? defaultLimiter(),
+      tx_rate_limiter: source.tx_rate_limiter ?? defaultLimiter(),
+    }
+    form.reset(values)
+  }, [networkInterface, form])
 
   const onSubmit = (data: NetworkForm) => {
     if (isRateLimitMode && networkInterface) {
-      // Only submit rate limiter data
-      patchNicRateLimit.mutate(
+      // Update rate limiters
+      updateNic.mutate(
         {
-          id: networkInterface.iface_id,
-          config: {
+          vmId,
+          nicId: networkInterface.iface_id,
+          nic: {
             rx_rate_limiter: data.rx_rate_limiter,
             tx_rate_limiter: data.tx_rate_limiter,
           },
@@ -77,13 +93,18 @@ export function NicEditorDialog({
         },
       )
     } else {
-      // Create or update full interface config
+      // Create new interface
       const cleanData = {
-        ...data,
-        guest_mac: data.guest_mac || undefined,
+        iface_id: data.iface_id.trim(),
+        host_dev_name: data.host_dev_name.trim(),
+        guest_mac: data.guest_mac?.trim() ? data.guest_mac.trim() : undefined,
+        rx_rate_limiter:
+          data.rx_rate_limiter && data.rx_rate_limiter.size > 0 ? data.rx_rate_limiter : undefined,
+        tx_rate_limiter:
+          data.tx_rate_limiter && data.tx_rate_limiter.size > 0 ? data.tx_rate_limiter : undefined,
       }
       createNic.mutate(
-        { id: data.iface_id, config: cleanData },
+        { vmId, nic: cleanData },
         {
           onSuccess: () => onOpenChange(false),
         },
@@ -117,20 +138,30 @@ export function NicEditorDialog({
         </DialogHeader>
 
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* Guardrail Alert */}
-          {!canEdit && (
+          {/* Info banner for create mode */}
+          {mode === "create" && (
             <AlertBanner
-              type="warning"
-              title="Configuration Locked"
-              message="VM must be stopped to modify network interface configuration."
+              type="info"
+              title="Database-Backed Network Management"
+              message="This network interface will be saved to the database immediately and attached to Firecracker on the next VM start or restart."
             />
           )}
 
-          {isRateLimitMode && (
+          {/* Info banner for edit mode */}
+          {mode === "edit" && vmState !== "stopped" && (
             <AlertBanner
               type="info"
-              title="Runtime Rate Limit Editing"
-              message="You can modify rate limiters while the VM is running."
+              title="Changes Apply on Restart"
+              message="Network interface changes are saved to the database immediately but will take effect when the VM is restarted."
+            />
+          )}
+
+          {/* Info banner for rate-limit mode */}
+          {isRateLimitMode && vmState !== "stopped" && (
+            <AlertBanner
+              type="info"
+              title="Rate Limit Changes on Restart"
+              message="Rate limiter changes are saved to the database and will take effect when the VM is restarted."
             />
           )}
 
@@ -142,26 +173,30 @@ export function NicEditorDialog({
                   <Label htmlFor="iface_id">Interface ID</Label>
                   <Input
                     id="iface_id"
+                    placeholder="eth1"
                     disabled={!canEdit || mode === "edit"}
-                    placeholder="eth0"
                     {...form.register("iface_id")}
                   />
                   {form.formState.errors.iface_id && (
                     <p className="text-sm text-destructive">{form.formState.errors.iface_id.message}</p>
                   )}
+                  <p className="text-xs text-muted-foreground">Use eth1, eth2, etc. (eth0 is reserved)</p>
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="host_dev_name">Host Device Name</Label>
                   <Input
                     id="host_dev_name"
-                    disabled={!canEdit}
-                    placeholder="tap0"
+                    placeholder="tap-<vm-id>-eth1"
+                    disabled={!canEdit || mode === "edit"}
                     {...form.register("host_dev_name")}
                   />
                   {form.formState.errors.host_dev_name && (
                     <p className="text-sm text-destructive">{form.formState.errors.host_dev_name.message}</p>
                   )}
+                  <p className="text-xs text-muted-foreground">
+                    Each interface needs its own TAP (15 char max). Defaults to vm tap + interface suffix.
+                  </p>
                 </div>
               </div>
 
@@ -294,10 +329,10 @@ export function NicEditorDialog({
             </Button>
             <Button
               type="submit"
-              disabled={(!canEdit && !isRateLimitMode) || createNic.isPending || patchNicRateLimit.isPending}
+              disabled={(!canEdit && !isRateLimitMode) || createNic.isPending || updateNic.isPending}
             >
               <Save className="h-4 w-4 mr-2" />
-              {createNic.isPending || patchNicRateLimit.isPending ? "Saving..." : "Save"}
+              {createNic.isPending || updateNic.isPending ? "Saving..." : "Save"}
             </Button>
           </div>
         </form>

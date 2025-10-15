@@ -14,12 +14,15 @@ pub fn router() -> Router {
 #[derive(Deserialize)]
 struct PrepareSnapshotRequest {
     snapshot_id: Uuid,
+    #[serde(default)]
+    snapshot_type: Option<String>,
 }
 
 #[derive(Serialize)]
 struct PrepareSnapshotResponse {
     snapshot_path: String,
-    mem_path: String,
+    mem_path: Option<String>,
+    diff_dir: Option<String>,
     snapshot_size_bytes: Option<u64>,
     mem_size_bytes: Option<u64>,
 }
@@ -36,18 +39,41 @@ async fn prepare(
         .map_err(internal_error)?;
     let base_dir = canonicalize_dir(&base_dir).await?;
 
-    let snapshot_path = base_dir.join("snapshot.fc");
-    let mem_dir = base_dir.join("mem");
-    fs::create_dir_all(&mem_dir).await.map_err(internal_error)?;
-    let mem_dir = canonicalize_dir(&mem_dir).await?;
-    let mem_path = mem_dir.join("mem.fc");
+    let snapshot_type = req.snapshot_type.as_deref().unwrap_or("Full").to_string();
+
+    let snapshot_path = base_dir.join(match snapshot_type.as_str() {
+        "Diff" => "diff.fc",
+        _ => "snapshot.fc",
+    });
+
+    let mem_path = if snapshot_type == "Diff" {
+        None
+    } else {
+        let mem_dir = base_dir.join("mem");
+        fs::create_dir_all(&mem_dir).await.map_err(internal_error)?;
+        let mem_dir = canonicalize_dir(&mem_dir).await?;
+        Some(mem_dir.join("mem.fc"))
+    };
+
+    let diff_dir = if snapshot_type == "Diff" {
+        let dir = base_dir.join("diff");
+        fs::create_dir_all(&dir).await.map_err(internal_error)?;
+        let dir = canonicalize_dir(&dir).await?;
+        Some(dir)
+    } else {
+        None
+    };
 
     let (_, snapshot_size_bytes) = file_status(&snapshot_path).await?;
-    let (_, mem_size_bytes) = file_status(&mem_path).await?;
+    let mem_size_bytes = match &mem_path {
+        Some(path) => file_status(path).await?.1,
+        None => None,
+    };
 
     Ok(Json(PrepareSnapshotResponse {
         snapshot_path: path_to_string(&snapshot_path)?,
-        mem_path: path_to_string(&mem_path)?,
+        mem_path: mem_path.map(|p| path_to_string(&p)).transpose()?,
+        diff_dir: diff_dir.map(|p| path_to_string(&p)).transpose()?,
         snapshot_size_bytes,
         mem_size_bytes,
     }))

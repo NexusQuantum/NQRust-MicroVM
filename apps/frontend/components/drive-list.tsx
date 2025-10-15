@@ -1,11 +1,13 @@
 "use client"
 
 import { useState } from "react"
-import type { VM, DriveConfig } from "@/types/firecracker"
+import type { Vm, VmDrive } from "@/types/nexus"
+import { useVMDrives, useDeleteVMDrive } from "@/lib/queries"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,49 +21,19 @@ import { HardDrive, Plus, MoreHorizontal, Edit, Trash2, Settings, Database } fro
 import { formatBytes } from "@/lib/utils"
 
 interface DriveListProps {
-  vm: VM
+  vm: Vm
 }
 
-// Mock drive data - in real implementation this would come from the VM config
-const mockDrives: DriveConfig[] = [
-  {
-    drive_id: "root",
-    path_on_host: "/images/ubuntu-22.04-rootfs.ext4",
-    is_root_device: true,
-    is_read_only: false,
-    cache_type: "Unsafe",
-    io_engine: "Async",
-    rate_limiter: {
-      bandwidth: {
-        size: 1000000,
-        one_time_burst: 1000000,
-        refill_time: 100,
-      },
-      ops: {
-        size: 1000,
-        one_time_burst: 1000,
-        refill_time: 100,
-      },
-    },
-  },
-  {
-    drive_id: "data",
-    path_on_host: "/data/vm-data.ext4",
-    is_root_device: false,
-    is_read_only: false,
-    cache_type: "Writeback",
-    io_engine: "Sync",
-  },
-]
-
 export function DriveList({ vm }: DriveListProps) {
-  const [drives] = useState<DriveConfig[]>(mockDrives)
-  const [selectedDrive, setSelectedDrive] = useState<DriveConfig | null>(null)
+  const { data: drives = [], isLoading } = useVMDrives(vm.id)
+  const deleteDrive = useDeleteVMDrive()
+  const [selectedDrive, setSelectedDrive] = useState<VmDrive | null>(null)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const [editorMode, setEditorMode] = useState<"create" | "edit" | "rate-limit">("create")
 
-  const canCreateDrives = vm.state === "stopped"
-  const canEditRateLimits = vm.state === "running"
+  // Drives are database-backed and applied during VM start/restart
+  const canCreateDrives = true // Can manage drives at any time - changes take effect on restart
+  const canEditRateLimits = false // Rate limiters for drives not fully implemented yet
 
   const handleCreateDrive = () => {
     setSelectedDrive(null)
@@ -69,34 +41,49 @@ export function DriveList({ vm }: DriveListProps) {
     setIsEditorOpen(true)
   }
 
-  const handleEditDrive = (drive: DriveConfig) => {
+  const handleEditDrive = (drive: VmDrive) => {
     setSelectedDrive(drive)
     setEditorMode("edit")
     setIsEditorOpen(true)
   }
 
-  const handleEditRateLimits = (drive: DriveConfig) => {
+  const handleEditRateLimits = (drive: VmDrive) => {
     setSelectedDrive(drive)
     setEditorMode("rate-limit")
     setIsEditorOpen(true)
   }
 
+  const handleDeleteDrive = (drive: VmDrive) => {
+    if (confirm(`Are you sure you want to delete drive "${drive.drive_id}"?`)) {
+      deleteDrive.mutate({ vmId: vm.id, driveId: drive.id })
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <HardDrive className="h-5 w-5" />
+            <CardTitle>Storage Drives</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      {/* Guardrail Alerts */}
-      {vm.state === "running" && (
+      {/* Info Alert */}
+      {(vm.state === "running" || vm.state === "paused") && (
         <AlertBanner
           type="info"
-          title="Runtime Mode"
-          message="VM is running. You can only modify rate limiters. Stop the VM to create or modify drives."
-        />
-      )}
-
-      {vm.state === "paused" && (
-        <AlertBanner
-          type="warning"
-          title="VM Paused"
-          message="VM is paused. Stop the VM to modify storage configuration."
+          title="Drive Changes on Restart"
+          message="Drives are stored in the database and will be attached when the VM starts. Any changes you make will take effect on the next VM restart."
         />
       )}
 
@@ -202,7 +189,10 @@ export function DriveList({ vm }: DriveListProps) {
                                 Edit Drive
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive">
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => handleDeleteDrive(drive)}
+                              >
                                 <Trash2 className="h-4 w-4" />
                                 Remove Drive
                               </DropdownMenuItem>
@@ -223,9 +213,10 @@ export function DriveList({ vm }: DriveListProps) {
       <DriveEditorDialog
         open={isEditorOpen}
         onOpenChange={setIsEditorOpen}
-        drive={selectedDrive}
+        drive={selectedDrive as any}
         mode={editorMode}
-        vmState={vm.state}
+        vmState={vm.state as any}
+        vmId={vm.id}
       />
     </div>
   )

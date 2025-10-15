@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::features::hosts::repo::HostRow;
 use crate::features::vms;
+use crate::features::vms::repo::{VmDrive, VmNic};
 use crate::AppState;
 use anyhow::{anyhow, Result};
 use reqwest::StatusCode;
@@ -78,6 +79,107 @@ async fn reconcile_host(state: &AppState, host: &HostRow, inventory: AgentInvent
                 metrics::counter!("manager_reconciler_orphan_cleanup_failure", 1);
                 warn!(vm_id = %orphan.vm_id, host_id = %host.id, error = ?err, "failed to cleanup orphan artifacts");
             }
+        }
+    }
+
+    reconcile_devices(state, host, &vm_map, &inventory).await?;
+
+    Ok(())
+}
+
+async fn reconcile_devices(
+    state: &AppState,
+    host: &HostRow,
+    vm_map: &HashMap<Uuid, vms::repo::VmRow>,
+    _inventory: &AgentInventory,
+) -> Result<()> {
+    for (vm_id, vm_row) in vm_map {
+        let desired_drives = vms::repo::drives::list(&state.db, *vm_id).await?;
+        reconcile_vm_drives(state, host, vm_row, &desired_drives).await?;
+
+        let desired_nics = vms::repo::nics::list(&state.db, *vm_id).await?;
+        reconcile_vm_nics(state, host, vm_row, &desired_nics).await?;
+    }
+    Ok(())
+}
+
+async fn reconcile_vm_drives(
+    _state: &AppState,
+    _host: &HostRow,
+    vm: &vms::repo::VmRow,
+    desired: &[VmDrive],
+) -> Result<()> {
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+    let client = reqwest::Client::new();
+
+    for drive in desired {
+        let body = serde_json::json!({
+            "drive_id": drive.drive_id,
+            "path_on_host": drive.path_on_host,
+            "is_root_device": drive.is_root_device,
+            "is_read_only": drive.is_read_only,
+            "cache_type": drive.cache_type,
+            "io_engine": drive.io_engine,
+            "rate_limiter": drive.rate_limiter,
+        });
+
+        if let Err(err) = client
+            .put(format!("{base}/drives/{}{}", drive.drive_id, qs))
+            .json(&body)
+            .send()
+            .await
+            .and_then(|resp| resp.error_for_status())
+        {
+            warn!(vm_id = %vm.id, drive_id = %drive.drive_id, error = %err, "failed to reconcile drive");
+        }
+    }
+
+    Ok(())
+}
+
+async fn reconcile_vm_nics(
+    _state: &AppState,
+    _host: &HostRow,
+    vm: &vms::repo::VmRow,
+    desired: &[VmNic],
+) -> Result<()> {
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+    let client = reqwest::Client::new();
+
+    for nic in desired {
+        let put_body = serde_json::json!({
+            "iface_id": nic.iface_id,
+            "host_dev_name": nic.host_dev_name,
+            "guest_mac": nic.guest_mac,
+        });
+
+        if let Err(err) = client
+            .put(format!("{base}/network-interfaces/{}{}", nic.iface_id, qs))
+            .json(&put_body)
+            .send()
+            .await
+            .and_then(|resp| resp.error_for_status())
+        {
+            warn!(vm_id = %vm.id, iface_id = %nic.iface_id, error = %err, "failed to reconcile nic");
+            continue;
+        }
+
+        let patch_body = serde_json::json!({
+            "iface_id": nic.iface_id,
+            "rx_rate_limiter": nic.rx_rate_limiter,
+            "tx_rate_limiter": nic.tx_rate_limiter,
+        });
+
+        if let Err(err) = client
+            .patch(format!("{base}/network-interfaces/{}{}", nic.iface_id, qs))
+            .json(&patch_body)
+            .send()
+            .await
+            .and_then(|resp| resp.error_for_status())
+        {
+            warn!(vm_id = %vm.id, iface_id = %nic.iface_id, error = %err, "failed to reconcile nic rate limiters");
         }
     }
 

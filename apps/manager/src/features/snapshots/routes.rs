@@ -2,7 +2,8 @@ use crate::AppState;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
 use nexus_types::{
     CreateSnapshotRequest, CreateSnapshotResponse, GetSnapshotResponse, InstantiateSnapshotReq,
-    InstantiateSnapshotResp, ListSnapshotsResponse, Snapshot, SnapshotPathParams, VmPathParams,
+    InstantiateSnapshotResp, ListSnapshotsResponse, OkResponse, Snapshot, SnapshotPathParams,
+    VmPathParams,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -32,28 +33,60 @@ pub async fn create(
     Path(VmPathParams { id: vm_id }): Path<VmPathParams>,
     _body: Option<Json<CreateSnapshotRequest>>,
 ) -> Result<Json<CreateSnapshotResponse>, StatusCode> {
+    let payload = _body.map(|Json(req)| req);
     let vm = crate::features::vms::repo::get(&st.db, vm_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     let snapshot_id = Uuid::new_v4();
+    let snapshot_name = payload
+        .as_ref()
+        .and_then(|p| p.name.clone())
+        .unwrap_or_else(|| format!("snapshot-{snapshot_id}"));
     let client = reqwest::Client::new();
     let base = format!("{}/agent/v1/vms/{}", vm.host_addr, vm.id);
     let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
-    let actions_url = format!("{base}/proxy/actions{qs}");
+    let vm_url = format!("{base}/proxy/vm{qs}");
     let snapshot_url = format!("{base}/proxy/snapshot/create{qs}");
     let prepare_url = format!("{base}/snapshots/prepare");
 
+    let snapshot_type = payload
+        .as_ref()
+        .and_then(|p| p.snapshot_type.clone())
+        .unwrap_or_else(|| "Full".to_string());
+    let parent_id = payload.as_ref().and_then(|p| p.parent_id);
+    let track_dirty_pages = payload
+        .as_ref()
+        .and_then(|p| p.track_dirty_pages)
+        .unwrap_or(false);
+
     client
-        .put(&actions_url)
-        .json(&json!({"action_type": "InstancePause"}))
+        .patch(&vm_url)
+        .json(&json!({"state": "Paused"}))
         .send()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?
         .error_for_status()
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
-    let prepare_req = AgentPrepareSnapshotRequest { snapshot_id };
+    if track_dirty_pages {
+        // ensure Firecracker tracking enabled before diff snapshot
+        let _ = client
+            .patch(format!("{base}/proxy/machine-config{qs}"))
+            .json(&json!({ "track_dirty_pages": true }))
+            .send()
+            .await
+            .and_then(|resp| resp.error_for_status())
+            .map_err(|err| {
+                tracing::warn!(vm_id = %vm.id, error = %err, "failed to enable dirty page tracking");
+                StatusCode::BAD_GATEWAY
+            });
+    }
+
+    let prepare_req = AgentPrepareSnapshotRequest {
+        snapshot_id,
+        snapshot_type: Some(snapshot_type.clone()),
+    };
     let prepare_resp: AgentPrepareSnapshotResponse = client
         .post(&prepare_url)
         .json(&prepare_req)
@@ -66,22 +99,30 @@ pub async fn create(
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
-    let snapshot_result = client
-        .put(&snapshot_url)
-        .json(&json!({
+    let create_payload = if snapshot_type == "Diff" {
+        json!({
+            "snapshot_type": "Diff",
+            "snapshot_path": prepare_resp.snapshot_path,
+        })
+    } else {
+        json!({
             "snapshot_type": "Full",
             "snapshot_path": prepare_resp.snapshot_path,
             "mem_file_path": prepare_resp.mem_path,
-            "version": 1
-        }))
+        })
+    };
+
+    let snapshot_result = client
+        .put(&snapshot_url)
+        .json(&create_payload)
         .send()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?
         .error_for_status();
 
     let resume_result = client
-        .put(&actions_url)
-        .json(&json!({"action_type": "InstanceResume"}))
+        .patch(&vm_url)
+        .json(&json!({"state": "Resumed"}))
         .send()
         .await;
 
@@ -118,14 +159,25 @@ pub async fn create(
             id: snapshot_id,
             vm_id,
             snapshot_path: sizes_resp.snapshot_path,
-            mem_path: sizes_resp.mem_path,
+            mem_path: if snapshot_type == "Diff" {
+                String::new()
+            } else {
+                sizes_resp.mem_path.clone().unwrap_or_default()
+            },
             size_bytes: total_size,
             state: "available".into(),
+            snapshot_type,
+            parent_id,
+            track_dirty_pages,
+            name: Some(snapshot_name.clone()),
         })
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(CreateSnapshotResponse { id: row.id }))
+    Ok(Json(CreateSnapshotResponse {
+        id: row.id,
+        name: row.name.clone(),
+    }))
 }
 
 #[utoipa::path(
@@ -177,6 +229,28 @@ pub async fn get(
 }
 
 #[utoipa::path(
+    delete,
+    path = "/v1/snapshots/{id}",
+    params(SnapshotPathParams),
+    responses(
+        (status = 200, description = "Snapshot deleted", body = OkResponse),
+        (status = 404, description = "Snapshot not found"),
+        (status = 500, description = "Failed to delete snapshot"),
+    ),
+    tag = "Snapshots"
+)]
+pub async fn delete(
+    Extension(st): Extension<AppState>,
+    Path(SnapshotPathParams { id }): Path<SnapshotPathParams>,
+) -> Result<Json<OkResponse>, StatusCode> {
+    let repo = st.snapshots.clone();
+    repo.delete(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(OkResponse::default()))
+}
+
+#[utoipa::path(
     post,
     path = "/v1/snapshots/{id}/instantiate",
     params(SnapshotPathParams),
@@ -206,9 +280,10 @@ pub async fn instantiate(
 
     let vm_id = Uuid::new_v4();
     let name = payload.name.unwrap_or_else(|| {
-        let suffix = vm_id.to_string();
-        let suffix = &suffix[..8];
-        format!("{}-clone-{suffix}", source_vm.name)
+        snapshot
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("snapshot-{}", snapshot.id))
     });
 
     crate::features::vms::service::create_from_snapshot(
@@ -216,7 +291,7 @@ pub async fn instantiate(
         vm_id,
         name.clone(),
         None,
-        snapshot,
+        snapshot.clone(),
         Some(source_vm),
     )
     .await
@@ -231,16 +306,22 @@ pub async fn instantiate(
 #[derive(Serialize)]
 struct AgentPrepareSnapshotRequest {
     snapshot_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_type: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct AgentPrepareSnapshotResponse {
     snapshot_path: String,
-    mem_path: String,
+    #[serde(default)]
+    mem_path: Option<String>,
     #[serde(default)]
     snapshot_size_bytes: Option<u64>,
     #[serde(default)]
     mem_size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
+    diff_dir: Option<String>,
 }
 
 impl From<super::repo::SnapshotRow> for Snapshot {
@@ -252,8 +333,12 @@ impl From<super::repo::SnapshotRow> for Snapshot {
             mem_path: row.mem_path,
             size_bytes: row.size_bytes,
             state: row.state,
+            name: row.name.clone(),
             created_at: row.created_at,
             updated_at: row.updated_at,
+            snapshot_type: Some(row.snapshot_type.clone()),
+            parent_id: row.parent_id,
+            track_dirty_pages: row.track_dirty_pages,
         }
     }
 }

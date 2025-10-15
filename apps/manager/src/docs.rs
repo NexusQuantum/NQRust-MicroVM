@@ -17,6 +17,20 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::features::vms::routes::get,
         crate::features::vms::routes::stop,
         crate::features::vms::routes::delete,
+        crate::features::vms::routes::pause,
+        crate::features::vms::routes::resume,
+        crate::features::vms::routes::flush_metrics,
+        crate::features::vms::routes::ctrl_alt_del,
+        crate::features::vms::routes::list_drives,
+        crate::features::vms::routes::create_drive,
+        crate::features::vms::routes::get_drive,
+        crate::features::vms::routes::update_drive,
+        crate::features::vms::routes::delete_drive,
+        crate::features::vms::routes::list_nics,
+        crate::features::vms::routes::create_nic,
+        crate::features::vms::routes::get_nic,
+        crate::features::vms::routes::update_nic,
+        crate::features::vms::routes::delete_nic,
         crate::features::images::routes::create,
         crate::features::images::routes::list,
         crate::features::images::routes::get,
@@ -26,6 +40,12 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::features::snapshots::routes::get,
         crate::features::snapshots::routes::instantiate,
         crate::features::logs::tail_once,
+        crate::features::vms::routes::put_entropy,
+        crate::features::vms::routes::put_serial,
+        crate::features::vms::routes::put_logger,
+        crate::features::vms::routes::put_balloon,
+        crate::features::vms::routes::patch_balloon,
+        crate::features::vms::routes::patch_balloon_statistics,
     ),
     components(
         schemas(
@@ -58,6 +78,18 @@ use utoipa_swagger_ui::SwaggerUi;
             nexus_types::InstantiateSnapshotReq,
             nexus_types::InstantiateSnapshotResp,
             nexus_types::TailLogResponse,
+            nexus_types::VmDrive,
+            nexus_types::CreateDriveReq,
+            nexus_types::UpdateDriveReq,
+            nexus_types::ListDrivesResponse,
+            nexus_types::VmNic,
+            nexus_types::CreateNicReq,
+            nexus_types::UpdateNicReq,
+            nexus_types::ListNicsResponse,
+            nexus_types::ListVmsResponse,
+            nexus_types::LoggerUpdateReq,
+            nexus_types::BalloonConfig,
+            nexus_types::BalloonStatsConfig,
         )
     ),
     tags(
@@ -67,13 +99,13 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "Images", description = "Image registry APIs."),
         (name = "Snapshots", description = "Snapshot management APIs."),
         (name = "Logs", description = "Development log utilities."),
+        (name = "VM devices", description = "Block and network device management."),
     )
 )]
 pub struct ApiDoc;
 
 pub fn router(openapi: OpenApiDoc) -> Router {
-    Router::new()
-        .merge(SwaggerUi::new("/docs").url("/docs/openapi.json", openapi))
+    Router::new().merge(SwaggerUi::new("/docs").url("/docs/openapi.json", openapi))
 }
 
 pub async fn write_openapi_yaml(openapi: &OpenApiDoc) -> anyhow::Result<()> {

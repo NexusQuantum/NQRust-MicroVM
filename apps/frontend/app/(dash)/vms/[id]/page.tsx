@@ -87,7 +87,7 @@ export default function VMDetailPage({ params }: VMDetailPageProps) {
               <h1 className="text-2xl font-bold tracking-tight">{vm.name}</h1>
               <StatusIndicator state={vm.state} />
             </div>
-            {vm.description && <p className="text-muted-foreground">{vm.description}</p>}
+            <p className="text-muted-foreground text-sm">ID: {vm.id}</p>
           </div>
         </div>
 
@@ -106,21 +106,23 @@ export default function VMDetailPage({ params }: VMDetailPageProps) {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Owner</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Host</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="font-semibold">{vm.owner}</p>
+            <p className="font-semibold">{vm.host_addr}</p>
+            <p className="text-xs text-muted-foreground">ID: {vm.host_id.slice(0, 8)}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Environment</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Resources</CardTitle>
           </CardHeader>
           <CardContent>
-            <Badge variant="outline" className="capitalize">
-              {vm.environment}
-            </Badge>
+            <div className="space-y-1">
+              <p className="text-sm">{vm.vcpu} vCPU</p>
+              <p className="text-sm">{vm.mem_mib} MiB RAM</p>
+            </div>
           </CardContent>
         </Card>
 
@@ -130,6 +132,7 @@ export default function VMDetailPage({ params }: VMDetailPageProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm">{new Date(vm.created_at).toLocaleDateString()}</p>
+            <p className="text-xs text-muted-foreground">{new Date(vm.created_at).toLocaleTimeString()}</p>
           </CardContent>
         </Card>
 
@@ -139,6 +142,7 @@ export default function VMDetailPage({ params }: VMDetailPageProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm">{new Date(vm.updated_at).toLocaleDateString()}</p>
+            <p className="text-xs text-muted-foreground">{new Date(vm.updated_at).toLocaleTimeString()}</p>
           </CardContent>
         </Card>
       </div>

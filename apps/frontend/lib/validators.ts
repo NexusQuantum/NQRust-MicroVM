@@ -41,8 +41,14 @@ export const driveConfigSchema = z.object({
 })
 
 export const networkConfigSchema = z.object({
-  iface_id: z.string().min(1, "Interface ID is required"),
-  host_dev_name: z.string().min(1, "Host device name is required"),
+  iface_id: z
+    .string()
+    .min(1, "Interface ID is required")
+    .regex(/^eth[1-9]\d*$/, "Interface ID must be eth<index> and start at eth1"),
+  host_dev_name: z
+    .string()
+    .min(1, "Host device name is required")
+    .regex(/^tap-[a-zA-Z0-9-]+$/, "Host device must match tap-<identifier>"),
   guest_mac: z.string().optional(),
   allow_mmds_requests: z.boolean(),
   rx_rate_limiter: z

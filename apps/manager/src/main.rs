@@ -3,14 +3,16 @@ mod docs;
 mod features;
 
 use sqlx::PgPool;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi as _;
-use tower_http::cors::{CorsLayer, Any};
 
+use crate::features::storage::LocalStorage;
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
 use features::snapshots::repo::SnapshotRepository;
+use features::vms::shell::ShellRepository;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -18,7 +20,9 @@ pub struct AppState {
     pub hosts: HostRepository,
     pub images: ImageRepository,
     pub snapshots: SnapshotRepository,
+    pub shell_repo: ShellRepository,
     pub allow_direct_image_paths: bool,
+    pub storage: LocalStorage,
 }
 
 #[tokio::main]
@@ -34,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("MANAGER_IMAGE_ROOT").unwrap_or_else(|_| "/srv/images".to_string());
     let images = ImageRepository::new(db.clone(), image_root);
     let snapshots = SnapshotRepository::new(db.clone());
+    let shell_repo = ShellRepository::new(db.clone());
     let allow_direct_image_paths = std::env::var("MANAGER_ALLOW_IMAGE_PATHS")
         .map(|value| matches_ignore_case(value.trim()))
         .unwrap_or(false);
@@ -42,13 +47,15 @@ async fn main() -> anyhow::Result<()> {
         hosts,
         images,
         snapshots,
+        shell_repo,
         allow_direct_image_paths,
+        storage: LocalStorage::new(),
     };
 
     // Allow disabling the reconciler via env for test/debug to avoid races during VM creation
     let reconciler_disabled = std::env::var("MANAGER_RECONCILER_DISABLED")
-    .map(|v| matches_ignore_case(v.trim()))
-    .unwrap_or(false);
+        .map(|v| matches_ignore_case(v.trim()))
+        .unwrap_or(false);
     if !reconciler_disabled {
         let _reconciler_handle = features::reconciler::spawn(state.clone());
     } else {
@@ -66,10 +73,19 @@ async fn main() -> anyhow::Result<()> {
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
-                .allow_headers(Any)
+                .allow_headers(Any),
         );
     let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".into());
     info!(%bind, "manager listening");
+    if let Ok(host_id) = std::env::var("MANAGER_HOST_ID") {
+        let capabilities = serde_json::json!({
+            "bridge": std::env::var("MANAGER_BRIDGE").unwrap_or_else(|_| "fcbr0".into())
+        });
+        let _ = state
+            .hosts
+            .register("manager-host", &host_id, capabilities)
+            .await;
+    }
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())

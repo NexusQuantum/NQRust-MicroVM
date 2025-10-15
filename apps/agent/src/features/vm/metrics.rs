@@ -17,7 +17,9 @@ pub fn router() -> Router {
     Router::new().route("/:id/metrics/prepare", post(prepare))
 }
 
-async fn prepare(Json(req): Json<PrepareMetricsReq>) -> Result<Json<PrepareMetricsResp>, (StatusCode, String)> {
+async fn prepare(
+    Json(req): Json<PrepareMetricsReq>,
+) -> Result<Json<PrepareMetricsResp>, (StatusCode, String)> {
     // Ensure parent directory exists
     if let Some(parent) = Path::new(&req.metrics_path).parent() {
         tokio::fs::create_dir_all(parent)
@@ -77,6 +79,3 @@ async fn prepare(Json(req): Json<PrepareMetricsReq>) -> Result<Json<PrepareMetri
 fn internal_error<E: std::fmt::Display>(err: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
-
-
-

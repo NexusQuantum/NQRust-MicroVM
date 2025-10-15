@@ -6,6 +6,7 @@ pub mod images;
 pub mod logs; // A3 starter
 pub mod reconciler;
 pub mod snapshots;
+pub mod storage;
 pub mod templates;
 pub mod vms; // A2 core
 

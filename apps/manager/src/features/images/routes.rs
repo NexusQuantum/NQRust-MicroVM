@@ -123,12 +123,15 @@ mod tests {
         let hosts = HostRepository::new(pool.clone());
         let images = ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let storage = crate::features::storage::LocalStorage::new();
+        storage.init().await.unwrap();
         let state = crate::AppState {
             db: pool.clone(),
             hosts,
             images: images.clone(),
             snapshots,
             allow_direct_image_paths: true,
+            storage,
         };
 
         let req = CreateImageReq {
@@ -172,12 +175,15 @@ mod tests {
         let hosts = HostRepository::new(pool.clone());
         let images = ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let storage = crate::features::storage::LocalStorage::new();
+        storage.init().await.unwrap();
         let state = crate::AppState {
             db: pool,
             hosts,
             images,
             snapshots,
             allow_direct_image_paths: true,
+            storage,
         };
 
         let req = CreateImageReq {

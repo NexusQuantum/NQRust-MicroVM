@@ -96,8 +96,8 @@ export interface RegistryImage {
 }
 
 export interface SnapshotConfig {
+  name: string
   snapshot_type: "Diff" | "Full"
-  snapshot_path: string
-  mem_file_path: string
+  track_dirty_pages?: boolean
   version?: string
 }

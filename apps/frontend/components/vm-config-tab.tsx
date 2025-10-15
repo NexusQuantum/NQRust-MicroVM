@@ -15,7 +15,7 @@ import { AlertBanner } from "@/components/alert-banner"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { machineConfigSchema, bootSourceSchema } from "@/lib/validators"
-// Configuration updates not supported in new backend
+import { useUpdateMachineConfig, useUpdateBootSource } from "@/lib/queries"
 import { Settings, Play, Save, RotateCcw } from "lucide-react"
 import type { z } from "zod"
 
@@ -30,6 +30,8 @@ export function VMConfigTab({ vm }: VMConfigTabProps) {
   const [activeSection, setActiveSection] = useState<"machine" | "boot">("machine")
 
   // Configuration updates not supported in new backend
+  const updateMachineConfig = useUpdateMachineConfig()
+  const updateBootSource = useUpdateBootSource()
 
   const canEdit = vm.state === "stopped"
 

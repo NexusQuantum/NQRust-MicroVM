@@ -1,15 +1,73 @@
 use crate::{features::snapshots::repo::SnapshotRow, AppState};
 use anyhow::{anyhow, bail, Context, Result};
-use nexus_types::CreateVmReq;
+use nexus_types::{
+    BalloonConfig, BalloonStatsConfig, CpuConfigReq, CreateDriveReq, CreateNicReq, CreateVmReq,
+    EntropyConfigReq, LoggerUpdateReq, MachineConfigPatchReq, MmdsConfigReq, MmdsDataReq,
+    SerialConfigReq, UpdateDriveReq, UpdateNicReq, VsockConfigReq,
+};
 #[cfg(not(test))]
 use reqwest::Client;
+use serde::Deserialize;
 #[cfg(not(test))]
 use serde_json::json;
+use serde_json::Value;
 use std::path::Path;
-use serde::Deserialize;
 use std::time::{Duration, Instant};
+#[cfg(not(test))]
+#[allow(unused_imports)]
 use tracing::{info, warn};
 use uuid::Uuid;
+
+struct NetworkSelection {
+    bridge: String,
+}
+
+fn select_network(capabilities: &Value) -> Result<NetworkSelection> {
+    if let Some(bridge) = capabilities.get("bridge").and_then(|v| v.as_str()) {
+        return Ok(NetworkSelection {
+            bridge: bridge.to_string(),
+        });
+    }
+    Err(anyhow!("host capabilities missing bridge name"))
+}
+
+fn normalize_rate_limiter(raw: &Value) -> Value {
+    match raw {
+        Value::Object(obj) => {
+            if obj.contains_key("bandwidth") || obj.contains_key("ops") {
+                return raw.clone();
+            }
+
+            let mut normalized = serde_json::Map::new();
+            let mut bandwidth = serde_json::Map::new();
+
+            if let Some(value) = obj.get("size") {
+                bandwidth.insert("size".to_string(), value.clone());
+            }
+            if let Some(value) = obj.get("one_time_burst") {
+                bandwidth.insert("one_time_burst".to_string(), value.clone());
+            }
+            if let Some(value) = obj.get("refill_time") {
+                bandwidth.insert("refill_time".to_string(), value.clone());
+            }
+
+            if !bandwidth.is_empty() {
+                normalized.insert("bandwidth".to_string(), Value::Object(bandwidth));
+            }
+
+            if let Some(ops) = obj.get("ops") {
+                normalized.insert("ops".to_string(), ops.clone());
+            }
+
+            if normalized.is_empty() {
+                raw.clone()
+            } else {
+                Value::Object(normalized)
+            }
+        }
+        _ => raw.clone(),
+    }
+}
 
 pub async fn create_and_start(
     st: &AppState,
@@ -32,15 +90,16 @@ pub async fn create_and_start(
         .first_healthy()
         .await
         .context("no healthy hosts available")?;
-    let paths = VmPaths::new(id);
-    let spec = resolve_vm_spec(st, req).await?;
+    let network = select_network(&host.capabilities_json)?;
+    let paths = VmPaths::new(id, &st.storage).await?;
+    let spec = resolve_vm_spec(st, req, id).await?;
 
-    create_tap(&host.addr, id).await?;
+    create_tap(&host.addr, id, &network.bridge).await?;
     spawn_firecracker(&host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
     } else {
-        configure_vm(&host.addr, id, &spec, &paths).await?;
+        configure_vm(st, &host.addr, id, &spec, &paths).await?;
     }
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM start");
@@ -86,8 +145,8 @@ pub async fn create_from_snapshot(
     let SnapshotRow {
         id: source_snapshot_id,
         vm_id,
-        snapshot_path,
-        mem_path,
+        ref snapshot_path,
+        ref mem_path,
         ..
     } = snapshot;
 
@@ -119,16 +178,19 @@ pub async fn create_from_snapshot(
         rootfs_path: source_vm.rootfs_path.clone(),
     };
 
-    let paths = VmPaths::new(id).with_snapshot(snapshot_path, mem_path);
+    let paths = VmPaths::new(id, &st.storage)
+        .await?
+        .with_snapshot(snapshot_path.clone(), mem_path.clone());
 
-    create_tap(&host.addr, id).await?;
+    let network = select_network(&host.capabilities_json)?;
+    create_tap(&host.addr, id, &network.bridge).await?;
     spawn_firecracker(&host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
     } else {
-        configure_vm(&host.addr, id, &spec, &paths).await?;
+        configure_vm(st, &host.addr, id, &spec, &paths).await?;
     }
-    load_snapshot(&host.addr, id, &paths).await?;
+    load_snapshot(st, id, &snapshot).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM start");
     } else {
@@ -176,9 +238,10 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
         rootfs_path: vm.rootfs_path.clone(),
     };
 
-    create_tap(&host.addr, vm.id).await?;
+    let network = select_network(&host.capabilities_json)?;
+    create_tap(&host.addr, vm.id, &network.bridge).await?;
     spawn_firecracker(&host.addr, vm.id, &paths).await?;
-    configure_vm(&host.addr, vm.id, &spec, &paths).await?;
+    configure_vm(st, &host.addr, vm.id, &spec, &paths).await?;
     start_vm(&host.addr, vm.id, &paths).await?;
     super::repo::update_state(&st.db, vm.id, "running").await?;
     Ok(())
@@ -193,7 +256,8 @@ pub async fn stop_only(st: &AppState, id: Uuid) -> Result<()> {
         .json(&serde_json::json!({
             "tap": vm.tap,
             "sock": vm.api_sock,
-            "fc_unit": vm.fc_unit
+            "fc_unit": vm.fc_unit,
+            // Do NOT send storage_path - drives are persisted for restart
         }))
         .send()
         .await?;
@@ -207,7 +271,130 @@ pub async fn stop_and_delete(st: &AppState, id: Uuid) -> Result<()> {
     if let Err(err) = stop_only(st, id).await {
         tracing::warn!(vm_id = %id, error = ?err, "failed to stop vm before deletion");
     }
+
+    // Manually clean up storage directory (drives, logs, etc.)
+    let storage_path = st.storage.vm_dir(id);
+    if let Err(e) = tokio::fs::remove_dir_all(&storage_path).await {
+        tracing::warn!(vm_id = %id, path = ?storage_path, error = ?e,
+                      "failed to cleanup storage directory during deletion");
+    } else {
+        info!(vm_id = %id, path = ?storage_path, "cleaned up VM storage directory");
+    }
+
+    // Delete from database (this cascades to vm_drive and vm_network_interface)
     super::repo::delete_row(&st.db, id).await?;
+    Ok(())
+}
+
+pub async fn start_vm_by_id(st: &AppState, id: Uuid) -> Result<()> {
+    let vm = super::repo::get(&st.db, id).await?;
+
+    if vm.state == "running" {
+        return Ok(()); // Already running
+    }
+
+    restart_vm(st, &vm).await?;
+    Ok(())
+}
+
+pub async fn pause_vm(st: &AppState, id: Uuid) -> Result<()> {
+    let vm = super::repo::get(&st.db, id).await?;
+
+    if vm.state != "running" {
+        bail!("VM must be running to pause");
+    }
+
+    super::repo::update_state(&st.db, id, "pausing").await?;
+
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .context("failed to build reqwest client (pause_vm)")?;
+
+    let response = client
+        .patch(format!("{base}/vm{qs}"))
+        .json(&serde_json::json!({
+            "state": "Paused"
+        }))
+        .send()
+        .await?;
+
+    response.error_for_status()?;
+    super::repo::update_state(&st.db, id, "paused").await?;
+    Ok(())
+}
+
+pub async fn resume_vm(st: &AppState, id: Uuid) -> Result<()> {
+    let vm = super::repo::get(&st.db, id).await?;
+
+    if vm.state != "paused" {
+        bail!("VM must be paused to resume");
+    }
+
+    super::repo::update_state(&st.db, id, "resuming").await?;
+
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .context("failed to build reqwest client (resume_vm)")?;
+
+    let response = client
+        .patch(format!("{base}/vm{qs}"))
+        .json(&serde_json::json!({
+            "state": "Resumed"
+        }))
+        .send()
+        .await?;
+
+    response.error_for_status()?;
+    super::repo::update_state(&st.db, id, "running").await?;
+    Ok(())
+}
+
+pub async fn flush_vm_metrics(st: &AppState, id: Uuid) -> Result<()> {
+    let vm = super::repo::get(&st.db, id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    let response = reqwest::Client::new()
+        .put(format!("{base}/actions{qs}"))
+        .json(&serde_json::json!({
+            "action_type": "FlushMetrics"
+        }))
+        .send()
+        .await?;
+
+    response.error_for_status()?;
+
+    Ok(())
+}
+
+pub async fn send_ctrl_alt_del(st: &AppState, id: Uuid) -> Result<()> {
+    let vm = super::repo::get(&st.db, id).await?;
+
+    if vm.state != "running" {
+        bail!("VM must be running to send Ctrl-Alt-Del");
+    }
+
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    let response = reqwest::Client::new()
+        .put(format!("{base}/actions{qs}"))
+        .json(&serde_json::json!({
+            "action_type": "SendCtrlAltDel"
+        }))
+        .send()
+        .await?;
+
+    response.error_for_status()?;
+
     Ok(())
 }
 
@@ -223,16 +410,17 @@ struct VmPaths {
 }
 
 impl VmPaths {
-    fn new(id: Uuid) -> Self {
-        Self {
-            sock: format!("/srv/fc/vms/{id}/sock/fc.sock"),
-            log_path: format!("/srv/fc/vms/{id}/logs/firecracker.log"),
-            metrics_path: format!("/srv/fc/vms/{id}/logs/metrics.json"),
+    async fn new(id: Uuid, storage: &crate::features::storage::LocalStorage) -> Result<Self> {
+        storage.ensure_vm_dirs(id).await?;
+        Ok(Self {
+            sock: storage.sock_path(id),
+            log_path: storage.log_path(id),
+            metrics_path: storage.metrics_path(id),
             tap: format!("tap-{}", &id.to_string()[..8]),
             fc_unit: format!("fc-{id}.scope"),
             snapshot_path: None,
             mem_path: None,
-        }
+        })
     }
 
     fn from_row(vm: &super::repo::VmRow) -> Self {
@@ -263,11 +451,10 @@ struct ResolvedVmSpec {
     rootfs_path: String,
 }
 
-async fn resolve_vm_spec(st: &AppState, req: CreateVmReq) -> Result<ResolvedVmSpec> {
+async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
-    let rootfs_path =
-        resolve_image_path(st, req.rootfs_image_id, req.rootfs_path, "rootfs").await?;
+    let rootfs_path = provision_rootfs(st, req.rootfs_image_id, req.rootfs_path, vm_id).await?;
 
     Ok(ResolvedVmSpec {
         name: req.name,
@@ -305,11 +492,492 @@ async fn resolve_image_path(
     Err(anyhow!("{field} requires an image id or host path"))
 }
 
+async fn provision_rootfs(
+    st: &AppState,
+    image_id: Option<Uuid>,
+    direct_path: Option<String>,
+    vm_id: Uuid,
+) -> Result<String> {
+    if let Some(id) = image_id {
+        let image = st
+            .images
+            .get(id)
+            .await
+            .with_context(|| format!("failed to load rootfs image {id}"))?;
+        ensure_allowed_path(st, &image.host_path)?;
+
+        let vm_root = st
+            .storage
+            .alloc_rootfs(vm_id, Path::new(&image.host_path))
+            .await
+            .context("failed to provision rootfs")?;
+        return Ok(vm_root);
+    }
+    if let Some(path) = direct_path {
+        if !st.allow_direct_image_paths {
+            bail!("rootfs path not permitted in production mode");
+        }
+        ensure_allowed_path(st, &path)?;
+        return Ok(path);
+    }
+
+    bail!("rootfs requires an image id or host path")
+}
+
 fn ensure_allowed_path(st: &AppState, path: &str) -> Result<()> {
     let candidate = Path::new(path);
-    if !st.images.is_path_allowed(candidate) {
-        bail!("path {path} is not within the configured image root");
+
+    // Allow paths within the image root
+    if st.images.is_path_allowed(candidate) {
+        return Ok(());
     }
+
+    // Also allow paths within the storage root (for auto-provisioned drives, rootfs, snapshots)
+    let storage_base = std::env::var("MANAGER_STORAGE_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/srv/fc/vms"));
+
+    if candidate.starts_with(&storage_base) {
+        return Ok(());
+    }
+
+    bail!("path {path} is not within the configured image root or storage root");
+}
+
+pub async fn list_drives(st: &AppState, vm_id: Uuid) -> Result<Vec<nexus_types::VmDrive>> {
+    let rows = super::repo::drives::list(&st.db, vm_id).await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+pub async fn create_drive(
+    st: &AppState,
+    vm_id: Uuid,
+    req: CreateDriveReq,
+) -> Result<nexus_types::VmDrive> {
+    // Verify VM exists
+    let _vm = super::repo::get(&st.db, vm_id).await?;
+
+    // Determine path and size
+    let (host_path, size_bytes) = if let Some(path) = req.path_on_host.as_ref() {
+        // User-provided path
+        ensure_allowed_path(st, path)?;
+        (path.clone(), None)
+    } else {
+        // Auto-provision: create sparse disk file
+        let size = req.size_bytes.unwrap_or(10_737_418_240); // Default 10GB
+        let path = st.storage.alloc_data_disk(vm_id, size).await?;
+        (path, Some(size as i64))
+    };
+
+    // Check for duplicate drive_id
+    if super::repo::drives::list(&st.db, vm_id)
+        .await?
+        .iter()
+        .any(|d| d.drive_id == req.drive_id)
+    {
+        bail!("drive_id already exists for this VM");
+    }
+
+    // Insert into database ONLY - drive will be applied on next VM start
+    let drive = super::repo::drives::insert(
+        &st.db,
+        vm_id,
+        &req.drive_id,
+        &host_path,
+        size_bytes,
+        req.is_root_device,
+        req.is_read_only,
+        req.cache_type.as_deref(),
+        req.io_engine.as_deref(),
+        req.rate_limiter.as_ref(),
+    )
+    .await?;
+
+    info!(vm_id = %vm_id, drive_id = %req.drive_id, path = %host_path,
+          "Drive created in database, will be attached on next VM start");
+
+    Ok(drive.into())
+}
+
+pub async fn update_drive(
+    st: &AppState,
+    vm_id: Uuid,
+    drive_id: Uuid,
+    req: UpdateDriveReq,
+) -> Result<nexus_types::VmDrive> {
+    let drive = super::repo::drives::get(&st.db, drive_id).await?;
+    if drive.vm_id != vm_id {
+        bail!("drive does not belong to VM");
+    }
+
+    let new_path = req
+        .path_on_host
+        .unwrap_or_else(|| drive.path_on_host.clone());
+    ensure_allowed_path(st, &new_path)?;
+
+    let updated =
+        super::repo::drives::update(&st.db, drive_id, &new_path, req.rate_limiter.as_ref()).await?;
+
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .patch(format!("{base}/drives/{}{}", drive.drive_id, qs))
+        .json(&serde_json::json!({
+            "drive_id": drive.drive_id,
+            "path_on_host": new_path,
+            "rate_limiter": req.rate_limiter,
+        }))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    Ok(updated.into())
+}
+
+pub async fn delete_drive(st: &AppState, vm_id: Uuid, drive_id: Uuid) -> Result<()> {
+    let drive = super::repo::drives::get(&st.db, drive_id).await?;
+    if drive.vm_id != vm_id {
+        bail!("drive does not belong to VM");
+    }
+
+    // Delete from database ONLY - drive removal will apply on next VM start
+    super::repo::drives::delete(&st.db, drive_id).await?;
+
+    // Optionally delete the disk file from filesystem if it's auto-provisioned
+    if let Some(_size) = drive.size_bytes {
+        if let Err(e) = tokio::fs::remove_file(&drive.path_on_host).await {
+            warn!(path = %drive.path_on_host, error = ?e, "failed to delete drive file");
+        } else {
+            info!(path = %drive.path_on_host, "deleted drive file");
+        }
+    }
+
+    info!(vm_id = %vm_id, drive_id = %drive.drive_id,
+          "Drive deleted from database, will be removed from Firecracker on next VM start");
+
+    Ok(())
+}
+
+pub async fn list_nics(st: &AppState, vm_id: Uuid) -> Result<Vec<nexus_types::VmNic>> {
+    let rows = super::repo::nics::list(&st.db, vm_id).await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+pub async fn create_nic(
+    st: &AppState,
+    vm_id: Uuid,
+    req: CreateNicReq,
+) -> Result<nexus_types::VmNic> {
+    // Validate VM exists
+    let _vm = super::repo::get(&st.db, vm_id).await?;
+
+    let iface_id = req.iface_id.trim().to_ascii_lowercase();
+    if !iface_id.starts_with("eth") {
+        bail!("interface id must start with eth");
+    }
+    if iface_id == "eth0" {
+        bail!("eth0 is reserved for the primary interface");
+    }
+    if iface_id.len() <= 3 {
+        bail!("interface id must include an index, e.g. eth1");
+    }
+    if !iface_id[3..].chars().all(|c| c.is_ascii_digit()) {
+        bail!("interface id must be in the form eth<index>");
+    }
+    let existing = super::repo::nics::list(&st.db, vm_id).await?;
+    if existing
+        .iter()
+        .any(|nic| nic.iface_id.eq_ignore_ascii_case(&iface_id))
+    {
+        bail!("interface id already exists for this VM");
+    }
+
+    let host_dev = req.host_dev_name.trim();
+    if !host_dev.starts_with("tap-") {
+        bail!("host device must match tap-<identifier>");
+    }
+    if existing
+        .iter()
+        .any(|nic| nic.host_dev_name.eq_ignore_ascii_case(host_dev))
+    {
+        bail!("host device already in use by another interface");
+    }
+
+    let guest_mac = req
+        .guest_mac
+        .as_ref()
+        .map(|mac| mac.trim())
+        .filter(|mac| !mac.is_empty());
+
+    let rx_rate_limiter = req.rx_rate_limiter.as_ref().map(normalize_rate_limiter);
+    let tx_rate_limiter = req.tx_rate_limiter.as_ref().map(normalize_rate_limiter);
+
+    // Insert network interface into database only
+    // Interface will be attached to Firecracker on next VM start/restart
+    let nic = super::repo::nics::insert(
+        &st.db,
+        vm_id,
+        &iface_id,
+        host_dev,
+        guest_mac,
+        rx_rate_limiter.as_ref(),
+        tx_rate_limiter.as_ref(),
+    )
+    .await?;
+
+    info!(vm_id = %vm_id, iface_id = %iface_id, host_dev = %host_dev,
+          "Network interface created in database, will be attached on next VM start");
+
+    Ok(nic.into())
+}
+
+pub async fn update_nic(
+    st: &AppState,
+    vm_id: Uuid,
+    nic_id: Uuid,
+    req: UpdateNicReq,
+) -> Result<nexus_types::VmNic> {
+    let nic = super::repo::nics::get(&st.db, nic_id).await?;
+    if nic.vm_id != vm_id {
+        bail!("network interface does not belong to VM");
+    }
+
+    // Update database only - changes will apply on next VM start/restart
+    let rx_rate_limiter = req.rx_rate_limiter.as_ref().map(normalize_rate_limiter);
+    let tx_rate_limiter = req.tx_rate_limiter.as_ref().map(normalize_rate_limiter);
+
+    let updated = super::repo::nics::update_rate_limiters(
+        &st.db,
+        nic_id,
+        rx_rate_limiter.as_ref(),
+        tx_rate_limiter.as_ref(),
+    )
+    .await?;
+
+    info!(vm_id = %vm_id, iface_id = %nic.iface_id,
+          "Network interface updated in database, will apply on next VM restart");
+
+    Ok(updated.into())
+}
+
+pub async fn delete_nic(st: &AppState, vm_id: Uuid, nic_id: Uuid) -> Result<()> {
+    let nic = super::repo::nics::get(&st.db, nic_id).await?;
+    if nic.vm_id != vm_id {
+        bail!("network interface does not belong to VM");
+    }
+
+    // Delete from database only - interface removal will apply on next VM start/restart
+    super::repo::nics::delete(&st.db, nic_id).await?;
+
+    info!(vm_id = %vm_id, iface_id = %nic.iface_id,
+          "Network interface deleted from database, will be removed from Firecracker on next VM restart");
+
+    Ok(())
+}
+
+pub async fn patch_machine_config(
+    st: &AppState,
+    vm_id: Uuid,
+    req: MachineConfigPatchReq,
+) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .patch(format!("{base}/machine-config{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    super::repo::update_state(&st.db, vm.id, &vm.state).await?;
+    Ok(())
+}
+
+pub async fn put_cpu_config(st: &AppState, vm_id: Uuid, req: CpuConfigReq) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/cpu-config{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn put_vsock(st: &AppState, vm_id: Uuid, req: VsockConfigReq) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/vsock{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn put_mmds(st: &AppState, vm_id: Uuid, req: MmdsDataReq) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/mmds{qs}"))
+        .json(&req.data)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn put_mmds_config(st: &AppState, vm_id: Uuid, req: MmdsConfigReq) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/mmds/config{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn put_entropy(st: &AppState, vm_id: Uuid, req: EntropyConfigReq) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/entropy{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn put_serial(st: &AppState, vm_id: Uuid, req: SerialConfigReq) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/serial{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn patch_logger(st: &AppState, vm_id: Uuid, req: LoggerUpdateReq) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/logger{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn put_balloon(st: &AppState, vm_id: Uuid, req: BalloonConfig) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .put(format!("{base}/balloon{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn patch_balloon(st: &AppState, vm_id: Uuid, req: BalloonConfig) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .patch(format!("{base}/balloon{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn patch_balloon_stats(
+    st: &AppState,
+    vm_id: Uuid,
+    req: BalloonStatsConfig,
+) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+    let base = format!("{}/agent/v1/vms/{}/proxy", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    reqwest::Client::new()
+        .patch(format!("{base}/balloon/statistics{qs}"))
+        .json(&req)
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub async fn load_snapshot(
+    st: &AppState,
+    vm_id: Uuid,
+    snapshot: &crate::features::snapshots::repo::SnapshotRow,
+) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id).await?;
+
+    let client = reqwest::Client::new();
+    let base = format!("{}/agent/v1/vms/{}", vm.host_addr, vm.id);
+    let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
+
+    let is_diff = snapshot.snapshot_type == "Diff";
+    let mem_value = if is_diff {
+        serde_json::Value::Null
+    } else if snapshot.mem_path.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(snapshot.mem_path.clone())
+    };
+
+    let load_payload = serde_json::json!({
+        "snapshot_path": snapshot.snapshot_path.clone(),
+        "mem_file_path": mem_value,
+        "enable_diff_snapshots": snapshot.track_dirty_pages,
+    });
+
+    let load_resp = client
+        .put(format!("{base}/proxy/snapshot/load{qs}"))
+        .json(&load_payload)
+        .send()
+        .await?;
+    load_resp.error_for_status()?;
+
+    if let Some(parent_id) = snapshot.parent_id {
+        tracing::info!(vm_id = %vm.id, parent_id = %parent_id, "diff snapshot load uses parent");
+    }
+
     Ok(())
 }
 
@@ -321,6 +989,27 @@ mod tests {
     use crate::features::vms::repo;
     use nexus_types::CreateImageReq;
     use serde_json::json;
+    #[derive(Clone)]
+    pub struct TestSnapshotLoad {
+        vm_id: Uuid,
+        snapshot_path: String,
+        mem_path: String,
+    }
+
+    static SNAPSHOT_LOAD_CALLS: std::sync::OnceLock<std::sync::Mutex<Vec<TestSnapshotLoad>>> =
+        std::sync::OnceLock::new();
+
+    fn snapshot_load_store() -> &'static std::sync::Mutex<Vec<TestSnapshotLoad>> {
+        SNAPSHOT_LOAD_CALLS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+    }
+
+    pub fn reset_snapshot_load_calls() {
+        snapshot_load_store().lock().unwrap().clear();
+    }
+
+    pub fn snapshot_load_calls() -> Vec<TestSnapshotLoad> {
+        snapshot_load_store().lock().unwrap().clone()
+    }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn create_with_image_ids_resolves_paths(pool: sqlx::PgPool) {
@@ -356,12 +1045,15 @@ mod tests {
             .unwrap();
 
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
-        let state = crate::AppState {
+        let storage = crate::features::storage::LocalStorage::new();
+        storage.init().await.unwrap();
+        let state = AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
             images: images.clone(),
             snapshots,
             allow_direct_image_paths: false,
+            storage: storage.clone(),
         };
 
         let vm_id = Uuid::new_v4();
@@ -400,12 +1092,15 @@ mod tests {
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
-        let state = crate::AppState {
+        let storage = crate::features::storage::LocalStorage::new();
+        storage.init().await.unwrap();
+        let state = AppState {
             db: pool,
             hosts,
             images,
             snapshots,
             allow_direct_image_paths: false,
+            storage: storage.clone(),
         };
 
         let err = create_and_start(
@@ -432,7 +1127,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn restart_rejects_paths_outside_root(pool: sqlx::PgPool) {
         repo::reset_store();
-        super::reset_snapshot_load_calls();
+        reset_snapshot_load_calls();
         let hosts = HostRepository::new(pool.clone());
         let host = hosts
             .register("host", "http://127.0.0.1:1", json!({}))
@@ -441,12 +1136,15 @@ mod tests {
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
-        let state = crate::AppState {
+        let storage = crate::features::storage::LocalStorage::new();
+        storage.init().await.unwrap();
+        let state = AppState {
             db: pool,
             hosts,
             images,
             snapshots,
             allow_direct_image_paths: false,
+            storage: storage.clone(),
         };
 
         let vm = repo::VmRow {
@@ -479,7 +1177,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn create_from_snapshot_persists_source(pool: sqlx::PgPool) {
         repo::reset_store();
-        super::reset_snapshot_load_calls();
+        reset_snapshot_load_calls();
 
         let hosts = HostRepository::new(pool.clone());
         let host = hosts
@@ -489,12 +1187,15 @@ mod tests {
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
-        let state = crate::AppState {
+        let storage = crate::features::storage::LocalStorage::new();
+        storage.init().await.unwrap();
+        let state = AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
             images: images.clone(),
             snapshots,
             allow_direct_image_paths: false,
+            storage: storage.clone(),
         };
 
         let now = chrono::Utc::now();
@@ -532,6 +1233,9 @@ mod tests {
             mem_path: "/srv/fc/vms/source/snapshots/snap.mem".into(),
             size_bytes: 0,
             state: "available".into(),
+            snapshot_type: "Full".into(),
+            parent_id: None,
+            track_dirty_pages: false,
             created_at: now,
             updated_at: now,
         };
@@ -556,7 +1260,7 @@ mod tests {
         assert_eq!(stored.rootfs_path, rootfs_path);
         assert_eq!(stored.template_id, template_id);
 
-        let loads = super::snapshot_load_calls();
+        let loads = snapshot_load_calls();
         assert_eq!(loads.len(), 1);
         assert_eq!(loads[0].vm_id, new_vm_id);
         assert_eq!(loads[0].snapshot_path, expected_snapshot_path);
@@ -565,16 +1269,15 @@ mod tests {
 }
 
 #[cfg(not(test))]
-async fn create_tap(host_addr: &str, id: Uuid) -> Result<()> {
+async fn create_tap(host_addr: &str, id: Uuid, bridge: &str) -> Result<()> {
     let http = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .context("failed to build reqwest client (create_tap)")?;
     let tap = format!("tap-{}", &id.to_string()[..8]);
     info!(vm_id=%id, step="tap", %tap, "creating tap on agent");
-    http
-        .post(format!("{host_addr}/agent/v1/vms/{id}/tap"))
-        .json(&json!({"bridge": "fcbr0", "owner_user": serde_json::Value::Null}))
+    http.post(format!("{host_addr}/agent/v1/vms/{id}/tap"))
+        .json(&json!({"bridge": bridge, "owner_user": Value::Null}))
         .send()
         .await
         .context("create_tap request failed to send")?
@@ -585,7 +1288,7 @@ async fn create_tap(host_addr: &str, id: Uuid) -> Result<()> {
 }
 
 #[cfg(test)]
-async fn create_tap(_: &str, _: Uuid) -> Result<()> {
+async fn create_tap(_: &str, _: Uuid, _: &str) -> Result<()> {
     Ok(())
 }
 
@@ -624,10 +1327,16 @@ async fn spawn_firecracker(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result
 }
 
 #[derive(Deserialize)]
-struct InvSocket { vm_id: String, sockets: Vec<String> }
+struct InvSocket {
+    vm_id: String,
+    sockets: Vec<String>,
+}
 #[derive(Deserialize)]
-struct Inventory { sockets: Vec<InvSocket> }
+struct Inventory {
+    sockets: Vec<InvSocket>,
+}
 
+#[cfg_attr(test, allow(dead_code))]
 async fn poll_socket_ready(
     host_addr: &str,
     id: Uuid,
@@ -668,6 +1377,7 @@ async fn spawn_firecracker(_: &str, _: Uuid, _: &VmPaths) -> Result<()> {
 
 #[cfg(not(test))]
 async fn configure_vm(
+    st: &AppState,
     host_addr: &str,
     id: Uuid,
     spec: &ResolvedVmSpec,
@@ -722,9 +1432,49 @@ async fn configure_vm(
             .error_for_status()
             .context("drives returned error status")?;
         info!(vm_id=%id, step="drives", "ok");
+
+        // Attach all additional drives from database
+        let db_drives = super::repo::drives::list(&st.db, id).await?;
+        for drive in &db_drives {
+            // Validate drive path is allowed
+            ensure_allowed_path(st, &drive.path_on_host)?;
+
+            info!(vm_id=%id, drive_id=%drive.drive_id, path=%drive.path_on_host, "attaching additional drive from DB");
+
+            // Build drive config - only include optional fields if they have values
+            let mut drive_config = json!({
+                "drive_id": drive.drive_id,
+                "path_on_host": drive.path_on_host,
+                "is_root_device": drive.is_root_device,
+                "is_read_only": drive.is_read_only,
+            });
+
+            // Only add optional fields if they are Some
+            if let Some(ref cache) = drive.cache_type {
+                drive_config["cache_type"] = json!(cache);
+            }
+            if let Some(ref io) = drive.io_engine {
+                drive_config["io_engine"] = json!(io);
+            }
+            if let Some(ref rl) = drive.rate_limiter {
+                drive_config["rate_limiter"] = rl.clone();
+            }
+
+            http.put(format!("{base}/drives/{}{}", drive.drive_id, qs))
+                .json(&drive_config)
+                .send()
+                .await
+                .context("additional drive request failed to send")?
+                .error_for_status()
+                .context("additional drive returned error status")?;
+        }
+        if !db_drives.is_empty() {
+            info!(vm_id=%id, count=%db_drives.len(), "attached drives from database");
+        }
     }
 
     info!(vm_id=%id, step="network-interfaces", tap=%paths.tap, "configuring network interface");
+    // Configure default eth0 interface with TAP device
     http.put(format!("{base}/network-interfaces/eth0{qs}"))
         .json(&json!({
             "iface_id": "eth0",
@@ -736,6 +1486,40 @@ async fn configure_vm(
         .error_for_status()
         .context("network-interfaces returned error status")?;
     info!(vm_id=%id, step="network-interfaces", "ok");
+
+    // Attach all additional network interfaces from database
+    let db_nics = super::repo::nics::list(&st.db, id).await?;
+    for nic in &db_nics {
+        info!(vm_id=%id, iface_id=%nic.iface_id, host_dev=%nic.host_dev_name, "attaching additional NIC from DB");
+
+        // Build NIC config - only include optional fields if they have values
+        let mut nic_config = json!({
+            "iface_id": nic.iface_id,
+            "host_dev_name": nic.host_dev_name,
+        });
+
+        // Only add optional fields if they are Some
+        if let Some(ref mac) = nic.guest_mac {
+            nic_config["guest_mac"] = json!(mac);
+        }
+        if let Some(ref rx) = nic.rx_rate_limiter {
+            nic_config["rx_rate_limiter"] = normalize_rate_limiter(rx);
+        }
+        if let Some(ref tx) = nic.tx_rate_limiter {
+            nic_config["tx_rate_limiter"] = normalize_rate_limiter(tx);
+        }
+
+        http.put(format!("{base}/network-interfaces/{}{}", nic.iface_id, qs))
+            .json(&nic_config)
+            .send()
+            .await
+            .context("additional NIC request failed to send")?
+            .error_for_status()
+            .context("additional NIC returned error status")?;
+    }
+    if !db_nics.is_empty() {
+        info!(vm_id=%id, count=%db_nics.len(), "attached network interfaces from database");
+    }
 
     info!(vm_id=%id, step="logger", log_path=%paths.log_path, "configuring logger");
     http.put(format!("{base}/logger{qs}"))
@@ -793,77 +1577,14 @@ async fn configure_vm(
 }
 
 #[cfg(test)]
-async fn configure_vm(_: &str, _: Uuid, _: &ResolvedVmSpec, _: &VmPaths) -> Result<()> {
+async fn configure_vm(
+    _: &AppState,
+    _: &str,
+    _: Uuid,
+    _: &ResolvedVmSpec,
+    _: &VmPaths,
+) -> Result<()> {
     Ok(())
-}
-
-#[cfg(not(test))]
-async fn load_snapshot(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
-    let snapshot_path = paths
-        .snapshot_path
-        .as_ref()
-        .context("missing snapshot path for load")?;
-    let mem_path = paths
-        .mem_path
-        .as_ref()
-        .context("missing mem path for load")?;
-    let base = format!("{host_addr}/agent/v1/vms/{id}/proxy");
-    let qs = format!("?sock={}", urlencoding::encode(&paths.sock));
-    Client::new()
-        .put(format!("{base}/snapshot/load{qs}"))
-        .json(&json!({
-            "snapshot_path": snapshot_path,
-            "mem_file_path": mem_path,
-            "resume_vm": false
-        }))
-        .send()
-        .await?
-        .error_for_status()?;
-    Ok(())
-}
-
-#[cfg(test)]
-async fn load_snapshot(_: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
-    let snapshot_path = paths
-        .snapshot_path
-        .clone()
-        .expect("snapshot_path expected in tests");
-    let mem_path = paths.mem_path.clone().expect("mem_path expected in tests");
-    snapshot_load_store()
-        .lock()
-        .unwrap()
-        .push(TestSnapshotLoad {
-            vm_id: id,
-            snapshot_path,
-            mem_path,
-        });
-    Ok(())
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TestSnapshotLoad {
-    pub vm_id: Uuid,
-    pub snapshot_path: String,
-    pub mem_path: String,
-}
-
-#[cfg(test)]
-fn snapshot_load_store() -> &'static std::sync::Mutex<Vec<TestSnapshotLoad>> {
-    use std::sync::{Mutex, OnceLock};
-
-    static STORE: OnceLock<Mutex<Vec<TestSnapshotLoad>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-#[cfg(test)]
-pub fn reset_snapshot_load_calls() {
-    snapshot_load_store().lock().unwrap().clear();
-}
-
-#[cfg(test)]
-pub fn snapshot_load_calls() -> Vec<TestSnapshotLoad> {
-    snapshot_load_store().lock().unwrap().clone()
 }
 
 #[cfg(not(test))]
