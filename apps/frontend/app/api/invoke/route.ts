@@ -1,9 +1,8 @@
 // app/api/invoke/route.ts
-import type { NextRequest } from "next/server";
-const { NextResponse } = require("next/server");
-const vm = require("node:vm");
+import { NextRequest, NextResponse } from "next/server";
+import vm from "node:vm";
 
-const runtime = "nodejs"; // penting: gunakan Node runtime, bukan edge
+export const runtime = "nodejs"; // WAJIB: jangan Edge
 
 type LambdaResponse = {
   statusCode: number;
@@ -11,12 +10,68 @@ type LambdaResponse = {
   body?: string;
 };
 
+// -- ESM -> CJS transform sederhana untuk kasus umum
+function transformToCJS(src: string): string {
+  let code = src;
+
+  // 1) export default async function handler(...) { ... }
+  //    -> async function handler(...) { ... }; exports.__default = handler;
+  code = code.replace(
+    /export\s+default\s+async\s+function\s+([A-Za-z_$][0-9A-Za-z_$]*)\s*\(/g,
+    (_m, name) => `async function ${name}(`,
+  ) + `\n;exports.__default = (typeof handler !== "undefined" ? handler : exports.__default);\n`;
+
+  // 2) export default (async function|function|class|const|let|var) ...
+  //    -> simpan ke exports.__default
+  if (/export\s+default\s+/.test(code)) {
+    code = code.replace(
+      /export\s+default\s+/g,
+      "exports.__default = ",
+    );
+  }
+
+  // 3) export const handler = ...
+  //    export let/var handler = ...
+  //    -> const/let/var handler = ...
+  code = code.replace(
+    /^\s*export\s+(const|let|var)\s+/gm,
+    "$1 ",
+  );
+
+  // 4) export async function handler(...) / export function handler(...)
+  //    -> async function handler(...)/function handler(...)
+  code = code.replace(
+    /^\s*export\s+(async\s+)?function\s+/gm,
+    "$1function ",
+  );
+
+  // 5) export class Foo -> class Foo
+  code = code.replace(
+    /^\s*export\s+class\s+/gm,
+    "class ",
+  );
+
+  // 6) Named export (mis. "export { handler }" atau "export { a as handler }")
+  //    Hapus saja; kita akhiri dengan module.exports.handler di bawah.
+  code = code.replace(/^\s*export\s*\{[\s\S]*?\}\s*;?\s*$/gm, "");
+
+  // 7) Akhiri dengan mengekspor handler:
+  //    - jika ada variabel/fungsi bernama handler, ambil itu
+  //    - jika tidak ada handler tapi ada __default (dari export default handler), gunakan itu
+  code += `
+;module.exports = {
+  handler: (typeof handler !== "undefined"
+              ? handler
+              : (typeof exports !== "undefined" && exports.__default ? exports.__default : undefined))
+};
+`;
+  return code;
+}
+
 function normalizeResult(result: any): LambdaResponse {
-  // Jika handler sudah mengembalikan objek LambdaResponse, kirim apa adanya
   if (result && typeof result === "object" && "statusCode" in result) {
     return result as LambdaResponse;
   }
-  // Jika bukan, bungkus sebagai 200 JSON
   return {
     statusCode: 200,
     headers: { "content-type": "application/json" },
@@ -24,32 +79,24 @@ function normalizeResult(result: any): LambdaResponse {
   };
 }
 
-async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
     const { code, event } = (await req.json()) as { code: string; event: any };
 
-    if (typeof code !== "string" || !code.trim()) {
-      return NextResponse.json(
-        { ok: false, error: "Code kosong. Kirim source code di field `code`." },
-        { status: 400 }
-      );
+    if (!code || typeof code !== "string") {
+      return NextResponse.json({ ok: false, error: "Field `code` wajib string." }, { status: 400 });
     }
 
-    // Transform sederhana: ambil handler dari ESM ke CommonJS export
-    // Cukup untuk pola: `export const handler = ...`
-    const transformed = `${code}
-;module.exports = { handler: (typeof handler !== "undefined" ? handler : (typeof exports !== "undefined" ? exports.handler : undefined)) };`;
+    const transformed = transformToCJS(code);
 
-    // (Opsional) kumpulkan console.log agar bisa ditampilkan ke UI
     const logs: string[] = [];
     const safeConsole = {
-      log: (...args: any[]) => logs.push(args.map(String).join(" ")),
-      error: (...args: any[]) => logs.push("[error] " + args.map(String).join(" ")),
-      warn: (...args: any[]) => logs.push("[warn] " + args.map(String).join(" ")),
-      info: (...args: any[]) => logs.push("[info] " + args.map(String).join(" ")),
+      log: (...a: any[]) => logs.push(a.map(String).join(" ")),
+      error: (...a: any[]) => logs.push("[error] " + a.map(String).join(" ")),
+      warn: (...a: any[]) => logs.push("[warn] " + a.map(String).join(" ")),
+      info: (...a: any[]) => logs.push("[info] " + a.map(String).join(" ")),
     };
 
-    // Sandbox minim: tanpa akses require/process/dll
     const sandbox = {
       module: { exports: {} as any },
       exports: {} as any,
@@ -66,10 +113,9 @@ async function POST(req: NextRequest) {
     const script = new vm.Script(transformed, {
       filename: "index.mjs",
       displayErrors: true,
-      timeout: 1000, // cegah loop tak hingga saat compile
+      timeout: 1000,
     });
 
-    // Jalankan script untuk mengisi module.exports.handler
     script.runInContext(context, { timeout: 1000 });
 
     const handler =
@@ -81,34 +127,24 @@ async function POST(req: NextRequest) {
         {
           ok: false,
           error:
-            "Handler tidak ditemukan. Pastikan ada `export const handler = async (event) => { ... }`.",
+            "Handler tidak ditemukan. Pastikan ada `export const handler = ...` atau `export default async function handler(...) {}`.",
           logs,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Panggil handler dengan timeout eksekusi
     const result = await Promise.race([
       Promise.resolve(handler(event)),
-      new Promise((_res, rej) => setTimeout(() => rej(new Error("Timeout")), 1500)),
+      new Promise((_r, rej) => setTimeout(() => rej(new Error("Timeout")), 2000)),
     ]);
 
     const response = normalizeResult(result);
-
-    return NextResponse.json(
-      { ok: true, response, logs },
-      { status: 200 }
-    );
+    return NextResponse.json({ ok: true, response, logs }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: err?.message || "Invocation error",
-      },
-      { status: 500 }
+      { ok: false, error: err?.message || "Invocation error" },
+      { status: 500 },
     );
   }
 }
-
-module.exports = { runtime, POST };

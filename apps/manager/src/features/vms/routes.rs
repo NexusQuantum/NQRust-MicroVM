@@ -1,5 +1,13 @@
 use crate::AppState;
-use axum::{extract::Path, Extension, Json};
+use axum::{
+    extract::{
+        ws::{Message, WebSocket},
+        Path, WebSocketUpgrade,
+    },
+    response::IntoResponse,
+    Extension, Json,
+};
+use futures::{SinkExt, StreamExt};
 use nexus_types::{
     BalloonConfig, BalloonStatsConfig, CpuConfigReq, CreateDriveReq, CreateNicReq, CreateVmReq,
     CreateVmResponse, EntropyConfigReq, GetVmResponse, ListDrivesResponse, ListNicsResponse,
@@ -9,6 +17,7 @@ use nexus_types::{
 };
 use reqwest::StatusCode;
 use serde::Serialize;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
 use uuid::Uuid;
 
 #[utoipa::path(
@@ -44,6 +53,119 @@ pub async fn get_shell_credentials(
 pub struct VmShellCredentialResponse {
     pub username: String,
     pub password: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/vms/{id}/shell/ws",
+    params(VmPathParams),
+    responses(
+        (status = 101, description = "WebSocket connection established"),
+        (status = 404, description = "VM not found"),
+        (status = 502, description = "Failed to connect to agent"),
+    ),
+    tag = "VMs"
+)]
+pub async fn shell_websocket(
+    ws: WebSocketUpgrade,
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+) -> axum::response::Response {
+    // Fetch VM to get host address
+    let vm = match super::repo::get(&st.db, id).await {
+        Ok(v) => v,
+        Err(_) => {
+            return (StatusCode::NOT_FOUND, "VM not found").into_response();
+        }
+    };
+
+    // Upgrade the WebSocket connection
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = proxy_to_agent_shell(vm.host_addr, id, socket).await {
+            tracing::error!("WebSocket proxy error: {:?}", e);
+        }
+    })
+}
+
+async fn proxy_to_agent_shell(
+    host_addr: String,
+    vm_id: Uuid,
+    client_ws: WebSocket,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Connect to agent's WebSocket endpoint
+    let agent_url = format!("ws://{}/agent/v1/vms/{}/shell/ws", host_addr.trim_start_matches("http://"), vm_id);
+    tracing::info!("Connecting to agent shell at: {}", agent_url);
+
+    let (agent_stream, _) = connect_async(&agent_url).await?;
+    let (mut agent_write, mut agent_read) = agent_stream.split();
+    let (mut client_write, mut client_read) = client_ws.split();
+
+    // Proxy messages bidirectionally
+    let client_to_agent = async {
+        while let Some(msg) = client_read.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    if agent_write.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Binary(data)) => {
+                    if agent_write.send(WsMessage::Binary(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Ping(data)) => {
+                    if agent_write.send(WsMessage::Ping(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Pong(data)) => {
+                    if agent_write.send(WsMessage::Pong(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Close(_)) => break,
+                Err(_) => break,
+            }
+        }
+    };
+
+    let agent_to_client = async {
+        while let Some(msg) = agent_read.next().await {
+            match msg {
+                Ok(WsMessage::Text(text)) => {
+                    if client_write.send(Message::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(WsMessage::Binary(data)) => {
+                    if client_write.send(Message::Binary(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(WsMessage::Ping(data)) => {
+                    if client_write.send(Message::Ping(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(WsMessage::Pong(data)) => {
+                    if client_write.send(Message::Pong(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(WsMessage::Close(_)) => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = client_to_agent => {},
+        _ = agent_to_client => {},
+    }
+
+    Ok(())
 }
 
 #[utoipa::path(

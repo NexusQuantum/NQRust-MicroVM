@@ -25,3 +25,6 @@ CREATE INDEX IF NOT EXISTS idx_vm_shell_session_vm_id
 CREATE INDEX IF NOT EXISTS idx_vm_shell_session_expires_at
     ON vm_shell_session(expires_at);
 
+
+
+

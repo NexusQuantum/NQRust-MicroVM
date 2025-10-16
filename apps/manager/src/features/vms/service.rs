@@ -95,7 +95,7 @@ pub async fn create_and_start(
     let spec = resolve_vm_spec(st, req, id).await?;
 
     create_tap(&host.addr, id, &network.bridge).await?;
-    spawn_firecracker(&host.addr, id, &paths).await?;
+    spawn_firecracker(st, &host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
     } else {
@@ -131,6 +131,16 @@ pub async fn create_and_start(
         },
     )
     .await?;
+
+    // Auto-generate shell credentials for the VM
+    let username = "root";
+    let password = format!("vm-{}", &id.to_string()[..8]);
+    if let Err(e) = st.shell_repo.upsert_credentials(id, username, &password).await {
+        warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
+    } else {
+        info!(vm_id = %id, username = %username, "created shell credentials for VM");
+    }
+
     Ok(())
 }
 
@@ -184,7 +194,7 @@ pub async fn create_from_snapshot(
 
     let network = select_network(&host.capabilities_json)?;
     create_tap(&host.addr, id, &network.bridge).await?;
-    spawn_firecracker(&host.addr, id, &paths).await?;
+    spawn_firecracker(st, &host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
     } else {
@@ -201,7 +211,7 @@ pub async fn create_from_snapshot(
         &st.db,
         &super::repo::VmRow {
             id,
-            name,
+            name: name.clone(),
             state: "running".into(),
             host_id: host.id,
             template_id: template_id.or(source_vm.template_id),
@@ -222,6 +232,15 @@ pub async fn create_from_snapshot(
     )
     .await?;
 
+    // Auto-generate shell credentials for the VM
+    let username = "root";
+    let password = format!("vm-{}", &id.to_string()[..8]);
+    if let Err(e) = st.shell_repo.upsert_credentials(id, username, &password).await {
+        warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
+    } else {
+        info!(vm_id = %id, username = %username, "created shell credentials for VM");
+    }
+
     Ok(())
 }
 
@@ -240,7 +259,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
 
     let network = select_network(&host.capabilities_json)?;
     create_tap(&host.addr, vm.id, &network.bridge).await?;
-    spawn_firecracker(&host.addr, vm.id, &paths).await?;
+    spawn_firecracker(st, &host.addr, vm.id, &paths).await?;
     configure_vm(st, &host.addr, vm.id, &spec, &paths).await?;
     start_vm(&host.addr, vm.id, &paths).await?;
     super::repo::update_state(&st.db, vm.id, "running").await?;
@@ -1293,7 +1312,7 @@ async fn create_tap(_: &str, _: Uuid, _: &str) -> Result<()> {
 }
 
 #[cfg(not(test))]
-async fn spawn_firecracker(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
+async fn spawn_firecracker(st: &AppState, host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
     let http = Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
@@ -1303,7 +1322,10 @@ async fn spawn_firecracker(host_addr: &str, id: Uuid, paths: &VmPaths) -> Result
     // Fire-and-forget: do not block the creation flow on systemd-run latency
     match http
         .post(format!("{host_addr}/agent/v1/vms/{id}/spawn"))
-        .json(&json!({"sock": paths.sock, "log_path": paths.log_path}))
+        .json(&json!({
+            "sock": paths.sock,
+            "log_path": paths.log_path
+        }))
         .send()
         .await
     {
@@ -1371,7 +1393,7 @@ async fn poll_socket_ready(
 }
 
 #[cfg(test)]
-async fn spawn_firecracker(_: &str, _: Uuid, _: &VmPaths) -> Result<()> {
+async fn spawn_firecracker(_: &AppState, _: &str, _: Uuid, _: &VmPaths) -> Result<()> {
     Ok(())
 }
 
@@ -1535,6 +1557,38 @@ async fn configure_vm(
         .error_for_status()
         .context("logger returned error status")?;
     info!(vm_id=%id, step="logger", "ok");
+
+    // Configure serial console via /serial API endpoint (pre-boot only)
+    // Note: Firecracker's serial console only supports OUTPUT (VM writes to a file/pipe)
+    // For interactive terminal, we would need bidirectional communication which requires
+    // a different approach (e.g., vsock or network-based terminal)
+    // For now, we configure it for logging purposes only
+    if paths.snapshot_path.is_none() {
+        let console_log_path = st.storage.vm_dir(id).join("logs/console.log").display().to_string();
+        info!(vm_id=%id, step="serial", console_path=%console_log_path, "configuring serial console output");
+
+        match http.put(format!("{base}/serial{qs}"))
+            .json(&json!({
+                "output_path": console_log_path
+            }))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                match resp.error_for_status() {
+                    Ok(_) => {
+                        info!(vm_id=%id, step="serial", "serial console configured for logging");
+                    }
+                    Err(e) => {
+                        warn!(vm_id=%id, error=?e, "failed to configure serial console");
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(vm_id=%id, error=?e, "failed to send serial configuration request");
+            }
+        }
+    }
 
     // Metrics are optional; Firecracker expects a FIFO. Skip unless explicitly enabled.
     let enable_metrics = std::env::var("MANAGER_ENABLE_METRICS")

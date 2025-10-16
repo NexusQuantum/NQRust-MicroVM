@@ -26,6 +26,8 @@ utoipa-axum = "0.1"
 utoipa-swagger-ui = { version = "7", features = ["axum"] }
 serde_yaml = "0.9"
 tower-http = { version = "0.5", features = ["cors"] }
+futures = { workspace = true }
+tokio-tungstenite = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"

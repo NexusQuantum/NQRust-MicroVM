@@ -290,6 +290,20 @@ export class FacadeApi {
   async deleteVMNic(vmId: string, nicId: string): Promise<void> {
     await apiClient.delete<OkResponse>(`/vms/${vmId}/nics/${nicId}`)
   }
+
+  /**
+   * Shell Access - WebSocket terminal connection
+   */
+  getShellWebSocketUrl(vmId: string): string {
+    // Get WebSocket base URL from environment or derive from API base URL
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:18080/v1'
+    const wsBaseUrl = process.env.NEXT_PUBLIC_WS_BASE_URL || apiBaseUrl.replace(/^http/, 'ws').replace(/\/v1$/, '')
+    return `${wsBaseUrl}/v1/vms/${vmId}/shell/ws`
+  }
+
+  async getShellCredentials(vmId: string): Promise<{ username: string; password: string }> {
+    return apiClient.get<{ username: string; password: string }>(`/vms/${vmId}/shell`)
+  }
 }
 
 // Export singleton instance

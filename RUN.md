@@ -1,7 +1,7 @@
 export the env
 
 cargo build -p agent
-sudo -E env AGENT_BIND=127.0.0.1:19091 MANAGER_BASE=http://127.0.0.1:18081 FC_RUN_DIR=/srv/fc FC_BRIDGE=fcbr0 ./target/debug/agent
+sudo -E env AGENT_BIND=127.0.0.1:19090 MANAGER_BASE=http://127.0.0.1:18080 FC_RUN_DIR=/srv/fc FC_BRIDGE=fcbr0 ./target/debug/agent
 
 cargo build -p manager
 MANAGER_RECONCILER_DISABLED=1 RUST_LOG=info ./target/debug/manager

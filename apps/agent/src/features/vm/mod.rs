@@ -26,4 +26,5 @@ pub fn router() -> Router {
         .merge(metrics::router())
         .merge(balloon::router())
         .merge(system::router())
+        .merge(shell::router())
 }

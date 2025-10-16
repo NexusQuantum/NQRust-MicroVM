@@ -15,6 +15,7 @@ import { DriveList } from "@/components/drive-list"
 import { NetworkTable } from "@/components/network-table"
 import { SnapshotsTab } from "@/components/snapshots-tab"
 import { MetricsTab } from "@/components/metrics-tab"
+import { VMTerminal } from "@/components/vm-terminal"
 import { ArrowLeft, ExternalLink } from "lucide-react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
@@ -149,11 +150,12 @@ export default function VMDetailPage({ params }: VMDetailPageProps) {
 
       {/* Tabs */}
       <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="config">Config</TabsTrigger>
           <TabsTrigger value="storage">Storage</TabsTrigger>
           <TabsTrigger value="network">Network</TabsTrigger>
+          <TabsTrigger value="terminal">Terminal</TabsTrigger>
           <TabsTrigger value="snapshots">Snapshots</TabsTrigger>
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
         </TabsList>
@@ -172,6 +174,10 @@ export default function VMDetailPage({ params }: VMDetailPageProps) {
 
         <TabsContent value="network">
           <NetworkTable vm={vm} />
+        </TabsContent>
+
+        <TabsContent value="terminal">
+          <VMTerminal vm={vm} />
         </TabsContent>
 
         <TabsContent value="snapshots">

@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{Path, State},
+    extract::Path,
     http::StatusCode,
     response::Response,
     routing::get,
-    Json, Router,
+    Extension, Json, Router,
 };
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use serde::Serialize;
@@ -24,14 +24,14 @@ pub struct ConsoleInfo {
     pub console_sock: String,
 }
 
-pub fn router() -> Router<AppState> {
+pub fn router() -> Router {
     Router::new()
         .route("/:id/shell/info", get(get_console_info))
         .route("/:id/shell/ws", get(ws_console_proxy))
 }
 
 async fn get_console_info(
-    State(st): State<AppState>,
+    Extension(st): Extension<AppState>,
     Path(vm_id): Path<String>,
 ) -> Result<Json<ConsoleInfo>, (StatusCode, String)> {
     let socket_path = PathBuf::from(&st.run_dir)
@@ -126,7 +126,7 @@ pub async fn proxy_console(socket: PathBuf, ws: WebSocket) -> Result<(), (Status
 
 async fn ws_console_proxy(
     ws: WebSocketUpgrade,
-    State(st): State<AppState>,
+    Extension(st): Extension<AppState>,
     Path(vm_id): Path<String>,
 ) -> Response {
     let socket_path = PathBuf::from(&st.run_dir)

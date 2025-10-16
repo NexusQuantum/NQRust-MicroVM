@@ -36,6 +36,7 @@ pub fn router() -> Router {
                 .delete(routes::delete_nic),
         )
         .route("/:id/shell", get(routes::get_shell_credentials))
+        .route("/:id/shell/ws", get(routes::shell_websocket))
         .route(
             "/:id/machine-config",
             axum::routing::patch(routes::patch_machine_config),

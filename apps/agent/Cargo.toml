@@ -24,6 +24,7 @@ hyper-util = { version = "0.1", features = ["client", "http1", "tokio"] }
 nexus-types = { path = "../../crates/nexus-types" }
 reqwest = { workspace = true }
 uuid = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

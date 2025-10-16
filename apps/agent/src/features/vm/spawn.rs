@@ -11,6 +11,8 @@ use tokio::{fs, io::AsyncWriteExt};
 struct SpawnReq {
     sock: String,
     log_path: String,
+    #[serde(default)]
+    console_sock: Option<String>,
 }
 
 pub fn router() -> Router {
@@ -49,9 +51,16 @@ async fn spawn_fc(
     // Ensure any previous scope is not lingering as loaded/deactivated
     let _ = systemd::stop_unit(&unit).await;
 
+    // Create console socket directory if console is requested
+    if let Some(ref console) = req.console_sock {
+        if let Some(parent) = std::path::Path::new(console).parent() {
+            fs::create_dir_all(parent).await.map_err(int)?;
+        }
+    }
+
     // Attempt to spawn. If systemd-run reports failure but the socket appears,
     // consider it success to avoid flapping on duplicate unit names.
-    if let Err(err) = systemd::spawn_fc_scope(&unit, &req.sock).await {
+    if let Err(err) = systemd::spawn_fc_scope_with_console(&unit, &req.sock, req.console_sock.as_deref()).await {
         // Brief grace period to see if the socket got created anyway
         for _ in 0..400 {
             if std::path::Path::new(&req.sock).exists() {
