@@ -1,9 +1,10 @@
-"use client"
+"use client";
 
-import dynamic from "next/dynamic";
 import React from "react";
-import { HiX, HiMenu } from "react-icons/hi";
+import dynamic from "next/dynamic";
+import { HiMenu, HiX } from "react-icons/hi"; // Importing hamburger and close icons
 
+// Load Monaco in the browser only
 const Monaco = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
 declare global {
@@ -14,7 +15,7 @@ declare global {
   }
 }
 
-const DEFAULT_CODE = `// index.mjs  (Node.js 20.x / ESM)
+const DEFAULT_NODEJS_CODE = `// index.mjs  (Node.js 20.x / ESM)
 export const handler = async (event) => {
   const a = Number(event?.key1);
   const b = Number(event?.key2);
@@ -32,17 +33,37 @@ export const handler = async (event) => {
   };
 };`;
 
+const DEFAULT_PYTHON_CODE = `# handler.py (Python)
+def handler(event):
+    try:
+        a = float(event.get("key1", 0))
+        b = float(event.get("key2", 0))
+        if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+            raise ValueError("key1 and key2 must be numbers")
+        return {
+            "statusCode": 200,
+            "body": {"result": a + b}
+        }
+    except Exception as e:
+        return {
+            "statusCode": 400,
+            "body": {"error": str(e)}
+        }`;
+
 const DEFAULT_PAYLOAD = `{
-  \"key1\": 10,
-  \"key2\": 5
+  "key1": 10,
+  "key2": 5
 }`;
 
 const QUICK_FILES = [
-  { name: "index.mjs", content: DEFAULT_CODE },
+  { name: "index.mjs", content: DEFAULT_NODEJS_CODE },
+  { name: "event.json", content: DEFAULT_PAYLOAD },
+  { name: "utils.js", content: "// Utility functions\nexport const add = (a, b) => a + b;" }
 ];
 
-export default function Lambda() {
-  const [code, setCode] = React.useState<string>(DEFAULT_CODE);
+export default function LambdaPlayground() {
+  const [runtime, setRuntime] = React.useState("Node.js"); // Track selected runtime
+  const [code, setCode] = React.useState<string>(DEFAULT_NODEJS_CODE);
   const [payload, setPayload] = React.useState<string>(DEFAULT_PAYLOAD);
   const [output, setOutput] = React.useState<string>("Ready. Press Run or ⌘/Ctrl+Enter.");
   const [logs, setLogs] = React.useState<string[]>([]);
@@ -87,12 +108,6 @@ export default function Lambda() {
       document.body.style.userSelect = "";
     };
 
-    const startDragX = (e: React.MouseEvent) => {
-      dragXRef.current = { startX: e.clientX, startW: leftW };
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-    };
-
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
@@ -100,6 +115,12 @@ export default function Lambda() {
       window.removeEventListener("mouseup", onUp);
     };
   }, []);
+
+  const startDragX = (e: React.MouseEvent) => {
+    dragXRef.current = { startX: e.clientX, startW: leftW };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
 
   const startDragMiddle = (e: React.MouseEvent) => {
     dragMiddleRef.current = { startX: e.clientX, startW: middleW };
@@ -117,7 +138,7 @@ export default function Lambda() {
     try { await navigator.clipboard.writeText(text); } catch { }
   };
 
-  // run call app/api/invoke
+  // Run (call /api/invoke)
   const run = React.useCallback(async () => {
     setStatus("running");
     setLogs([]);
@@ -129,7 +150,7 @@ export default function Lambda() {
     const timeout = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const res = await fetch("/api/invoke", {
+      const res = await fetch(`/api/invoke/${runtime.toLowerCase()}`, {  // Adjust the endpoint based on runtime
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -164,9 +185,9 @@ export default function Lambda() {
       setOutput(formatExecutionResult({ status: "Failed", eventName: "event-tes", response }));
       setStatus("error");
     }
-  }, [code, payload]);
+  }, [code, payload, runtime]);
 
-
+  // keyboard shortcut: Ctrl/Cmd+Enter to run
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -201,33 +222,40 @@ ${safePrettyJSON(response.body)}`;
   };
 
   return (
-    <div className="h-screen w-full bg-neutral-950 text-neutral-100 dark:bg-black">
-      {/* Header */}
-      <header className="h-12 border-b border-neutral-800 flex items-center px-4 gap-3">
-        <h1 className="text-sm font-semibold">Lambda Playground</h1>
+    <div className="h-screen w-full bg-neutral-950 text-neutral-100">
+      {/* Top bar */}
+      <header className="h-12 border-b border-neutral-800 flex items-center gap-3 px-3">
+        <div className="text-sm font-semibold tracking-wide">Lambda Playground</div>
+
+        {/* Dropdown to select runtime */}
+        <select
+          value={runtime}
+          onChange={(e) => setRuntime(e.target.value)}
+          className="px-3 py-1 text-xs bg-neutral-900 text-neutral-100 border border-neutral-700 rounded-lg"
+        >
+          <option value="Node.js">Node.js</option>
+          <option value="Python">Python</option>
+        </select>
+
         <span className={`text-2xs px-2 py-0.5 rounded-full border ml-2 ${status === "running" ? "border-amber-400 text-amber-300" : status === "done" ? "border-emerald-400 text-emerald-300" : status === "error" ? "border-rose-400 text-rose-300" : "border-neutral-700 text-neutral-400"}`}>{status.toUpperCase()}</span>
         <div className="ml-auto flex items-center gap-2">
           {latencyMs !== null && <div className="text-xs text-neutral-400 tabular-nums">{latencyMs} ms</div>}
-          <button onClick={() => copy(code)} className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs cursor-pointer" title="Copy code">Copy code</button>
-          <button onClick={run} className="px-3 py-1.5 rounded-xl bg-neutral-100 text-neutral-900 hover:bg-neutral-300 transition disabled:opacity-50 cursor-pointer" disabled={status === "running"}>{status === "running" ? "Running..." : "Run (Ctrl/⌘+Enter)"}</button>
+          <button onClick={() => copy(code)} className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs" title="Copy code">Copy code</button>
+          <button onClick={run} className="px-3 py-1.5 rounded-xl bg-neutral-100 text-neutral-900 hover:bg-neutral-200 transition disabled:opacity-50" disabled={status === "running"}>{status === "running" ? "Running..." : "Run (Ctrl/⌘+Enter)"}</button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="flex h-[calc(100vh-3rem)]">
-        {/* Left: Quick Files */}
-        <aside className={`w-${isSidebarOpen ? '100' : '40'} border-r border-neutral-800 transition-all duration-200 overflow-hidden flex flex-col`}>
-          <div className="flex items-center justify-between px-3 py-2">
-            <h1>
-              {isSidebarOpen ? "Quick Files" : "Files"}
-            </h1>
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="px-3 py-2 text-neutral-400 text-lg"
-            >
-              {isSidebarOpen ? <HiX /> : <HiMenu />}
-            </button>
-          </div>
+      {/* Main layout: left (Quick Files) | center (code editor) | right (payload editor) */}
+      <div className="h-[calc(100vh-3rem)] flex">
+        {/* Left: Quick Files Sidebar with Hamburger Icon */}
+        <aside className={`w-${isSidebarOpen ? '80' : '0'} border-r border-neutral-800 flex flex-col overflow-hidden transition-width duration-300`}>
+          <button
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="px-3 py-2 text-neutral-400 text-lg"
+          >
+            {isSidebarOpen ? <HiX /> : <HiMenu />} {/* Hamburger icon */}
+          </button>
+          <div className="px-3 py-2 text-sm font-medium text-neutral-300">Quick Files</div>
           <div className="px-3 py-2 space-y-1 overflow-auto">
             {QUICK_FILES.map((file) => (
               <div
@@ -243,8 +271,76 @@ ${safePrettyJSON(response.body)}`;
         </aside>
 
         {/* Vertical resizer */}
-        {/* <div className="w-1.5 cursor-col-resize bg-transparent hover:bg-neutral-800/40" onMouseDown={startDragX} aria-label="Resize Quick Files / Code Editor" /> */}
+        <div className="w-1.5 cursor-col-resize bg-transparent hover:bg-neutral-800/40" onMouseDown={startDragX} aria-label="Resize Quick Files / Code Editor" />
+
+        {/* Center: Code Editor */}
+        <section className="flex-1 h-full flex flex-col border-r border-neutral-800" style={{ width: middleW }}>
+          <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-800">
+            <div>
+              <div className="text-sm font-semibold">{runtime === "Node.js" ? "index.mjs" : "handler.py"}</div>
+              <div className="text-2xs text-neutral-500">{runtime === "Node.js" ? "ESM handler" : "Python handler"}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setCode(runtime === "Node.js" ? DEFAULT_NODEJS_CODE : DEFAULT_PYTHON_CODE)} className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs">Reset</button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0">
+            <Monaco height="100%" language={runtime === "Node.js" ? "javascript" : "python"} theme="vs-dark" value={code} onChange={(v) => setCode(v || "")} options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: "on" }} />
+          </div>
+        </section>
+
+        {/* Vertical resizer */}
+        <div className="w-1.5 cursor-col-resize bg-transparent hover:bg-neutral-800/40" onMouseDown={startDragMiddle} aria-label="Resize code editor / payload editor" />
+
+        {/* Right: Payload Editor */}
+        <section className="flex-1 h-full flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800">
+            <div>
+              <div className="text-sm font-semibold">Test Event</div>
+              <div className="text-xs text-neutral-400">Event Name: <span className="font-mono">event-tes</span></div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => copy(payload)} className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs">Copy</button>
+              <button onClick={() => setPayload(DEFAULT_PAYLOAD)} className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-xs">Reset</button>
+              <button onClick={run} className="px-3 py-1.5 rounded-xl bg-neutral-100 text-neutral-900 hover:bg-white text-xs" disabled={status === "running"}>Invoke</button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0">
+            <Monaco height="100%" language="json" theme="vs-dark" value={payload} onChange={(v) => setPayload(v || "")} options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: "on" }} />
+          </div>
+
+          {/* Horizontal resizer */}
+          <div className="h-1.5 cursor-row-resize bg-transparent hover:bg-neutral-800/40" onMouseDown={startDragY} aria-label="Resize output" />
+
+          {/* Bottom output panel */}
+          <div className="border-t border-neutral-800 bg-neutral-950/60" style={{ height: bottomH }}>
+            <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-800">
+              <div className="flex items-center gap-3">
+                <div className="text-sm font-semibold">Execution Results</div>
+                {latencyMs !== null && <span className="text-xs text-neutral-500 tabular-nums">{latencyMs} ms</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => copy(output)} className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs">Copy output</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 h-[calc(100%-2.5rem)]">
+              <pre className="h-full overflow-auto p-4 text-xs leading-5 bg-neutral-950">{output}</pre>
+              <div className="h-full overflow-auto p-4 text-xs leading-5 bg-neutral-950 border-l border-neutral-800">
+                <div className="text-xs font-semibold mb-2 text-neutral-300">Logs</div>
+                {logs?.length ? (
+                  <ul className="space-y-1">
+                    {logs.map((l, i) => (
+                      <li key={i} className="font-mono text-neutral-400">{l}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-neutral-600">No logs</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
-  )
+  );
 }

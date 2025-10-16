@@ -3,38 +3,38 @@ use tokio::process::Command;
 
 /// Spawn firecracker under a transient systemd scope so it is tracked and killed on stop.
 pub async fn spawn_fc_scope(unit: &str, sock: &str) -> Result<()> {
-    spawn_fc_scope_with_console(unit, sock, None).await
+    spawn_fc_scope_with_screen(unit, sock, None).await
 }
 
-/// Spawn firecracker with optional console socket support
-pub async fn spawn_fc_scope_with_console(unit: &str, sock: &str, console_sock: Option<&str>) -> Result<()> {
+/// Spawn firecracker inside a screen session for console access
+/// The screen session name will be the same as the unit name (e.g., "fc-{vm-id}")
+pub async fn spawn_fc_scope_with_screen(unit: &str, sock: &str, screen_name: Option<&str>) -> Result<()> {
     // Ensure parent dir exists is done by caller.
-    let mut args = vec![
-        "systemd-run",
-        "--scope",
-        "--unit",
-        unit,
-        "--property",
-        "KillMode=mixed",
-        "--property",
-        "TimeoutStopSec=5s",
-        "--",
-        "firecracker",
-        "--api-sock",
-        sock,
-    ];
+    let session_name = screen_name.unwrap_or(unit);
 
-    // Add console socket if provided
-    if let Some(console) = console_sock {
-        args.push("--console-sock");
-        args.push(console);
-    }
-
+    // Use screen to create a detached session with a PTY for interactive console
+    // The screen session allows us to attach to Firecracker's stdin/stdout later
     let status = Command::new("sudo")
-        .args(&args)
+        .args([
+            "systemd-run",
+            "--scope",
+            "--unit",
+            unit,
+            "--property",
+            "KillMode=mixed",
+            "--property",
+            "TimeoutStopSec=5s",
+            "--",
+            "screen",
+            "-dmS",  // Create detached session with name
+            session_name,
+            "firecracker",
+            "--api-sock",
+            sock,
+        ])
         .status()
         .await?;
-    ensure!(status.success(), "systemd-run failed for firecracker");
+    ensure!(status.success(), "systemd-run failed for firecracker with screen");
     Ok(())
 }
 

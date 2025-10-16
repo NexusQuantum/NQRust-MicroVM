@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -13,7 +12,7 @@ use futures::{stream::SplitSink, SinkExt, StreamExt};
 use serde::Serialize;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
+    process::Command,
     sync::Mutex,
 };
 
@@ -21,7 +20,7 @@ use crate::AppState;
 
 #[derive(Serialize)]
 pub struct ConsoleInfo {
-    pub console_sock: String,
+    pub screen_session: String,
 }
 
 pub fn router() -> Router {
@@ -31,45 +30,71 @@ pub fn router() -> Router {
 }
 
 async fn get_console_info(
-    Extension(st): Extension<AppState>,
+    Extension(_st): Extension<AppState>,
     Path(vm_id): Path<String>,
 ) -> Result<Json<ConsoleInfo>, (StatusCode, String)> {
-    let socket_path = PathBuf::from(&st.run_dir)
-        .join("vms")
-        .join(&vm_id)
-        .join("sock/console.sock");
+    // The screen session name is fc-{vm_id}.scope
+    let screen_name = format!("fc-{}.scope", vm_id);
 
-    if !socket_path.exists() {
-        return Err((StatusCode::NOT_FOUND, "console socket not found".into()));
+    // Check if screen session exists
+    let output = Command::new("sudo")
+        .args(["screen", "-ls", &screen_name])
+        .output()
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+
+    if !output.status.success() {
+        return Err((StatusCode::NOT_FOUND, "screen session not found".into()));
     }
 
     Ok(Json(ConsoleInfo {
-        console_sock: socket_path.display().to_string(),
+        screen_session: screen_name,
     }))
 }
 
-pub async fn proxy_console(socket: PathBuf, ws: WebSocket) -> Result<(), (StatusCode, String)> {
-    let stream = UnixStream::connect(&socket)
-        .await
-        .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
+pub async fn proxy_console_screen(screen_name: String, ws: WebSocket) -> Result<(), (StatusCode, String)> {
+    // Spawn screen -x to attach to the session
+    // We use 'script' to allocate a PTY because screen requires a terminal
+    // script -qfc "command" /dev/null runs command with a PTY and outputs to stdout
+    let mut child = Command::new("sudo")
+        .args([
+            "script",
+            "-qfc",
+            &format!("screen -x {}", screen_name),
+            "/dev/null"
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to spawn screen: {}", err)))?;
 
-    let (mut read_socket, mut write_socket) = stream.into_split();
+    let mut stdin = child.stdin.take().ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Failed to get stdin".to_string(),
+    ))?;
+    let mut stdout = child.stdout.take().ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Failed to get stdout".to_string(),
+    ))?;
+
     let (ws_tx, mut ws_rx) = ws.split();
     let ws_tx: Arc<Mutex<SplitSink<WebSocket, Message>>> = Arc::new(Mutex::new(ws_tx));
 
+    // WebSocket -> Screen stdin
     let ws_tx_clone = ws_tx.clone();
-    let ws_to_sock = async {
+    let ws_to_screen = async {
         while let Some(msg) = ws_rx.next().await {
             let msg = msg.map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
             match msg {
                 Message::Text(text) => {
-                    write_socket
+                    stdin
                         .write_all(text.as_bytes())
                         .await
                         .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
                 }
                 Message::Binary(data) => {
-                    write_socket
+                    stdin
                         .write_all(&data)
                         .await
                         .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
@@ -89,11 +114,12 @@ pub async fn proxy_console(socket: PathBuf, ws: WebSocket) -> Result<(), (Status
         Ok::<_, (StatusCode, String)>(())
     };
 
+    // Screen stdout -> WebSocket
     let ws_tx_clone = ws_tx.clone();
-    let sock_to_ws = async {
+    let screen_to_ws = async {
         let mut buf = [0u8; 1024];
         loop {
-            let n = read_socket
+            let n = stdout
                 .read(&mut buf)
                 .await
                 .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
@@ -117,25 +143,26 @@ pub async fn proxy_console(socket: PathBuf, ws: WebSocket) -> Result<(), (Status
     };
 
     tokio::select! {
-        res = ws_to_sock => res?,
-        res = sock_to_ws => res?,
+        res = ws_to_screen => res?,
+        res = screen_to_ws => res?,
     }
+
+    // Kill the screen -x process when done
+    let _ = child.kill().await;
 
     Ok(())
 }
 
 async fn ws_console_proxy(
     ws: WebSocketUpgrade,
-    Extension(st): Extension<AppState>,
+    Extension(_st): Extension<AppState>,
     Path(vm_id): Path<String>,
 ) -> Response {
-    let socket_path = PathBuf::from(&st.run_dir)
-        .join("vms")
-        .join(&vm_id)
-        .join("sock/console.sock");
+    // The screen session name is fc-{vm_id}.scope
+    let screen_name = format!("fc-{}.scope", vm_id);
 
     ws.on_upgrade(move |socket| async move {
-        if let Err(err) = proxy_console(socket_path, socket).await {
+        if let Err(err) = proxy_console_screen(screen_name, socket).await {
             tracing::warn!(error = ?err, "websocket proxy for console failed");
         }
     })

@@ -101,6 +101,22 @@ pub async fn create_and_start(
     } else {
         configure_vm(st, &host.addr, id, &spec, &paths).await?;
     }
+
+    // Inject credentials: Try cloud-init via MMDS first, fallback to rootfs modification
+    let username = "root";
+    let password = format!("vm-{}", &id.to_string()[..8]);
+    match configure_cloud_init_credentials(st, id, username, &password).await {
+        Ok(_) => {
+            info!(vm_id = %id, "cloud-init credentials configured via MMDS");
+        }
+        Err(e) => {
+            warn!(vm_id = %id, error = ?e, "cloud-init injection failed, trying rootfs fallback");
+            if let Err(fallback_err) = inject_credentials_to_rootfs(id, &spec.rootfs_path, username, &password).await {
+                warn!(vm_id = %id, error = ?fallback_err, "rootfs credential injection also failed");
+            }
+        }
+    }
+
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM start");
     } else {
@@ -1000,6 +1016,208 @@ pub async fn load_snapshot(
     Ok(())
 }
 
+/// Configure cloud-init credentials via MMDS before VM starts
+/// This injects a cloud-init user-data payload with username/password into the VM's metadata service
+#[cfg(not(test))]
+async fn configure_cloud_init_credentials(
+    st: &AppState,
+    vm_id: Uuid,
+    username: &str,
+    password: &str,
+) -> Result<()> {
+    use base64::{Engine as _, engine::general_purpose};
+
+    // Generate cloud-init YAML with user credentials
+    let cloud_init_yaml = format!(
+        r#"#cloud-config
+users:
+  - name: {username}
+    plain_text_passwd: {password}
+    lock_passwd: false
+    sudo: ALL=(ALL) NOPASSWD:ALL
+chpasswd:
+  expire: false
+"#,
+        username = username,
+        password = password
+    );
+
+    // Base64 encode the user-data (cloud-init standard)
+    let user_data_b64 = general_purpose::STANDARD.encode(cloud_init_yaml.as_bytes());
+
+    info!(vm_id = %vm_id, username = %username, "configuring cloud-init credentials via MMDS");
+
+    // Step 1: Configure MMDS for eth0 interface (required before injecting data)
+    put_mmds_config(
+        st,
+        vm_id,
+        MmdsConfigReq {
+            version: Some("V2".to_string()),
+            network_interfaces: Some(vec!["eth0".to_string()]),
+            ipv4_address: None,
+            imds_compat: None,
+        },
+    )
+    .await
+    .context("failed to configure MMDS")?;
+
+    // Step 2: Inject cloud-init user-data into MMDS
+    put_mmds(
+        st,
+        vm_id,
+        MmdsDataReq {
+            data: json!({
+                "latest": {
+                    "user-data": user_data_b64
+                }
+            }),
+        },
+    )
+    .await
+    .context("failed to inject cloud-init user-data")?;
+
+    info!(vm_id = %vm_id, "cloud-init credentials configured successfully");
+    Ok(())
+}
+
+#[cfg(test)]
+async fn configure_cloud_init_credentials(
+    _: &AppState,
+    _: Uuid,
+    _: &str,
+    _: &str,
+) -> Result<()> {
+    Ok(())
+}
+
+/// Fallback: Inject credentials directly into rootfs by mounting and modifying /etc/shadow
+/// This is used when cloud-init is not available in the guest OS
+#[cfg(not(test))]
+async fn inject_credentials_to_rootfs(
+    vm_id: Uuid,
+    rootfs_path: &str,
+    username: &str,
+    password: &str,
+) -> Result<()> {
+    use tokio::process::Command;
+    use std::path::PathBuf;
+
+    info!(vm_id = %vm_id, rootfs = %rootfs_path, username = %username,
+          "attempting rootfs credential injection (cloud-init fallback)");
+
+    // Create temporary mount directory
+    let mount_dir = format!("/tmp/nexus-mount-{}", vm_id);
+    let mount_path = PathBuf::from(&mount_dir);
+
+    // Cleanup function to ensure unmount even on error
+    let cleanup = |mount_dir: String| async move {
+        let _ = Command::new("sudo")
+            .args(["umount", &mount_dir])
+            .status()
+            .await;
+        let _ = tokio::fs::remove_dir(&mount_dir).await;
+    };
+
+    // Create mount directory
+    tokio::fs::create_dir_all(&mount_path).await
+        .context("failed to create mount directory")?;
+
+    // Mount the rootfs
+    let mount_status = Command::new("sudo")
+        .args(["mount", "-o", "loop", rootfs_path, &mount_dir])
+        .status()
+        .await
+        .context("failed to execute mount command")?;
+
+    if !mount_status.success() {
+        cleanup(mount_dir.clone()).await;
+        bail!("failed to mount rootfs at {}", rootfs_path);
+    }
+
+    // Generate password hash using openssl (SHA-512)
+    let hash_output = Command::new("openssl")
+        .args(["passwd", "-6", password])
+        .output()
+        .await
+        .context("failed to generate password hash")?;
+
+    if !hash_output.status.success() {
+        cleanup(mount_dir.clone()).await;
+        bail!("openssl passwd failed");
+    }
+
+    let password_hash = String::from_utf8_lossy(&hash_output.stdout).trim().to_string();
+
+    // Read current /etc/shadow
+    let shadow_path = mount_path.join("etc/shadow");
+    let shadow_contents = tokio::fs::read_to_string(&shadow_path)
+        .await
+        .context("failed to read /etc/shadow from rootfs")?;
+
+    // Update or add the user line in shadow file
+    let mut new_shadow = String::new();
+    let mut user_found = false;
+
+    for line in shadow_contents.lines() {
+        if line.starts_with(&format!("{}:", username)) {
+            // Replace existing user's password
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() >= 9 {
+                new_shadow.push_str(&format!(
+                    "{}:{}:{}:{}:{}:{}:{}:{}:{}\n",
+                    username, password_hash, parts[2], parts[3], parts[4],
+                    parts[5], parts[6], parts[7], parts[8]
+                ));
+                user_found = true;
+            } else {
+                new_shadow.push_str(line);
+                new_shadow.push('\n');
+            }
+        } else {
+            new_shadow.push_str(line);
+            new_shadow.push('\n');
+        }
+    }
+
+    // If user not found, add new entry (for root: no expiry, no aging)
+    if !user_found {
+        new_shadow.push_str(&format!("{}:{}:19000:0:99999:7:::\n", username, password_hash));
+    }
+
+    // Write updated shadow file
+    tokio::fs::write(&shadow_path, new_shadow)
+        .await
+        .context("failed to write updated /etc/shadow")?;
+
+    // Set proper permissions on shadow file (0640)
+    let chmod_status = Command::new("sudo")
+        .args(["chmod", "640", shadow_path.to_str().unwrap()])
+        .status()
+        .await
+        .context("failed to chmod /etc/shadow")?;
+
+    if !chmod_status.success() {
+        cleanup(mount_dir.clone()).await;
+        bail!("failed to set permissions on /etc/shadow");
+    }
+
+    // Unmount and cleanup
+    cleanup(mount_dir).await;
+
+    info!(vm_id = %vm_id, "successfully injected credentials into rootfs");
+    Ok(())
+}
+
+#[cfg(test)]
+async fn inject_credentials_to_rootfs(
+    _: Uuid,
+    _: &str,
+    _: &str,
+    _: &str,
+) -> Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1312,7 +1530,7 @@ async fn create_tap(_: &str, _: Uuid, _: &str) -> Result<()> {
 }
 
 #[cfg(not(test))]
-async fn spawn_firecracker(st: &AppState, host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
+async fn spawn_firecracker(_st: &AppState, host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
     let http = Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
