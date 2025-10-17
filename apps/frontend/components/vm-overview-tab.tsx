@@ -8,19 +8,26 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Cpu, HardDrive, Zap, Tag, Server, Play, Square, Pause, Terminal, Download } from "lucide-react"
 import { formatBytes } from "@/lib/utils"
-// Actions not supported in new backend yet
+import { useVmStatePatch, type VmStateAction } from "@/lib/queries"
 
 interface VMOverviewTabProps {
   vm: VM | Vm // Support both old and new VM types
 }
 
 export function VMOverviewTab({ vm }: VMOverviewTabProps) {
-  // Actions not implemented in new backend yet
-  const handleAction = (actionType: string) => {
-    console.log(`Action ${actionType} not implemented in new backend`)
-  }
+  const facadeActions = useVmStatePatch()
 
-  const canStop = vm.state === "running"
+  const normalizedState = typeof vm.state === "string" ? vm.state.toLowerCase() : vm.state
+  const canStart = normalizedState === "not_started" || normalizedState === "stopped"
+  const canStop = normalizedState === "running"
+  const canPause = normalizedState === "running"
+  const canResume = normalizedState === "paused"
+  const canSendCtrlAltDel = normalizedState === "running"
+  const canFlushMetrics = normalizedState === "running"
+
+  const triggerAction = (action: VmStateAction) => {
+    facadeActions.mutate({ id: vm.id, action })
+  }
 
   // Adapt to new backend structure - VM data is flatter
   const newVm = vm as Vm
@@ -134,38 +141,74 @@ export function VMOverviewTab({ vm }: VMOverviewTabProps) {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-2">
-            {canStop && (
+            {canStart && (
               <Button
                 variant="outline"
-                onClick={() => handleAction("SendCtrlAlt+Del")}
-                disabled={false}
+                onClick={() => triggerAction("start")}
+                disabled={facadeActions.isPending}
                 className="w-full justify-start"
               >
-                <Square className="h-4 w-4" />
-                Stop VM (Not Implemented)
+                <Play className="h-4 w-4" />
+                Start VM
               </Button>
             )}
 
-            <Separator />
+            {canPause && (
+              <Button
+                variant="outline"
+                onClick={() => triggerAction("pause")}
+                disabled={facadeActions.isPending}
+                className="w-full justify-start"
+              >
+                <Pause className="h-4 w-4" />
+                Pause VM
+              </Button>
+            )}
+
+            {canResume && (
+              <Button
+                variant="outline"
+                onClick={() => triggerAction("resume")}
+                disabled={facadeActions.isPending}
+                className="w-full justify-start"
+              >
+                <Play className="h-4 w-4" />
+                Resume VM
+              </Button>
+            )}
+
+            {canStop && (
+              <Button
+                variant="outline"
+                onClick={() => triggerAction("stop")}
+                disabled={facadeActions.isPending}
+                className="w-full justify-start"
+              >
+                <Square className="h-4 w-4" />
+                Stop VM
+              </Button>
+            )}
+
+            {(canStart || canPause || canResume || canStop) && <Separator />}
 
             <Button
               variant="outline"
-              onClick={() => handleAction("SendCtrlAltDel")}
-              disabled={vm.state !== "running"}
+              onClick={() => triggerAction("ctrl_alt_del")}
+              disabled={facadeActions.isPending || !canSendCtrlAltDel}
               className="w-full justify-start"
             >
               <Terminal className="h-4 w-4" />
-              Send Ctrl+Alt+Del (Not Implemented)
+              Send Ctrl+Alt+Del
             </Button>
 
             <Button
               variant="outline"
-              onClick={() => handleAction("FlushMetrics")}
-              disabled={false}
+              onClick={() => triggerAction("flush_metrics")}
+              disabled={facadeActions.isPending || !canFlushMetrics}
               className="w-full justify-start"
             >
               <Download className="h-4 w-4" />
-              Flush Metrics (Not Implemented)
+              Flush Metrics
             </Button>
           </div>
         </CardContent>

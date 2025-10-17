@@ -321,7 +321,7 @@ ${safePrettyJSON(response.body)}`;
                 )}
               </div>
             </div>
-          </div>
+          </div>idle
         </section>
       </div>
     </div>

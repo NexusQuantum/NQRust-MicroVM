@@ -435,11 +435,13 @@ export function useActionsPut() {
 }
 
 // Facade VM State Patch
+export type VmStateAction = 'start'|'stop'|'pause'|'resume'|'flush_metrics'|'ctrl_alt_del'
+
 export function useVmStatePatch() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ id, action }: { id: string; action: 'start'|'stop'|'pause'|'resume' }) =>
+    mutationFn: ({ id, action }: { id: string; action: VmStateAction }) =>
       facadeApi.updateVMState(id, action),
     onSuccess: (_, { id, action }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) })
@@ -456,6 +458,12 @@ export function useVmStatePatch() {
           break
         case 'stop':
           toast.success('Shutdown signal sent')
+          break
+        case 'flush_metrics':
+          toast.success('Metrics flush requested')
+          break
+        case 'ctrl_alt_del':
+          toast.success('Ctrl+Alt+Del signal sent')
           break
       }
     },

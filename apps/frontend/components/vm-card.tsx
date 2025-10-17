@@ -70,6 +70,7 @@ export function VMCard({ vm, onSelect, isSelected }: VMCardProps) {
   const canStart = normalizedState === "stopped"
   const canStop = normalizedState === "running"
   const canPause = normalizedState === "running"
+  const canResume = normalizedState === "paused"
 
   return (
     <Card className={cn(

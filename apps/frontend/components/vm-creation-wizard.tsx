@@ -23,6 +23,10 @@ const vmCreationSchema = z.object({
   environment: z.enum(["development", "staging", "production"]),
   owner: z.string().min(1, "Owner is required").default("developer"),
 
+  // Credentials
+  username: z.string().min(1, "Username is required").max(32, "Username too long").default("root"),
+  password: z.string().min(1, "Password is required").max(128, "Password too long"),
+
   // Machine config
   vcpu_count: z.number().min(1, "Minimum 1 vCPU").max(32, "Maximum 32 vCPUs"),
   mem_size_mib: z
@@ -103,6 +107,8 @@ export function VMCreationWizard({ onComplete, onCancel }: VMCreationWizardProps
       owner: "developer",
       environment: "development",
       description: "Test VM created from frontend",
+      username: "root",
+      password: "changeme",
       vcpu_count: 1,
       mem_size_mib: 512,
       smt: false,
@@ -189,6 +195,8 @@ export function VMCreationWizard({ onComplete, onCancel }: VMCreationWizardProps
     description: z.string().max(200, "Description too long").optional(),
     environment: z.enum(["development", "staging", "production"]),
     owner: z.string().min(1, "Owner is required"),
+    username: z.string().min(1, "Username is required").max(32, "Username too long"),
+    password: z.string().min(1, "Password is required").max(128, "Password too long"),
     vcpu_count: z.number().min(1, "Minimum 1 vCPU").max(32, "Maximum 32 vCPUs"),
     mem_size_mib: z.number().min(128, "Minimum 128 MiB").max(32768, "Maximum 32768 MiB"),
     cpu_template: z.enum(["C3", "T2", "None"]).optional(),
@@ -212,6 +220,8 @@ export function VMCreationWizard({ onComplete, onCancel }: VMCreationWizardProps
         owner: stepSchemaFields.owner,
         environment: stepSchemaFields.environment,
         description: stepSchemaFields.description,
+        username: stepSchemaFields.username,
+        password: stepSchemaFields.password,
       }),
       z.object({
         vcpu_count: stepSchemaFields.vcpu_count,
@@ -262,6 +272,9 @@ export function VMCreationWizard({ onComplete, onCancel }: VMCreationWizardProps
         // Fall back to paths if no image IDs are selected
         kernel_path: data.kernel_image_id ? undefined : data.kernel_image_path,
         rootfs_path: data.rootfs_image_id ? undefined : data.root_drive_path,
+        // Add credentials
+        username: data.username,
+        password: data.password,
       }
 
       console.log('Creating VM with:', vmReq) // Debug log
@@ -452,6 +465,29 @@ export function VMCreationWizard({ onComplete, onCancel }: VMCreationWizardProps
                   <Label htmlFor="description" className="mb-1 inline-block text-gray-500">Description (Optional)</Label>
                   <Textarea id="description" {...register("description")} placeholder="Describe your VM..." rows={3} className="bg-muted/40 focus:bg-background" />
                   {errors.description && <p className="text-sm text-red-600 mt-1">{errors.description.message}</p>}
+                </div>
+
+                <div className="md:col-span-2">
+                  <Separator className="my-4" />
+                  <h4 className="text-sm font-medium mb-3">VM Credentials</h4>
+                </div>
+
+                <div>
+                  <Label htmlFor="username" className="mb-1 inline-block">
+                    Username<span className="text-red-600 ml-0.5" aria-hidden>*</span>
+                  </Label>
+                  <Input id="username" aria-required="true" aria-invalid={!!errors.username} {...register("username")} placeholder="root" className="bg-muted/40 focus:bg-background" />
+                  <p className="text-xs text-muted-foreground mt-1">Username for SSH/console access</p>
+                  {errors.username && <p className="text-sm text-red-600 mt-1">{errors.username.message}</p>}
+                </div>
+
+                <div>
+                  <Label htmlFor="password" className="mb-1 inline-block">
+                    Password<span className="text-red-600 ml-0.5" aria-hidden>*</span>
+                  </Label>
+                  <Input id="password" type="password" aria-required="true" aria-invalid={!!errors.password} {...register("password")} placeholder="Enter password" className="bg-muted/40 focus:bg-background" />
+                  <p className="text-xs text-muted-foreground mt-1">Password will be injected into VM</p>
+                  {errors.password && <p className="text-sm text-red-600 mt-1">{errors.password.message}</p>}
                 </div>
               </div>
             )}

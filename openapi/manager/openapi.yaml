@@ -1164,6 +1164,9 @@ components:
           minimum: 0
         name:
           type: string
+        password:
+          type: string
+          nullable: true
         rootfs_image_id:
           type: string
           format: uuid
@@ -1174,6 +1177,9 @@ components:
         source_snapshot_id:
           type: string
           format: uuid
+          nullable: true
+        username:
+          type: string
           nullable: true
         vcpu:
           type: integer

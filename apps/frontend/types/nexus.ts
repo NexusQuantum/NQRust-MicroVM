@@ -46,6 +46,8 @@ export interface CreateVmReq {
   kernel_path?: string
   rootfs_path?: string
   source_snapshot_id?: string
+  username?: string
+  password?: string
 }
 
 export interface TemplateSpec {

@@ -92,7 +92,18 @@ pub async fn create_and_start(
         .context("no healthy hosts available")?;
     let network = select_network(&host.capabilities_json)?;
     let paths = VmPaths::new(id, &st.storage).await?;
+
+    // Extract credentials before moving req into resolve_vm_spec
+    let username = req.username.clone().unwrap_or_else(|| "root".to_string());
+    let password = req.password.clone()
+        .unwrap_or_else(|| format!("vm-{}", &id.to_string()[..8]));
+
     let spec = resolve_vm_spec(st, req, id).await?;
+
+    // Inject credentials into rootfs BEFORE VM starts (while rootfs is not in use)
+    if let Err(e) = inject_credentials_to_rootfs(id, &spec.rootfs_path, &username, &password).await {
+        warn!(vm_id = %id, error = ?e, "rootfs credential injection failed");
+    }
 
     create_tap(&host.addr, id, &network.bridge).await?;
     spawn_firecracker(st, &host.addr, id, &paths).await?;
@@ -100,21 +111,6 @@ pub async fn create_and_start(
         eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
     } else {
         configure_vm(st, &host.addr, id, &spec, &paths).await?;
-    }
-
-    // Inject credentials: Try cloud-init via MMDS first, fallback to rootfs modification
-    let username = "root";
-    let password = format!("vm-{}", &id.to_string()[..8]);
-    match configure_cloud_init_credentials(st, id, username, &password).await {
-        Ok(_) => {
-            info!(vm_id = %id, "cloud-init credentials configured via MMDS");
-        }
-        Err(e) => {
-            warn!(vm_id = %id, error = ?e, "cloud-init injection failed, trying rootfs fallback");
-            if let Err(fallback_err) = inject_credentials_to_rootfs(id, &spec.rootfs_path, username, &password).await {
-                warn!(vm_id = %id, error = ?fallback_err, "rootfs credential injection also failed");
-            }
-        }
     }
 
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
@@ -148,10 +144,8 @@ pub async fn create_and_start(
     )
     .await?;
 
-    // Auto-generate shell credentials for the VM
-    let username = "root";
-    let password = format!("vm-{}", &id.to_string()[..8]);
-    if let Err(e) = st.shell_repo.upsert_credentials(id, username, &password).await {
+    // Store shell credentials for the VM (use the same credentials that were injected)
+    if let Err(e) = st.shell_repo.upsert_credentials(id, &username, &password).await {
         warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
     } else {
         info!(vm_id = %id, username = %username, "created shell credentials for VM");
@@ -1135,11 +1129,27 @@ async fn inject_credentials_to_rootfs(
     }
 
     // Generate password hash using openssl (SHA-512)
-    let hash_output = Command::new("openssl")
-        .args(["passwd", "-6", password])
-        .output()
-        .await
-        .context("failed to generate password hash")?;
+    // Use -stdin to avoid interactive prompts
+    let mut child = Command::new("openssl")
+        .args(["passwd", "-6", "-stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to spawn openssl")?;
+
+    // Write password to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(password.as_bytes()).await
+            .context("failed to write password to openssl stdin")?;
+        stdin.write_all(b"\n").await
+            .context("failed to write newline to openssl stdin")?;
+        drop(stdin); // Close stdin to signal EOF
+    }
+
+    let hash_output = child.wait_with_output().await
+        .context("failed to wait for openssl")?;
 
     if !hash_output.status.success() {
         cleanup(mount_dir.clone()).await;
@@ -1148,11 +1158,20 @@ async fn inject_credentials_to_rootfs(
 
     let password_hash = String::from_utf8_lossy(&hash_output.stdout).trim().to_string();
 
-    // Read current /etc/shadow
+    // Read current /etc/shadow using sudo (requires elevated permissions)
     let shadow_path = mount_path.join("etc/shadow");
-    let shadow_contents = tokio::fs::read_to_string(&shadow_path)
+    let shadow_read = Command::new("sudo")
+        .args(["cat", shadow_path.to_str().unwrap()])
+        .output()
         .await
         .context("failed to read /etc/shadow from rootfs")?;
+
+    if !shadow_read.status.success() {
+        cleanup(mount_dir.clone()).await;
+        bail!("failed to read /etc/shadow with sudo");
+    }
+
+    let shadow_contents = String::from_utf8_lossy(&shadow_read.stdout).to_string();
 
     // Update or add the user line in shadow file
     let mut new_shadow = String::new();
@@ -1184,10 +1203,29 @@ async fn inject_credentials_to_rootfs(
         new_shadow.push_str(&format!("{}:{}:19000:0:99999:7:::\n", username, password_hash));
     }
 
-    // Write updated shadow file
-    tokio::fs::write(&shadow_path, new_shadow)
-        .await
-        .context("failed to write updated /etc/shadow")?;
+    // Write updated shadow file using sudo via tee
+    let mut write_child = Command::new("sudo")
+        .args(["tee", shadow_path.to_str().unwrap()])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to spawn sudo tee")?;
+
+    if let Some(mut stdin) = write_child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(new_shadow.as_bytes()).await
+            .context("failed to write to tee stdin")?;
+        drop(stdin);
+    }
+
+    let write_output = write_child.wait_with_output().await
+        .context("failed to wait for tee")?;
+
+    if !write_output.status.success() {
+        cleanup(mount_dir.clone()).await;
+        bail!("failed to write /etc/shadow with sudo tee");
+    }
 
     // Set proper permissions on shadow file (0640)
     let chmod_status = Command::new("sudo")

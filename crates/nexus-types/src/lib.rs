@@ -64,6 +64,10 @@ pub struct CreateVmReq {
     pub rootfs_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_snapshot_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -91,6 +95,8 @@ impl TemplateSpec {
             kernel_path: self.kernel_path,
             rootfs_path: self.rootfs_path,
             source_snapshot_id: None,
+            username: None,
+            password: None,
         }
     }
 }
