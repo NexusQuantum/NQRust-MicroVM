@@ -257,12 +257,28 @@ async fn stream_metrics(
                         // Read one line from the FIFO (Firecracker writes one JSON object per flush)
                         match reader.read_line(&mut line).await {
                             Ok(n) if n > 0 => {
+                                // Debug: log raw metrics
+                                tracing::info!(vm_id = %vm_id, raw_metrics = %line.chars().take(500).collect::<String>(), "Received Firecracker metrics");
+
                                 // Parse Firecracker metrics and convert to our format
                                 if let Ok(fc_metrics) = serde_json::from_str::<serde_json::Value>(&line) {
+                                    // Fetch process stats from agent for real CPU/memory metrics
+                                    let (cpu_percent, memory_percent) = match super::service::get_process_stats(&st, vm_id).await {
+                                        Ok(stats) => (stats.cpu_percent, stats.memory_percent),
+                                        Err(e) => {
+                                            tracing::debug!(vm_id = %vm_id, "Failed to get process stats: {}", e);
+                                            (0.0, 0.0)
+                                        }
+                                    };
+
                                     let simplified = simplify_firecracker_metrics(
                                         &fc_metrics,
                                         last_metrics.as_ref(),
+                                        cpu_percent,
+                                        memory_percent,
                                     );
+
+                                    tracing::info!(vm_id = %vm_id, simplified = ?simplified, "Simplified metrics");
 
                                     if let Ok(json) = serde_json::to_string(&simplified) {
                                         if sender.send(Message::Text(json)).await.is_err() {
@@ -271,6 +287,8 @@ async fn stream_metrics(
                                     }
 
                                     last_metrics = Some(fc_metrics);
+                                } else {
+                                    tracing::warn!(vm_id = %vm_id, "Failed to parse Firecracker metrics JSON");
                                 }
                             }
                             _ => {
@@ -293,86 +311,65 @@ async fn stream_metrics(
 fn simplify_firecracker_metrics(
     fc_metrics: &serde_json::Value,
     _last_metrics: Option<&serde_json::Value>,
+    cpu_percent: f64,
+    memory_percent: f64,
 ) -> serde_json::Value {
     use serde_json::json;
 
-    // Extract relevant metrics from Firecracker's format
-    let cpu_usage = fc_metrics
-        .get("vcpu")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| {
-            // Sum up all vCPU usage
-            let mut total = 0.0;
-            let mut count = 0.0;
-            for (key, value) in obj {
-                if key.starts_with("vcpu_") {
-                    if let Some(usage) = value.get("cpu_usage_percent").and_then(|v| v.as_f64()) {
-                        total += usage;
-                        count += 1.0;
+    let obj = fc_metrics.as_object();
+
+    // Extract network metrics - keys are like "net_eth0", "net_eth1", etc.
+    // Note: Firecracker uses rx_bytes_count and tx_bytes_count
+    // Firecracker resets counters after each flush, so values represent bytes since last flush
+    let (network_rx, network_tx) = obj
+        .map(|o| {
+            let mut rx_total = 0u64;
+            let mut tx_total = 0u64;
+
+            for (key, value) in o {
+                if key.starts_with("net_") {
+                    if let Some(net_stats) = value.as_object() {
+                        let rx = net_stats.get("rx_bytes_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let tx = net_stats.get("tx_bytes_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        tracing::debug!("Found network interface {}: rx={}, tx={}", key, rx, tx);
+                        rx_total += rx;
+                        tx_total += tx;
                     }
                 }
             }
-            if count > 0.0 {
-                Some(total / count)
-            } else {
-                None
+
+            tracing::debug!("Network totals: rx={}, tx={}", rx_total, tx_total);
+            (rx_total, tx_total)
+        })
+        .unwrap_or((0, 0));
+
+    // Extract block device metrics - keys are like "block_rootfs", "block_sda", etc.
+    // Firecracker resets counters after each flush, so values represent bytes since last flush
+    let (disk_read, disk_write) = obj
+        .map(|o| {
+            let mut read_total = 0u64;
+            let mut write_total = 0u64;
+
+            for (key, value) in o {
+                if key.starts_with("block_") {
+                    if let Some(block_stats) = value.as_object() {
+                        let rd = block_stats.get("read_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let wr = block_stats.get("write_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                        tracing::debug!("Found block device {}: read={}, write={}", key, rd, wr);
+                        read_total += rd;
+                        write_total += wr;
+                    }
+                }
             }
-        })
-        .unwrap_or(0.0);
 
-    let _memory_used = fc_metrics
-        .get("vmm")
-        .and_then(|v| v.get("memory_used_bytes"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    let network_rx = fc_metrics
-        .get("net")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| {
-            obj.values()
-                .filter_map(|v| v.get("rx_bytes").and_then(|b| b.as_u64()))
-                .sum::<u64>()
-                .into()
+            tracing::debug!("Disk totals: read={}, write={}", read_total, write_total);
+            (read_total, write_total)
         })
-        .unwrap_or(0);
-
-    let network_tx = fc_metrics
-        .get("net")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| {
-            obj.values()
-                .filter_map(|v| v.get("tx_bytes").and_then(|b| b.as_u64()))
-                .sum::<u64>()
-                .into()
-        })
-        .unwrap_or(0);
-
-    let disk_read = fc_metrics
-        .get("block")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| {
-            obj.values()
-                .filter_map(|v| v.get("read_bytes").and_then(|b| b.as_u64()))
-                .sum::<u64>()
-                .into()
-        })
-        .unwrap_or(0);
-
-    let disk_write = fc_metrics
-        .get("block")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| {
-            obj.values()
-                .filter_map(|v| v.get("write_bytes").and_then(|b| b.as_u64()))
-                .sum::<u64>()
-                .into()
-        })
-        .unwrap_or(0);
+        .unwrap_or((0, 0));
 
     json!({
-        "cpu_usage_percent": cpu_usage,
-        "memory_usage_percent": 0.0,  // TODO: Calculate based on allocated memory
+        "cpu_usage_percent": cpu_percent,  // From host-side process monitoring
+        "memory_usage_percent": memory_percent,  // From host-side process monitoring
         "network_in_bytes": network_rx,
         "network_out_bytes": network_tx,
         "disk_read_bytes": disk_read,
@@ -1136,6 +1133,36 @@ impl From<super::repo::VmRow> for Vm {
             updated_at: row.updated_at,
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateGuestIpReq {
+    pub guest_ip: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/guest-ip",
+    params(VmPathParams),
+    request_body = UpdateGuestIpReq,
+    responses(
+        (status = 200, description = "Guest IP updated", body = OkResponse),
+        (status = 404, description = "VM not found"),
+        (status = 500, description = "Failed to update guest IP"),
+    ),
+    tag = "VMs"
+)]
+pub async fn update_guest_ip(
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+    Json(req): Json<UpdateGuestIpReq>,
+) -> Result<Json<OkResponse>, axum::http::StatusCode> {
+    super::repo::update_guest_ip(&st.db, id, Some(&req.guest_ip))
+        .await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    tracing::info!(vm_id = %id, guest_ip = %req.guest_ip, "Updated VM guest IP");
+    Ok(Json(OkResponse::default()))
 }
 
 #[cfg(test)]

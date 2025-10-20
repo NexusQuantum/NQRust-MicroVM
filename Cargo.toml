@@ -1,6 +1,6 @@
 [workspace]
 members = [
-"apps/agent",
+"apps/agent", "apps/guest-agent",
 "apps/manager",
 "crates/nexus-types",
 ]

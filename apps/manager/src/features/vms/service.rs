@@ -139,6 +139,7 @@ pub async fn create_and_start(
             kernel_path: spec.kernel_path.clone(),
             rootfs_path: spec.rootfs_path.clone(),
             source_snapshot_id: None,
+            guest_ip: None, // Will be set when guest agent reports
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -243,6 +244,7 @@ pub async fn create_from_snapshot(
             kernel_path: spec.kernel_path.clone(),
             rootfs_path: spec.rootfs_path.clone(),
             source_snapshot_id: Some(source_snapshot_id),
+            guest_ip: None, // Will be set when guest agent reports
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -409,6 +411,68 @@ pub async fn flush_vm_metrics(st: &AppState, id: Uuid) -> Result<()> {
     response.error_for_status()?;
 
     Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProcessStats {
+    pub pid: u32,
+    pub cpu_percent: f64,
+    pub memory_rss_kb: u64,
+    pub memory_percent: f64,
+}
+
+#[derive(serde::Deserialize)]
+struct GuestMetrics {
+    cpu_usage_percent: f64,
+    memory_usage_percent: f64,
+    memory_used_kb: u64,
+    memory_total_kb: u64,
+}
+
+pub async fn get_process_stats(st: &AppState, id: Uuid) -> Result<ProcessStats> {
+    let vm = super::repo::get(&st.db, id).await?;
+
+    // Try to get metrics from guest agent first (if guest_ip is set)
+    if let Some(guest_ip) = &vm.guest_ip {
+        if let Ok(guest_metrics) = get_guest_metrics(guest_ip).await {
+            // Convert guest metrics to ProcessStats format
+            return Ok(ProcessStats {
+                pid: 0, // Not applicable for guest metrics
+                cpu_percent: guest_metrics.cpu_usage_percent,
+                memory_rss_kb: guest_metrics.memory_used_kb,
+                memory_percent: guest_metrics.memory_usage_percent,
+            });
+        }
+        // If guest agent fails, fall through to host-side metrics
+        tracing::debug!(vm_id = %id, guest_ip = %guest_ip, "Guest agent unavailable, falling back to host-side metrics");
+    }
+
+    // Fallback: Get host-side process stats via agent
+    let url = format!("{}/agent/v1/vms/{}/metrics/process-stats", vm.host_addr, vm.id);
+
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({
+            "sock_path": vm.api_sock
+        }))
+        .send()
+        .await?;
+
+    let stats = response.error_for_status()?.json::<ProcessStats>().await?;
+
+    Ok(stats)
+}
+
+async fn get_guest_metrics(guest_ip: &str) -> Result<GuestMetrics> {
+    let url = format!("http://{}:8080/metrics", guest_ip);
+    let response = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await?;
+
+    let metrics = response.error_for_status()?.json::<GuestMetrics>().await?;
+    Ok(metrics)
 }
 
 pub async fn send_ctrl_alt_del(st: &AppState, id: Uuid) -> Result<()> {
