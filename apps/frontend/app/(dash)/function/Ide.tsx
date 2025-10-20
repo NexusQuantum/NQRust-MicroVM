@@ -2,9 +2,17 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
-import { HiMenu, HiX } from "react-icons/hi"; // Importing hamburger and close icons
+import { HiMenu, HiX } from "react-icons/hi";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/dropdown-menu.tsx";
+import { Button } from "../../../components/ui/button.tsx";
 
-// Load Monaco in the browser only
+// Load Monaco only in browser
 const Monaco = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
 declare global {
@@ -15,7 +23,8 @@ declare global {
   }
 }
 
-const DEFAULT_CODE = `// index.mjs  (Node.js 20.x / ESM)
+/** ---- Default codes ---- */
+const DEFAULT_CODE_NODE = `// index.mjs  (Node.js 20.x / ESM)
 export const handler = async (event) => {
   const a = Number(event?.key1);
   const b = Number(event?.key2);
@@ -33,19 +42,51 @@ export const handler = async (event) => {
   };
 };`;
 
+const DEFAULT_CODE_PY = `# index.py  (Python 3.11)
+def handler(event):
+    try:
+        a = float(event.get("key1"))
+        b = float(event.get("key2"))
+    except Exception:
+        return {
+            "statusCode": 400,
+            "headers": {"content-type": "application/json"},
+            "body": '{"error":"key1 and key2 must be numbers"}',
+        }
+
+    return {
+        "statusCode": 200,
+        "headers": {"content-type": "application/json"},
+        "body": '{"result": %s}' % (a + b),
+    }`;
+
 const DEFAULT_PAYLOAD = `{
-  \"key1\": 10,
-  \"key2\": 5
+  "key1": 10,
+  "key2": 5
 }`;
 
-const QUICK_FILES = [
-  { name: "index.mjs", content: DEFAULT_CODE },
-  { name: "event.json", content: DEFAULT_PAYLOAD },
-  { name: "utils.js", content: "// Utility functions\nexport const add = (a, b) => a + b;" }
-];
+/** Quick files per runtime */
+const getQuickFiles = (runtime: "node" | "python") => {
+  if (runtime === "node") {
+    return [
+      { name: "index.mjs", content: DEFAULT_CODE_NODE },
+      { name: "event.json", content: DEFAULT_PAYLOAD },
+      { name: "utils.js", content: "// Utility functions\nexport const add = (a, b) => a + b;" },
+    ];
+  }
+  return [
+    { name: "index.py", content: DEFAULT_CODE_PY },
+    { name: "event.json", content: DEFAULT_PAYLOAD },
+    { name: "utils.py", content: "# Utility functions\nadd = lambda a, b: a + b" },
+  ];
+};
 
 export default function LambdaPlayground() {
-  const [code, setCode] = React.useState<string>(DEFAULT_CODE);
+  /** runtime state */
+  const [runtime, setRuntime] = React.useState<"node" | "python">("node");
+
+  /** code + io state */
+  const [code, setCode] = React.useState<string>(DEFAULT_CODE_NODE);
   const [payload, setPayload] = React.useState<string>(DEFAULT_PAYLOAD);
   const [output, setOutput] = React.useState<string>("Ready. Press Run or ⌘/Ctrl+Enter.");
   const [logs, setLogs] = React.useState<string[]>([]);
@@ -53,11 +94,10 @@ export default function LambdaPlayground() {
   const [latencyMs, setLatencyMs] = React.useState<number | null>(null);
 
   // Layout sizes (resizable)
-  const [leftW, setLeftW] = React.useState(240); // px (Quick Files)
-  const [middleW, setMiddleW] = React.useState(720); // px (code editor)
-  const [bottomH, setBottomH] = React.useState(220); // px (output)
-
-  const [isSidebarOpen, setIsSidebarOpen] = React.useState(true); // For toggling Quick Files sidebar
+  const [leftW, setLeftW] = React.useState(240);   // Quick Files
+  const [middleW, setMiddleW] = React.useState(720); // Code editor
+  const [bottomH, setBottomH] = React.useState(220); // Output
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
 
   const dragXRef = React.useRef<{ startX: number; startW: number } | null>(null);
   const dragMiddleRef = React.useRef<{ startX: number; startW: number } | null>(null);
@@ -81,7 +121,6 @@ export default function LambdaPlayground() {
         setBottomH(next);
       }
     };
-
     const onUp = () => {
       dragXRef.current = null;
       dragMiddleRef.current = null;
@@ -89,7 +128,6 @@ export default function LambdaPlayground() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
@@ -103,13 +141,11 @@ export default function LambdaPlayground() {
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   };
-
   const startDragMiddle = (e: React.MouseEvent) => {
     dragMiddleRef.current = { startX: e.clientX, startW: middleW };
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   };
-
   const startDragY = (e: React.MouseEvent) => {
     dragYRef.current = { startY: e.clientY, startH: bottomH };
     document.body.style.cursor = "row-resize";
@@ -117,10 +153,17 @@ export default function LambdaPlayground() {
   };
 
   const copy = async (text: string) => {
-    try { await navigator.clipboard.writeText(text); } catch { }
+    try { await navigator.clipboard.writeText(text); } catch {}
   };
 
-  // Run (call /api/invoke)
+  /** Switch runtime handler */
+  const onChangeRuntime = (next: "node" | "python") => {
+    setRuntime(next);
+    // swap default code when user switches runtime
+    setCode(next === "node" ? DEFAULT_CODE_NODE : DEFAULT_CODE_PY);
+  };
+
+  /** Run (call /api/invoke) */
   const run = React.useCallback(async () => {
     setStatus("running");
     setLogs([]);
@@ -136,6 +179,7 @@ export default function LambdaPlayground() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          runtime, // <<< penting: kirim runtime ke backend
           code,
           event: (() => { try { return JSON.parse(payload || "{}"); } catch { return payload; } })(),
         }),
@@ -167,7 +211,7 @@ export default function LambdaPlayground() {
       setOutput(formatExecutionResult({ status: "Failed", eventName: "event-tes", response }));
       setStatus("error");
     }
-  }, [code, payload]);
+  }, [runtime, code, payload]);
 
   // keyboard shortcut: Ctrl/Cmd+Enter to run
   React.useEffect(() => {
@@ -196,12 +240,15 @@ ${safePrettyJSON(response.body)}`;
 
   const safePrettyJSON = (raw: string) => { try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; } };
 
+  const quickFiles = React.useMemo(() => getQuickFiles(runtime), [runtime]);
   const onSelectFile = (fileName: string) => {
-    const file = QUICK_FILES.find((f) => f.name === fileName);
-    if (file) {
-      setCode(file.content); // update editor content
-    }
+    const file = quickFiles.find((f) => f.name === fileName);
+    if (file) setCode(file.content);
   };
+
+  const editorLanguage = runtime === "node" ? "javascript" : "python";
+  const mainFileLabel = runtime === "node" ? "index.mjs" : "index.py";
+  const mainFileSub = runtime === "node" ? "ESM handler" : "Python handler";
 
   return (
     <div className="h-screen w-full bg-neutral-950 text-neutral-100">
@@ -209,6 +256,19 @@ ${safePrettyJSON(response.body)}`;
       <header className="h-12 border-b border-neutral-800 flex items-center gap-3 px-3">
         <h1 className="text-sm font-semibold tracking-wide">Lambda Playground</h1>
         <span className={`text-2xs px-2 py-0.5 rounded-full border ml-2 ${status === "running" ? "border-amber-400 text-amber-300" : status === "done" ? "border-emerald-400 text-emerald-300" : status === "error" ? "border-rose-400 text-rose-300" : "border-neutral-700 text-neutral-400"}`}>{status.toUpperCase()}</span>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">Runtime: {runtime === "node" ? "Node.js" : "Python"}</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56">
+            <DropdownMenuRadioGroup value={runtime} onValueChange={(v) => onChangeRuntime(v as "node" | "python")}>
+              <DropdownMenuRadioItem value="node">Node.js</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="python">Python</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <div className="ml-auto flex items-center gap-2">
           {latencyMs !== null && <div className="text-xs text-neutral-400 tabular-nums">{latencyMs} ms</div>}
           <button onClick={() => copy(code)} className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs" title="Copy code">Copy code</button>
@@ -216,35 +276,21 @@ ${safePrettyJSON(response.body)}`;
         </div>
       </header>
 
-      {/* Main layout: left (Quick Files) | center (code editor) | right (payload editor) */}
+      {/* Main layout */}
       <div className="h-[calc(100vh-3rem)] flex">
-        {/* Left: Quick Files Sidebar with Hamburger Icon */}
-        <aside className={`${isSidebarOpen ? 'w-64' : 'w-32'} border-r border-neutral-800 transition-all duration-200 overflow-hidden flex flex-col`}>
+        {/* Left: Quick Files */}
+        <aside className={`${isSidebarOpen ? "w-64" : "w-32"} border-r border-neutral-800 transition-all duration-200 overflow-hidden flex flex-col`}>
           <div className="flex items-center justify-between px-3 py-2">
-            <h1>
-              {isSidebarOpen ? "Quick Files" : "Files"}
-            </h1>
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="px-3 py-2 text-neutral-400 text-lg"
-            >
-              {isSidebarOpen ?
-                <div className="cursor-pointer">
-                  <HiX />
-                </div>
-                :
-                <div className="cursor-pointer">
-                  <HiMenu />
-                </div>
-              } {/* Hamburger icon */}
+            <h1>{isSidebarOpen ? "Quick Files" : "Files"}</h1>
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="px-3 py-2 text-neutral-400 text-lg">
+              {isSidebarOpen ? <HiX /> : <HiMenu />}
             </button>
           </div>
           <div className="px-3 py-2 space-y-1 overflow-auto">
-            {QUICK_FILES.map((file) => (
+            {quickFiles.map((file) => (
               <div
                 key={file.name}
-                className={`cursor-pointer text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 p-2 rounded-lg ${code === file.content ? "bg-neutral-800 text-neutral-100" : ""
-                  }`}
+                className={`cursor-pointer text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 p-2 rounded-lg ${code === file.content ? "bg-neutral-800 text-neutral-100" : ""}`}
                 onClick={() => onSelectFile(file.name)}
               >
                 {file.name}
@@ -253,26 +299,38 @@ ${safePrettyJSON(response.body)}`;
           </div>
         </aside>
 
-        {/* Vertical resizer */}
+        {/* resizer */}
         <div className="w-1.5 cursor-col-resize bg-transparent hover:bg-neutral-800/40" onMouseDown={startDragX} aria-label="Resize Quick Files / Code Editor" />
 
         {/* Center: Code Editor */}
         <section className="flex-1 h-full flex flex-col border-r border-neutral-800" style={{ width: middleW }}>
           <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-800">
             <div>
-              <div className="text-sm font-semibold">index.mjs</div>
-              <div className="text-2xs text-neutral-500">ESM handler</div>
+              <div className="text-sm font-semibold">{mainFileLabel}</div>
+              <div className="text-2xs text-neutral-500">{mainFileSub}</div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setCode(DEFAULT_CODE)} className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs">Reset</button>
+              <button
+                onClick={() => setCode(runtime === "node" ? DEFAULT_CODE_NODE : DEFAULT_CODE_PY)}
+                className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-xs"
+              >
+                Reset
+              </button>
             </div>
           </div>
           <div className="flex-1 min-h-0">
-            <Monaco height="100%" language="javascript" theme="vs-dark" value={code} onChange={(v) => setCode(v || "")} options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: "on" }} />
+            <Monaco
+              height="100%"
+              language={editorLanguage}
+              theme="vs-dark"
+              value={code}
+              onChange={(v) => setCode(v || "")}
+              options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: "on" }}
+            />
           </div>
         </section>
 
-        {/* Vertical resizer */}
+        {/* resizer */}
         <div className="w-1.5 cursor-col-resize bg-transparent hover:bg-neutral-800/40" onMouseDown={startDragMiddle} aria-label="Resize code editor / payload editor" />
 
         {/* Right: Payload Editor */}
@@ -289,7 +347,14 @@ ${safePrettyJSON(response.body)}`;
             </div>
           </div>
           <div className="flex-1 min-h-0">
-            <Monaco height="100%" language="json" theme="vs-dark" value={payload} onChange={(v) => setPayload(v || "")} options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: "on" }} />
+            <Monaco
+              height="100%"
+              language="json"
+              theme="vs-dark"
+              value={payload}
+              onChange={(v) => setPayload(v || "")}
+              options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: "on" }}
+            />
           </div>
 
           {/* Horizontal resizer */}
@@ -321,7 +386,7 @@ ${safePrettyJSON(response.body)}`;
                 )}
               </div>
             </div>
-          </div>idle
+          </div>
         </section>
       </div>
     </div>

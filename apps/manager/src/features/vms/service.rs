@@ -101,8 +101,9 @@ pub async fn create_and_start(
     let spec = resolve_vm_spec(st, req, id).await?;
 
     // Inject credentials into rootfs BEFORE VM starts (while rootfs is not in use)
+    // This is the fallback for images without cloud-init
     if let Err(e) = inject_credentials_to_rootfs(id, &spec.rootfs_path, &username, &password).await {
-        warn!(vm_id = %id, error = ?e, "rootfs credential injection failed");
+        warn!(vm_id = %id, error = ?e, "rootfs credential injection failed (will try cloud-init)");
     }
 
     create_tap(&host.addr, id, &network.bridge).await?;
@@ -149,6 +150,12 @@ pub async fn create_and_start(
         warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
     } else {
         info!(vm_id = %id, username = %username, "created shell credentials for VM");
+    }
+
+    // Configure cloud-init with credentials and network AFTER VM is inserted in DB
+    // This enables DHCP networking for cloud-init enabled images
+    if let Err(e) = configure_cloud_init_with_network(st, id, &username, &password).await {
+        warn!(vm_id = %id, error = ?e, "cloud-init configuration failed (not critical if image lacks cloud-init)");
     }
 
     Ok(())
@@ -1010,10 +1017,10 @@ pub async fn load_snapshot(
     Ok(())
 }
 
-/// Configure cloud-init credentials via MMDS before VM starts
-/// This injects a cloud-init user-data payload with username/password into the VM's metadata service
+/// Configure cloud-init credentials and network via MMDS after VM is configured
+/// This injects cloud-init user-data with username/password AND network-config with DHCP
 #[cfg(not(test))]
-async fn configure_cloud_init_credentials(
+async fn configure_cloud_init_with_network(
     st: &AppState,
     vm_id: Uuid,
     username: &str,
@@ -1036,10 +1043,19 @@ chpasswd:
         password = password
     );
 
-    // Base64 encode the user-data (cloud-init standard)
-    let user_data_b64 = general_purpose::STANDARD.encode(cloud_init_yaml.as_bytes());
+    // Generate network-config YAML for DHCP
+    let network_config_yaml = r#"version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+    dhcp6: false
+"#;
 
-    info!(vm_id = %vm_id, username = %username, "configuring cloud-init credentials via MMDS");
+    // Base64 encode both configs (cloud-init standard)
+    let user_data_b64 = general_purpose::STANDARD.encode(cloud_init_yaml.as_bytes());
+    let network_config_b64 = general_purpose::STANDARD.encode(network_config_yaml.as_bytes());
+
+    info!(vm_id = %vm_id, username = %username, "configuring cloud-init with credentials and DHCP network");
 
     // Step 1: Configure MMDS for eth0 interface (required before injecting data)
     put_mmds_config(
@@ -1055,27 +1071,28 @@ chpasswd:
     .await
     .context("failed to configure MMDS")?;
 
-    // Step 2: Inject cloud-init user-data into MMDS
+    // Step 2: Inject cloud-init user-data and network-config into MMDS
     put_mmds(
         st,
         vm_id,
         MmdsDataReq {
             data: json!({
                 "latest": {
-                    "user-data": user_data_b64
+                    "user-data": user_data_b64,
+                    "network-config": network_config_b64
                 }
             }),
         },
     )
     .await
-    .context("failed to inject cloud-init user-data")?;
+    .context("failed to inject cloud-init data")?;
 
-    info!(vm_id = %vm_id, "cloud-init credentials configured successfully");
+    info!(vm_id = %vm_id, "cloud-init configured with credentials and DHCP networking");
     Ok(())
 }
 
 #[cfg(test)]
-async fn configure_cloud_init_credentials(
+async fn configure_cloud_init_with_network(
     _: &AppState,
     _: Uuid,
     _: &str,
@@ -1239,10 +1256,193 @@ async fn inject_credentials_to_rootfs(
         bail!("failed to set permissions on /etc/shadow");
     }
 
+    // Also inject network configuration for minimal images (Alpine, etc.)
+    // This enables DHCP even if cloud-init is not available
+    info!(vm_id = %vm_id, "injecting network DHCP configuration for minimal images");
+
+    // Create /etc/network/interfaces for Alpine/BusyBox
+    let interfaces_path = mount_path.join("etc/network/interfaces");
+    let network_config = r#"auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+    udhcpc_opts -b -s /etc/udhcpc/default.script
+    hostname localhost
+"#;
+
+    let mut network_write = Command::new("sudo")
+        .args(["tee", interfaces_path.to_str().unwrap()])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to spawn sudo tee for network config")?;
+
+    if let Some(mut stdin) = network_write.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(network_config.as_bytes()).await?;
+        drop(stdin);
+    }
+
+    let network_output = network_write.wait_with_output().await?;
+    if !network_output.status.success() {
+        warn!(vm_id = %vm_id, "failed to inject /etc/network/interfaces (may not be Alpine)");
+    } else {
+        info!(vm_id = %vm_id, "injected /etc/network/interfaces with DHCP config");
+    }
+
+    // Remove broken Firecracker tap script that interferes with DHCP
+    let firecracker_tap_script = mount_path.join("etc/network/if-up.d/firecracker-tap");
+    if firecracker_tap_script.exists() {
+        let rm_status = Command::new("sudo")
+            .args(["rm", "-f", firecracker_tap_script.to_str().unwrap()])
+            .status()
+            .await;
+
+        match rm_status {
+            Ok(status) if status.success() => {
+                info!(vm_id = %vm_id, "removed broken firecracker-tap script");
+            }
+            _ => {
+                warn!(vm_id = %vm_id, "could not remove firecracker-tap script (may not exist)");
+            }
+        }
+    }
+
+    // Inject a proper udhcpc default script for Alpine
+    // The default script is broken/missing, causing DHCP to fail to configure the interface
+    // First create the directory with sudo
+    let udhcpc_dir = mount_path.join("etc/udhcpc");
+    let mkdir_status = Command::new("sudo")
+        .args(["mkdir", "-p", udhcpc_dir.to_str().unwrap()])
+        .status()
+        .await
+        .context("failed to create /etc/udhcpc directory")?;
+
+    if !mkdir_status.success() {
+        warn!(vm_id = %vm_id, "failed to create /etc/udhcpc directory");
+    }
+
+    let udhcpc_script_path = mount_path.join("etc/udhcpc/default.script");
+    let udhcpc_script = r#"#!/bin/sh
+# udhcpc script for Alpine Linux (BusyBox udhcpc)
+
+[ -z "$1" ] && echo "Error: should be called from udhcpc" && exit 1
+
+case "$1" in
+    deconfig)
+        ip addr flush dev $interface
+        ;;
+
+    renew|bound)
+        # BusyBox udhcpc provides: $ip, $subnet, $router, $dns
+        # Configure IP address with subnet mask
+        # Note: $subnet is in dotted-decimal notation (e.g., 255.255.255.0)
+        # We need to convert it to CIDR or use ip addr with broadcast
+
+        # Simple approach: just use /24 for most common networks
+        # Better: Convert subnet to CIDR (for production, use proper conversion)
+        CIDR=24  # Default to /24
+        case "$subnet" in
+            255.255.255.0) CIDR=24 ;;
+            255.255.255.128) CIDR=25 ;;
+            255.255.255.192) CIDR=26 ;;
+            255.255.255.224) CIDR=27 ;;
+            255.255.255.240) CIDR=28 ;;
+            255.255.255.248) CIDR=29 ;;
+            255.255.255.252) CIDR=30 ;;
+            255.255.0.0) CIDR=16 ;;
+            255.0.0.0) CIDR=8 ;;
+        esac
+
+        ip addr add $ip/$CIDR dev $interface
+
+        # Configure default route if provided
+        if [ -n "$router" ]; then
+            ip route add default via $router dev $interface 2>/dev/null || true
+        fi
+
+        # Configure DNS if provided
+        if [ -n "$dns" ]; then
+            echo -n > /etc/resolv.conf
+            for i in $dns; do
+                echo "nameserver $i" >> /etc/resolv.conf
+            done
+        fi
+        ;;
+esac
+
+exit 0
+"#;
+
+    let mut udhcpc_write = Command::new("sudo")
+        .args(["tee", udhcpc_script_path.to_str().unwrap()])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to spawn sudo tee for udhcpc script")?;
+
+    if let Some(mut stdin) = udhcpc_write.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(udhcpc_script.as_bytes()).await?;
+        drop(stdin);
+    }
+
+    let udhcpc_output = udhcpc_write.wait_with_output().await?;
+    if !udhcpc_output.status.success() {
+        warn!(vm_id = %vm_id, "failed to inject udhcpc script");
+    } else {
+        // Make the script executable
+        let chmod_udhcpc_status = Command::new("sudo")
+            .args(["chmod", "+x", udhcpc_script_path.to_str().unwrap()])
+            .status()
+            .await
+            .context("failed to chmod udhcpc script")?;
+
+        if chmod_udhcpc_status.success() {
+            info!(vm_id = %vm_id, "injected udhcpc default script for DHCP configuration");
+        } else {
+            warn!(vm_id = %vm_id, "failed to make udhcpc script executable");
+        }
+    }
+
+    // Enable Alpine's built-in networking service by creating a symlink
+    let runlevels_dir = mount_path.join("etc/runlevels");
+    let networking_service = mount_path.join("etc/init.d/networking");
+
+    if runlevels_dir.exists() && networking_service.exists() {
+        info!(vm_id = %vm_id, "detected OpenRC (Alpine) - enabling built-in networking service");
+
+        // Create symlink in default runlevel to enable the service at boot
+        let default_runlevel = mount_path.join("etc/runlevels/default");
+        if !default_runlevel.exists() {
+            if let Err(e) = tokio::fs::create_dir_all(&default_runlevel).await {
+                warn!(vm_id = %vm_id, "failed to create default runlevel: {}", e);
+            }
+        }
+
+        let symlink_path = default_runlevel.join("networking");
+        let ln_status = Command::new("sudo")
+            .args(["ln", "-sf", "/etc/init.d/networking", symlink_path.to_str().unwrap()])
+            .status()
+            .await
+            .context("failed to create networking service symlink")?;
+
+        if ln_status.success() {
+            info!(vm_id = %vm_id, "enabled Alpine's built-in networking service for boot");
+        } else {
+            warn!(vm_id = %vm_id, "failed to enable networking service");
+        }
+    } else if runlevels_dir.exists() {
+        warn!(vm_id = %vm_id, "OpenRC detected but /etc/init.d/networking not found - networking may not start automatically");
+    }
+
     // Unmount and cleanup
     cleanup(mount_dir).await;
 
-    info!(vm_id = %vm_id, "successfully injected credentials into rootfs");
+    info!(vm_id = %vm_id, "successfully injected credentials and network config into rootfs");
     Ok(())
 }
 
@@ -1846,13 +2046,13 @@ async fn configure_vm(
         }
     }
 
-    // Metrics are optional; Firecracker expects a FIFO. Skip unless explicitly enabled.
-    let enable_metrics = std::env::var("MANAGER_ENABLE_METRICS")
+    // Metrics are enabled by default; Firecracker expects a FIFO.
+    let enable_metrics = std::env::var("MANAGER_DISABLE_METRICS")
         .map(|v| {
             let l = v.to_ascii_lowercase();
-            l == "1" || l == "true" || l == "yes" || l == "on"
+            !(l == "1" || l == "true" || l == "yes" || l == "on")
         })
-        .unwrap_or(false);
+        .unwrap_or(true); // Default to enabled
     if enable_metrics {
         // Ensure FIFO exists on the agent before configuring Firecracker metrics
         info!(vm_id=%id, step="metrics", metrics_path=%paths.metrics_path, "preparing metrics fifo");

@@ -92,6 +92,8 @@ export function VMTerminal({ vm }: VMTerminalProps) {
           brightWhite: "#e5e5e5",
         },
         scrollback: 10000,
+        allowTransparency: false,
+        convertEol: true,
       })
 
       // Add addons
@@ -250,16 +252,42 @@ export function VMTerminal({ vm }: VMTerminalProps) {
                 </Button>
               )}
               {connectionState === "connected" && (
-                <Button
-                  onClick={() => {
-                    disconnect()
-                    setTimeout(connect, 100)
-                  }}
-                  variant="outline"
-                  size="sm"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
+                <>
+                  <Button
+                    onClick={() => {
+                      if (terminalInstance.current) {
+                        const buffer = terminalInstance.current.buffer.active
+                        let text = ""
+                        for (let i = 0; i < buffer.length; i++) {
+                          const line = buffer.getLine(i)
+                          if (line) {
+                            text += line.translateToString(true) + "\n"
+                          }
+                        }
+                        copyToClipboard(text, "terminal")
+                      }
+                    }}
+                    variant="outline"
+                    size="sm"
+                    title="Copy entire terminal history"
+                  >
+                    {copiedField === "terminal" ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      disconnect()
+                      setTimeout(connect, 100)
+                    }}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -346,7 +374,6 @@ export function VMTerminal({ vm }: VMTerminalProps) {
           <div
             ref={terminalRef}
             className="w-full h-[600px] bg-[#1e1e1e]"
-            style={{ overflow: "hidden" }}
           />
         </CardContent>
       </Card>

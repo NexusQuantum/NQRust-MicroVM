@@ -42,7 +42,7 @@ export class MetricsWebSocketClient {
     this.onStateChange({ isConnecting: true, error: null })
 
     try {
-      const wsUrl = `${WS_BASE_URL}/metrics/${this.vmId}`
+      const wsUrl = `${WS_BASE_URL}/v1/vms/${this.vmId}/metrics/ws`
       this.ws = new WebSocket(wsUrl)
 
       this.ws.onopen = () => {

@@ -1,0 +1,53 @@
+# Example netplan configuration for persistent bridge setup
+# Place this in /etc/netplan/01-fcbridge.yaml on your Ubuntu host
+#
+# IMPORTANT: Adjust interface names and IP addresses for your setup!
+#
+# Instructions:
+# 1. Copy this file to /etc/netplan/01-fcbridge.yaml
+# 2. Set correct permissions: sudo chmod 600 /etc/netplan/01-fcbridge.yaml
+# 3. Edit the values to match your network configuration
+# 4. Test with: sudo netplan try (will auto-revert after 120s if you lose connection)
+# 5. Apply with: sudo netplan apply
+#
+# This example assumes:
+# - Physical interface: ens18 (change to your interface, e.g., eth0, enp0s3)
+# - Bridge: fcbr0
+# - Static IP: 192.168.18.240/24 (change to your host's IP)
+# - Gateway: 192.168.18.1 (change to your router's IP)
+
+network:
+  version: 2
+  renderer: networkd
+
+  ethernets:
+    ens18:  # CHANGE THIS to your physical interface name
+      dhcp4: no
+      dhcp6: no
+      # Physical interface is now part of bridge, no IP needed here
+
+  bridges:
+    fcbr0:
+      interfaces:
+        - ens18  # CHANGE THIS to match your physical interface above
+
+      # Option 1: Static IP (recommended for servers)
+      addresses:
+        - 192.168.18.240/24  # CHANGE THIS to your host's IP and subnet
+      routes:
+        - to: default
+          via: 192.168.18.1  # CHANGE THIS to your gateway/router IP
+      nameservers:
+        addresses:
+          - 192.168.18.1  # Your router (can also do DNS)
+          - 8.8.8.8       # Google DNS (backup)
+          - 8.8.4.4       # Google DNS (backup)
+
+      # Option 2: DHCP (uncomment these lines and comment out Option 1 above)
+      # dhcp4: yes
+      # dhcp6: no
+
+      # Bridge parameters (optional, these are good defaults)
+      parameters:
+        stp: false  # Spanning Tree Protocol (not needed for single bridge)
+        forward-delay: 0  # Faster bridge startup

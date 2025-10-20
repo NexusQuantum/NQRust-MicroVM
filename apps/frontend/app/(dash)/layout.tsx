@@ -14,7 +14,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { LayoutDashboard, Server, Database, Plus, Settings, HelpCircle } from "lucide-react"
+import { LayoutDashboard, Server, Database, Plus, Settings, HelpCircle, CodeXml } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -40,7 +40,7 @@ const navigation: { title: string; href: Route; icon: any }[] = [
   {
     title: "Function",
     href: "/function",
-    icon: Database,
+    icon: CodeXml,
   },
 
 ]
@@ -108,9 +108,9 @@ export default function DashboardLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
-        <div className="flex items-center justify-between pt-2 px-2 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between pt-2 px-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2">
-          <Image src="/logo.png" alt="NexusRust logo" width={24} height={24} className="w-6 h-6 rounded-md" />
+                  <Image src="/logo.png" alt="NexusRust logo" width={24} height={24} className="w-6 h-6 rounded-md" />
                   <span>NexusRust</span>
                 </div>
                 <span className="opacity-70">v1.0</span>

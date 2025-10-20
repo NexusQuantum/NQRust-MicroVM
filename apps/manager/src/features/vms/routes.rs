@@ -169,6 +169,218 @@ async fn proxy_to_agent_shell(
 }
 
 #[utoipa::path(
+    get,
+    path = "/v1/vms/{id}/metrics/ws",
+    params(VmPathParams),
+    responses(
+        (status = 101, description = "WebSocket connection established"),
+        (status = 404, description = "VM not found"),
+        (status = 400, description = "VM not running"),
+    ),
+    tag = "VMs"
+)]
+pub async fn metrics_websocket(
+    ws: WebSocketUpgrade,
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+) -> axum::response::Response {
+    // Fetch VM to check if it's running
+    let vm = match super::repo::get(&st.db, id).await {
+        Ok(v) => v,
+        Err(_) => {
+            return (StatusCode::NOT_FOUND, "VM not found").into_response();
+        }
+    };
+
+    if vm.state != "running" {
+        return (StatusCode::BAD_REQUEST, "VM must be running to stream metrics").into_response();
+    }
+
+    // Upgrade the WebSocket connection
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = stream_metrics(st, id, socket).await {
+            tracing::error!(vm_id = %id, "Metrics WebSocket error: {:?}", e);
+        }
+    })
+}
+
+async fn stream_metrics(
+    st: AppState,
+    vm_id: Uuid,
+    ws: WebSocket,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio::time::{interval, Duration};
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::fs::OpenOptions;
+
+    let (mut sender, mut receiver) = ws.split();
+    let metrics_path = format!("/srv/fc/vms/{}/logs/metrics.json", vm_id);
+
+    // Create a ticker that will trigger metrics flush every second
+    let mut ticker = interval(Duration::from_secs(1));
+
+    // Track last metrics for rate calculations
+    let mut last_metrics: Option<serde_json::Value> = None;
+
+    loop {
+        tokio::select! {
+            // Check for client disconnect
+            msg = receiver.next() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => {
+                        tracing::info!(vm_id = %vm_id, "Metrics WebSocket client disconnected");
+                        break;
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        if sender.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Send metrics every second
+            _ = ticker.tick() => {
+                // First, flush metrics from Firecracker to the FIFO
+                if let Err(e) = super::service::flush_vm_metrics(&st, vm_id).await {
+                    tracing::debug!(vm_id = %vm_id, "Failed to flush metrics: {}", e);
+                    continue;
+                }
+
+                // Try to read metrics from the FIFO
+                match OpenOptions::new().read(true).open(&metrics_path).await {
+                    Ok(file) => {
+                        let mut reader = BufReader::new(file);
+                        let mut line = String::new();
+
+                        // Read one line from the FIFO (Firecracker writes one JSON object per flush)
+                        match reader.read_line(&mut line).await {
+                            Ok(n) if n > 0 => {
+                                // Parse Firecracker metrics and convert to our format
+                                if let Ok(fc_metrics) = serde_json::from_str::<serde_json::Value>(&line) {
+                                    let simplified = simplify_firecracker_metrics(
+                                        &fc_metrics,
+                                        last_metrics.as_ref(),
+                                    );
+
+                                    if let Ok(json) = serde_json::to_string(&simplified) {
+                                        if sender.send(Message::Text(json)).await.is_err() {
+                                            break;
+                                        }
+                                    }
+
+                                    last_metrics = Some(fc_metrics);
+                                }
+                            }
+                            _ => {
+                                // No data available or error, skip this tick
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(vm_id = %vm_id, "Failed to open metrics FIFO: {}", e);
+                        // Metrics FIFO not available, skip this tick
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn simplify_firecracker_metrics(
+    fc_metrics: &serde_json::Value,
+    _last_metrics: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    use serde_json::json;
+
+    // Extract relevant metrics from Firecracker's format
+    let cpu_usage = fc_metrics
+        .get("vcpu")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| {
+            // Sum up all vCPU usage
+            let mut total = 0.0;
+            let mut count = 0.0;
+            for (key, value) in obj {
+                if key.starts_with("vcpu_") {
+                    if let Some(usage) = value.get("cpu_usage_percent").and_then(|v| v.as_f64()) {
+                        total += usage;
+                        count += 1.0;
+                    }
+                }
+            }
+            if count > 0.0 {
+                Some(total / count)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0.0);
+
+    let _memory_used = fc_metrics
+        .get("vmm")
+        .and_then(|v| v.get("memory_used_bytes"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let network_rx = fc_metrics
+        .get("net")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| {
+            obj.values()
+                .filter_map(|v| v.get("rx_bytes").and_then(|b| b.as_u64()))
+                .sum::<u64>()
+                .into()
+        })
+        .unwrap_or(0);
+
+    let network_tx = fc_metrics
+        .get("net")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| {
+            obj.values()
+                .filter_map(|v| v.get("tx_bytes").and_then(|b| b.as_u64()))
+                .sum::<u64>()
+                .into()
+        })
+        .unwrap_or(0);
+
+    let disk_read = fc_metrics
+        .get("block")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| {
+            obj.values()
+                .filter_map(|v| v.get("read_bytes").and_then(|b| b.as_u64()))
+                .sum::<u64>()
+                .into()
+        })
+        .unwrap_or(0);
+
+    let disk_write = fc_metrics
+        .get("block")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| {
+            obj.values()
+                .filter_map(|v| v.get("write_bytes").and_then(|b| b.as_u64()))
+                .sum::<u64>()
+                .into()
+        })
+        .unwrap_or(0);
+
+    json!({
+        "cpu_usage_percent": cpu_usage,
+        "memory_usage_percent": 0.0,  // TODO: Calculate based on allocated memory
+        "network_in_bytes": network_rx,
+        "network_out_bytes": network_tx,
+        "disk_read_bytes": disk_read,
+        "disk_write_bytes": disk_write,
+    })
+}
+
+#[utoipa::path(
     post,
     path = "/v1/vms",
     request_body = CreateVmReq,
