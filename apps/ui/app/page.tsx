@@ -78,6 +78,7 @@ export default function LandingPage() {
                 <div className="space-y-2">
                   <Label htmlFor="username">Username</Label>
                   <Input
+                    autoComplete="off"
                     id="username"
                     type="text"
                     placeholder="Enter your username"
@@ -91,6 +92,7 @@ export default function LandingPage() {
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
                   <Input
+                    autoComplete="off"
                     id="password"
                     type="password"
                     placeholder="Enter your password"
