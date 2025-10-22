@@ -13,6 +13,7 @@ import {
   SidebarInset,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { FunctionGroup } from "@/components/nav/function-group"
 import { Button } from "@/components/ui/button"
 import { LayoutDashboard, Server, Database, Plus, Settings, HelpCircle, CodeXml } from "lucide-react"
 import Link from "next/link"
@@ -37,11 +38,11 @@ const navigation: { title: string; href: Route; icon: any }[] = [
     href: "/registry",
     icon: Database,
   },
-  {
-    title: "Function",
-    href: "/function",
-    icon: CodeXml,
-  },
+  // {
+  //   title: "Function",
+  //   href: "/function",
+  //   icon: CodeXml,
+  // },
 
 ]
 
@@ -87,6 +88,9 @@ export default function DashboardLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+            </SidebarMenu>
+            <SidebarMenu>
+              <FunctionGroup />
             </SidebarMenu>
 
             <div className="mt-auto p-2">

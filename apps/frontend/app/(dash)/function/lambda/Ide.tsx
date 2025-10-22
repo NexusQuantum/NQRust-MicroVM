@@ -9,8 +9,8 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "../../../components/ui/dropdown-menu.tsx";
-import { Button } from "../../../components/ui/button.tsx";
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 
 // Load Monaco only in browser
 const Monaco = dynamic(() => import("@monaco-editor/react"), { ssr: false });
