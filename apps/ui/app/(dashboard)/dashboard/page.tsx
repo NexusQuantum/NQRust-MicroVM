@@ -17,36 +17,6 @@ const mockStats = {
   total_hosts: 4,
 }
 
-// const mockNonVMResources = [
-//   {
-//     id: "fn-1",
-//     name: "image-processor",
-//     type: "function" as const,
-//     state: "idle",
-//     metrics: { lastInvoked: new Date(Date.now() - 3600000).toISOString() },
-//   },
-//   {
-//     id: "fn-2",
-//     name: "email-sender",
-//     type: "function" as const,
-//     state: "idle",
-//     metrics: { lastInvoked: new Date(Date.now() - 300000).toISOString() },
-//   },
-//   {
-//     id: "ct-1",
-//     name: "postgres-main",
-//     type: "container" as const,
-//     state: "running",
-//     metrics: { cpu: 32.1, memory: 512 },
-//   },
-//   {
-//     id: "ct-2",
-//     name: "redis-cache",
-//     type: "container" as const,
-//     state: "running",
-//     metrics: { cpu: 12.4, memory: 128 },
-//   },
-// ]
 
 export default function DashboardPage() {
   const { data: vms = [], isLoading: vmsLoading } = useVMs()
@@ -66,7 +36,7 @@ export default function DashboardPage() {
 
   // Combine VMs with mock resources
   const allResources = [...vmResources]
-  // console.log('all resource: ', allResources)
+  console.log('all resource: ', allResources)
 
 
   return (
