@@ -9,6 +9,7 @@ export interface CreateVmResponse {
 }
 
 export interface Vm {
+  guest_ip: string
   vm_name: string
   id: string
   name: string
