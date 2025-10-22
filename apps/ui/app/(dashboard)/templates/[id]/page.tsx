@@ -11,6 +11,7 @@ import { useState } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { use } from "react"
 
 // Mock data
 const mockTemplate = {
@@ -26,7 +27,8 @@ const mockTemplate = {
   usage_count: 8,
 }
 
-export default function TemplateDetailPage({ params }: { params: { id: string } }) {
+export default function TemplateDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   const { toast } = useToast()
   const router = useRouter()
   const [isEditing, setIsEditing] = useState(false)
@@ -60,7 +62,7 @@ export default function TemplateDetailPage({ params }: { params: { id: string } 
   }
 
   const handleDeploy = () => {
-    router.push(`/vms/create?template=${params.id}`)
+    router.push(`/vms/create?template=${id}`)
   }
 
   return (
