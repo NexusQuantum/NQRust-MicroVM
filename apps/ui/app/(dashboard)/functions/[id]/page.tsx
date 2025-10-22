@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Play, Trash2, FileText } from "lucide-react"
 import Link from "next/link"
+import { use } from "react"
 
 // Mock data
 const mockFunction = {
@@ -46,7 +47,8 @@ const getStatusColor = (state: string) => {
   }
 }
 
-export default function FunctionEditorPage({ params }: { params: { id: string } }) {
+export default function FunctionEditorPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -67,7 +69,7 @@ export default function FunctionEditorPage({ params }: { params: { id: string } 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link href={`/functions/${params.id}/logs`}>
+          <Link href={`/functions/${id}/logs`}>
             <Button variant="outline" size="sm">
               <FileText className="mr-2 h-4 w-4" />
               View Logs
