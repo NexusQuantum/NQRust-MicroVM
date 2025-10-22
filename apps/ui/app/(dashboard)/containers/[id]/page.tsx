@@ -8,6 +8,7 @@ import { XTermWrapper } from "@/components/shared/xterm-wrapper"
 import { MetricsChart } from "@/components/shared/metrics-chart"
 import { Play, Square, RotateCw, Trash2, ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { use } from "react"
 
 // Mock data
 const mockContainer = {
@@ -45,7 +46,8 @@ const getStatusColor = (status: string) => {
   }
 }
 
-export default function ContainerDetailPage({ params }: { params: { id: string } }) {
+export default function ContainerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
