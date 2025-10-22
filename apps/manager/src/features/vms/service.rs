@@ -106,6 +106,48 @@ pub async fn create_and_start(
         warn!(vm_id = %id, error = ?e, "rootfs credential injection failed (will try cloud-init)");
     }
 
+    // Install guest agent into rootfs BEFORE VM starts (while rootfs is not in use)
+    // Get manager URL from MANAGER_BIND (use bridge IP from network.bridge)
+    let manager_bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
+
+    // Get bridge IP for manager URL (VMs connect via bridge network)
+    let bridge_ip = std::process::Command::new("ip")
+        .args(["addr", "show", &network.bridge])
+        .output()
+        .ok()
+        .and_then(|output| {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.trim().starts_with("inet ") {
+                    if let Some(ip_part) = line.split_whitespace().nth(1) {
+                        if let Some(ip) = ip_part.split('/').next() {
+                            return Some(ip.to_string());
+                        }
+                    }
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| manager_bind.split(':').next().unwrap_or("127.0.0.1").to_string());
+
+    let manager_port = manager_bind.split(':').nth(1).unwrap_or("18080");
+    let manager_url = format!("http://{}:{}", bridge_ip, manager_port);
+    
+    eprintln!("=== GUEST AGENT INSTALLATION STARTED for VM {} ===", id);
+    eprintln!("Rootfs path: {}", &spec.rootfs_path);
+    eprintln!("Manager bind: {}", manager_bind);
+    eprintln!("Bridge: {}", network.bridge);
+    eprintln!("Bridge IP: {}", bridge_ip);
+    eprintln!("Manager port: {}", manager_port);
+    eprintln!("Manager URL: {}", &manager_url);
+    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await {
+        eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} ===", id);
+        eprintln!("Error: {:?}", e);
+        warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
+    } else {
+        eprintln!("=== GUEST AGENT INSTALLATION SUCCESS for VM {} ===", id);
+    }
+
     create_tap(&host.addr, id, &network.bridge).await?;
     spawn_firecracker(st, &host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
@@ -211,6 +253,49 @@ pub async fn create_from_snapshot(
         .with_snapshot(snapshot_path.clone(), mem_path.clone());
 
     let network = select_network(&host.capabilities_json)?;
+
+    // Install guest agent into rootfs BEFORE VM starts (while rootfs is not in use)
+    // Get manager URL from MANAGER_BIND (use bridge IP from network.bridge)
+    let manager_bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
+
+    // Get bridge IP for manager URL (VMs connect via bridge network)
+    let bridge_ip = std::process::Command::new("ip")
+        .args(["addr", "show", &network.bridge])
+        .output()
+        .ok()
+        .and_then(|output| {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.trim().starts_with("inet ") {
+                    if let Some(ip_part) = line.split_whitespace().nth(1) {
+                        if let Some(ip) = ip_part.split('/').next() {
+                            return Some(ip.to_string());
+                        }
+                    }
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| manager_bind.split(':').next().unwrap_or("127.0.0.1").to_string());
+
+    let manager_port = manager_bind.split(':').nth(1).unwrap_or("18080");
+    let manager_url = format!("http://{}:{}", bridge_ip, manager_port);
+    
+    eprintln!("=== GUEST AGENT INSTALLATION STARTED for VM {} (from snapshot) ===", id);
+    eprintln!("Rootfs path: {}", &spec.rootfs_path);
+    eprintln!("Manager bind: {}", manager_bind);
+    eprintln!("Bridge: {}", network.bridge);
+    eprintln!("Bridge IP: {}", bridge_ip);
+    eprintln!("Manager port: {}", manager_port);
+    eprintln!("Manager URL: {}", &manager_url);
+    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await {
+        eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} (from snapshot) ===", id);
+        eprintln!("Error: {:?}", e);
+        warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
+    } else {
+        eprintln!("=== GUEST AGENT INSTALLATION SUCCESS for VM {} (from snapshot) ===", id);
+    }
+
     create_tap(&host.addr, id, &network.bridge).await?;
     spawn_firecracker(st, &host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
@@ -464,7 +549,7 @@ pub async fn get_process_stats(st: &AppState, id: Uuid) -> Result<ProcessStats> 
 }
 
 async fn get_guest_metrics(guest_ip: &str) -> Result<GuestMetrics> {
-    let url = format!("http://{}:8080/metrics", guest_ip);
+    let url = format!("http://{}:9000/metrics", guest_ip);
     let response = reqwest::Client::new()
         .get(&url)
         .timeout(std::time::Duration::from_secs(2))

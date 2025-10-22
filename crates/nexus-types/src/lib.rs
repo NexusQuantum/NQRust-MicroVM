@@ -507,3 +507,148 @@ pub struct BalloonStatsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stats_polling_interval_s: Option<u64>,
 }
+
+// ========================================
+// Functions (Serverless Lambda)
+// ========================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Function {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub runtime: String,  // node, python, go, rust
+    pub code: String,
+    pub handler: String,
+    pub timeout_seconds: i32,
+    pub memory_mb: i32,
+    pub vcpu: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_vars: Option<serde_json::Value>,
+    // MicroVM information
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_ip: Option<String>,
+    pub port: i32,
+    pub state: String,  // creating, ready, error, stopped
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_invoked_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FunctionInvocation {
+    pub id: uuid::Uuid,
+    pub function_id: uuid::Uuid,
+    pub status: String,  // success, error, timeout
+    pub duration_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_used_mb: Option<i32>,
+    pub request_id: String,
+    pub event: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<serde_json::Value>,
+    #[serde(default)]
+    pub logs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub invoked_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateFunctionReq {
+    pub name: String,
+    pub runtime: String,
+    pub code: String,
+    pub handler: String,
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: i32,
+    #[serde(default = "default_memory")]
+    pub memory_mb: i32,
+    #[serde(default = "default_vcpu")]
+    pub vcpu: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_vars: Option<serde_json::Value>,
+}
+
+fn default_timeout() -> i32 {
+    30
+}
+
+fn default_memory() -> i32 {
+    128
+}
+
+fn default_vcpu() -> i32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateFunctionReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handler: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_vars: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InvokeFunctionReq {
+    pub event: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+pub struct CreateFunctionResp {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListFunctionsResp {
+    pub items: Vec<Function>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GetFunctionResp {
+    pub item: Function,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InvokeFunctionResp {
+    pub request_id: String,
+    pub status: String,
+    pub duration_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<serde_json::Value>,
+    #[serde(default)]
+    pub logs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListInvocationsResp {
+    pub items: Vec<FunctionInvocation>,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct FunctionPathParams {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct ListInvocationsParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}

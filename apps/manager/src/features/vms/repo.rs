@@ -163,8 +163,9 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
                vm.kernel_path,
                vm.rootfs_path,
                vm.source_snapshot_id,
-                vm.created_at,
-                vm.updated_at
+               vm.guest_ip,
+               vm.created_at,
+               vm.updated_at
         FROM vm
         JOIN host ON host.id = vm.host_id
         WHERE vm.id=$1

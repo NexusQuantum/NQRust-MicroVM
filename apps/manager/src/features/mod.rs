@@ -1,6 +1,7 @@
 use crate::AppState;
 use axum::{Extension, Router};
 
+pub mod functions;
 pub mod hosts;
 pub mod images;
 pub mod logs; // A3 starter
@@ -21,6 +22,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/vms/:id/snapshots",
             axum::routing::post(snapshots::routes::create).get(snapshots::routes::list_for_vm),
         )
+        .nest("/v1/functions", functions::router())
         .nest("/v1/logs", logs::router())
         .layer(Extension(state))
 }

@@ -51,3 +51,15 @@ logs/**
 *.swp
 *.swo
 *~
+
+# Runtime build scripts
+scripts/runtime-images/build-node-runtime.sh
+scripts/runtime-images/build-python-runtime.sh
+
+# Runtime build directories
+build-node-runtime/
+build-python-runtime/
+/tmp/alpine-cache/
+
+build-node-runtime/*
+

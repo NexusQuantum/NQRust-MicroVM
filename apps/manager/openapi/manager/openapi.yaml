@@ -385,6 +385,545 @@ paths:
                 $ref: '#/components/schemas/OkResponse'
         '500':
           description: Failed to delete VM
+  /v1/vms/{id}/balloon:
+    put:
+      tags:
+      - VM configuration
+      operationId: put_balloon
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BalloonConfig'
+        required: true
+      responses:
+        '200':
+          description: Balloon configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: VM not found
+    patch:
+      tags:
+      - VM configuration
+      operationId: patch_balloon
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BalloonConfig'
+        required: true
+      responses:
+        '200':
+          description: Balloon updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: VM not found
+  /v1/vms/{id}/balloon/statistics:
+    patch:
+      tags:
+      - VM configuration
+      operationId: patch_balloon_statistics
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BalloonStatsConfig'
+        required: true
+      responses:
+        '200':
+          description: Balloon stats updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: VM not found
+  /v1/vms/{id}/ctrl-alt-del:
+    post:
+      tags:
+      - VMs
+      operationId: ctrl_alt_del
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Ctrl-Alt-Del sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: VM must be running
+        '404':
+          description: VM not found
+        '500':
+          description: Failed to send Ctrl-Alt-Del
+  /v1/vms/{id}/drives:
+    get:
+      tags:
+      - VM devices
+      operationId: list_drives
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Drives listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDrivesResponse'
+    post:
+      tags:
+      - VM devices
+      operationId: create_drive
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDriveReq'
+        required: true
+      responses:
+        '200':
+          description: Drive created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VmDrive'
+        '404':
+          description: VM not found
+  /v1/vms/{id}/drives/{drive_id}:
+    get:
+      tags:
+      - VM devices
+      operationId: get_drive
+      parameters:
+      - name: id
+        in: path
+        description: VM ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: drive_id
+        in: path
+        description: Drive record ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Drive fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VmDrive'
+        '404':
+          description: Drive not found
+    delete:
+      tags:
+      - VM devices
+      operationId: delete_drive
+      parameters:
+      - name: id
+        in: path
+        description: VM ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: drive_id
+        in: path
+        description: Drive record ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Drive deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Invalid request
+        '404':
+          description: Drive not found
+    patch:
+      tags:
+      - VM devices
+      operationId: update_drive
+      parameters:
+      - name: id
+        in: path
+        description: VM ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: drive_id
+        in: path
+        description: Drive record ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDriveReq'
+        required: true
+      responses:
+        '200':
+          description: Drive updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VmDrive'
+        '400':
+          description: Invalid request
+        '404':
+          description: Drive not found
+  /v1/vms/{id}/entropy:
+    put:
+      tags:
+      - VM configuration
+      operationId: put_entropy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntropyConfigReq'
+        required: true
+      responses:
+        '200':
+          description: Entropy device configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: VM not found
+  /v1/vms/{id}/flush-metrics:
+    post:
+      tags:
+      - VMs
+      operationId: flush_metrics
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Metrics flushed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: VM not found
+        '500':
+          description: Failed to flush metrics
+  /v1/vms/{id}/logger:
+    put:
+      tags:
+      - VM configuration
+      operationId: put_logger
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoggerUpdateReq'
+        required: true
+      responses:
+        '200':
+          description: Logger updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: VM not found
+  /v1/vms/{id}/nics:
+    get:
+      tags:
+      - VM devices
+      operationId: list_nics
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: NICs listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNicsResponse'
+    post:
+      tags:
+      - VM devices
+      operationId: create_nic
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNicReq'
+        required: true
+      responses:
+        '200':
+          description: NIC created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VmNic'
+        '404':
+          description: VM not found
+  /v1/vms/{id}/nics/{nic_id}:
+    get:
+      tags:
+      - VM devices
+      operationId: get_nic
+      parameters:
+      - name: id
+        in: path
+        description: VM ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: nic_id
+        in: path
+        description: NIC record ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: NIC fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VmNic'
+        '404':
+          description: NIC not found
+    delete:
+      tags:
+      - VM devices
+      operationId: delete_nic
+      parameters:
+      - name: id
+        in: path
+        description: VM ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: nic_id
+        in: path
+        description: NIC record ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: NIC deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Invalid request
+        '404':
+          description: NIC not found
+    patch:
+      tags:
+      - VM devices
+      operationId: update_nic
+      parameters:
+      - name: id
+        in: path
+        description: VM ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: nic_id
+        in: path
+        description: NIC record ID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNicReq'
+        required: true
+      responses:
+        '200':
+          description: NIC updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VmNic'
+        '400':
+          description: Invalid request
+        '404':
+          description: NIC not found
+  /v1/vms/{id}/pause:
+    post:
+      tags:
+      - VMs
+      operationId: pause
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: VM paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: VM must be running to pause
+        '404':
+          description: VM not found
+        '500':
+          description: Failed to pause VM
+  /v1/vms/{id}/resume:
+    post:
+      tags:
+      - VMs
+      operationId: resume
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: VM resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: VM must be paused to resume
+        '404':
+          description: VM not found
+        '500':
+          description: Failed to resume VM
+  /v1/vms/{id}/serial:
+    put:
+      tags:
+      - VM configuration
+      operationId: put_serial
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SerialConfigReq'
+        required: true
+      responses:
+        '200':
+          description: Serial device configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: VM not found
   /v1/vms/{id}/snapshots:
     get:
       tags:
@@ -460,6 +999,58 @@ paths:
           description: Failed to stop VM
 components:
   schemas:
+    BalloonConfig:
+      type: object
+      required:
+      - amount_mib
+      - deflate_on_oom
+      properties:
+        amount_mib:
+          type: integer
+          format: int64
+          minimum: 0
+        deflate_on_oom:
+          type: boolean
+        stats_polling_interval_s:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 0
+    BalloonStatsConfig:
+      type: object
+      properties:
+        stats_polling_interval_s:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 0
+    CreateDriveReq:
+      type: object
+      required:
+      - drive_id
+      properties:
+        cache_type:
+          type: string
+          nullable: true
+        drive_id:
+          type: string
+        io_engine:
+          type: string
+          nullable: true
+        is_read_only:
+          type: boolean
+        is_root_device:
+          type: boolean
+        path_on_host:
+          type: string
+          nullable: true
+        rate_limiter:
+          nullable: true
+        size_bytes:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 0
     CreateImageReq:
       type: object
       required:
@@ -491,8 +1082,39 @@ components:
         id:
           type: string
           format: uuid
+    CreateNicReq:
+      type: object
+      required:
+      - iface_id
+      - host_dev_name
+      properties:
+        guest_mac:
+          type: string
+          nullable: true
+        host_dev_name:
+          type: string
+        iface_id:
+          type: string
+        rx_rate_limiter:
+          nullable: true
+        tx_rate_limiter:
+          nullable: true
     CreateSnapshotRequest:
       type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        snapshot_type:
+          type: string
+          nullable: true
+        track_dirty_pages:
+          type: boolean
+          nullable: true
     CreateSnapshotResponse:
       type: object
       required:
@@ -501,6 +1123,9 @@ components:
         id:
           type: string
           format: uuid
+        name:
+          type: string
+          nullable: true
     CreateTemplateReq:
       type: object
       required:
@@ -539,6 +1164,9 @@ components:
           minimum: 0
         name:
           type: string
+        password:
+          type: string
+          nullable: true
         rootfs_image_id:
           type: string
           format: uuid
@@ -549,6 +1177,9 @@ components:
         source_snapshot_id:
           type: string
           format: uuid
+          nullable: true
+        username:
+          type: string
           nullable: true
         vcpu:
           type: integer
@@ -662,6 +1293,15 @@ components:
         id:
           type: string
           format: uuid
+    ListDrivesResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/VmDrive'
     ListImagesResp:
       type: object
       required:
@@ -671,6 +1311,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Image'
+    ListNicsResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/VmNic'
     ListSnapshotsResponse:
       type: object
       required:
@@ -698,6 +1347,24 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Vm'
+    LoggerUpdateReq:
+      type: object
+      properties:
+        level:
+          type: string
+          nullable: true
+        log_path:
+          type: string
+          nullable: true
+        module:
+          type: string
+          nullable: true
+        show_level:
+          type: boolean
+          nullable: true
+        show_log_origin:
+          type: boolean
+          nullable: true
     OkResponse:
       type: object
       required:
@@ -744,13 +1411,25 @@ components:
           format: uuid
         mem_path:
           type: string
+        name:
+          type: string
+          nullable: true
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
         size_bytes:
           type: integer
           format: int64
         snapshot_path:
           type: string
+        snapshot_type:
+          type: string
+          nullable: true
         state:
           type: string
+        track_dirty_pages:
+          type: boolean
         updated_at:
           type: string
           format: date-time
@@ -792,6 +1471,21 @@ components:
           type: integer
           format: int32
           minimum: 0
+    UpdateDriveReq:
+      type: object
+      properties:
+        path_on_host:
+          type: string
+          nullable: true
+        rate_limiter:
+          nullable: true
+    UpdateNicReq:
+      type: object
+      properties:
+        rx_rate_limiter:
+          nullable: true
+        tx_rate_limiter:
+          nullable: true
     Vm:
       type: object
       required:
@@ -859,6 +1553,83 @@ components:
         vcpu:
           type: integer
           format: int32
+    VmDrive:
+      type: object
+      required:
+      - id
+      - vm_id
+      - drive_id
+      - path_on_host
+      - is_root_device
+      - is_read_only
+      - created_at
+      - updated_at
+      properties:
+        cache_type:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        drive_id:
+          type: string
+        id:
+          type: string
+          format: uuid
+        io_engine:
+          type: string
+          nullable: true
+        is_read_only:
+          type: boolean
+        is_root_device:
+          type: boolean
+        path_on_host:
+          type: string
+        rate_limiter:
+          nullable: true
+        size_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+        vm_id:
+          type: string
+          format: uuid
+    VmNic:
+      type: object
+      required:
+      - id
+      - vm_id
+      - iface_id
+      - host_dev_name
+      - created_at
+      - updated_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        guest_mac:
+          type: string
+          nullable: true
+        host_dev_name:
+          type: string
+        id:
+          type: string
+          format: uuid
+        iface_id:
+          type: string
+        rx_rate_limiter:
+          nullable: true
+        tx_rate_limiter:
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+        vm_id:
+          type: string
+          format: uuid
 tags:
 - name: Hosts
   description: Host lifecycle operations.
@@ -872,3 +1643,5 @@ tags:
   description: Snapshot management APIs.
 - name: Logs
   description: Development log utilities.
+- name: VM devices
+  description: Block and network device management.

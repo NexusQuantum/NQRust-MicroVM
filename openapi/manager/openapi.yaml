@@ -6,6 +6,179 @@ info:
     name: ''
   version: 0.1.0
 paths:
+  /v1/functions:
+    get:
+      tags:
+      - Functions
+      operationId: list
+      responses:
+        '200':
+          description: Functions listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListFunctionsResp'
+        '500':
+          description: Failed to list functions
+    post:
+      tags:
+      - Functions
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFunctionReq'
+        required: true
+      responses:
+        '200':
+          description: Function created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateFunctionResp'
+        '400':
+          description: Invalid request
+        '500':
+          description: Failed to create function
+  /v1/functions/{id}:
+    get:
+      tags:
+      - Functions
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Function fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetFunctionResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to fetch function
+    put:
+      tags:
+      - Functions
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFunctionReq'
+        required: true
+      responses:
+        '200':
+          description: Function updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetFunctionResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to update function
+    delete:
+      tags:
+      - Functions
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Function deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to delete function
+  /v1/functions/{id}/invoke:
+    post:
+      tags:
+      - Functions
+      operationId: invoke
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvokeFunctionReq'
+        required: true
+      responses:
+        '200':
+          description: Function invoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvokeFunctionResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to invoke function
+  /v1/functions/{id}/logs:
+    get:
+      tags:
+      - Functions
+      operationId: logs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: limit
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          nullable: true
+      responses:
+        '200':
+          description: Invocation logs fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListInvocationsResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to fetch logs
   /v1/hosts/register:
     post:
       tags:
@@ -1051,6 +1224,41 @@ components:
           format: int64
           nullable: true
           minimum: 0
+    CreateFunctionReq:
+      type: object
+      required:
+      - name
+      - runtime
+      - code
+      - handler
+      properties:
+        code:
+          type: string
+        env_vars:
+          nullable: true
+        handler:
+          type: string
+        memory_mb:
+          type: integer
+          format: int32
+        name:
+          type: string
+        runtime:
+          type: string
+        timeout_seconds:
+          type: integer
+          format: int32
+        vcpu:
+          type: integer
+          format: int32
+    CreateFunctionResp:
+      type: object
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          format: uuid
     CreateImageReq:
       type: object
       required:
@@ -1193,6 +1401,114 @@ components:
         id:
           type: string
           format: uuid
+    Function:
+      type: object
+      required:
+      - id
+      - name
+      - runtime
+      - code
+      - handler
+      - timeout_seconds
+      - memory_mb
+      - vcpu
+      - port
+      - state
+      - created_at
+      - updated_at
+      properties:
+        code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        env_vars:
+          nullable: true
+        guest_ip:
+          type: string
+          nullable: true
+        handler:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_invoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        memory_mb:
+          type: integer
+          format: int32
+        name:
+          type: string
+        port:
+          type: integer
+          format: int32
+        runtime:
+          type: string
+        state:
+          type: string
+        timeout_seconds:
+          type: integer
+          format: int32
+        updated_at:
+          type: string
+          format: date-time
+        vcpu:
+          type: integer
+          format: int32
+        vm_id:
+          type: string
+          format: uuid
+          nullable: true
+    FunctionInvocation:
+      type: object
+      required:
+      - id
+      - function_id
+      - status
+      - duration_ms
+      - request_id
+      - event
+      - invoked_at
+      properties:
+        duration_ms:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+        event: {}
+        function_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        invoked_at:
+          type: string
+          format: date-time
+        logs:
+          type: array
+          items:
+            type: string
+        memory_used_mb:
+          type: integer
+          format: int32
+          nullable: true
+        request_id:
+          type: string
+        response:
+          nullable: true
+        status:
+          type: string
+    GetFunctionResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/Function'
     GetImageResp:
       type: object
       required:
@@ -1293,6 +1609,35 @@ components:
         id:
           type: string
           format: uuid
+    InvokeFunctionReq:
+      type: object
+      required:
+      - event
+      properties:
+        event: {}
+    InvokeFunctionResp:
+      type: object
+      required:
+      - request_id
+      - status
+      - duration_ms
+      properties:
+        duration_ms:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+        logs:
+          type: array
+          items:
+            type: string
+        request_id:
+          type: string
+        response:
+          nullable: true
+        status:
+          type: string
     ListDrivesResponse:
       type: object
       required:
@@ -1302,6 +1647,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/VmDrive'
+    ListFunctionsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Function'
     ListImagesResp:
       type: object
       required:
@@ -1311,6 +1665,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Image'
+    ListInvocationsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FunctionInvocation'
     ListNicsResponse:
       type: object
       required:
@@ -1479,6 +1842,31 @@ components:
           nullable: true
         rate_limiter:
           nullable: true
+    UpdateFunctionReq:
+      type: object
+      properties:
+        code:
+          type: string
+          nullable: true
+        env_vars:
+          nullable: true
+        handler:
+          type: string
+          nullable: true
+        memory_mb:
+          type: integer
+          format: int32
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        runtime:
+          type: string
+          nullable: true
+        timeout_seconds:
+          type: integer
+          format: int32
+          nullable: true
     UpdateNicReq:
       type: object
       properties:
@@ -1641,6 +2029,8 @@ tags:
   description: Image registry APIs.
 - name: Snapshots
   description: Snapshot management APIs.
+- name: Functions
+  description: Serverless function management APIs.
 - name: Logs
   description: Development log utilities.
 - name: VM devices

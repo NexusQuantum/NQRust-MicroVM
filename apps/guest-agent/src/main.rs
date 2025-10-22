@@ -1,8 +1,15 @@
-use axum::{routing::get, Json, Router};
+use axum::{routing::get, Json, Router, extract::State};
 use serde::Serialize;
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
+
+#[derive(Debug, Clone)]
+struct AgentConfig {
+    vm_id: String,
+    manager_url: String,
+}
 
 #[derive(Debug, Serialize, Clone)]
 struct GuestMetrics {
@@ -12,6 +19,8 @@ struct GuestMetrics {
     memory_total_kb: u64,
     memory_available_kb: u64,
     uptime_seconds: u64,
+    load_average: Option<f64>,
+    process_count: Option<u32>,
 }
 
 /// Read CPU statistics from /proc/stat
@@ -49,11 +58,8 @@ fn calculate_cpu_percent(
     let prev_idle_total = prev_idle + prev_iowait;
     let curr_idle_total = curr_idle + curr_iowait;
 
-    let prev_non_idle = prev_user + prev_nice + prev_system + prev_irq + prev_softirq;
-    let curr_non_idle = curr_user + curr_nice + curr_system + curr_irq + curr_softirq;
-
-    let prev_total = prev_idle_total + prev_non_idle;
-    let curr_total = curr_idle_total + curr_non_idle;
+    let prev_total = prev_user + prev_nice + prev_system + prev_idle + prev_iowait + prev_irq + prev_softirq;
+    let curr_total = curr_user + curr_nice + curr_system + curr_idle + curr_iowait + curr_irq + curr_softirq;
 
     let total_diff = curr_total.saturating_sub(prev_total);
     let idle_diff = curr_idle_total.saturating_sub(prev_idle_total);
@@ -62,154 +68,335 @@ fn calculate_cpu_percent(
         return 0.0;
     }
 
-    let usage = total_diff.saturating_sub(idle_diff);
-    (usage as f64 / total_diff as f64) * 100.0
+    let usage_percent = ((total_diff - idle_diff) as f64 / total_diff as f64) * 100.0;
+    usage_percent.min(100.0).max(0.0)
 }
 
 /// Read memory statistics from /proc/meminfo
+/// Works across all Linux distributions
 fn read_memory_stats() -> Result<(u64, u64, u64), String> {
     let meminfo = fs::read_to_string("/proc/meminfo").map_err(|e| e.to_string())?;
-
-    let mut mem_total = 0u64;
-    let mut mem_available = 0u64;
-    let mut mem_free = 0u64;
-
+    
+    let mut total_kb = 0u64;
+    let mut available_kb = 0u64;
+    let mut free_kb = 0u64;
+    let mut buffers_kb = 0u64;
+    let mut cached_kb = 0u64;
+    
     for line in meminfo.lines() {
         if line.starts_with("MemTotal:") {
-            mem_total = line
-                .split_whitespace()
-                .nth(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            if let Some(kb_str) = line.split_whitespace().nth(1) {
+                total_kb = kb_str.parse().unwrap_or(0);
+            }
         } else if line.starts_with("MemAvailable:") {
-            mem_available = line
-                .split_whitespace()
-                .nth(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            if let Some(kb_str) = line.split_whitespace().nth(1) {
+                available_kb = kb_str.parse().unwrap_or(0);
+            }
         } else if line.starts_with("MemFree:") {
-            mem_free = line
-                .split_whitespace()
-                .nth(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            if let Some(kb_str) = line.split_whitespace().nth(1) {
+                free_kb = kb_str.parse().unwrap_or(0);
+            }
+        } else if line.starts_with("Buffers:") {
+            if let Some(kb_str) = line.split_whitespace().nth(1) {
+                buffers_kb = kb_str.parse().unwrap_or(0);
+            }
+        } else if line.starts_with("Cached:") {
+            if let Some(kb_str) = line.split_whitespace().nth(1) {
+                cached_kb = kb_str.parse().unwrap_or(0);
+            }
         }
     }
-
-    // If MemAvailable is not available (older kernels), use MemFree
-    if mem_available == 0 {
-        mem_available = mem_free;
+    
+    if total_kb == 0 {
+        return Err("Could not parse memory total".to_string());
     }
-
-    let mem_used = mem_total.saturating_sub(mem_available);
-
-    Ok((mem_total, mem_used, mem_available))
+    
+    // If MemAvailable is not available (older kernels), calculate it
+    if available_kb == 0 {
+        available_kb = free_kb + buffers_kb + cached_kb;
+    }
+    
+    let used_kb = total_kb.saturating_sub(available_kb);
+    let usage_percent = if total_kb > 0 {
+        (used_kb as f64 / total_kb as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    Ok((total_kb, used_kb, usage_percent as u64))
 }
 
-/// Read system uptime from /proc/uptime
+/// Read uptime from /proc/uptime
 fn read_uptime() -> Result<u64, String> {
     let uptime = fs::read_to_string("/proc/uptime").map_err(|e| e.to_string())?;
-    let uptime_secs: f64 = uptime
-        .split_whitespace()
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.0);
-
-    Ok(uptime_secs as u64)
+    let seconds_str = uptime.split_whitespace().next().unwrap_or("0");
+    Ok(seconds_str.parse().unwrap_or(0.0) as u64)
 }
 
-/// Global state for CPU metrics calculation
-struct MetricsState {
-    last_cpu_stats: Option<(u64, u64, u64, u64, u64, u64, u64)>,
-    current_cpu_percent: f64,
+/// Read load average from /proc/loadavg
+fn read_load_average() -> Option<f64> {
+    let loadavg = fs::read_to_string("/proc/loadavg").ok()?;
+    let load_str = loadavg.split_whitespace().next()?;
+    load_str.parse().ok()
 }
 
-impl MetricsState {
-    fn new() -> Self {
-        Self {
-            last_cpu_stats: None,
-            current_cpu_percent: 0.0,
+/// Count processes in /proc
+fn count_processes() -> Option<u32> {
+    let proc_entries = fs::read_dir("/proc").ok()?;
+    let count = proc_entries
+        .filter_map(|entry| {
+            entry.ok().and_then(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+            })
+        })
+        .count();
+    Some(count as u32)
+}
+
+/// Read guest agent configuration from /etc/guest-agent.conf
+fn read_config() -> Option<AgentConfig> {
+    let config_content = fs::read_to_string("/etc/guest-agent.conf").ok()?;
+
+    let mut vm_id = None;
+    let mut manager_url = None;
+
+    for line in config_content.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+
+        if let Some((key, value)) = line.split_once('=') {
+            match key.trim() {
+                "VM_ID" => vm_id = Some(value.trim().to_string()),
+                "MANAGER_URL" => manager_url = Some(value.trim().to_string()),
+                _ => {}
+            }
         }
     }
+
+    Some(AgentConfig {
+        vm_id: vm_id?,
+        manager_url: manager_url?,
+    })
+}
+
+/// Detect the VM's IP address from eth0
+fn detect_ip() -> Option<String> {
+    // Try reading from /sys/class/net/eth0/address first
+    let output = std::process::Command::new("ip")
+        .args(["addr", "show", "eth0"])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse: "inet 192.168.18.2/24 ..."
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("inet ") {
+            if let Some(ip_part) = line.split_whitespace().nth(1) {
+                if let Some(ip) = ip_part.split('/').next() {
+                    // Skip localhost
+                    if ip != "127.0.0.1" && !ip.is_empty() {
+                        return Some(ip.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Report IP address to the manager
+async fn report_ip_to_manager(config: &AgentConfig, ip: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let url = format!("{}/v1/vms/{}/guest-ip", config.manager_url, config.vm_id);
+
+    // Create JSON payload as a string to ensure proper formatting
+    let payload = format!(r#"{{"guest_ip":"{}"}}"#, ip);
+
+    eprintln!("Reporting to: {}", url);
+    eprintln!("Payload: {}", payload);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(payload)
+        .send()
+        .await?;
+
+    if response.status().is_success() {
+        eprintln!("✅ Successfully reported IP {} to manager", ip);
+        Ok(())
+    } else {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(format!("Failed to report IP: {} - {}", status, body).into())
+    }
+}
+
+/// Get current metrics
+fn get_current_metrics(prev_cpu: Option<(u64, u64, u64, u64, u64, u64, u64)>) -> (GuestMetrics, Option<(u64, u64, u64, u64, u64, u64, u64)>) {
+    let cpu_stats = read_cpu_stats().unwrap_or((0, 0, 0, 0, 0, 0, 0));
+    let cpu_percent = if let Some(prev) = prev_cpu {
+        calculate_cpu_percent(prev, cpu_stats)
+    } else {
+        0.0 // Need two samples to calculate percentage
+    };
+    
+    let (total_kb, used_kb, usage_percent) = read_memory_stats().unwrap_or((0, 0, 0));
+    let uptime = read_uptime().unwrap_or(0);
+    let load_avg = read_load_average();
+    let process_count = count_processes();
+    
+    let metrics = GuestMetrics {
+        cpu_usage_percent: cpu_percent,
+        memory_usage_percent: usage_percent as f64,
+        memory_used_kb: used_kb,
+        memory_total_kb: total_kb,
+        memory_available_kb: total_kb.saturating_sub(used_kb),
+        uptime_seconds: uptime,
+        load_average: load_avg,
+        process_count: process_count,
+    };
+    
+    (metrics, Some(cpu_stats))
+}
+
+/// Health check endpoint
+async fn health_check() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "healthy",
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        "version": env!("CARGO_PKG_VERSION")
+    }))
+}
+
+/// Metrics endpoint
+async fn get_metrics(
+    State(cpu_state): State<Arc<CpuState>>,
+) -> Json<GuestMetrics> {
+    let prev_cpu = cpu_state.last_cpu.load(Ordering::Relaxed);
+    let prev_cpu_tuple = if prev_cpu == 0 {
+        None
+    } else {
+        // Convert stored u128 back to tuple
+        let user = (prev_cpu >> 48) & 0xFFFF;
+        let nice = (prev_cpu >> 32) & 0xFFFF;
+        let system = (prev_cpu >> 16) & 0xFFFF;
+        let idle = prev_cpu & 0xFFFF;
+        Some((user, nice, system, idle, 0, 0, 0))
+    };
+    
+    let (metrics, new_cpu) = get_current_metrics(prev_cpu_tuple);
+    
+    // Store new CPU stats (compressed as u64 to save space)
+    if let Some(cpu) = new_cpu {
+        let compressed = ((cpu.0 & 0xFFFF) << 48) |
+                        ((cpu.1 & 0xFFFF) << 32) |
+                        ((cpu.2 & 0xFFFF) << 16) |
+                        (cpu.3 & 0xFFFF);
+        cpu_state.last_cpu.store(compressed, Ordering::Relaxed);
+    }
+    
+    Json(metrics)
+}
+
+#[derive(Clone)]
+struct CpuState {
+    last_cpu: Arc<AtomicU64>,
 }
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .compact()
-        .init();
+    // Initialize logging to stderr (works everywhere)
+    eprintln!("Guest agent v{} starting...", env!("CARGO_PKG_VERSION"));
 
-    tracing::info!("Guest agent starting...");
+    // Read configuration
+    let config = read_config();
+    if let Some(ref cfg) = config {
+        eprintln!("Loaded config: VM ID = {}, Manager URL = {}", cfg.vm_id, cfg.manager_url);
+    } else {
+        eprintln!("Warning: No config found at /etc/guest-agent.conf - IP reporting disabled");
+    }
 
-    // Shared state for metrics
-    let state = std::sync::Arc::new(tokio::sync::Mutex::new(MetricsState::new()));
+    let cpu_state = Arc::new(CpuState {
+        last_cpu: Arc::new(AtomicU64::new(0)),
+    });
 
-    // Spawn background task to update CPU metrics
-    let state_clone = state.clone();
+    // Sample CPU every second in background
+    let cpu_state_clone = cpu_state.clone();
     tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
+            interval.tick().await;
             if let Ok(cpu_stats) = read_cpu_stats() {
-                let mut state = state_clone.lock().await;
-                if let Some(last_stats) = state.last_cpu_stats {
-                    state.current_cpu_percent = calculate_cpu_percent(last_stats, cpu_stats);
-                }
-                state.last_cpu_stats = Some(cpu_stats);
+                let compressed = ((cpu_stats.0 & 0xFFFF) << 48) |
+                                ((cpu_stats.1 & 0xFFFF) << 32) |
+                                ((cpu_stats.2 & 0xFFFF) << 16) |
+                                (cpu_stats.3 & 0xFFFF);
+                cpu_state_clone.last_cpu.store(compressed, Ordering::Relaxed);
             }
-
-            sleep(Duration::from_secs(1)).await;
         }
     });
 
-    // Build HTTP router
+    // Start IP reporting task if config is available
+    if let Some(config) = config {
+        tokio::spawn(async move {
+            // Wait a bit for network to be ready
+            tokio::time::sleep(Duration::from_secs(5)).await;
+
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            let mut reported = false;
+
+            loop {
+                interval.tick().await;
+
+                if let Some(ip) = detect_ip() {
+                    match report_ip_to_manager(&config, &ip).await {
+                        Ok(_) => {
+                            if !reported {
+                                eprintln!("Initial IP report successful");
+                                reported = true;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to report IP: {}", e);
+                        }
+                    }
+                } else {
+                    eprintln!("Could not detect IP address from eth0");
+                }
+            }
+        });
+    }
+
+    // Create router
     let app = Router::new()
-        .route("/metrics", get({
-            let state = state.clone();
-            move || metrics_handler(state)
-        }))
-        .route("/health", get(health_handler));
+        .route("/health", get(health_check))
+        .route("/metrics", get(get_metrics))
+        .with_state(cpu_state);
 
-    // Bind to all interfaces on port 8080
-    let addr = "0.0.0.0:8080";
-    tracing::info!("Guest agent listening on {}", addr);
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("Failed to bind to address");
-
-    axum::serve(listener, app)
-        .await
-        .expect("Server error");
-}
-
-async fn metrics_handler(
-    state: std::sync::Arc<tokio::sync::Mutex<MetricsState>>,
-) -> Json<GuestMetrics> {
-    let cpu_percent = {
-        let state = state.lock().await;
-        state.current_cpu_percent
-    };
-
-    let (mem_total, mem_used, mem_available) = read_memory_stats().unwrap_or((0, 0, 0));
-    let mem_percent = if mem_total > 0 {
-        (mem_used as f64 / mem_total as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    let uptime = read_uptime().unwrap_or(0);
-
-    Json(GuestMetrics {
-        cpu_usage_percent: cpu_percent,
-        memory_usage_percent: mem_percent,
-        memory_used_kb: mem_used,
-        memory_total_kb: mem_total,
-        memory_available_kb: mem_available,
-        uptime_seconds: uptime,
-    })
-}
-
-async fn health_handler() -> &'static str {
-    "OK"
+    // Try to bind to port 9000 (avoid conflict with manager on 8080)
+    let addr = "0.0.0.0:9000";
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => {
+            eprintln!("Guest agent listening on {}", addr);
+            axum::serve(listener, app).await.unwrap();
+        }
+        Err(e) => {
+            eprintln!("Failed to bind to {}: {}", addr, e);
+            std::process::exit(1);
+        }
+    }
 }
