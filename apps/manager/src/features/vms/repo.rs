@@ -20,6 +20,7 @@ pub struct VmRow {
     pub kernel_path: String,
     pub rootfs_path: String,
     pub source_snapshot_id: Option<Uuid>,
+    pub guest_ip: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -76,6 +77,7 @@ pub async fn list(db: &PgPool) -> sqlx::Result<Vec<VmRow>> {
                vm.kernel_path,
                vm.rootfs_path,
                vm.source_snapshot_id,
+               vm.guest_ip,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -114,6 +116,7 @@ pub async fn list_by_host(db: &PgPool, host_id: Uuid) -> sqlx::Result<Vec<VmRow>
                vm.kernel_path,
                vm.rootfs_path,
                vm.source_snapshot_id,
+               vm.guest_ip,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -239,6 +242,15 @@ pub async fn insert_event(_: &PgPool, vm_id: Uuid, level: &str, message: &str) -
         level: level.to_string(),
         message: message.to_string(),
     });
+    Ok(())
+}
+
+pub async fn update_guest_ip(db: &PgPool, vm_id: Uuid, guest_ip: Option<&str>) -> sqlx::Result<()> {
+    sqlx::query("UPDATE vm SET guest_ip = $1, updated_at = NOW() WHERE id = $2")
+        .bind(guest_ip)
+        .bind(vm_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 

@@ -7,6 +7,7 @@ pub mod repo; // db
 pub mod routes; // handlers
 pub mod service; // orchestration
 pub mod shell; // shell session helpers
+pub mod guest_agent; // automatic guest agent installation
 
 pub fn router() -> Router {
     Router::new()
@@ -38,6 +39,7 @@ pub fn router() -> Router {
         .route("/:id/shell", get(routes::get_shell_credentials))
         .route("/:id/shell/ws", get(routes::shell_websocket))
         .route("/:id/metrics/ws", get(routes::metrics_websocket))
+        .route("/:id/guest-ip", post(routes::update_guest_ip))
         .route(
             "/:id/machine-config",
             axum::routing::patch(routes::patch_machine_config),

@@ -54,6 +54,7 @@ export function MetricsTab({ vm }: MetricsTabProps) {
 
   useEffect(() => {
     const handleMetrics = (data: IncomingMetrics) => {
+      console.log("Received metrics:", data)
       const newMetric: MetricsData = {
         timestamp: Date.now(),
         cpu: data.cpu_usage_percent || 0,
@@ -63,9 +64,11 @@ export function MetricsTab({ vm }: MetricsTabProps) {
         diskRead: data.disk_read_bytes || 0,
         diskWrite: data.disk_write_bytes || 0,
       }
+      console.log("New metric added:", newMetric)
 
       setMetricsData((prev) => {
         const updated = [...prev, newMetric]
+        console.log("Total metrics data points:", updated.length)
         return updated.slice(-MAX_DATA_POINTS)
       })
     }
@@ -86,9 +89,10 @@ export function MetricsTab({ vm }: MetricsTabProps) {
     }
   }
 
-  const chartOptions: ChartOptions<"line"> = {
+  const percentageChartOptions: ChartOptions<"line"> = {
     responsive: true,
     maintainAspectRatio: false,
+    animation: false,
     plugins: {
       legend: {
         display: false,
@@ -101,27 +105,50 @@ export function MetricsTab({ vm }: MetricsTabProps) {
       y: {
         beginAtZero: true,
         max: 100,
+        grid: {
+          display: true,
+        },
         ticks: {
+          stepSize: 25,
           callback: (value) => `${value}%`,
         },
       },
     },
     elements: {
       point: {
-        radius: 0,
+        radius: 2,
+        hitRadius: 10,
       },
       line: {
+        borderWidth: 2,
         tension: 0.4,
       },
     },
   }
 
-  const networkChartOptions: ChartOptions<"line"> = {
-    ...chartOptions,
+  const bytesChartOptions: ChartOptions<"line"> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: {
+        display: true,
+        position: "top",
+        labels: {
+          usePointStyle: true,
+          boxWidth: 6,
+        },
+      },
+    },
     scales: {
-      ...chartOptions.scales,
+      x: {
+        display: false,
+      },
       y: {
         beginAtZero: true,
+        grid: {
+          display: true,
+        },
         ticks: {
           callback: (value) => {
             const bytes = value as number
@@ -130,6 +157,16 @@ export function MetricsTab({ vm }: MetricsTabProps) {
             return `${bytes}B/s`
           },
         },
+      },
+    },
+    elements: {
+      point: {
+        radius: 2,
+        hitRadius: 10,
+      },
+      line: {
+        borderWidth: 2,
+        tension: 0.4,
       },
     },
   }
@@ -141,8 +178,8 @@ export function MetricsTab({ vm }: MetricsTabProps) {
     datasets: [
       {
         data: metricsData.map((d) => d.cpu),
-        borderColor: "hsl(var(--primary))",
-        backgroundColor: "hsl(var(--primary) / 0.1)",
+        borderColor: "rgb(59, 130, 246)",
+        backgroundColor: "rgba(59, 130, 246, 0.1)",
         fill: true,
       },
     ],
@@ -153,8 +190,8 @@ export function MetricsTab({ vm }: MetricsTabProps) {
     datasets: [
       {
         data: metricsData.map((d) => d.memory),
-  borderColor: "hsl(var(--success))",
-  backgroundColor: "hsl(var(--success) / 0.1)",
+        borderColor: "rgb(34, 197, 94)",
+        backgroundColor: "rgba(34, 197, 94, 0.1)",
         fill: true,
       },
     ],
@@ -166,16 +203,16 @@ export function MetricsTab({ vm }: MetricsTabProps) {
       {
         label: "In",
         data: metricsData.map((d) => d.networkIn),
-  borderColor: "hsl(262 83% 58%)",
-  backgroundColor: "hsl(262 83% 58% / 0.12)",
+        borderColor: "rgb(168, 85, 247)",
+        backgroundColor: "rgba(168, 85, 247, 0.12)",
         fill: false,
       },
       {
         label: "Out",
         data: metricsData.map((d) => d.networkOut),
-  borderColor: "hsl(262 83% 58% / 0.6)",
-  backgroundColor: "hsl(262 83% 58% / 0.08)",
-  borderDash: [4, 4] as unknown as number[],
+        borderColor: "rgba(168, 85, 247, 0.6)",
+        backgroundColor: "rgba(168, 85, 247, 0.08)",
+        borderDash: [4, 4] as unknown as number[],
         fill: false,
       },
     ],
@@ -187,22 +224,35 @@ export function MetricsTab({ vm }: MetricsTabProps) {
       {
         label: "Read",
         data: metricsData.map((d) => d.diskRead),
-  borderColor: "hsl(var(--warning))",
-  backgroundColor: "hsl(var(--warning) / 0.12)",
+        borderColor: "rgb(234, 179, 8)",
+        backgroundColor: "rgba(234, 179, 8, 0.12)",
         fill: false,
       },
       {
         label: "Write",
         data: metricsData.map((d) => d.diskWrite),
-  borderColor: "hsl(var(--warning) / 0.7)",
-  backgroundColor: "hsl(var(--warning) / 0.06)",
-  borderDash: [4, 4] as unknown as number[],
+        borderColor: "rgba(234, 179, 8, 0.7)",
+        backgroundColor: "rgba(234, 179, 8, 0.06)",
+        borderDash: [4, 4] as unknown as number[],
         fill: false,
       },
     ],
   }
 
   const latestMetrics = metricsData[metricsData.length - 1]
+
+  // Debug logging
+  if (metricsData.length > 0) {
+    console.log("Chart data prepared:", {
+      dataPoints: metricsData.length,
+      cpu: cpuData.datasets[0].data,
+      memory: memoryData.datasets[0].data,
+      networkIn: networkData.datasets[0].data,
+      networkOut: networkData.datasets[1].data,
+      diskRead: diskData.datasets[0].data,
+      diskWrite: diskData.datasets[1].data,
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -268,7 +318,7 @@ export function MetricsTab({ vm }: MetricsTabProps) {
             <CardContent>
               <div className="h-32">
                 {metricsData.length > 0 ? (
-                  <Line data={cpuData} options={chartOptions} />
+                  <Line data={cpuData} options={percentageChartOptions} />
                 ) : (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
                     {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
@@ -294,7 +344,7 @@ export function MetricsTab({ vm }: MetricsTabProps) {
             <CardContent>
               <div className="h-32">
                 {metricsData.length > 0 ? (
-                  <Line data={memoryData} options={chartOptions} />
+                  <Line data={memoryData} options={percentageChartOptions} />
                 ) : (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
                     {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
@@ -325,7 +375,7 @@ export function MetricsTab({ vm }: MetricsTabProps) {
             <CardContent>
               <div className="h-32">
                 {metricsData.length > 0 ? (
-                  <Line data={networkData} options={networkChartOptions} />
+                  <Line data={networkData} options={bytesChartOptions} />
                 ) : (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
                     {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
@@ -356,7 +406,7 @@ export function MetricsTab({ vm }: MetricsTabProps) {
             <CardContent>
               <div className="h-32">
                 {metricsData.length > 0 ? (
-                  <Line data={diskData} options={networkChartOptions} />
+                  <Line data={diskData} options={bytesChartOptions} />
                 ) : (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
                     {isStreaming ? "Collecting data..." : "Start monitoring to view data"}
