@@ -9,6 +9,7 @@ import { useState } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { use } from "react"
 
 // Mock data
 const mockImage = {
@@ -25,7 +26,8 @@ const mockImage = {
   format: "ext4",
 }
 
-export default function RegistryDetailPage({ params }: { params: { id: string } }) {
+export default function RegistryDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   const { toast } = useToast()
   const router = useRouter()
   const [copied, setCopied] = useState(false)
