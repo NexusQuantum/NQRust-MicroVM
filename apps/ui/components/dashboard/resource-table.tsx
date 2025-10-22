@@ -8,15 +8,16 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { StatusBadge } from "@/components/shared/status-badge"
-import { Server, Zap, Container, Play, Square, Trash2, Search } from "lucide-react"
+import { Server, Zap, Container, Play, Trash2, Search, Square, Pause } from "lucide-react"
 import { formatRelativeTime, formatPercentage } from "@/lib/utils/format"
 import type { UnifiedResource } from "@/lib/api/dashboard"
+import { useVmStatePatch } from "@/lib/queries"
 
 interface ResourceTableProps {
   resources: UnifiedResource[]
 }
 
-export function   ResourceTable({ resources }: ResourceTableProps) {
+export function ResourceTable({ resources }: ResourceTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>("all")
   const [stateFilter, setStateFilter] = useState<string>("all")
@@ -69,6 +70,12 @@ export function   ResourceTable({ resources }: ResourceTableProps) {
         return "#"
     }
   }
+
+  const vmStatePatch = useVmStatePatch()
+  const handleAction = (id: string, action: "start" | "stop" | "resume" | "ctrl_alt_del" | "pause") => {
+    vmStatePatch.mutate({ id, action })
+  }
+
 
   return (
     <div className="space-y-4">
@@ -153,16 +160,26 @@ export function   ResourceTable({ resources }: ResourceTableProps) {
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
                       {resource.state === "stopped" && (
-                        <Button variant="ghost" size="icon">
+                        <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "start")}>
                           <Play className="h-4 w-4" />
                         </Button>
                       )}
                       {resource.state === "running" && (
-                        <Button variant="ghost" size="icon">
-                          <Square className="h-4 w-4" />
+                        <div className="flex flex-row-reverse gap-2">
+                          <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "stop")}>
+                            <Square className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "pause")}>
+                            <Pause className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                      {resource.state === "paused" && (
+                        <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "resume")}>
+                          <Play className="h-4 w-4" />
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon">
+                      <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "stop")}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
