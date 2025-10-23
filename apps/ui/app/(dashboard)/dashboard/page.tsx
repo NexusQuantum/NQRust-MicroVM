@@ -28,7 +28,7 @@ export default function DashboardPage() {
   // Transform VMs for resource table
   const vmResources = vms.map(vm => ({
     id: vm.id,
-    name: vm.vm_name || `VM-${vm.id}`,
+    name: vm.name,
     type: "vm" as const,
     state: vm.state.toLowerCase(),
     metrics: { cpu: 0, memory: 0 }, // TODO: Get real metrics when available
@@ -36,7 +36,7 @@ export default function DashboardPage() {
 
   // Combine VMs with mock resources
   const allResources = [...vmResources]
-  console.log('all resource: ', allResources)
+  // console.log('all resource: ', allResources)
 
 
   return (
