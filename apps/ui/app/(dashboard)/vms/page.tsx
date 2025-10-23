@@ -1,5 +1,5 @@
 "use client"
-
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useVMs } from "@/lib/queries"
 import { VMTable } from "@/components/vm/vm-table"
 import { Button } from "@/components/ui/button"
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Plus, Search } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
+import Image from "next/image"
 
 export default function VMsPage() {
   const { data: vms, isLoading, error } = useVMs()
