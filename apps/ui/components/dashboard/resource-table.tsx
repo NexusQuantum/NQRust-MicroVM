@@ -11,13 +11,16 @@ import { StatusBadge } from "@/components/shared/status-badge"
 import { Server, Zap, Container, Play, Trash2, Search, Square, Pause } from "lucide-react"
 import { formatRelativeTime, formatPercentage } from "@/lib/utils/format"
 import type { UnifiedResource } from "@/lib/api/dashboard"
-import { useVmStatePatch } from "@/lib/queries"
+import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useToast } from "@/hooks/use-toast"
 
 interface ResourceTableProps {
   resources: UnifiedResource[]
 }
 
 export function ResourceTable({ resources }: ResourceTableProps) {
+  const { toast } = useToast()
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>("all")
   const [stateFilter, setStateFilter] = useState<string>("all")
@@ -27,6 +30,12 @@ export function ResourceTable({ resources }: ResourceTableProps) {
     const matchesType = typeFilter === "all" || resource.type === typeFilter
     const matchesState = stateFilter === "all" || resource.state === stateFilter
     return matchesSearch && matchesType && matchesState
+  })
+
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; vmId: string; vmName: string }>({
+    open: false,
+    vmId: "",
+    vmName: "",
   })
 
   const getTypeIcon = (type: string) => {
@@ -72,8 +81,31 @@ export function ResourceTable({ resources }: ResourceTableProps) {
   }
 
   const vmStatePatch = useVmStatePatch()
+  const deleteMutation = useDeleteVM()
   const handleAction = (id: string, action: "start" | "stop" | "resume" | "ctrl_alt_del" | "pause") => {
     vmStatePatch.mutate({ id, action })
+  }
+
+  const handleDelete = () => {
+    if (deleteDialog.vmId && deleteDialog.vmName) {
+      deleteMutation.mutate(deleteDialog.vmId, {
+        onSuccess: () => {
+          toast({
+            title: "Resource Deleted",
+            description: `${deleteDialog.vmName} has been deleted`,
+            variant: "destructive",
+          })
+          setDeleteDialog({ open: false, vmId: "", vmName: "" })
+        },
+        onError: (error) => {
+          toast({
+            title: "Delete Failed",
+            description: `Failed to delete ${deleteDialog.vmName}: ${error.message}`,
+            variant: "destructive",
+          })
+        }
+      })
+    }
   }
 
 
@@ -161,7 +193,7 @@ export function ResourceTable({ resources }: ResourceTableProps) {
                     <div className="flex justify-end gap-2">
                       {resource.state === "stopped" && (
                         <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "start")}>
-                          <Play className="h-4 w-4" />
+                          <Play className="h-4 w-4 " />
                         </Button>
                       )}
                       {resource.state === "running" && (
@@ -179,7 +211,7 @@ export function ResourceTable({ resources }: ResourceTableProps) {
                           <Play className="h-4 w-4" />
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "stop")}>
+                      <Button variant="ghost" size="icon" onClick={() => setDeleteDialog({ open: true, vmId: resource.id, vmName: resource.name || 'Unknown' })}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -190,6 +222,16 @@ export function ResourceTable({ resources }: ResourceTableProps) {
           </TableBody>
         </Table>
       </div>
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        title="Delete VM"
+        description={`Are you sure you want to delete ${deleteDialog.vmName}? This action cannot be undone.`}
+        confirmText="Delete"
+        onConfirm={() => handleDelete()}
+        variant="destructive"
+      />
     </div>
   )
 }
