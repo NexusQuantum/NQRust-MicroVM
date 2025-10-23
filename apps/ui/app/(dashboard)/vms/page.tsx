@@ -46,57 +46,63 @@ export default function VMsPage() {
   }
 
   return (
-    <div className="container mx-auto py-6">
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">Virtual Machines</h1>
-            <p className="text-muted-foreground">
-              Manage your Firecracker microVMs
+    <div className="space-y-6">
+      <div className="relative overflow-hidden rounded-xl border border-border bg-gradient-to-br from-yellow-50 to-yellow-100/50 p-8">
+        <div className="relative z-10 flex items-center justify-between">
+          <div className="max-w-xl">
+            <h1 className="text-3xl font-bold text-foreground">Virtual Machines</h1>
+            <p className="mt-2 text-muted-foreground">
+              Manage your microVMs
             </p>
+            <Button asChild className="mt-4">
+              <Link href="/vms/create">
+                <Plus className="mr-2 h-4 w-4" />
+                Create VM
+              </Link>
+            </Button>
           </div>
-          <Button asChild>
-            <Link href="/vms/create">
-              <Plus className="mr-2 h-4 w-4" />
-              Create VM
-            </Link>
-          </Button>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search VMs..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
+          <div className="hidden lg:block">
+            <Image
+              src="/virtual-machine-server-infrastructure-illustration.jpg"
+              alt="Virtual Machines"
+              width={300}
+              height={200}
+              className="rounded-lg"
             />
           </div>
         </div>
-
-        {filteredVMs.length === 0 ? (
-          <div className="text-center py-12">
-            <h3 className="text-lg font-medium">No VMs found</h3>
-            <p className="text-muted-foreground mt-2">
-              {searchTerm 
-                ? "No VMs match your search criteria."
-                : "Get started by creating your first VM."
-              }
-            </p>
-            {!searchTerm && (
-              <Button asChild className="mt-4">
-                <Link href="/vms/create">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create your first VM
-                </Link>
-              </Button>
-            )}
-          </div>
-        ) : (
-          <VMTable vms={filteredVMs} />
-        )}
+        <div className="absolute right-0 top-0 h-64 w-64 translate-x-32 -translate-y-32 rounded-full bg-gradient-to-br from-yellow-400/30 to-yellow-600/30 blur-3xl" />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>All Virtual Machine</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {filteredVMs.length === 0 ? (
+            <div className="text-center py-12">
+              <h3 className="text-lg font-medium">No VMs found</h3>
+              <p className="text-muted-foreground mt-2">
+                {searchTerm
+                  ? "No VMs match your search criteria."
+                  : "Get started by creating your first VM."
+                }
+              </p>
+              {!searchTerm && (
+                <Button asChild className="mt-4">
+                  <Link href="/vms/create">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create your first VM
+                  </Link>
+                </Button>
+              )}
+            </div>
+          ) : (
+            <VMTable vms={filteredVMs} />
+          )}
+        </CardContent>
+      </Card>
+
     </div>
   )
 }
