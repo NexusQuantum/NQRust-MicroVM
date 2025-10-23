@@ -19,27 +19,175 @@ import { useCreateVM, useRegistryImages } from "@/lib/queries"
 import type { CreateVmReq } from "@/lib/types"
 import { RegistryBrowser } from "@/components/registry/registry-browser"
 
-const steps = ["Basic Info", "Credentials", "Machine Config", "Boot Source", "Network", "Review"]
+const vmCreationSchema = z.object({
+  name: z.string().min(1, "VM Name is required").max(50, "Name too long"),
+  description: z.string().max(200, "Description too long").optional(),
+  environment: z.enum(["development", "staging", "production"]),
+  owner: z.string().min(1, "Owner is required").default("developer"),
 
-export function VMCreateWizard() {
+  // Credentials
+  username: z.string().min(1, "Username is required").max(32, "Username too long").default("root"),
+  password: z.string().min(1, "Password is required").max(128, "Password too long"),
+
+  // Machine config
+  vcpu_count: z.number().min(1, "Minimum 1 vCPU").max(32, "Maximum 32 vCPUs"),
+  mem_size_mib: z
+    .number()
+    .min(128, "Minimum 128 MiB")
+    .max(32768, "Maximum 32768 MiB")
+    .refine((n) => n % 128 === 0, {
+      message: "Memory must be a multiple of 128 MiB",
+    }),
+  cpu_template: z.enum(["C3", "T2", "None"]).optional(),
+  smt: z.boolean().default(false),
+  track_dirty_pages: z.boolean().default(false),
+
+  // Boot source - support both image IDs and paths
+  kernel_image_id: z.string().optional(),
+  kernel_image_path: z.string().optional(),
+  initrd_path: z.string().optional(),
+  boot_args: z.string().optional(),
+
+  // Root drive - support both image IDs and paths
+  rootfs_image_id: z.string().optional(),
+  root_drive_path: z.string().optional(),
+  root_drive_readonly: z.boolean().default(false),
+
+  // Network (optional)
+  enable_network: z.boolean().default(false),
+  host_dev_name: z.string().optional(),
+  guest_mac: z.string().optional(),
+}).refine(
+  (data) => data.kernel_image_id || data.kernel_image_path,
+  {
+    message: "Either kernel image ID or path is required",
+    path: ["kernel_image_path"],
+  }
+).refine(
+  (data) => data.rootfs_image_id || data.root_drive_path,
+  {
+    message: "Either rootfs image ID or path is required", 
+    path: ["root_drive_path"],
+  }
+)
+
+type VMCreationForm = z.infer<typeof vmCreationSchema>
+
+const steps = [
+  { id: "basic", title: "Basic Info", icon: Settings },
+  { id: "credentials", title: "Credentials", icon: Settings },
+  { id: "machine", title: "Machine Config", icon: Server },
+  { id: "boot", title: "Boot Source", icon: HardDrive },
+  { id: "network", title: "Network", icon: Network },
+  { id: "review", title: "Review", icon: Check },
+]
+
+interface VMCreateWizardProps {
+  onComplete?: () => void
+  onCancel?: () => void
+}
+
+export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
+  const [showRegistryBrowser, setShowRegistryBrowser] = useState<"kernel" | "rootfs" | null>(null)
+  const [kernelOptions, setKernelOptions] = useState<{ name: string; path: string; id: string; kind: string }[]>([])
+  const [rootfsOptions, setRootfsOptions] = useState<{ name: string; path: string; id: string; kind: string }[]>([])
+  const createVM = useCreateVM()
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
-  // Form state
-  const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
-  const [username, setUsername] = useState("root")
-  const [password, setPassword] = useState("")
-  const [vcpu, setVcpu] = useState(2)
-  const [memory, setMemory] = useState(2048)
-  const [smtEnabled, setSmtEnabled] = useState(false)
-  const [trackDirtyPages, setTrackDirtyPages] = useState(false)
-  const [kernelPath, setKernelPath] = useState("")
-  const [rootfsPath, setRootfsPath] = useState("")
-  const [initrdPath, setInitrdPath] = useState("")
-  const [bootArgs, setBootArgs] = useState("")
-  const [enableNetwork, setEnableNetwork] = useState(true)
-  const [hostDevice, setHostDevice] = useState("tap0")
-  const [guestMac, setGuestMac] = useState("")
+  const {
+    register,
+    handleSubmit,
+    watch,
+    setValue,
+    trigger,
+    formState: { errors, isSubmitting },
+  } = useForm<VMCreationForm>({
+    resolver: zodResolver(vmCreationSchema) as any,
+    mode: "onChange",
+    defaultValues: {
+      name: "my-vm-" + Date.now().toString().slice(-6),
+      owner: "developer",
+      environment: "development",
+      description: "",
+      username: "root",
+      password: "changeme",
+      vcpu_count: 2,
+      mem_size_mib: 2048,
+      smt: false,
+      cpu_template: "None",
+      track_dirty_pages: false,
+      root_drive_readonly: false,
+      enable_network: true,
+      host_dev_name: "tap0",
+      // Auto-select first available images
+      kernel_image_id: "",
+      rootfs_image_id: "",
+    },
+  })
+
+  const formData = watch()
+  
+  // Load prefilled values from localStorage (when coming from registry)
+  useEffect(() => {
+    try {
+      const kernelId = localStorage.getItem('NR_PREFILL_KERNEL_ID')
+      const rootfsId = localStorage.getItem('NR_PREFILL_ROOTFS_ID')
+      
+      if (kernelId) {
+        setValue('kernel_image_id', kernelId)
+        setValue('kernel_image_path', '')
+        localStorage.removeItem('NR_PREFILL_KERNEL_ID')
+      }
+      
+      if (rootfsId) {
+        setValue('rootfs_image_id', rootfsId)
+        setValue('root_drive_path', '')
+        localStorage.removeItem('NR_PREFILL_ROOTFS_ID')
+      }
+    } catch (_e) {
+      // Ignore localStorage errors
+    }
+  }, [setValue])
+  
+  // Load registry items for kernel and rootfs from backend
+  useEffect(() => {
+    (async () => {
+      try {
+        // Get kernel images
+        const kernelRes = await fetch('/api/v1/images?kind=kernel')
+        const kernelData = await kernelRes.json()
+        const kernels = (kernelData.items || []).map((i: any) => ({ 
+          name: i.name, 
+          path: i.host_path, 
+          id: i.id,
+          kind: i.kind 
+        }))
+        setKernelOptions(kernels)
+
+        // Get rootfs images
+        const rootfsRes = await fetch('/api/v1/images?kind=rootfs')
+        const rootfsData = await rootfsRes.json()
+        const rootfs = (rootfsData.items || []).map((i: any) => ({
+          name: i.name,
+          path: i.host_path,
+          id: i.id,
+          kind: i.kind
+        }))
+        setRootfsOptions(rootfs)
+
+        // Auto-select first available images for convenience
+        if (kernels.length > 0 && !formData.kernel_image_id) {
+          setValue('kernel_image_id', kernels[0].id)
+        }
+        if (rootfs.length > 0 && !formData.rootfs_image_id) {
+          setValue('rootfs_image_id', rootfs[0].id)
+        }
+      } catch (_e) {
+        // ignore fetch failures; user can type paths manually
+      }
+    })()
+  }, [setValue, formData.kernel_image_id, formData.rootfs_image_id])
 
   const nextStep = () => {
     if (currentStep < steps.length - 1) {
