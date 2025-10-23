@@ -6,7 +6,7 @@ use nexus_types::CreateVmReq;
 /// Create a dedicated MicroVM for running a serverless function
 ///
 /// This spawns a lightweight VM with:
-/// - Runtime-specific rootfs (Node.js or Python)
+/// - Runtime-specific rootfs (Node.js or Python) - COPIED per-function for isolation
 /// - Function code written to /function/code.{js,py}
 /// - Runtime server auto-starting on boot
 /// - Minimal resources (configurable vCPU and memory)
@@ -15,16 +15,46 @@ pub async fn create_function_vm(
     function_id: Uuid,
     function_name: &str,
     runtime: &str,
-    code: &str,
-    handler: &str,
+    _code: &str,
+    _handler: &str,
     vcpu: u8,
     memory_mb: u32,
-    env_vars: &Option<serde_json::Value>,
+    _env_vars: &Option<serde_json::Value>,
 ) -> Result<Uuid> {
-    // Get runtime-specific image paths (shared base images)
-    let (kernel_path, rootfs_path) = get_runtime_image_paths(runtime)?;
+    use tokio::process::Command;
 
-    // Create VM request using shared runtime image
+    // Get runtime-specific image paths (base images)
+    let (kernel_path, base_rootfs_path) = get_runtime_image_paths(runtime)?;
+
+    // Create a per-function copy of the runtime image
+    // This is necessary because:
+    // 1. Firecracker requires exclusive write access to rootfs
+    // 2. Guest agent installation modifies the rootfs
+    // 3. Multiple VMs cannot share the same writable rootfs file
+    let vm_id = Uuid::new_v4();
+    let function_rootfs_path = format!("/srv/images/functions/{}.ext4", vm_id);
+
+    eprintln!("[Function {}] Creating VM {} with dedicated runtime image copy", function_id, vm_id);
+    eprintln!("[Function {}] Copying {} to {}", function_id, base_rootfs_path, function_rootfs_path);
+
+    // Ensure directory exists
+    tokio::fs::create_dir_all("/srv/images/functions").await
+        .context("Failed to create functions image directory")?;
+
+    // Copy the base runtime image to a function-specific image
+    let copy_status = Command::new("cp")
+        .args([&base_rootfs_path, &function_rootfs_path])
+        .status()
+        .await
+        .context("Failed to execute cp command")?;
+
+    if !copy_status.success() {
+        anyhow::bail!("Failed to copy runtime image from {} to {}", base_rootfs_path, function_rootfs_path);
+    }
+
+    eprintln!("[Function {}] Runtime image copied successfully", function_id);
+
+    // Create VM request using function-specific rootfs copy
     let vm_name = format!("fn-{}-{}", function_name, &function_id.to_string()[..8]);
     let vm_req = CreateVmReq {
         name: vm_name,
@@ -33,15 +63,13 @@ pub async fn create_function_vm(
         kernel_image_id: None,
         rootfs_image_id: None,
         kernel_path: Some(kernel_path),
-        rootfs_path: Some(rootfs_path),
+        rootfs_path: Some(function_rootfs_path),
         source_snapshot_id: None,
         username: Some("root".to_string()),
         password: Some("function".to_string()),
     };
 
     // Create and start VM
-    let vm_id = Uuid::new_v4();
-    eprintln!("[Function {}] Creating VM {} with shared runtime image", function_id, vm_id);
     crate::features::vms::service::create_and_start(st, vm_id, vm_req, None).await?;
 
     // Note: Function code will be injected after VM boots and guest IP is available
@@ -181,30 +209,64 @@ pub async fn update_function_code(
 
     eprintln!("[CodeInjection] Writing code to {} via HTTP", guest_ip);
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
-        .json(&payload)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .context("Failed to call /write-code endpoint")?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
 
-    if !response.status().is_success() {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-        anyhow::bail!("Write-code failed: {}", error_text);
-    }
+    // Retry with exponential backoff until successful (max 2 minutes)
+    let mut attempt = 0;
+    let max_attempts = 60; // ~5 minutes total with 5s delays
+    let mut last_error = String::new();
 
-    let result: serde_json::Value = response.json().await
-        .context("Failed to parse response")?;
+    loop {
+        attempt += 1;
 
-    if result.get("success") == Some(&serde_json::Value::Bool(true)) {
-        eprintln!("[CodeInjection] Successfully wrote and loaded code at {}", guest_ip);
-        Ok(())
-    } else {
-        let error = result.get("error")
-            .and_then(|e| e.as_str())
-            .unwrap_or("Unknown error");
-        anyhow::bail!("Code injection failed: {}", error);
+        match client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                    anyhow::bail!("Write-code failed: {}", error_text);
+                }
+
+                let result: serde_json::Value = response.json().await
+                    .context("Failed to parse response")?;
+
+                if result.get("success") == Some(&serde_json::Value::Bool(true)) {
+                    eprintln!("[CodeInjection] Successfully wrote and loaded code at {} (attempt {})", guest_ip, attempt);
+                    return Ok(());
+                } else {
+                    let error = result.get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("Unknown error");
+                    anyhow::bail!("Code injection failed: {}", error);
+                }
+            }
+            Err(e) => {
+                last_error = format!("{:?}", e);
+
+                if attempt >= max_attempts {
+                    eprintln!("[CodeInjection] ERROR DETAILS: {:#?}", e);
+                    anyhow::bail!("Failed to call /write-code endpoint after {} attempts: {}", max_attempts, last_error);
+                }
+
+                let wait_secs = std::cmp::min(attempt, 5); // Cap at 5 seconds
+                eprintln!("[CodeInjection] Attempt {}/{} failed, retrying in {}s...
+Error type: {}
+Is timeout: {}
+Is connect: {}
+URL: {}",
+                    attempt, max_attempts, wait_secs,
+                    if e.is_timeout() { "TIMEOUT" } else if e.is_connect() { "CONNECTION_REFUSED" } else { "OTHER" },
+                    e.is_timeout(),
+                    e.is_connect(),
+                    url);
+                tokio::time::sleep(std::time::Duration::from_secs(wait_secs as u64)).await;
+            }
+        }
     }
 }

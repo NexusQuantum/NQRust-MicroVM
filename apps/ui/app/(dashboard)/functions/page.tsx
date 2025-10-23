@@ -85,7 +85,7 @@ export default function FunctionsPage() {
           <CardTitle>All Functions</CardTitle>
         </CardHeader>
         <CardContent>
-          <FunctionTable functions={mockFunctions} />
+          {/* <FunctionTable functions={mockFunctions} /> */}
         </CardContent>
       </Card>
     </div>

@@ -69,12 +69,13 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
             Ok(vm_id) => {
                 eprintln!("[Function {}] VM created: {}", function_id, vm_id);
 
-                // Update function with VM ID
+                // Update function with VM ID and state
                 if let Err(e) = super::repo::update_vm_info(&st_clone.db, function_id, vm_id, None).await {
                     eprintln!("[Function {}] Failed to update VM info: {}", function_id, e);
                     let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
                     return;
                 }
+                let _ = super::repo::update_state(&st_clone.db, function_id, "booting").await;
 
                 // Wait for guest IP to be available (up to 60 seconds)
                 eprintln!("[Function {}] Waiting for VM guest IP...", function_id);
@@ -106,11 +107,12 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
 
                 eprintln!("[Function {}] Got guest IP: {}", function_id, guest_ip);
 
-                // Update function with guest IP
+                // Update function with guest IP and state
                 let _ = super::repo::update_vm_info(&st_clone.db, function_id, vm_id, Some(&guest_ip)).await;
+                let _ = super::repo::update_state(&st_clone.db, function_id, "deploying").await;
 
-                // Inject function code via SSH + /reload
-                eprintln!("[Function {}] Injecting function code...", function_id);
+                // Inject function code via HTTP (will retry until successful)
+                eprintln!("[Function {}] Injecting function code (will retry until runtime server is ready)...", function_id);
                 match super::vm::update_function_code(&guest_ip, &runtime, &code, &handler).await {
                     Ok(_) => {
                         eprintln!("[Function {}] Code injection successful", function_id);

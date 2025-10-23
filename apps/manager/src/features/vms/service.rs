@@ -2036,7 +2036,7 @@ async fn configure_vm(
         http.put(format!("{base}/boot-source{qs}"))
             .json(&json!({
                 "kernel_image_path": spec.kernel_path,
-                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off",
+                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init",
             }))
             .send()
             .await

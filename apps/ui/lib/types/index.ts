@@ -9,6 +9,8 @@ export interface CreateVmResponse {
 }
 
 export interface Vm {
+  memory_usage_percent: undefined
+  cpu_usage_percent: undefined
   guest_ip: string
   vm_name: string
   id: string
@@ -361,17 +363,11 @@ export interface RateLimiter {
 export interface Function {
   id: string
   name: string
-  runtime: "node" | "python" | "go" | "rust"
-  code: string
+  runtime: "node" | "python"
   handler: string
-  timeout_seconds: number
+  code: string
+  vcpu: number
   memory_mb: number
-  env_vars?: Record<string, string>
-  created_at: string
-  updated_at: string
-  last_invoked_at?: string
-  invocation_count_24h?: number
-  avg_duration_ms?: number
 }
 
 export interface FunctionInvocation {

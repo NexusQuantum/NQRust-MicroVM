@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Play, Square, Pause, Trash2, Power } from "lucide-react"
 import { formatRelativeTime, formatPercentage } from "@/lib/utils/format"
-import type { VM } from "@/lib/types"
+import type { Vm } from "@/lib/types"
 
 interface VMOverviewProps {
-  vm: VM
+  vm: Vm
 }
 
 export function VMOverview({ vm }: VMOverviewProps) {
@@ -22,40 +22,7 @@ export function VMOverview({ vm }: VMOverviewProps) {
               <span className="text-sm font-medium">Current State:</span>
               <StatusBadge status={vm.state} />
             </div>
-            <div className="flex gap-2">
-              {vm.state === "stopped" && (
-                <Button>
-                  <Play className="mr-2 h-4 w-4" />
-                  Start
-                </Button>
-              )}
-              {vm.state === "running" && (
-                <>
-                  <Button variant="outline">
-                    <Pause className="mr-2 h-4 w-4" />
-                    Pause
-                  </Button>
-                  <Button variant="outline">
-                    <Square className="mr-2 h-4 w-4" />
-                    Stop
-                  </Button>
-                  <Button variant="outline">
-                    <Power className="mr-2 h-4 w-4" />
-                    Ctrl-Alt-Del
-                  </Button>
-                </>
-              )}
-              {vm.state === "paused" && (
-                <Button>
-                  <Play className="mr-2 h-4 w-4" />
-                  Resume
-                </Button>
-              )}
-              <Button variant="destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </Button>
-            </div>
+
           </div>
         </CardContent>
       </Card>

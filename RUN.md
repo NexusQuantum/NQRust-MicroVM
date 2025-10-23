@@ -1,13 +1,13 @@
 export the env
 
 # Agent
-cargo build -p agent
-sudo -E env AGENT_BIND=127.0.0.1:19090 MANAGER_BASE=http://127.0.0.1:18080 FC_RUN_DIR=/srv/fc FC_BRIDGE=fcbr0 ./target/debug/agent
+  cargo build -p agent
+  sudo -E env AGENT_BIND=127.0.0.1:19090 MANAGER_BASE=http://127.0.0.1:18080 FC_RUN_DIR=/srv/fc FC_BRIDGE=fcbr0 ./target/debug/agent
 
 # Manager
 cargo build -p manager
 export DATABASE_URL=postgres://nexus:nexus@localhost:5432/nexus
-MANAGER_RECONCILER_DISABLED=1 RUST_LOG=info ./target/debug/manager
+MANAGER_RECONCILER_DISABLED=1 MANAGER_ALLOW_IMAGE_PATHS=true RUST_LOG=info ./target/debug/manager
 
 # If migrations fail, reset migration 10:
 # psql $DATABASE_URL -c "DELETE FROM _sqlx_migrations WHERE version = 10;"

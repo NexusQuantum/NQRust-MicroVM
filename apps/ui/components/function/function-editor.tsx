@@ -75,6 +75,8 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
     setIsRunning(false)
   }
 
+  
+
   const handleSave = async () => {
     setIsSaved(true)
     setTimeout(() => setIsSaved(false), 2000)

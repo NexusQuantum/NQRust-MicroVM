@@ -19,10 +19,11 @@ import {
 import { Play, Square, Pause, Trash2, Search } from "lucide-react"
 import { formatRelativeTime, formatPercentage } from "@/lib/utils/format"
 import { useToast } from "@/hooks/use-toast"
-import type { VM } from "@/lib/types"
+import type { Vm } from "@/lib/types"
+import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
 
 interface VMTableProps {
-  vms: VM[]
+  vms: Vm[]
 }
 
 const ITEMS_PER_PAGE = 10
@@ -39,7 +40,8 @@ export function VMTable({ vms }: VMTableProps) {
   const { toast } = useToast()
 
   const filteredVMs = vms.filter((vm) => {
-    const matchesSearch = vm.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const vmName = vm.name || vm.vm_name || `VM-${vm.id}`
+    const matchesSearch = vmName.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesState = stateFilter === "all" || vm.state === stateFilter
     return matchesSearch && matchesState
   })
@@ -48,20 +50,36 @@ export function VMTable({ vms }: VMTableProps) {
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
   const paginatedVMs = filteredVMs.slice(startIndex, startIndex + ITEMS_PER_PAGE)
 
-  const handleAction = (action: string, vmName: string) => {
+  const vmStatePatch = useVmStatePatch()
+  const deleteMutation = useDeleteVM()
+  const handleAction = (name: string, id: string, action: "start" | "stop" | "resume" | "ctrl_alt_del" | "pause") => {
+    vmStatePatch.mutate({ id, action })
     toast({
       title: `VM ${action}`,
-      description: `${vmName} has been ${action.toLowerCase()}`,
+      description: `${name} has been ${action.toLowerCase()}`,
     })
   }
 
   const handleDelete = () => {
-    toast({
-      title: "VM Deleted",
-      description: `${deleteDialog.vmName} has been deleted`,
-      variant: "destructive",
-    })
-    setDeleteDialog({ open: false, vmId: "", vmName: "" })
+    if (deleteDialog.vmId && deleteDialog.vmName) {
+      deleteMutation.mutate(deleteDialog.vmId, {
+        onSuccess: () => {
+          toast({
+            title: "VM Deleted",
+            description: `${deleteDialog.vmName} has been deleted`,
+            variant: "destructive",
+          })
+          setDeleteDialog({ open: false, vmId: "", vmName: "" })
+        },
+        onError: (error) => {
+          toast({
+            title: "Delete Failed",
+            description: `Failed to delete ${deleteDialog.vmName}: ${error.message}`,
+            variant: "destructive",
+          })
+        }
+      })
+    }
   }
 
   return (
@@ -120,15 +138,17 @@ export function VMTable({ vms }: VMTableProps) {
                 </TableCell>
               </TableRow>
             ) : (
-              paginatedVMs.map((vm) => (
+              paginatedVMs.map((vm) => {
+                const vmName = vm.name || vm.vm_name || `VM-${vm.id}`
+                return (
                 <TableRow key={vm.id}>
                   <TableCell>
                     <Link href={`/vms/${vm.id}`} className="font-medium hover:underline">
-                      {vm.name}
+                      {vmName}
                     </Link>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={vm.state} />
+                    <StatusBadge status={vm.state as any} />
                   </TableCell>
                   <TableCell>
                     <div className="text-sm">
@@ -158,7 +178,7 @@ export function VMTable({ vms }: VMTableProps) {
                           variant="ghost"
                           size="icon"
                           title="Start"
-                          onClick={() => handleAction("Started", vm.name)}
+                          onClick={() => handleAction(vmName, vm.id, "start")}
                         >
                           <Play className="h-4 w-4" />
                         </Button>
@@ -169,7 +189,7 @@ export function VMTable({ vms }: VMTableProps) {
                             variant="ghost"
                             size="icon"
                             title="Pause"
-                            onClick={() => handleAction("Paused", vm.name)}
+                            onClick={() => handleAction(vmName, vm.id, "pause")}
                           >
                             <Pause className="h-4 w-4" />
                           </Button>
@@ -177,7 +197,7 @@ export function VMTable({ vms }: VMTableProps) {
                             variant="ghost"
                             size="icon"
                             title="Stop"
-                            onClick={() => handleAction("Stopped", vm.name)}
+                            onClick={() => handleAction(vmName, vm.id, "stop")}
                           >
                             <Square className="h-4 w-4" />
                           </Button>
@@ -188,7 +208,7 @@ export function VMTable({ vms }: VMTableProps) {
                           variant="ghost"
                           size="icon"
                           title="Resume"
-                          onClick={() => handleAction("Resumed", vm.name)}
+                          onClick={() => handleAction(vmName, vm.id, "resume")}
                         >
                           <Play className="h-4 w-4" />
                         </Button>
@@ -197,14 +217,15 @@ export function VMTable({ vms }: VMTableProps) {
                         variant="ghost"
                         size="icon"
                         title="Delete"
-                        onClick={() => setDeleteDialog({ open: true, vmId: vm.id, vmName: vm.name })}
+                        onClick={() => setDeleteDialog({ open: true, vmId: vm.id, vmName })}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </TableCell>
                 </TableRow>
-              ))
+                )
+              })
             )}
           </TableBody>
         </Table>
@@ -246,7 +267,7 @@ export function VMTable({ vms }: VMTableProps) {
         title="Delete VM"
         description={`Are you sure you want to delete ${deleteDialog.vmName}? This action cannot be undone.`}
         confirmText="Delete"
-        onConfirm={handleDelete}
+        onConfirm={() => handleDelete()}
         variant="destructive"
       />
     </div>
