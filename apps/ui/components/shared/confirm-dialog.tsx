@@ -20,6 +20,7 @@ interface ConfirmDialogProps {
   cancelText?: string
   onConfirm: () => void
   variant?: "default" | "destructive"
+  isLoading?: boolean
 }
 
 export function ConfirmDialog({
@@ -31,6 +32,7 @@ export function ConfirmDialog({
   cancelText = "Cancel",
   onConfirm,
   variant = "default",
+  isLoading = false,
 }: ConfirmDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -40,14 +42,15 @@ export function ConfirmDialog({
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{cancelText}</AlertDialogCancel>
+          <AlertDialogCancel disabled={isLoading}>{cancelText}</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
+            disabled={isLoading}
             className={
               variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""
             }
           >
-            {confirmText}
+            {isLoading ? "Loading..." : confirmText}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
