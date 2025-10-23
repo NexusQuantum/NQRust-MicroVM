@@ -15,6 +15,7 @@ import { Play, Square, RotateCw, Trash2, ArrowLeft, Zap, Pause } from "lucide-re
 import Link from "next/link"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { useState } from "react"
+import { use } from "react"
 
 const getStatusColor = (state: string) => {
   switch (state) {
@@ -29,18 +30,19 @@ const getStatusColor = (state: string) => {
   }
 }
 
-export default function VMDetailPage({ params }: { params: { id: string } }) {
-  const { data: vm, isLoading, error } = useVM(params.id)
+export default function VMDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
+  const { data: vm, isLoading, error } = useVM(id)
   const vmStatePatch = useVmStatePatch()
   const deleteVM = useDeleteVM()
   const [deleteDialog, setDeleteDialog] = useState(false)
 
-  const handleAction = (action: 'start'|'stop'|'pause'|'resume'|'ctrl_alt_del') => {
-    vmStatePatch.mutate({ id: params.id, action })
+  const handleAction = (action: 'start' | 'stop' | 'pause' | 'resume' | 'ctrl_alt_del') => {
+    vmStatePatch.mutate({ id, action })
   }
 
   const handleDelete = () => {
-    deleteVM.mutate(params.id, {
+    deleteVM.mutate(id, {
       onSuccess: () => {
         window.location.href = '/vms'
       }
