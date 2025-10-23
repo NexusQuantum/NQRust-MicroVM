@@ -1,6 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { z } from "zod"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,7 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { ChevronLeft, ChevronRight, Check, Server, HardDrive, Network, Settings } from "lucide-react"
+import { useCreateVM, useRegistryImages } from "@/lib/queries"
+import type { CreateVmReq } from "@/lib/types"
+import { RegistryBrowser } from "@/components/registry/registry-browser"
 
 const steps = ["Basic Info", "Credentials", "Machine Config", "Boot Source", "Network", "Review"]
 
