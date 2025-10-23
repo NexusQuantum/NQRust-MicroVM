@@ -20,9 +20,32 @@ const montserrat = Montserrat({
 })
 
 export const metadata: Metadata = {
-  title: "NQR-MicroVM - Multi-Workload Management",
-  description: "Manage Virtual Machines, Serverless Functions, and Containers with NQR-MicroVM",
-  generator: "v0.app",
+  title: {
+    default: "NQR-MicroVM - Virtual Machine Management Platform",
+    template: "%s | NQR-MicroVM"
+  },
+  description: "A powerful platform for managing virtual machines, containers, and serverless functions with ease",
+  keywords: ["virtual machines", "containers", "serverless", "microVM", "cloud computing", "devops"],
+  authors: [{ name: "NQR-MicroVM Team" }],
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/site.webmanifest",
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "https://nqr-microvm.com",
+    title: "NQR-MicroVM - Virtual Machine Management Platform",
+    description: "A powerful platform for managing virtual machines, containers, and serverless functions with ease",
+    siteName: "NQR-MicroVM",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "NQR-MicroVM - Virtual Machine Management Platform",
+    description: "A powerful platform for managing virtual machines, containers, and serverless functions with ease",
+  },
 }
 
 export default function RootLayout({
