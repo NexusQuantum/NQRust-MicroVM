@@ -24,10 +24,10 @@ export function Sidebar({ isCollapsed }: { isCollapsed: boolean }) {
     <div
       className={cn(
         "flex h-full flex-col border-r border-border bg-card transition-all duration-300",
-        isCollapsed ? "w-16" : "w-64",
+        isCollapsed ? "w-18" : "w-64",
       )}
     >
-      <div className="flex h-16 items-center justify-center border-b border-border px-4">
+      <div className="flex h-16 items-center justify-start border-b border-border px-4">
         {!isCollapsed && (
           <Link href="/dashboard" className="flex items-center">
             <Image
@@ -42,7 +42,7 @@ export function Sidebar({ isCollapsed }: { isCollapsed: boolean }) {
         )}
         {isCollapsed && (
           <Link href="/dashboard" className="flex items-center">
-            <Image src="/nqr-icon.png" alt="NQR" width={40} height={40} className="h-10 w-auto" priority />
+            <Image src="/nq-logo.png" alt="NQR-MicroVM" width={40} height={40} className="h-10 w-auto" priority />
           </Link>
         )}
       </div>
