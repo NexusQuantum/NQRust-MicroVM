@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { Terminal } from "xterm"
-import { FitAddon } from "xterm-addon-fit"
-import "xterm/css/xterm.css"
+import { Terminal } from "@xterm/xterm"
+import { FitAddon } from "@xterm/addon-fit"
+import "@xterm/xterm/css/xterm.css"
 
 interface XTermComponentProps {
   vmId?: string
@@ -44,7 +44,7 @@ export function XtermComponent({ vmId, containerId }: XTermComponentProps) {
 
     let currentLine = ""
 
-    term.onData((data) => {
+    term.onData((data: string) => {
       if (data === "\r") {
         // Enter key
         term.write("\r\n")
