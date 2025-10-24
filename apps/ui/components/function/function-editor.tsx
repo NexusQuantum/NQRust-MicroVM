@@ -86,26 +86,22 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">
-            {functionData ? `Edit ${functionData.name}` : "New Function"}
-          </h1>
-          <p className="text-muted-foreground">Configure and test your serverless function</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <Button variant="outline" onClick={handleSave}>
             {isSaved ? (
-              <>
+              <Button variant="outline" onClick={handleSave}>
                 <Check className="mr-2 h-4 w-4" />
                 Saved
-              </>
+              </Button>
             ) : (
-              <>
+              <Button variant="outline" onClick={handleSave}>
                 <Save className="mr-2 h-4 w-4" />
                 Save Draft
-              </>
+              </Button>
             )}
           </Button>
-          <Button onClick={handleSave}>
+          <Button onClick={handleSave} size="sm">
             <Save className="mr-2 h-4 w-4" />
             Deploy
           </Button>
@@ -266,6 +262,6 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
           </Card>
         </div>
       </div>
-    </div>
+    </div >
   )
 }

@@ -11,7 +11,7 @@ import { useFunction } from "@/lib/queries"
 
 const getStatusColor = (state: string) => {
   switch (state) {
-    case "active":
+    case "ready":
       return "bg-green-500/10 text-green-700 border-green-200"
     case "inactive":
       return "bg-gray-500/10 text-gray-700 border-gray-200"
@@ -87,6 +87,6 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
       </div>
 
       <FunctionEditor functionData={functions} />
-    </div>
+    </div >
   )
 }
