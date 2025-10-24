@@ -29,14 +29,10 @@ export function FunctionTable({ functions }: FunctionTableProps) {
     const colors = {
       node: "bg-green-100 text-green-700 border-green-200",
       python: "bg-blue-100 text-blue-700 border-blue-200",
-      go: "bg-cyan-100 text-cyan-700 border-cyan-200",
-      rust: "bg-orange-100 text-orange-700 border-orange-200",
     }
     const labels = {
       node: "Node.js",
       python: "Python",
-      go: "Go",
-      rust: "Rust",
     }
     return (
       <Badge variant="outline" className={colors[runtime as keyof typeof colors]}>
@@ -65,8 +61,6 @@ export function FunctionTable({ functions }: FunctionTableProps) {
             <SelectItem value="all">All Runtimes</SelectItem>
             <SelectItem value="node">Node.js</SelectItem>
             <SelectItem value="python">Python</SelectItem>
-            <SelectItem value="go">Go</SelectItem>
-            <SelectItem value="rust">Rust</SelectItem>
           </SelectContent>
         </Select>
       </div>
