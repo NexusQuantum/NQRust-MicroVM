@@ -22,7 +22,7 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
   const [runtime, setRuntime] = useState(functionData?.runtime || "node")
   const [code, setCode] = useState(
     functionData?.code ||
-      `export const handler = async (event) => {
+    `export const handler = async (event) => {
   // Your code here
   console.log('Event:', event);
   
@@ -34,7 +34,7 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
   )
   const [handler, setHandler] = useState(functionData?.handler || "index.handler")
   const [memory, setMemory] = useState(functionData?.memory_mb || 512)
-  const [timeout, setTimeout] = useState(functionData?.timeout_seconds || 30)
+  const [timeout, setTimeoutSeconds] = useState(functionData?.timeout_seconds || 30)
   const [testEvent, setTestEvent] = useState('{\n  "key": "value",\n  "userId": "123"\n}')
   const [testResult, setTestResult] = useState<any>(null)
   const [isRunning, setIsRunning] = useState(false)
@@ -56,7 +56,7 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
 
   const handleTest = async () => {
     setIsRunning(true)
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 1500))
     setTestResult({
       status: "success",
       duration: Math.floor(Math.random() * 500) + 100,
@@ -75,11 +75,11 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
     setIsRunning(false)
   }
 
-  
+
 
   const handleSave = async () => {
     setIsSaved(true)
-    setTimeout(() => setIsSaved(false), 2000)
+    globalThis.setTimeout(() => setIsSaved(false), 2000)
   }
 
   return (
@@ -125,7 +125,8 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
                   language={getLanguage()}
                   value={code}
                   onChange={(value) => setCode(value || "")}
-                  theme="vs-dark"
+                  // theme="vs-dark"
+                  theme="light"
                   options={{
                     minimap: { enabled: false },
                     fontSize: 14,
@@ -221,7 +222,7 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
 
               <div className="space-y-2">
                 <Label>Timeout: {timeout}s</Label>
-                <Slider value={[timeout]} onValueChange={(v) => setTimeout(v[0])} min={1} max={900} step={1} />
+                <Slider value={[timeout]} onValueChange={(v) => setTimeoutSeconds(v[0])} min={1} max={900} step={1} />
               </div>
             </CardContent>
           </Card>
@@ -237,7 +238,8 @@ export function FunctionEditor({ functionData }: FunctionEditorProps) {
                   language="json"
                   value={testEvent}
                   onChange={(value) => setTestEvent(value || "")}
-                  theme="vs-dark"
+                  // theme="vs-dark"
+                  theme="light"
                   options={{
                     minimap: { enabled: false },
                     fontSize: 12,
