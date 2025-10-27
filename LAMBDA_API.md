@@ -176,7 +176,7 @@ Update function code or configuration. The code will be hot-reloaded in the runn
   "name": "updated-name",
   "code": "async function handler(event) { return { message: 'Updated!', version: 2 }; }",
   "handler": "handler",
-  "timeout_seconds": 60,
+  "timeout_seconds": 60,  
   "memory_mb": 512
 }
 ```

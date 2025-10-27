@@ -6,6 +6,355 @@ info:
     name: ''
   version: 0.1.0
 paths:
+  /v1/containers:
+    get:
+      tags:
+      - Containers
+      operationId: list
+      parameters:
+      - name: state
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: host_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          nullable: true
+      responses:
+        '200':
+          description: Containers listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListContainersResp'
+        '500':
+          description: Failed to list containers
+    post:
+      tags:
+      - Containers
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContainerReq'
+        required: true
+      responses:
+        '200':
+          description: Container created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateContainerResp'
+        '400':
+          description: Invalid request
+        '500':
+          description: Failed to create container
+  /v1/containers/{id}:
+    get:
+      tags:
+      - Containers
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetContainerResp'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to fetch container
+    put:
+      tags:
+      - Containers
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContainerReq'
+        required: true
+      responses:
+        '200':
+          description: Container updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetContainerResp'
+        '400':
+          description: Invalid request
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to update container
+    delete:
+      tags:
+      - Containers
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to delete container
+  /v1/containers/{id}/exec:
+    post:
+      tags:
+      - Containers
+      operationId: exec
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecCommandReq'
+        required: true
+      responses:
+        '200':
+          description: Command executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecCommandResp'
+        '400':
+          description: Container not running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to execute command
+  /v1/containers/{id}/logs:
+    get:
+      tags:
+      - Containers
+      operationId: logs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: since
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: until
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: tail
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          nullable: true
+      - name: follow
+        in: path
+        required: true
+        schema:
+          type: boolean
+          nullable: true
+      responses:
+        '200':
+          description: Container logs fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerLogsResp'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to fetch logs
+  /v1/containers/{id}/pause:
+    post:
+      tags:
+      - Containers
+      operationId: pause
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container not running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to pause container
+  /v1/containers/{id}/restart:
+    post:
+      tags:
+      - Containers
+      operationId: restart
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container restarted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to restart container
+  /v1/containers/{id}/resume:
+    post:
+      tags:
+      - Containers
+      operationId: resume
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container not paused
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to resume container
+  /v1/containers/{id}/start:
+    post:
+      tags:
+      - Containers
+      operationId: start
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container already running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to start container
+  /v1/containers/{id}/stats:
+    get:
+      tags:
+      - Containers
+      operationId: stats
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container stats fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerStatsResp'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to fetch stats
+  /v1/containers/{id}/stop:
+    post:
+      tags:
+      - Containers
+      operationId: stop
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container not running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to stop container
   /v1/functions:
     get:
       tags:
@@ -1197,6 +1546,230 @@ components:
           format: int64
           nullable: true
           minimum: 0
+    Container:
+      type: object
+      required:
+      - id
+      - name
+      - image
+      - restart_policy
+      - state
+      - created_at
+      - updated_at
+      properties:
+        args:
+          type: array
+          items:
+            type: string
+        command:
+          type: string
+          nullable: true
+        container_runtime_id:
+          type: string
+          nullable: true
+        cpu_limit:
+          type: number
+          format: float
+          nullable: true
+        cpu_percent:
+          type: number
+          format: float
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+        error_message:
+          type: string
+          nullable: true
+        host_id:
+          type: string
+          format: uuid
+          nullable: true
+        id:
+          type: string
+          format: uuid
+        image:
+          type: string
+        memory_limit_mb:
+          type: integer
+          format: int32
+          nullable: true
+        memory_used_mb:
+          type: integer
+          format: int64
+          nullable: true
+        name:
+          type: string
+        port_mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortMapping'
+        restart_policy:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        state:
+          type: string
+        stopped_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+          format: int64
+          nullable: true
+        volumes:
+          type: array
+          items:
+            $ref: '#/components/schemas/VolumeMount'
+    ContainerLog:
+      type: object
+      required:
+      - id
+      - container_id
+      - timestamp
+      - stream
+      - message
+      - created_at
+      properties:
+        container_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        message:
+          type: string
+        stream:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ContainerLogsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContainerLog'
+    ContainerStats:
+      type: object
+      required:
+      - id
+      - container_id
+      - recorded_at
+      properties:
+        block_read_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        block_write_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        container_id:
+          type: string
+          format: uuid
+        cpu_percent:
+          type: number
+          format: float
+          nullable: true
+        id:
+          type: string
+          format: uuid
+        memory_limit_mb:
+          type: integer
+          format: int64
+          nullable: true
+        memory_used_mb:
+          type: integer
+          format: int64
+          nullable: true
+        network_rx_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        network_tx_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        pids:
+          type: integer
+          format: int32
+          nullable: true
+        recorded_at:
+          type: string
+          format: date-time
+    ContainerStatsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContainerStats'
+    CreateContainerReq:
+      type: object
+      required:
+      - name
+      - image
+      properties:
+        args:
+          type: array
+          items:
+            type: string
+        command:
+          type: string
+          nullable: true
+        cpu_limit:
+          type: number
+          format: float
+          nullable: true
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+        image:
+          type: string
+        memory_limit_mb:
+          type: integer
+          format: int32
+          nullable: true
+        name:
+          type: string
+        port_mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortMapping'
+        restart_policy:
+          type: string
+        volumes:
+          type: array
+          items:
+            $ref: '#/components/schemas/VolumeMount'
+    CreateContainerResp:
+      type: object
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          format: uuid
     CreateDriveReq:
       type: object
       required:
@@ -1401,6 +1974,37 @@ components:
         id:
           type: string
           format: uuid
+    ExecCommandReq:
+      type: object
+      required:
+      - command
+      properties:
+        attach_stderr:
+          type: boolean
+        attach_stdin:
+          type: boolean
+        attach_stdout:
+          type: boolean
+        command:
+          type: array
+          items:
+            type: string
+        tty:
+          type: boolean
+    ExecCommandResp:
+      type: object
+      required:
+      - exec_id
+      properties:
+        exec_id:
+          type: string
+        exit_code:
+          type: integer
+          format: int32
+          nullable: true
+        output:
+          type: string
+          nullable: true
     Function:
       type: object
       required:
@@ -1502,6 +2106,13 @@ components:
           nullable: true
         status:
           type: string
+    GetContainerResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/Container'
     GetFunctionResp:
       type: object
       required:
@@ -1638,6 +2249,15 @@ components:
           nullable: true
         status:
           type: string
+    ListContainersResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Container'
     ListDrivesResponse:
       type: object
       required:
@@ -1735,6 +2355,21 @@ components:
       properties:
         ok:
           type: boolean
+    PortMapping:
+      type: object
+      required:
+      - host
+      - container
+      - protocol
+      properties:
+        container:
+          type: integer
+          format: int32
+        host:
+          type: integer
+          format: int32
+        protocol:
+          type: string
     RegisterHostRequest:
       type: object
       required:
@@ -1834,6 +2469,28 @@ components:
           type: integer
           format: int32
           minimum: 0
+    UpdateContainerReq:
+      type: object
+      properties:
+        cpu_limit:
+          type: number
+          format: float
+          nullable: true
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+        memory_limit_mb:
+          type: integer
+          format: int32
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        restart_policy:
+          type: string
+          nullable: true
     UpdateDriveReq:
       type: object
       properties:
@@ -1901,6 +2558,9 @@ components:
           format: date-time
         fc_unit:
           type: string
+        guest_ip:
+          type: string
+          nullable: true
         host_addr:
           type: string
         host_id:
@@ -2018,6 +2678,18 @@ components:
         vm_id:
           type: string
           format: uuid
+    VolumeMount:
+      type: object
+      required:
+      - host
+      - container
+      properties:
+        container:
+          type: string
+        host:
+          type: string
+        read_only:
+          type: boolean
 tags:
 - name: Hosts
   description: Host lifecycle operations.
@@ -2031,6 +2703,8 @@ tags:
   description: Snapshot management APIs.
 - name: Functions
   description: Serverless function management APIs.
+- name: Containers
+  description: Docker container orchestration APIs.
 - name: Logs
   description: Development log utilities.
 - name: VM devices

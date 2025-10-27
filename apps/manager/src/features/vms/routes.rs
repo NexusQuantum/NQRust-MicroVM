@@ -1129,6 +1129,7 @@ impl From<super::repo::VmRow> for Vm {
             kernel_path: row.kernel_path,
             rootfs_path: row.rootfs_path,
             source_snapshot_id: row.source_snapshot_id,
+            guest_ip: row.guest_ip,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }

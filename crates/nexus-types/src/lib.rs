@@ -35,6 +35,7 @@ pub struct Vm {
     pub kernel_path: String,
     pub rootfs_path: String,
     pub source_snapshot_id: Option<uuid::Uuid>,
+    pub guest_ip: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -651,4 +652,210 @@ pub struct ListInvocationsParams {
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+}
+
+// ========================================
+// Containers (Docker/OCI)
+// ========================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Container {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env_vars: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+    #[serde(default)]
+    pub port_mappings: Vec<PortMapping>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mb: Option<i32>,
+    pub restart_policy: String,
+    pub state: String,  // creating, running, stopped, restarting, error, paused
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_runtime_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_at: Option<chrono::DateTime<chrono::Utc>>,
+    // Computed fields (not in DB)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uptime_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_percent: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_used_mb: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PortMapping {
+    pub host: i32,
+    pub container: i32,
+    pub protocol: String,  // tcp, udp
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct VolumeMount {
+    pub host: String,
+    pub container: String,
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateContainerReq {
+    pub name: String,
+    pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env_vars: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+    #[serde(default)]
+    pub port_mappings: Vec<PortMapping>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mb: Option<i32>,
+    #[serde(default = "default_restart_policy")]
+    pub restart_policy: String,
+}
+
+fn default_restart_policy() -> String {
+    "no".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateContainerReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_vars: Option<std::collections::HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mb: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_policy: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+pub struct CreateContainerResp {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListContainersResp {
+    pub items: Vec<Container>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GetContainerResp {
+    pub item: Container,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContainerStats {
+    pub id: uuid::Uuid,
+    pub container_id: uuid::Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_percent: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_used_mb: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mb: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_rx_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_tx_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_read_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_write_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pids: Option<i32>,
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContainerStatsResp {
+    pub items: Vec<ContainerStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContainerLog {
+    pub id: uuid::Uuid,
+    pub container_id: uuid::Uuid,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub stream: String,  // stdout, stderr
+    pub message: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContainerLogsResp {
+    pub items: Vec<ContainerLog>,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct ContainerPathParams {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct ListContainersParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct ContainerLogsParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,  // RFC3339 timestamp
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,  // RFC3339 timestamp
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail: Option<i64>,      // Last N lines
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<bool>,   // Stream logs
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ExecCommandReq {
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub attach_stdin: bool,
+    #[serde(default)]
+    pub attach_stdout: bool,
+    #[serde(default)]
+    pub attach_stderr: bool,
+    #[serde(default)]
+    pub tty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ExecCommandResp {
+    pub exec_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
