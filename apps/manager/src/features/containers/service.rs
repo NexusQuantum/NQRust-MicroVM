@@ -126,7 +126,7 @@ async fn provision_container_vm(
     // Wait for Docker daemon to be ready inside VM
     repo.update_state(container_id, "initializing", None).await?;
 
-    if let Err(e) = super::vm::wait_for_docker_ready(&guest_ip, 60).await {
+    if let Err(e) = super::vm::wait_for_docker_ready(&guest_ip, 120).await {
         let error_msg = format!("Docker daemon not ready: {}", e);
         repo.update_state(container_id, "error", Some(error_msg.clone()))
             .await?;
