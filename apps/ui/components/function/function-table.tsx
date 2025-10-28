@@ -37,7 +37,8 @@ export function FunctionTable({ functions }: FunctionTableProps) {
   const filteredFunctions = functions.filter((fn) => {
     const matchesSearch = fn.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesRuntime = runtimeFilter === "all" || fn.runtime === runtimeFilter
-    return matchesSearch && matchesRuntime
+    const matchesState = stateFilter === "all" || fn.state === stateFilter
+    return matchesSearch && matchesRuntime && matchesState
   })
 
   const totalPages = Math.ceil(filteredFunctions.length / ITEMS_PER_PAGE)
@@ -80,8 +81,8 @@ export function FunctionTable({ functions }: FunctionTableProps) {
 
   const getRuntimeBadge = (runtime: string) => {
     const colors = {
-      node: "bg-green-100 text-green-700 border-green-200",
-      python: "bg-blue-100 text-blue-700 border-blue-200",
+      node: "bg-[#6cc24a] text-black border-[#44883e]",
+      python: "bg-[#ffde57] text-[#4584b6] border-[#4584b6]",
     }
     const labels = {
       node: "Node.js",
@@ -94,6 +95,30 @@ export function FunctionTable({ functions }: FunctionTableProps) {
     )
   }
 
+  const getStateBagde = (state: string) => {
+    const colors = {
+      creating: "bg-yellow-100 text-yellow-700 border-yellow-200",
+      deploying: "bg-blue-100 text-blue-700 border-blue-200",
+      ready: "bg-green-100 text-green-700 border-green-200",
+      error: "bg-red-100 text-red-700 border-red-200",
+      booting: "bg-gray-100 text-gray-700 border-gray-200",
+    }
+
+    const labels = {
+      creating: "Creating",
+      deploying: "Deploying",
+      ready: "Ready",
+      error: "Error",
+      booting: "Booting",
+    }
+
+    return (
+      <Badge variant="outline" className={colors[state as keyof typeof colors]}>
+        {labels[state as keyof typeof labels]}
+      </Badge>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
@@ -102,7 +127,10 @@ export function FunctionTable({ functions }: FunctionTableProps) {
           <Input
             placeholder="Search functions..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setCurrentPage(1)
+            }}
             className="pl-9"
           />
         </div>
@@ -122,6 +150,24 @@ export function FunctionTable({ functions }: FunctionTableProps) {
             <SelectItem value="python">Python</SelectItem>
           </SelectContent>
         </Select>
+        <Select
+          value={stateFilter}
+          onValueChange={(value) => {
+            setStateFilter(value)
+            setCurrentPage(1)
+          }}
+        >
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="State" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All States</SelectItem>
+            <SelectItem value="ready">Ready</SelectItem>
+            <SelectItem value="creating">Creating</SelectItem>
+            <SelectItem value="deploying">Deploying</SelectItem>
+            <SelectItem value="error">Error</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="rounded-lg border border-border">
@@ -130,9 +176,10 @@ export function FunctionTable({ functions }: FunctionTableProps) {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Runtime</TableHead>
+              <TableHead>State</TableHead>
               <TableHead>Last Invoked</TableHead>
               <TableHead>24h Invocations</TableHead>
-              <TableHead>Avg Duration</TableHead>
+              <TableHead>Guest IP</TableHead>
               <TableHead>Memory</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -140,7 +187,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
           <TableBody>
             {paginatedFunctions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   No functions found
                 </TableCell>
               </TableRow>
@@ -153,11 +200,12 @@ export function FunctionTable({ functions }: FunctionTableProps) {
                     </Link>
                   </TableCell>
                   <TableCell>{getRuntimeBadge(fn.runtime)}</TableCell>
+                  <TableCell>{getStateBagde(fn.state)}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {fn.last_invoked_at ? formatRelativeTime(fn.last_invoked_at) : "Never"}
                   </TableCell>
                   <TableCell className="text-sm">{fn.invocation_count_24h?.toLocaleString('en-US') || 0}</TableCell>
-                  <TableCell className="text-sm">{fn.avg_duration_ms ? `${fn.avg_duration_ms}ms` : "N/A"}</TableCell>
+                  <TableCell className="text-sm">192.128.1.1</TableCell>
                   <TableCell className="text-sm">{fn.memory_mb} MB</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
