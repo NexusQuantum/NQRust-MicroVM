@@ -18,6 +18,9 @@ import {
 } from "@/components/ui/pagination"
 import { formatRelativeTime } from "@/lib/utils/format"
 import type { Function } from "@/lib/types"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { useDeleteFunction } from "@/lib/queries"
+import { useToast } from "@/hooks/use-toast"
 
 interface FunctionTableProps {
   functions: Function[]
@@ -28,12 +31,52 @@ const ITEMS_PER_PAGE = 10
 export function FunctionTable({ functions }: FunctionTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [runtimeFilter, setRuntimeFilter] = useState<string>("all")
+  const [stateFilter, setStateFilter] = useState<string>("all")
+  const [currentPage, setCurrentPage] = useState(1)
 
   const filteredFunctions = functions.filter((fn) => {
     const matchesSearch = fn.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesRuntime = runtimeFilter === "all" || fn.runtime === runtimeFilter
     return matchesSearch && matchesRuntime
   })
+
+  const totalPages = Math.ceil(filteredFunctions.length / ITEMS_PER_PAGE)
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+  const paginatedFunctions = filteredFunctions.slice(
+    startIndex,
+    startIndex + ITEMS_PER_PAGE
+  )
+
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; fnId: string; fnName: string }>({
+    open: false,
+    fnId: "",
+    fnName: "",
+  })
+
+  const { toast } = useToast()
+  const deleteMutation = useDeleteFunction()
+
+  const handleDelete = () => {
+    if (deleteDialog.fnId && deleteDialog.fnName) {
+      deleteMutation.mutate(deleteDialog.fnId, {
+        onSuccess: () => {
+          toast({
+            title: "Function Deleted",
+            description: `${deleteDialog.fnName} has been deleted`,
+            variant: "destructive",
+          })
+          setDeleteDialog({ open: false, fnId: "", fnName: "" })
+        },
+        onError: (error) => {
+          toast({
+            title: "Delete Failed",
+            description: `Failed to delete ${deleteDialog.fnName}: ${error.message}`,
+            variant: "destructive",
+          })
+        }
+      })
+    }
+  }
 
   const getRuntimeBadge = (runtime: string) => {
     const colors = {
@@ -95,7 +138,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredFunctions.length === 0 ? (
+            {paginatedFunctions.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   No functions found
@@ -128,7 +171,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
                           <FileText className="h-4 w-4" />
                         </Link>
                       </Button>
-                      <Button variant="ghost" size="icon" title="Delete">
+                      <Button variant="ghost" size="icon" title="Delete" onClick={() => setDeleteDialog({ open: true, fnId: fn.id, fnName: fn.name })}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
