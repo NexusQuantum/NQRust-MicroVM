@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Server, Zap, Container, HardDrive, Plus, TrendingUp, Activity } from "lucide-react"
 import { ResourceTable } from "@/components/dashboard/resource-table"
 import Link from "next/link"
-import { useVMs } from "@/lib/queries"
+import { useVMs, useFunctions } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 
 // Mock data for services that don't have APIs yet
@@ -20,9 +20,12 @@ const mockStats = {
 
 export default function DashboardPage() {
   const { data: vms = [], isLoading: vmsLoading } = useVMs()
+  const { data: functions = [], isLoading: functionsLoading } = useFunctions()
+
 
   // Calculate VM stats from real data
   const totalVMs = vms.length
+  const totalFunctions = functions.length
   const runningVMs = vms.filter(vm => vm.state === 'running').length
 
   // Transform VMs for resource table
@@ -99,7 +102,7 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{mockStats.total_functions}</div>
+            <div className="text-2xl font-bold">{totalFunctions}</div>
             <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
               <Activity className="h-3 w-3 text-yellow-600" />
               {mockStats.invocations_24h.toLocaleString('en-US')} invocations (24h)
