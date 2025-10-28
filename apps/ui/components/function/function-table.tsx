@@ -8,12 +8,22 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { FileText, Play, Trash2, Search } from "lucide-react"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import { formatRelativeTime } from "@/lib/utils/format"
 import type { Function } from "@/lib/types"
 
 interface FunctionTableProps {
   functions: Function[]
 }
+
+const ITEMS_PER_PAGE = 10
 
 export function FunctionTable({ functions }: FunctionTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
@@ -53,7 +63,13 @@ export function FunctionTable({ functions }: FunctionTableProps) {
             className="pl-9"
           />
         </div>
-        <Select value={runtimeFilter} onValueChange={setRuntimeFilter}>
+        <Select
+          value={runtimeFilter}
+          onValueChange={(value) => {
+            setRuntimeFilter(value)
+            setCurrentPage(1)
+          }}
+        >
           <SelectTrigger className="w-40">
             <SelectValue placeholder="Runtime" />
           </SelectTrigger>
@@ -86,7 +102,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredFunctions.map((fn) => (
+              paginatedFunctions.map((fn) => (
                 <TableRow key={fn.id}>
                   <TableCell>
                     <Link href={`/functions/${fn.id}`} className="font-medium hover:underline">
@@ -123,6 +139,47 @@ export function FunctionTable({ functions }: FunctionTableProps) {
           </TableBody>
         </Table>
       </div>
+
+      {totalPages > 1 && (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"} size={undefined} />
+            </PaginationItem>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <PaginationItem key={page}>
+                <PaginationLink
+                  onClick={() => setCurrentPage(page)}
+                  isActive={currentPage === page}
+                  className="cursor-pointer"
+                  size={undefined}
+                >
+                  {page}
+                </PaginationLink>
+              </PaginationItem>
+            ))}
+            <PaginationItem>
+              <PaginationNext
+                size={undefined}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        title="Delete Function"
+        description={`Are you sure you want to delete ${deleteDialog.fnName}? This action cannot be undone.`}
+        confirmText="Delete"
+        onConfirm={() => handleDelete()}
+        variant="destructive"
+      />
     </div>
   )
 }
