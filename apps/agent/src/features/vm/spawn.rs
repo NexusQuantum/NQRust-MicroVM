@@ -11,6 +11,10 @@ use tokio::{fs, io::AsyncWriteExt};
 struct SpawnReq {
     sock: String,
     log_path: String,
+    #[serde(default)]
+    snapshot_path: Option<String>,
+    #[serde(default)]
+    snapshot_mem_path: Option<String>,
 }
 
 pub fn router() -> Router {
@@ -57,7 +61,7 @@ async fn spawn_fc(
 
     // Attempt to spawn. If systemd-run reports failure but the socket appears,
     // consider it success to avoid flapping on duplicate unit names.
-    if let Err(err) = systemd::spawn_fc_scope(&unit, &req.sock).await {
+    if let Err(err) = systemd::spawn_fc_scope_with_snapshot(&unit, &req.sock, req.snapshot_path.as_deref(), req.snapshot_mem_path.as_deref()).await {
         // Brief grace period to see if the socket got created anyway
         for _ in 0..400 {
             if std::path::Path::new(&req.sock).exists() {
@@ -67,15 +71,31 @@ async fn spawn_fc(
         }
         if !std::path::Path::new(&req.sock).exists() {
             // Fallback: try launching firecracker directly (without systemd)
+
+            // Build firecracker arguments
+            let mut fc_args = vec!["--api-sock", &req.sock];
+            let mut snapshot_args = Vec::new();
+            if let Some(ref snap_path) = req.snapshot_path {
+                snapshot_args.push("--snapshot-path");
+                snapshot_args.push(snap_path.as_str());
+            }
+            if let Some(ref mem_path) = req.snapshot_mem_path {
+                snapshot_args.push("--mem-path");
+                snapshot_args.push(mem_path.as_str());
+            }
+            fc_args.extend(snapshot_args.iter().copied());
+
             // 1) try without sudo
             let direct = Command::new("firecracker")
-                .args(["--api-sock", &req.sock])
+                .args(&fc_args)
                 .kill_on_drop(false)
                 .spawn();
             if direct.is_err() {
                 // 2) try with sudo -n
+                let mut sudo_args = vec!["-n", "firecracker"];
+                sudo_args.extend(fc_args.iter().copied());
                 let _ = Command::new("sudo")
-                    .args(["-n", "firecracker", "--api-sock", &req.sock])
+                    .args(&sudo_args)
                     .kill_on_drop(false)
                     .spawn();
             }

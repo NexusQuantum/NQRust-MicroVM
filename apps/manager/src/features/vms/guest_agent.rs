@@ -1,5 +1,5 @@
 /// Guest agent automatic installation for VMs
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::path::Path;
 use tokio::fs;
 use tokio::process::Command;
@@ -111,11 +111,14 @@ exit 0
 pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str) -> Result<()> {
     tracing::info!("=== GUEST AGENT INSTALLATION STARTED ===");
     tracing::info!(rootfs = %rootfs_path, vm_id = %vm_id, manager_url = %manager_url, "Installing guest agent to rootfs");
-    
+
     // Check if guest agent binary exists
     let guest_agent_binary = "target/x86_64-unknown-linux-musl/release/guest-agent";
     if !Path::new(guest_agent_binary).exists() {
-        tracing::warn!("Guest agent binary not found at {}, skipping installation", guest_agent_binary);
+        tracing::warn!(
+            "Guest agent binary not found at {}, skipping installation",
+            guest_agent_binary
+        );
         return Ok(());
     }
 
@@ -127,13 +130,7 @@ pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str
 
     // Mount the rootfs image
     let mount_result = Command::new("sudo")
-        .args([
-            "mount",
-            "-o",
-            "loop",
-            rootfs_path,
-            &mount_point,
-        ])
+        .args(["mount", "-o", "loop", rootfs_path, &mount_point])
         .status()
         .await?;
 
@@ -159,7 +156,12 @@ pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str
     result
 }
 
-async fn install_files(mount_point: &str, vm_id: Uuid, manager_url: &str, guest_agent_binary: &str) -> Result<()> {
+async fn install_files(
+    mount_point: &str,
+    vm_id: Uuid,
+    manager_url: &str,
+    guest_agent_binary: &str,
+) -> Result<()> {
     // 1. Copy guest-agent binary to /usr/local/bin/
     let agent_dest = format!("{}/usr/local/bin/guest-agent", mount_point);
 
@@ -238,6 +240,14 @@ MANAGER_URL={}
 
     fs::remove_file(&config_temp).await?;
     tracing::info!("✅ Created guest agent config at {}", config_dest);
+
+    // 5. Network restart script injection REMOVED
+    // Old approach (unreliable marker-based script) replaced with:
+    // - Guest agent /clean-network endpoint that stops networking BEFORE snapshot
+    // - Ensures restored VMs start with clean network state and request fresh DHCP
+    // - 100% reliable, no scripts or markers needed
+    // inject_network_restart_script_if_openrc(mount_point).await?;
+
     tracing::info!("=== GUEST AGENT INSTALLATION COMPLETED ===");
 
     Ok(())
@@ -245,18 +255,21 @@ MANAGER_URL={}
 
 /// Detect which init system the VM uses
 async fn detect_init_system(mount_point: &str) -> Result<String> {
-    tracing::info!("Detecting init system in mounted filesystem at {}", mount_point);
-    
+    tracing::info!(
+        "Detecting init system in mounted filesystem at {}",
+        mount_point
+    );
+
     // List what's actually in /etc to help with debugging
     if let Ok(output) = Command::new("sudo")
         .args(["ls", "-la", &format!("{}/etc", mount_point)])
         .output()
-        .await 
+        .await
     {
         let content = String::from_utf8_lossy(&output.stdout);
         tracing::info!("Contents of /etc: {}", content);
     }
-    
+
     // Check for systemd (most common)
     if Command::new("sudo")
         .args(["test", "-d", &format!("{}/etc/systemd", mount_point)])
@@ -296,16 +309,17 @@ async fn detect_init_system(mount_point: &str) -> Result<String> {
             .args(["test", "-f", &format!("{}/etc/inittab", mount_point)])
             .status()
             .await?
-            .success() || Command::new("sudo")
-            .args(["ls", &format!("{}/etc/rc*.d", mount_point)])
-            .status()
-            .await?
             .success()
+            || Command::new("sudo")
+                .args(["ls", &format!("{}/etc/rc*.d", mount_point)])
+                .status()
+                .await?
+                .success()
         {
             tracing::info!("Detected SysV init system");
             return Ok("sysvinit".to_string());
         }
-        
+
         // If we have /etc/init.d but no clear indicators, assume SysV-compatible
         tracing::info!("Found /etc/init.d directory, assuming SysV-compatible init system");
         return Ok("sysvinit".to_string());
@@ -333,7 +347,11 @@ async fn install_systemd_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
 
     let service_dest = format!("{}/etc/systemd/system/guest-agent.service", mount_point);
     Command::new("sudo")
-        .args(["mkdir", "-p", &format!("{}/etc/systemd/system", mount_point)])
+        .args([
+            "mkdir",
+            "-p",
+            &format!("{}/etc/systemd/system", mount_point),
+        ])
         .status()
         .await?;
 
@@ -352,7 +370,12 @@ async fn install_systemd_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
         .await?;
 
     Command::new("sudo")
-        .args(["ln", "-sf", "/etc/systemd/system/guest-agent.service", &format!("{}/guest-agent.service", enable_dir)])
+        .args([
+            "ln",
+            "-sf",
+            "/etc/systemd/system/guest-agent.service",
+            &format!("{}/guest-agent.service", enable_dir),
+        ])
         .status()
         .await?;
 
@@ -362,19 +385,24 @@ async fn install_systemd_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
 
 /// Install OpenRC service
 async fn install_openrc_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
+    tracing::info!("📦 Installing OpenRC guest-agent service...");
+
     let service_temp = format!("/tmp/guest-agent-service-{}", vm_id);
     fs::write(&service_temp, OPENRC_SERVICE).await?;
+    tracing::info!("  ✅ Created service file at {}", service_temp);
 
     let service_dest = format!("{}/etc/init.d/guest-agent", mount_point);
     Command::new("sudo")
         .args(["cp", &service_temp, &service_dest])
         .status()
         .await?;
+    tracing::info!("  ✅ Copied service to {}", service_dest);
 
     Command::new("sudo")
         .args(["chmod", "+x", &service_dest])
         .status()
         .await?;
+    tracing::info!("  ✅ Made service executable");
 
     fs::remove_file(&service_temp).await?;
 
@@ -384,13 +412,21 @@ async fn install_openrc_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
         .args(["mkdir", "-p", &runlevel_dir])
         .status()
         .await?;
+    tracing::info!("  ✅ Created runlevel directory");
 
+    let symlink_path = format!("{}/guest-agent", runlevel_dir);
     Command::new("sudo")
-        .args(["ln", "-sf", "/etc/init.d/guest-agent", &format!("{}/guest-agent", runlevel_dir)])
+        .args([
+            "ln",
+            "-sf",
+            "/etc/init.d/guest-agent",
+            &symlink_path,
+        ])
         .status()
         .await?;
+    tracing::info!("  ✅ Enabled service in default runlevel at {}", symlink_path);
 
-    tracing::debug!("Installed OpenRC service");
+    tracing::info!("✅ OpenRC guest-agent service installed and enabled");
     Ok(())
 }
 
@@ -421,7 +457,12 @@ async fn install_sysvinit_service(mount_point: &str, vm_id: Uuid) -> Result<()> 
             .await?;
 
         Command::new("sudo")
-            .args(["ln", "-sf", "../init.d/guest-agent", &format!("{}/S99guest-agent", rc_dir)])
+            .args([
+                "ln",
+                "-sf",
+                "../init.d/guest-agent",
+                &format!("{}/S99guest-agent", rc_dir),
+            ])
             .status()
             .await?;
     }
@@ -557,8 +598,72 @@ if [ $RETRY -ge $MAX_RETRIES ]; then
     logger -t guest-agent "Failed to report IP after $MAX_RETRIES attempts"
 fi
 "#,
-        manager_url, vm_id, manager_url, vm_id, manager_url.split("://").nth(1).unwrap_or(manager_url)
+        manager_url,
+        vm_id,
+        manager_url,
+        vm_id,
+        manager_url.split("://").nth(1).unwrap_or(manager_url)
     )
+}
+
+/// Inject network restart script for OpenRC-based systems (Alpine Linux)
+/// This ensures VMs restored from snapshots get fresh DHCP leases
+async fn inject_network_restart_script_if_openrc(mount_point: &str) -> Result<()> {
+    // Check if this is an OpenRC system
+    let local_d_path = format!("{}/etc/local.d", mount_point);
+    if !Path::new(&local_d_path).exists() {
+        tracing::info!("Not an OpenRC system, skipping network restart script injection");
+        return Ok(());
+    }
+
+    tracing::info!("Injecting network restart script for snapshot-based VMs");
+
+    let script_content = r#"#!/bin/sh
+# Auto-generated script to refresh network on snapshot restore
+# This ensures each restored VM gets a unique IP via DHCP
+
+# IMPORTANT: Only run this on snapshot restore, not on initial boot
+# We detect snapshot restore by checking if this is the second boot
+MARKER=/var/run/first-boot-done
+if [ ! -f "$MARKER" ]; then
+    # First boot (golden template creation) - just mark and skip
+    touch "$MARKER"
+    exit 0
+fi
+
+# This is snapshot restore (second+ boot) - restart networking
+# Kill any existing DHCP client
+pkill udhcpc 2>/dev/null || true
+
+# Restart networking to get fresh DHCP lease
+rc-service networking restart
+"#;
+
+    let script_temp = format!("/tmp/99-refresh-network-{}.start", uuid::Uuid::new_v4());
+    fs::write(&script_temp, script_content).await?;
+
+    let script_dest = format!("{}/etc/local.d/99-refresh-network.start", mount_point);
+    Command::new("sudo")
+        .args(["cp", &script_temp, &script_dest])
+        .status()
+        .await?;
+
+    Command::new("sudo")
+        .args(["chmod", "+x", &script_dest])
+        .status()
+        .await?;
+
+    fs::remove_file(&script_temp).await?;
+
+    // Enable local service if not already enabled (via chroot)
+    let _ = Command::new("sudo")
+        .args(["chroot", mount_point, "rc-update", "add", "local", "default"])
+        .output()
+        .await;
+
+    tracing::info!("✅ Network restart script injected at {}", script_dest);
+
+    Ok(())
 }
 
 /// Check if guest agent binary exists

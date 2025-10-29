@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
-use crate::AppState;
-use sqlx::PgPool;
 use std::time::Instant;
+
+use anyhow::{Context, Result};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::repo::{FunctionInvocationRow, FunctionRow};
+use crate::AppState;
 use nexus_types::{
     CreateFunctionReq, CreateFunctionResp, Function, FunctionInvocation, GetFunctionResp,
     InvokeFunctionReq, InvokeFunctionResp, ListFunctionsResp, ListInvocationsResp,
@@ -53,7 +54,7 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
     let env_vars = req.env_vars.clone();
 
     tokio::spawn(async move {
-        match super::vm::create_function_vm(
+        match super::vm::create_with_vm(
             &st_clone,
             function_id,
             &function_name,
@@ -70,57 +71,115 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
                 eprintln!("[Function {}] VM created: {}", function_id, vm_id);
 
                 // Update function with VM ID and state
-                if let Err(e) = super::repo::update_vm_info(&st_clone.db, function_id, vm_id, None).await {
+                if let Err(e) =
+                    super::repo::update_vm_info(&st_clone.db, function_id, vm_id, None).await
+                {
                     eprintln!("[Function {}] Failed to update VM info: {}", function_id, e);
                     let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
                     return;
                 }
                 let _ = super::repo::update_state(&st_clone.db, function_id, "booting").await;
 
-                // Wait for guest IP to be available (up to 60 seconds)
-                eprintln!("[Function {}] Waiting for VM guest IP...", function_id);
-                let mut guest_ip: Option<String> = None;
-                for attempt in 1..=60 {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-                    // Check VM for guest IP
-                    if let Ok(vm) = crate::features::vms::repo::get(&st_clone.db, vm_id).await {
-                        if let Some(ip) = vm.guest_ip {
-                            guest_ip = Some(ip);
-                            break;
-                        }
-                    }
-
-                    if attempt % 10 == 0 {
-                        eprintln!("[Function {}] Still waiting for guest IP... ({}s)", function_id, attempt);
-                    }
-                }
-
-                let guest_ip = match guest_ip {
-                    Some(ip) => ip,
-                    None => {
-                        eprintln!("[Function {}] Timeout waiting for guest IP", function_id);
+                // Get VM info for fast IP detection
+                let vm = match crate::features::vms::repo::get(&st_clone.db, vm_id).await {
+                    Ok(vm) => vm,
+                    Err(e) => {
+                        eprintln!("[Function {}] Failed to get VM info: {}", function_id, e);
                         let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
                         return;
+                    }
+                };
+
+                // Fast guest IP detection (combines neighbor table + guest-agent)
+                eprintln!("[Function {}] Fast IP detection starting...", function_id);
+                let guest_ip = match crate::features::vms::fast_provisioning::fast_detect_guest_ip(
+                    &st_clone.db,
+                    vm_id,
+                    "fcbr0", // bridge name
+                    &vm.tap,  // tap device name
+                    30,       // reduced timeout from 60s to 30s
+                ).await {
+                    Ok(ip) => ip,
+                    Err(e) => {
+                        eprintln!("[Function {}] Fast IP detection failed: {}. Falling back to legacy method...", function_id, e);
+
+                        // Legacy fallback: simple polling
+                        let mut legacy_ip: Option<String> = None;
+                        for attempt in 1..=30 {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            if let Ok(vm) = crate::features::vms::repo::get(&st_clone.db, vm_id).await {
+                                if let Some(ip) = vm.guest_ip {
+                                    legacy_ip = Some(ip);
+                                    break;
+                                }
+                            }
+                            if attempt % 10 == 0 {
+                                eprintln!(
+                                    "[Function {}] Legacy: Still waiting for guest IP... ({}s)",
+                                    function_id, attempt
+                                );
+                            }
+                        }
+
+                        match legacy_ip {
+                            Some(ip) => ip,
+                            None => {
+                                eprintln!("[Function {}] Timeout waiting for guest IP", function_id);
+                                let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
+                                return;
+                            }
+                        }
                     }
                 };
 
                 eprintln!("[Function {}] Got guest IP: {}", function_id, guest_ip);
 
                 // Update function with guest IP and state
-                let _ = super::repo::update_vm_info(&st_clone.db, function_id, vm_id, Some(&guest_ip)).await;
+                let _ =
+                    super::repo::update_vm_info(&st_clone.db, function_id, vm_id, Some(&guest_ip))
+                        .await;
                 let _ = super::repo::update_state(&st_clone.db, function_id, "deploying").await;
 
-                // Inject function code via HTTP (will retry until successful)
-                eprintln!("[Function {}] Injecting function code (will retry until runtime server is ready)...", function_id);
-                match super::vm::update_function_code(&guest_ip, &runtime, &code, &handler).await {
+                // Fast runtime readiness check (reduced from 30s to 10s with smart backoff)
+                eprintln!(
+                    "[Function {}] Fast runtime readiness check...",
+                    function_id
+                );
+                match crate::features::vms::fast_provisioning::fast_runtime_check(&guest_ip, 3000, 10).await {
                     Ok(_) => {
-                        eprintln!("[Function {}] Code injection successful", function_id);
+                        eprintln!(
+                            "[Function {}] Runtime reported ready, function is deployable",
+                            function_id
+                        );
                         let _ = super::repo::update_state(&st_clone.db, function_id, "ready").await;
                     }
-                    Err(e) => {
-                        eprintln!("[Function {}] Code injection failed: {}", function_id, e);
-                        let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
+                    Err(wait_err) => {
+                        eprintln!(
+                            "[Function {}] Runtime readiness check failed ({}). Falling back to HTTP code injection.",
+                            function_id, wait_err
+                        );
+                        match super::vm::update_function_code(&guest_ip, &runtime, &code, &handler)
+                            .await
+                        {
+                            Ok(_) => {
+                                eprintln!(
+                                    "[Function {}] Fallback code injection successful",
+                                    function_id
+                                );
+                                let _ =
+                                    super::repo::update_state(&st_clone.db, function_id, "ready")
+                                        .await;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[Function {}] Code injection failed: {}",
+                                    function_id, e
+                                );
+                                let _ =
+                                    super::repo::update_state(&st_clone.db, function_id, "error")
+                                        .await;
+                            }
+                        }
                     }
                 }
             }
@@ -188,11 +247,16 @@ pub async fn update_function(
         let new_handler = req.handler.unwrap_or(existing.handler);
         let runtime = req.runtime.unwrap_or(existing.runtime);
 
-        eprintln!("[Function {}] Code/handler updated, reloading in VM at {}", id, guest_ip);
+        eprintln!(
+            "[Function {}] Code/handler updated, reloading in VM at {}",
+            id, guest_ip
+        );
 
         // Reload code in background (don't block the response)
         tokio::spawn(async move {
-            if let Err(e) = super::vm::update_function_code(&guest_ip, &runtime, &new_code, &new_handler).await {
+            if let Err(e) =
+                super::vm::update_function_code(&guest_ip, &runtime, &new_code, &new_handler).await
+            {
                 eprintln!("[Function {}] Failed to reload code: {}", id, e);
             } else {
                 eprintln!("[Function {}] Code reloaded successfully", id);
@@ -242,7 +306,10 @@ pub async fn invoke_function(
     }
 
     // Check if VM exists and has IP
-    let guest_ip = func.guest_ip.as_ref().context("Function VM has no IP yet")?;
+    let guest_ip = func
+        .guest_ip
+        .as_ref()
+        .context("Function VM has no IP yet")?;
 
     // Generate request ID
     let request_id = Uuid::new_v4().to_string();
@@ -257,7 +324,9 @@ pub async fn invoke_function(
     let http_result = client
         .post(&url)
         .json(&serde_json::json!({ "event": req.event }))
-        .timeout(std::time::Duration::from_secs(func.timeout_seconds as u64 + 5))
+        .timeout(std::time::Duration::from_secs(
+            func.timeout_seconds as u64 + 5,
+        ))
         .send()
         .await;
 
@@ -268,24 +337,49 @@ pub async fn invoke_function(
             if resp.status().is_success() {
                 match resp.json::<serde_json::Value>().await {
                     Ok(result) => {
-                        let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                        let status = result
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
                         let response = result.get("response").cloned();
-                        let logs = result.get("logs")
+                        let logs = result
+                            .get("logs")
                             .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default();
-                        let error = result.get("error").and_then(|v| v.as_str()).map(String::from);
+                        let error = result
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
                         (status, response, logs, error)
                     }
-                    Err(e) => ("error".to_string(), None, vec![], Some(format!("Failed to parse response: {}", e))),
+                    Err(e) => (
+                        "error".to_string(),
+                        None,
+                        vec![],
+                        Some(format!("Failed to parse response: {}", e)),
+                    ),
                 }
             } else {
-                ("error".to_string(), None, vec![], Some(format!("HTTP {}", resp.status())))
+                (
+                    "error".to_string(),
+                    None,
+                    vec![],
+                    Some(format!("HTTP {}", resp.status())),
+                )
             }
         }
-        Err(e) => {
-            ("error".to_string(), None, vec![], Some(format!("HTTP request failed: {}", e)))
-        }
+        Err(e) => (
+            "error".to_string(),
+            None,
+            vec![],
+            Some(format!("HTTP request failed: {}", e)),
+        ),
     };
 
     // Store invocation
@@ -324,8 +418,7 @@ pub async fn list_invocations(
     status: Option<String>,
     limit: Option<i64>,
 ) -> Result<ListInvocationsResp> {
-    let rows =
-        super::repo::list_invocations(db, function_id, status.as_deref(), limit).await?;
+    let rows = super::repo::list_invocations(db, function_id, status.as_deref(), limit).await?;
     let items = rows.into_iter().map(invocation_row_to_type).collect();
     Ok(ListInvocationsResp { items })
 }

@@ -52,7 +52,10 @@ async fn get_console_info(
     }))
 }
 
-pub async fn proxy_console_screen(screen_name: String, ws: WebSocket) -> Result<(), (StatusCode, String)> {
+pub async fn proxy_console_screen(
+    screen_name: String,
+    ws: WebSocket,
+) -> Result<(), (StatusCode, String)> {
     // Spawn screen -x to attach to the session
     // We use 'script' to allocate a PTY because screen requires a terminal
     // script -qfc "command" /dev/null runs command with a PTY and outputs to stdout
@@ -61,13 +64,18 @@ pub async fn proxy_console_screen(screen_name: String, ws: WebSocket) -> Result<
             "script",
             "-qfc",
             &format!("screen -x {}", screen_name),
-            "/dev/null"
+            "/dev/null",
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to spawn screen: {}", err)))?;
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to spawn screen: {}", err),
+            )
+        })?;
 
     let mut stdin = child.stdin.take().ok_or((
         StatusCode::INTERNAL_SERVER_ERROR,

@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
-use uuid::Uuid;
-use crate::AppState;
 use nexus_types::CreateVmReq;
+use uuid::Uuid;
+
+use crate::AppState;
 
 /// Create a dedicated MicroVM for running a Docker container
 ///
@@ -30,28 +31,46 @@ pub async fn create_container_vm(
     let vm_id = Uuid::new_v4();
     let container_rootfs_path = format!("/srv/images/containers/{}.ext4", vm_id);
 
-    eprintln!("[Container {}] Creating VM {} with dedicated runtime image copy", container_id, vm_id);
-    eprintln!("[Container {}] Copying {} to {}", container_id, base_rootfs_path, container_rootfs_path);
+    eprintln!(
+        "[Container {}] Creating VM {} with dedicated runtime image copy",
+        container_id, vm_id
+    );
+    eprintln!(
+        "[Container {}] Copying {} to {}",
+        container_id, base_rootfs_path, container_rootfs_path
+    );
 
     // Ensure directory exists
-    tokio::fs::create_dir_all("/srv/images/containers").await
+    tokio::fs::create_dir_all("/srv/images/containers")
+        .await
         .context("Failed to create containers image directory")?;
 
-    // Copy the base runtime image to a container-specific image
-    let copy_status = Command::new("cp")
-        .args([&base_rootfs_path, &container_rootfs_path])
-        .status()
-        .await
-        .context("Failed to execute cp command")?;
-
-    if !copy_status.success() {
-        anyhow::bail!("Failed to copy runtime image from {} to {}", base_rootfs_path, container_rootfs_path);
+    // Use fast reflink copy (instant on btrfs, falls back to regular copy otherwise)
+    if let Err(e) = crate::features::vms::fast_provisioning::reflink_copy(
+        &base_rootfs_path,
+        &container_rootfs_path,
+    )
+    .await
+    {
+        anyhow::bail!(
+            "Failed to copy runtime image from {} to {}: {}",
+            base_rootfs_path,
+            container_rootfs_path,
+            e
+        );
     }
 
-    eprintln!("[Container {}] Runtime image copied successfully", container_id);
+    eprintln!(
+        "[Container {}] Runtime image copied successfully",
+        container_id
+    );
 
     // Create VM request using container-specific rootfs copy
-    let vm_name = format!("container-{}-{}", container_name, &container_id.to_string()[..8]);
+    let vm_name = format!(
+        "container-{}-{}",
+        container_name,
+        &container_id.to_string()[..8]
+    );
     let vm_req = CreateVmReq {
         name: vm_name,
         vcpu,
@@ -68,7 +87,10 @@ pub async fn create_container_vm(
     // Create and start VM
     crate::features::vms::service::create_and_start(st, vm_id, vm_req, None).await?;
 
-    eprintln!("[Container {}] VM {} created and starting", container_id, vm_id);
+    eprintln!(
+        "[Container {}] VM {} created and starting",
+        container_id, vm_id
+    );
 
     Ok(vm_id)
 }
@@ -136,7 +158,7 @@ pub async fn wait_for_docker_ready(guest_ip: &str, timeout_secs: u64) -> Result<
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -154,7 +176,10 @@ pub async fn cleanup_container_vm(st: &AppState, vm_id: Uuid) -> Result<()> {
     let container_rootfs_path = format!("/srv/images/containers/{}.ext4", vm_id);
     if tokio::fs::metadata(&container_rootfs_path).await.is_ok() {
         if let Err(e) = tokio::fs::remove_file(&container_rootfs_path).await {
-            eprintln!("[Container VM] Failed to delete rootfs {}: {}", container_rootfs_path, e);
+            eprintln!(
+                "[Container VM] Failed to delete rootfs {}: {}",
+                container_rootfs_path, e
+            );
         } else {
             eprintln!("[Container VM] Deleted rootfs {}", container_rootfs_path);
         }

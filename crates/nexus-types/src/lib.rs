@@ -517,7 +517,7 @@ pub struct BalloonStatsConfig {
 pub struct Function {
     pub id: uuid::Uuid,
     pub name: String,
-    pub runtime: String,  // node, python, go, rust
+    pub runtime: String, // node, python, go, rust
     pub code: String,
     pub handler: String,
     pub timeout_seconds: i32,
@@ -531,7 +531,7 @@ pub struct Function {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_ip: Option<String>,
     pub port: i32,
-    pub state: String,  // creating, ready, error, stopped
+    pub state: String, // creating, ready, error, stopped
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -542,7 +542,7 @@ pub struct Function {
 pub struct FunctionInvocation {
     pub id: uuid::Uuid,
     pub function_id: uuid::Uuid,
-    pub status: String,  // success, error, timeout
+    pub status: String, // success, error, timeout
     pub duration_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_used_mb: Option<i32>,
@@ -678,7 +678,7 @@ pub struct Container {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit_mb: Option<i32>,
     pub restart_policy: String,
-    pub state: String,  // creating, running, stopped, restarting, error, paused
+    pub state: String, // creating, running, stopped, restarting, error, paused
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_id: Option<uuid::Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -704,7 +704,7 @@ pub struct Container {
 pub struct PortMapping {
     pub host: i32,
     pub container: i32,
-    pub protocol: String,  // tcp, udp
+    pub protocol: String, // tcp, udp
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -803,7 +803,7 @@ pub struct ContainerLog {
     pub id: uuid::Uuid,
     pub container_id: uuid::Uuid,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub stream: String,  // stdout, stderr
+    pub stream: String, // stdout, stderr
     pub message: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -829,13 +829,13 @@ pub struct ListContainersParams {
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 pub struct ContainerLogsParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<String>,  // RFC3339 timestamp
+    pub since: Option<String>, // RFC3339 timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub until: Option<String>,  // RFC3339 timestamp
+    pub until: Option<String>, // RFC3339 timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tail: Option<i64>,      // Last N lines
+    pub tail: Option<i64>, // Last N lines
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub follow: Option<bool>,   // Stream logs
+    pub follow: Option<bool>, // Stream logs
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

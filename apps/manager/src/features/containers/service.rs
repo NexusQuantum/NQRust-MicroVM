@@ -1,8 +1,7 @@
 use anyhow::{anyhow, Result};
 use nexus_types::{
-    ContainerLogsResp, ContainerStatsResp, CreateContainerReq, CreateContainerResp,
-    ExecCommandReq, ExecCommandResp, GetContainerResp, ListContainersResp, OkResponse,
-    UpdateContainerReq,
+    ContainerLogsResp, ContainerStatsResp, CreateContainerReq, CreateContainerResp, ExecCommandReq,
+    ExecCommandResp, GetContainerResp, ListContainersResp, OkResponse, UpdateContainerReq,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -22,7 +21,10 @@ use crate::AppState;
 ///    d. Pull container image inside VM
 ///    e. Create and start Docker container inside VM
 ///    f. Update container state to running
-pub async fn create_container(st: &AppState, req: CreateContainerReq) -> Result<CreateContainerResp> {
+pub async fn create_container(
+    st: &AppState,
+    req: CreateContainerReq,
+) -> Result<CreateContainerResp> {
     let repo = ContainerRepository::new(st.db.clone());
 
     // Validate request
@@ -80,7 +82,8 @@ async fn provision_container_vm(
     eprintln!("[Container {}] Starting VM provisioning", container_id);
 
     // Create dedicated microVM with Docker runtime
-    let vm_id = super::vm::create_container_vm(st, container_id, container_name, vcpu, memory_mb).await?;
+    let vm_id =
+        super::vm::create_container_vm(st, container_id, container_name, vcpu, memory_mb).await?;
 
     eprintln!("[Container {}] VM created: {}", container_id, vm_id);
 
@@ -89,48 +92,77 @@ async fn provision_container_vm(
         .await?;
     repo.update_state(container_id, "booting", None).await?;
 
-    // Wait for guest IP to be available (up to 60 seconds)
-    eprintln!("[Container {}] Waiting for VM guest IP...", container_id);
-    let mut guest_ip: Option<String> = None;
-    for attempt in 1..=60 {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-        // Check VM for guest IP
-        if let Ok(vm) = crate::features::vms::repo::get(&st.db, vm_id).await {
-            if let Some(ip) = vm.guest_ip {
-                guest_ip = Some(ip);
-                break;
-            }
-        }
-
-        if attempt % 10 == 0 {
-            eprintln!(
-                "[Container {}] Still waiting for guest IP... ({}s)",
-                container_id, attempt
-            );
-        }
-    }
-
-    let guest_ip = match guest_ip {
-        Some(ip) => ip,
-        None => {
-            let error_msg = "Timeout waiting for VM guest IP";
-            repo.update_state(container_id, "error", Some(error_msg.to_string()))
+    // Get VM info for fast IP detection
+    let vm = match crate::features::vms::repo::get(&st.db, vm_id).await {
+        Ok(vm) => vm,
+        Err(e) => {
+            let error_msg = format!("Failed to get VM info: {}", e);
+            repo.update_state(container_id, "error", Some(error_msg.clone()))
                 .await?;
             anyhow::bail!(error_msg);
         }
     };
 
+    // Fast guest IP detection (combines neighbor table + guest-agent)
+    eprintln!("[Container {}] Fast IP detection starting...", container_id);
+    let guest_ip = match crate::features::vms::fast_provisioning::fast_detect_guest_ip(
+        &st.db,
+        vm_id,
+        "fcbr0", // bridge name
+        &vm.tap,  // tap device name
+        30,       // reduced timeout from 60s to 30s
+    ).await {
+        Ok(ip) => ip,
+        Err(e) => {
+            eprintln!("[Container {}] Fast IP detection failed: {}. Falling back to legacy method...", container_id, e);
+
+            // Legacy fallback: simple polling
+            let mut legacy_ip: Option<String> = None;
+            for attempt in 1..=30 {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if let Ok(vm) = crate::features::vms::repo::get(&st.db, vm_id).await {
+                    if let Some(ip) = vm.guest_ip {
+                        legacy_ip = Some(ip);
+                        break;
+                    }
+                }
+                if attempt % 10 == 0 {
+                    eprintln!(
+                        "[Container {}] Legacy: Still waiting for guest IP... ({}s)",
+                        container_id, attempt
+                    );
+                }
+            }
+
+            match legacy_ip {
+                Some(ip) => ip,
+                None => {
+                    let error_msg = "Timeout waiting for VM guest IP";
+                    repo.update_state(container_id, "error", Some(error_msg.to_string()))
+                        .await?;
+                    anyhow::bail!(error_msg);
+                }
+            }
+        }
+    };
+
     eprintln!("[Container {}] Got guest IP: {}", container_id, guest_ip);
 
-    // Wait for Docker daemon to be ready inside VM
-    repo.update_state(container_id, "initializing", None).await?;
+    // Fast Docker daemon readiness check (reduced from 120s to 30s with smart backoff)
+    repo.update_state(container_id, "initializing", None)
+        .await?;
 
-    if let Err(e) = super::vm::wait_for_docker_ready(&guest_ip, 120).await {
-        let error_msg = format!("Docker daemon not ready: {}", e);
-        repo.update_state(container_id, "error", Some(error_msg.clone()))
-            .await?;
-        anyhow::bail!(error_msg);
+    eprintln!("[Container {}] Fast Docker readiness check...", container_id);
+    if let Err(e) = crate::features::vms::fast_provisioning::fast_docker_check(&guest_ip, 30).await {
+        eprintln!("[Container {}] Fast Docker check failed: {}. Trying legacy method...", container_id, e);
+
+        // Legacy fallback
+        if let Err(e) = super::vm::wait_for_docker_ready(&guest_ip, 60).await {
+            let error_msg = format!("Docker daemon not ready: {}", e);
+            repo.update_state(container_id, "error", Some(error_msg.clone()))
+                .await?;
+            anyhow::bail!(error_msg);
+        }
     }
 
     eprintln!("[Container {}] Docker daemon ready", container_id);
@@ -176,7 +208,10 @@ async fn provision_container_vm(
     // Update container state to running
     repo.set_started(container_id).await?;
 
-    eprintln!("[Container {}] Container running successfully", container_id);
+    eprintln!(
+        "[Container {}] Container running successfully",
+        container_id
+    );
 
     Ok(())
 }
@@ -304,7 +339,9 @@ pub async fn stop_container(st: &AppState, id: Uuid) -> Result<OkResponse> {
 
     let docker_container_id = extract_docker_container_id(&container)?;
 
-    docker.stop_container(&docker_container_id, Some(10)).await?;
+    docker
+        .stop_container(&docker_container_id, Some(10))
+        .await?;
     repo.set_stopped(id).await?;
 
     tracing::info!(container_id = %id, "Container stopped");
@@ -322,7 +359,9 @@ pub async fn restart_container(st: &AppState, id: Uuid) -> Result<OkResponse> {
     let docker = DockerClient::new(&guest_ip)?;
     let docker_container_id = extract_docker_container_id(&container)?;
 
-    docker.restart_container(&docker_container_id, Some(10)).await?;
+    docker
+        .restart_container(&docker_container_id, Some(10))
+        .await?;
     repo.set_started(id).await?;
 
     tracing::info!(container_id = %id, "Container restarted");
@@ -439,11 +478,7 @@ async fn get_latest_stats(db: &PgPool, id: Uuid) -> Result<ContainerStatsResp> {
 }
 
 /// Execute a command in a container
-pub async fn exec_command(
-    st: &AppState,
-    id: Uuid,
-    req: ExecCommandReq,
-) -> Result<ExecCommandResp> {
+pub async fn exec_command(st: &AppState, id: Uuid, req: ExecCommandReq) -> Result<ExecCommandResp> {
     let repo = ContainerRepository::new(st.db.clone());
 
     let container = repo.get(id).await?;
@@ -493,8 +528,7 @@ async fn get_guest_ip_from_container(
     // Get VM and extract guest IP
     let vm = crate::features::vms::repo::get(db, vm_id).await?;
 
-    vm.guest_ip
-        .ok_or_else(|| anyhow!("VM has no guest IP"))
+    vm.guest_ip.ok_or_else(|| anyhow!("VM has no guest IP"))
 }
 
 fn extract_docker_container_id(container: &nexus_types::Container) -> Result<String> {

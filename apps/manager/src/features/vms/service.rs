@@ -95,20 +95,24 @@ pub async fn create_and_start(
 
     // Extract credentials before moving req into resolve_vm_spec
     let username = req.username.clone().unwrap_or_else(|| "root".to_string());
-    let password = req.password.clone()
+    let password = req
+        .password
+        .clone()
         .unwrap_or_else(|| format!("vm-{}", &id.to_string()[..8]));
 
     let spec = resolve_vm_spec(st, req, id).await?;
 
     // Inject credentials into rootfs BEFORE VM starts (while rootfs is not in use)
     // This is the fallback for images without cloud-init
-    if let Err(e) = inject_credentials_to_rootfs(id, &spec.rootfs_path, &username, &password).await {
+    if let Err(e) = inject_credentials_to_rootfs(id, &spec.rootfs_path, &username, &password).await
+    {
         warn!(vm_id = %id, error = ?e, "rootfs credential injection failed (will try cloud-init)");
     }
 
     // Install guest agent into rootfs BEFORE VM starts (while rootfs is not in use)
     // Get manager URL from MANAGER_BIND (use bridge IP from network.bridge)
-    let manager_bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
+    let manager_bind =
+        std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
 
     // Get bridge IP for manager URL (VMs connect via bridge network)
     let bridge_ip = std::process::Command::new("ip")
@@ -128,11 +132,17 @@ pub async fn create_and_start(
             }
             None
         })
-        .unwrap_or_else(|| manager_bind.split(':').next().unwrap_or("127.0.0.1").to_string());
+        .unwrap_or_else(|| {
+            manager_bind
+                .split(':')
+                .next()
+                .unwrap_or("127.0.0.1")
+                .to_string()
+        });
 
     let manager_port = manager_bind.split(':').nth(1).unwrap_or("18080");
     let manager_url = format!("http://{}:{}", bridge_ip, manager_port);
-    
+
     eprintln!("=== GUEST AGENT INSTALLATION STARTED for VM {} ===", id);
     eprintln!("Rootfs path: {}", &spec.rootfs_path);
     eprintln!("Manager bind: {}", manager_bind);
@@ -140,7 +150,8 @@ pub async fn create_and_start(
     eprintln!("Bridge IP: {}", bridge_ip);
     eprintln!("Manager port: {}", manager_port);
     eprintln!("Manager URL: {}", &manager_url);
-    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await {
+    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await
+    {
         eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} ===", id);
         eprintln!("Error: {:?}", e);
         warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
@@ -189,7 +200,11 @@ pub async fn create_and_start(
     .await?;
 
     // Store shell credentials for the VM (use the same credentials that were injected)
-    if let Err(e) = st.shell_repo.upsert_credentials(id, &username, &password).await {
+    if let Err(e) = st
+        .shell_repo
+        .upsert_credentials(id, &username, &password)
+        .await
+    {
         warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
     } else {
         info!(vm_id = %id, username = %username, "created shell credentials for VM");
@@ -254,60 +269,40 @@ pub async fn create_from_snapshot(
 
     let network = select_network(&host.capabilities_json)?;
 
-    // Install guest agent into rootfs BEFORE VM starts (while rootfs is not in use)
-    // Get manager URL from MANAGER_BIND (use bridge IP from network.bridge)
-    let manager_bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
-
-    // Get bridge IP for manager URL (VMs connect via bridge network)
-    let bridge_ip = std::process::Command::new("ip")
-        .args(["addr", "show", &network.bridge])
-        .output()
-        .ok()
-        .and_then(|output| {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if line.trim().starts_with("inet ") {
-                    if let Some(ip_part) = line.split_whitespace().nth(1) {
-                        if let Some(ip) = ip_part.split('/').next() {
-                            return Some(ip.to_string());
-                        }
-                    }
-                }
-            }
-            None
-        })
-        .unwrap_or_else(|| manager_bind.split(':').next().unwrap_or("127.0.0.1").to_string());
-
-    let manager_port = manager_bind.split(':').nth(1).unwrap_or("18080");
-    let manager_url = format!("http://{}:{}", bridge_ip, manager_port);
-    
-    eprintln!("=== GUEST AGENT INSTALLATION STARTED for VM {} (from snapshot) ===", id);
-    eprintln!("Rootfs path: {}", &spec.rootfs_path);
-    eprintln!("Manager bind: {}", manager_bind);
-    eprintln!("Bridge: {}", network.bridge);
-    eprintln!("Bridge IP: {}", bridge_ip);
-    eprintln!("Manager port: {}", manager_port);
-    eprintln!("Manager URL: {}", &manager_url);
-    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await {
-        eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} (from snapshot) ===", id);
-        eprintln!("Error: {:?}", e);
-        warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
-    } else {
-        eprintln!("=== GUEST AGENT INSTALLATION SUCCESS for VM {} (from snapshot) ===", id);
-    }
+    // IMPORTANT: For snapshot-based VMs, DO NOT install guest agent!
+    // Reasons:
+    // 1. The guest agent should already be baked into the golden snapshot
+    // 2. Installing it would modify the shared rootfs, breaking snapshot restore
+    // 3. Multiple VMs share the same rootfs, so per-VM modifications are not allowed
+    // 4. Firecracker will reject snapshot load if rootfs state doesn't match
+    eprintln!(
+        "=== SKIPPING GUEST AGENT INSTALLATION for VM {} (snapshot-based) ===",
+        id
+    );
+    eprintln!("Guest agent should already be in the golden snapshot");
+    eprintln!("Rootfs path: {} (shared, read-only)", &spec.rootfs_path);
 
     create_tap(&host.addr, id, &network.bridge).await?;
     spawn_firecracker(st, &host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
     } else {
+        // configure_vm handles snapshot loading when paths.snapshot_path is set
         configure_vm(st, &host.addr, id, &spec, &paths).await?;
     }
-    load_snapshot(st, id, &snapshot).await?;
+    // Note: load_snapshot is NOT called here because configure_vm already loads the snapshot
+    // when paths.snapshot_path and paths.mem_path are set. Calling it again would fail.
+    //
+    // For snapshot-based VMs, the VM is already resumed via resume_vm: true in the snapshot load.
+    // Only start the VM for traditional boot path.
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM start");
-    } else {
+    } else if paths.snapshot_path.is_none() {
+        // Traditional boot: start the VM
         start_vm(&host.addr, id, &paths).await?;
+    } else {
+        // Snapshot-based: VM already resumed during snapshot load
+        eprintln!("Snapshot-based VM already resumed - skipping explicit start");
     }
 
     super::repo::insert(
@@ -328,7 +323,11 @@ pub async fn create_from_snapshot(
             mem_mib: spec.mem_mib as i32,
             kernel_path: spec.kernel_path.clone(),
             rootfs_path: spec.rootfs_path.clone(),
-            source_snapshot_id: Some(source_snapshot_id),
+            source_snapshot_id: if snapshot.name.as_ref().map_or(false, |name| name.contains("golden")) {
+                None // Golden snapshots are managed externally, don't track in DB
+            } else {
+                Some(source_snapshot_id)
+            },
             guest_ip: None, // Will be set when guest agent reports
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -339,13 +338,55 @@ pub async fn create_from_snapshot(
     // Auto-generate shell credentials for the VM
     let username = "root";
     let password = format!("vm-{}", &id.to_string()[..8]);
-    if let Err(e) = st.shell_repo.upsert_credentials(id, username, &password).await {
+    if let Err(e) = st
+        .shell_repo
+        .upsert_credentials(id, username, &password)
+        .await
+    {
         warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
     } else {
         info!(vm_id = %id, username = %username, "created shell credentials for VM");
     }
 
     Ok(())
+}
+
+/// Update guest agent configuration after snapshot restore
+pub async fn update_guest_agent_config(
+    guest_ip: &str,
+    vm_id: Uuid,
+    manager_url: &str,
+) -> Result<()> {
+    // Guest agent listens on port 9000 inside the VM
+    let guest_agent_url = format!("http://{}:9000/update-config", guest_ip);
+    
+    let payload = serde_json::json!({
+        "vm_id": vm_id.to_string(),
+        "manager_url": manager_url
+    });
+    
+    eprintln!("Updating guest agent config for VM {} at {}", vm_id, guest_agent_url);
+    eprintln!("Payload: {}", payload);
+    
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    
+    let response = client
+        .post(&guest_agent_url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await?;
+    
+    if response.status().is_success() {
+        eprintln!("✅ Successfully updated guest agent config for VM {}", vm_id);
+        Ok(())
+    } else {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("Failed to update guest agent config: {} - {}", status, body);
+    }
 }
 
 pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
@@ -533,7 +574,10 @@ pub async fn get_process_stats(st: &AppState, id: Uuid) -> Result<ProcessStats> 
     }
 
     // Fallback: Get host-side process stats via agent
-    let url = format!("{}/agent/v1/vms/{}/metrics/process-stats", vm.host_addr, vm.id);
+    let url = format!(
+        "{}/agent/v1/vms/{}/metrics/process-stats",
+        vm.host_addr, vm.id
+    );
 
     let response = reqwest::Client::new()
         .post(&url)
@@ -1175,7 +1219,7 @@ async fn configure_cloud_init_with_network(
     username: &str,
     password: &str,
 ) -> Result<()> {
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
 
     // Generate cloud-init YAML with user credentials
     let cloud_init_yaml = format!(
@@ -1241,12 +1285,7 @@ ethernets:
 }
 
 #[cfg(test)]
-async fn configure_cloud_init_with_network(
-    _: &AppState,
-    _: Uuid,
-    _: &str,
-    _: &str,
-) -> Result<()> {
+async fn configure_cloud_init_with_network(_: &AppState, _: Uuid, _: &str, _: &str) -> Result<()> {
     Ok(())
 }
 
@@ -1259,8 +1298,8 @@ async fn inject_credentials_to_rootfs(
     username: &str,
     password: &str,
 ) -> Result<()> {
-    use tokio::process::Command;
     use std::path::PathBuf;
+    use tokio::process::Command;
 
     info!(vm_id = %vm_id, rootfs = %rootfs_path, username = %username,
           "attempting rootfs credential injection (cloud-init fallback)");
@@ -1279,7 +1318,8 @@ async fn inject_credentials_to_rootfs(
     };
 
     // Create mount directory
-    tokio::fs::create_dir_all(&mount_path).await
+    tokio::fs::create_dir_all(&mount_path)
+        .await
         .context("failed to create mount directory")?;
 
     // Mount the rootfs
@@ -1307,14 +1347,20 @@ async fn inject_credentials_to_rootfs(
     // Write password to stdin
     if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(password.as_bytes()).await
+        stdin
+            .write_all(password.as_bytes())
+            .await
             .context("failed to write password to openssl stdin")?;
-        stdin.write_all(b"\n").await
+        stdin
+            .write_all(b"\n")
+            .await
             .context("failed to write newline to openssl stdin")?;
         drop(stdin); // Close stdin to signal EOF
     }
 
-    let hash_output = child.wait_with_output().await
+    let hash_output = child
+        .wait_with_output()
+        .await
         .context("failed to wait for openssl")?;
 
     if !hash_output.status.success() {
@@ -1322,7 +1368,9 @@ async fn inject_credentials_to_rootfs(
         bail!("openssl passwd failed");
     }
 
-    let password_hash = String::from_utf8_lossy(&hash_output.stdout).trim().to_string();
+    let password_hash = String::from_utf8_lossy(&hash_output.stdout)
+        .trim()
+        .to_string();
 
     // Read current /etc/shadow using sudo (requires elevated permissions)
     let shadow_path = mount_path.join("etc/shadow");
@@ -1350,8 +1398,15 @@ async fn inject_credentials_to_rootfs(
             if parts.len() >= 9 {
                 new_shadow.push_str(&format!(
                     "{}:{}:{}:{}:{}:{}:{}:{}:{}\n",
-                    username, password_hash, parts[2], parts[3], parts[4],
-                    parts[5], parts[6], parts[7], parts[8]
+                    username,
+                    password_hash,
+                    parts[2],
+                    parts[3],
+                    parts[4],
+                    parts[5],
+                    parts[6],
+                    parts[7],
+                    parts[8]
                 ));
                 user_found = true;
             } else {
@@ -1366,7 +1421,10 @@ async fn inject_credentials_to_rootfs(
 
     // If user not found, add new entry (for root: no expiry, no aging)
     if !user_found {
-        new_shadow.push_str(&format!("{}:{}:19000:0:99999:7:::\n", username, password_hash));
+        new_shadow.push_str(&format!(
+            "{}:{}:19000:0:99999:7:::\n",
+            username, password_hash
+        ));
     }
 
     // Write updated shadow file using sudo via tee
@@ -1380,12 +1438,16 @@ async fn inject_credentials_to_rootfs(
 
     if let Some(mut stdin) = write_child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(new_shadow.as_bytes()).await
+        stdin
+            .write_all(new_shadow.as_bytes())
+            .await
             .context("failed to write to tee stdin")?;
         drop(stdin);
     }
 
-    let write_output = write_child.wait_with_output().await
+    let write_output = write_child
+        .wait_with_output()
+        .await
         .context("failed to wait for tee")?;
 
     if !write_output.status.success() {
@@ -1574,7 +1636,12 @@ exit 0
 
         let symlink_path = default_runlevel.join("networking");
         let ln_status = Command::new("sudo")
-            .args(["ln", "-sf", "/etc/init.d/networking", symlink_path.to_str().unwrap()])
+            .args([
+                "ln",
+                "-sf",
+                "/etc/init.d/networking",
+                symlink_path.to_str().unwrap(),
+            ])
             .status()
             .await
             .context("failed to create networking service symlink")?;
@@ -1596,12 +1663,7 @@ exit 0
 }
 
 #[cfg(test)]
-async fn inject_credentials_to_rootfs(
-    _: Uuid,
-    _: &str,
-    _: &str,
-    _: &str,
-) -> Result<()> {
+async fn inject_credentials_to_rootfs(_: Uuid, _: &str, _: &str, _: &str) -> Result<()> {
     Ok(())
 }
 
@@ -1917,20 +1979,32 @@ async fn create_tap(_: &str, _: Uuid, _: &str) -> Result<()> {
 }
 
 #[cfg(not(test))]
-async fn spawn_firecracker(_st: &AppState, host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
+async fn spawn_firecracker(
+    _st: &AppState,
+    host_addr: &str,
+    id: Uuid,
+    paths: &VmPaths,
+) -> Result<()> {
     let http = Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .context("failed to build reqwest client (spawn)")?;
 
-    info!(vm_id=%id, step="spawn", sock=%paths.sock, "requesting firecracker spawn on agent");
+    info!(vm_id=%id, step="spawn", sock=%paths.sock, snapshot_path=?paths.snapshot_path, "requesting firecracker spawn on agent");
     // Fire-and-forget: do not block the creation flow on systemd-run latency
+    let mut spawn_req = json!({
+        "sock": paths.sock,
+        "log_path": paths.log_path
+    });
+    if let Some(ref snap_path) = paths.snapshot_path {
+        spawn_req["snapshot_path"] = json!(snap_path);
+    }
+    if let Some(ref mem_path) = paths.mem_path {
+        spawn_req["snapshot_mem_path"] = json!(mem_path);
+    }
     match http
         .post(format!("{host_addr}/agent/v1/vms/{id}/spawn"))
-        .json(&json!({
-            "sock": paths.sock,
-            "log_path": paths.log_path
-        }))
+        .json(&spawn_req)
         .send()
         .await
     {
@@ -2017,26 +2091,73 @@ async fn configure_vm(
         .build()
         .context("failed to build reqwest client")?;
 
-    info!(vm_id=%id, step="machine-config", vcpu=%spec.vcpu, mem_mib=%spec.mem_mib, "configuring machine");
-    http.put(format!("{base}/machine-config{qs}"))
-        .json(&json!({
-            "vcpu_count": spec.vcpu,
-            "mem_size_mib": spec.mem_mib,
-            "smt": false
-        }))
-        .send()
-        .await
-        .context("machine-config request failed to send")?
-        .error_for_status()
-        .context("machine-config returned error status")?;
-    info!(vm_id=%id, step="machine-config", "ok");
+    // CRITICAL: Firecracker requires snapshot to be loaded FIRST, before ANY other configuration
+    // See: https://github.com/firecracker-microvm/firecracker/blob/main/src/vmm/src/snapshot/mod.rs
+    // "Loading a microVM snapshot not allowed after configuring boot-specific resources"
+    if let (Some(ref snapshot_path), Some(ref mem_path)) = (&paths.snapshot_path, &paths.mem_path) {
+        info!(vm_id=%id, step="snapshot-load", snapshot_path=%snapshot_path, mem_path=%mem_path, tap=%paths.tap, "loading snapshot with network override");
 
-    if paths.snapshot_path.is_none() {
+        // The snapshot includes a network device with a specific tap interface.
+        // We need to override it with the new tap device created for this VM.
+        // The iface_id is typically "eth0" or the first network interface.
+        let network_overrides = vec![
+            json!({
+                "iface_id": "eth0",  // Default interface ID in snapshots
+                "host_dev_name": paths.tap.clone()
+            })
+        ];
+
+        http.put(format!("{base}/snapshot/load{qs}"))
+            .json(&json!({
+                "snapshot_path": snapshot_path,
+                "mem_file_path": mem_path,
+                "enable_diff_snapshots": false,
+                "resume_vm": true,  // Resume the paused snapshot immediately
+                "network_overrides": network_overrides
+            }))
+            .send()
+            .await
+            .context("snapshot load request failed to send")?
+            .error_for_status()
+            .context("snapshot load returned error status")?;
+
+        info!(vm_id=%id, step="snapshot-load", "snapshot loaded and resumed with network override");
+
+        // NOTE: The snapshot INCLUDES drive configuration from when it was created.
+        // Firecracker restores the drive configuration automatically.
+        // We CANNOT attach drives after loading a snapshot - it would conflict.
+        //
+        // The snapshot expects the original drive path to exist. For golden snapshots,
+        // this means we must ensure the base runtime image is at the original path.
+        //
+        // For function VMs, we should use the SAME rootfs path that was used during
+        // snapshot creation, not a per-function copy.
+    } else if paths.snapshot_path.is_none() {
+        // Traditional boot path: machine-config first, then boot-source and drives
+        info!(vm_id=%id, step="machine-config", vcpu=%spec.vcpu, mem_mib=%spec.mem_mib, "configuring machine");
+        http.put(format!("{base}/machine-config{qs}"))
+            .json(&json!({
+                "vcpu_count": spec.vcpu,
+                "mem_size_mib": spec.mem_mib,
+                "smt": false
+            }))
+            .send()
+            .await
+            .context("machine-config request failed to send")?
+            .error_for_status()
+            .context("machine-config returned error status")?;
+        info!(vm_id=%id, step="machine-config", "ok");
         info!(vm_id=%id, step="boot-source", kernel_path=%spec.kernel_path, "configuring boot source");
+        // Include VM ID in kernel command line so guest agent can detect snapshot restore
+        // by comparing /proc/cmdline with its config file
+        let boot_args = format!(
+            "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init vm_id={}",
+            id
+        );
         http.put(format!("{base}/boot-source{qs}"))
             .json(&json!({
                 "kernel_image_path": spec.kernel_path,
-                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init",
+                "boot_args": boot_args,
             }))
             .send()
             .await
@@ -2098,138 +2219,144 @@ async fn configure_vm(
         if !db_drives.is_empty() {
             info!(vm_id=%id, count=%db_drives.len(), "attached drives from database");
         }
-    }
 
-    info!(vm_id=%id, step="network-interfaces", tap=%paths.tap, "configuring network interface");
-    // Configure default eth0 interface with TAP device
-    http.put(format!("{base}/network-interfaces/eth0{qs}"))
-        .json(&json!({
-            "iface_id": "eth0",
-            "host_dev_name": paths.tap
-        }))
-        .send()
-        .await
-        .context("network-interfaces request failed to send")?
-        .error_for_status()
-        .context("network-interfaces returned error status")?;
-    info!(vm_id=%id, step="network-interfaces", "ok");
-
-    // Attach all additional network interfaces from database
-    let db_nics = super::repo::nics::list(&st.db, id).await?;
-    for nic in &db_nics {
-        info!(vm_id=%id, iface_id=%nic.iface_id, host_dev=%nic.host_dev_name, "attaching additional NIC from DB");
-
-        // Build NIC config - only include optional fields if they have values
-        let mut nic_config = json!({
-            "iface_id": nic.iface_id,
-            "host_dev_name": nic.host_dev_name,
-        });
-
-        // Only add optional fields if they are Some
-        if let Some(ref mac) = nic.guest_mac {
-            nic_config["guest_mac"] = json!(mac);
-        }
-        if let Some(ref rx) = nic.rx_rate_limiter {
-            nic_config["rx_rate_limiter"] = normalize_rate_limiter(rx);
-        }
-        if let Some(ref tx) = nic.tx_rate_limiter {
-            nic_config["tx_rate_limiter"] = normalize_rate_limiter(tx);
-        }
-
-        http.put(format!("{base}/network-interfaces/{}{}", nic.iface_id, qs))
-            .json(&nic_config)
+        // Configure network interface for traditional boot path
+        // (For snapshot path, network is already configured via network_overrides)
+        info!(vm_id=%id, step="network-interfaces", tap=%paths.tap, "configuring network interface");
+        http.put(format!("{base}/network-interfaces/eth0{qs}"))
+            .json(&json!({
+                "iface_id": "eth0",
+                "host_dev_name": paths.tap
+            }))
             .send()
             .await
-            .context("additional NIC request failed to send")?
+            .context("network-interfaces request failed to send")?
             .error_for_status()
-            .context("additional NIC returned error status")?;
-    }
-    if !db_nics.is_empty() {
-        info!(vm_id=%id, count=%db_nics.len(), "attached network interfaces from database");
-    }
+            .context("network-interfaces returned error status")?;
+        info!(vm_id=%id, step="network-interfaces", "ok");
 
-    info!(vm_id=%id, step="logger", log_path=%paths.log_path, "configuring logger");
-    http.put(format!("{base}/logger{qs}"))
-        .json(&json!({
-            "log_path": paths.log_path,
-            "level": "Info",
-            "show_level": true,
-            "show_log_origin": false
-        }))
-        .send()
-        .await
-        .context("logger request failed to send")?
-        .error_for_status()
-        .context("logger returned error status")?;
-    info!(vm_id=%id, step="logger", "ok");
+        // Attach all additional network interfaces from database
+        // (Only for traditional boot path - snapshots have network baked in)
+        let db_nics = super::repo::nics::list(&st.db, id).await?;
+        for nic in &db_nics {
+            info!(vm_id=%id, iface_id=%nic.iface_id, host_dev=%nic.host_dev_name, "attaching additional NIC from DB");
 
-    // Configure serial console via /serial API endpoint (pre-boot only)
-    // Note: Firecracker's serial console only supports OUTPUT (VM writes to a file/pipe)
-    // For interactive terminal, we would need bidirectional communication which requires
-    // a different approach (e.g., vsock or network-based terminal)
-    // For now, we configure it for logging purposes only
-    if paths.snapshot_path.is_none() {
-        let console_log_path = st.storage.vm_dir(id).join("logs/console.log").display().to_string();
+            // Build NIC config - only include optional fields if they have values
+            let mut nic_config = json!({
+                "iface_id": nic.iface_id,
+                "host_dev_name": nic.host_dev_name,
+            });
+
+            // Only add optional fields if they are Some
+            if let Some(ref mac) = nic.guest_mac {
+                nic_config["guest_mac"] = json!(mac);
+            }
+            if let Some(ref rx) = nic.rx_rate_limiter {
+                nic_config["rx_rate_limiter"] = normalize_rate_limiter(rx);
+            }
+            if let Some(ref tx) = nic.tx_rate_limiter {
+                nic_config["tx_rate_limiter"] = normalize_rate_limiter(tx);
+            }
+
+            http.put(format!("{base}/network-interfaces/{}{}", nic.iface_id, qs))
+                .json(&nic_config)
+                .send()
+                .await
+                .context("additional NIC request failed to send")?
+                .error_for_status()
+                .context("additional NIC returned error status")?;
+        }
+        if !db_nics.is_empty() {
+            info!(vm_id=%id, count=%db_nics.len(), "attached network interfaces from database");
+        }
+
+        // Configure logger and serial console for traditional boot path only
+        // Snapshots already have these configured
+        info!(vm_id=%id, step="logger", log_path=%paths.log_path, "configuring logger");
+        http.put(format!("{base}/logger{qs}"))
+            .json(&json!({
+                "log_path": paths.log_path,
+                "level": "Info",
+                "show_level": true,
+                "show_log_origin": false
+            }))
+            .send()
+            .await
+            .context("logger request failed to send")?
+            .error_for_status()
+            .context("logger returned error status")?;
+        info!(vm_id=%id, step="logger", "ok");
+
+        // Configure serial console via /serial API endpoint (pre-boot only)
+        // Note: Firecracker's serial console only supports OUTPUT (VM writes to a file/pipe)
+        // For interactive terminal, we would need bidirectional communication which requires
+        // a different approach (e.g., vsock or network-based terminal)
+        // For now, we configure it for logging purposes only
+        let console_log_path = st
+            .storage
+            .vm_dir(id)
+            .join("logs/console.log")
+            .display()
+            .to_string();
         info!(vm_id=%id, step="serial", console_path=%console_log_path, "configuring serial console output");
 
-        match http.put(format!("{base}/serial{qs}"))
+        match http
+            .put(format!("{base}/serial{qs}"))
             .json(&json!({
                 "output_path": console_log_path
             }))
             .send()
             .await
         {
-            Ok(resp) => {
-                match resp.error_for_status() {
-                    Ok(_) => {
-                        info!(vm_id=%id, step="serial", "serial console configured for logging");
-                    }
-                    Err(e) => {
-                        warn!(vm_id=%id, error=?e, "failed to configure serial console");
-                    }
+            Ok(resp) => match resp.error_for_status() {
+                Ok(_) => {
+                    info!(vm_id=%id, step="serial", "serial console configured for logging");
                 }
-            }
+                Err(e) => {
+                    warn!(vm_id=%id, error=?e, "failed to configure serial console");
+                }
+            },
             Err(e) => {
                 warn!(vm_id=%id, error=?e, "failed to send serial configuration request");
             }
         }
-    }
 
-    // Metrics are enabled by default; Firecracker expects a FIFO.
-    let enable_metrics = std::env::var("MANAGER_DISABLE_METRICS")
-        .map(|v| {
-            let l = v.to_ascii_lowercase();
-            !(l == "1" || l == "true" || l == "yes" || l == "on")
-        })
-        .unwrap_or(true); // Default to enabled
-    if enable_metrics {
-        // Ensure FIFO exists on the agent before configuring Firecracker metrics
-        info!(vm_id=%id, step="metrics", metrics_path=%paths.metrics_path, "preparing metrics fifo");
-        Client::new()
-            .post(format!("{host_addr}/agent/v1/vms/{id}/metrics/prepare"))
-            .json(&json!({
-                "metrics_path": paths.metrics_path
-            }))
-            .send()
-            .await
-            .context("metrics prepare request failed to send")?
-            .error_for_status()
-            .context("metrics prepare returned error status")?;
+        // Metrics are enabled by default; Firecracker expects a FIFO.
+        let enable_metrics = std::env::var("MANAGER_DISABLE_METRICS")
+            .map(|v| {
+                let l = v.to_ascii_lowercase();
+                !(l == "1" || l == "true" || l == "yes" || l == "on")
+            })
+            .unwrap_or(true); // Default to enabled
+        if enable_metrics {
+            // Ensure FIFO exists on the agent before configuring Firecracker metrics
+            info!(vm_id=%id, step="metrics", metrics_path=%paths.metrics_path, "preparing metrics fifo");
+            Client::new()
+                .post(format!("{host_addr}/agent/v1/vms/{id}/metrics/prepare"))
+                .json(&json!({
+                    "metrics_path": paths.metrics_path
+                }))
+                .send()
+                .await
+                .context("metrics prepare request failed to send")?
+                .error_for_status()
+                .context("metrics prepare returned error status")?;
 
-        info!(vm_id=%id, step="metrics", metrics_path=%paths.metrics_path, "configuring metrics");
-        http.put(format!("{base}/metrics{qs}"))
-            .json(&json!({
-                "metrics_path": paths.metrics_path,
-                "level": "Info"
-            }))
-            .send()
-            .await
-            .context("metrics request failed to send")?
-            .error_for_status()
-            .context("metrics returned error status")?;
-        info!(vm_id=%id, step="metrics", "ok");
-    } else {
-        info!(vm_id=%id, step="metrics", "skipped (MANAGER_ENABLE_METRICS not set)");
+            info!(vm_id=%id, step="metrics", metrics_path=%paths.metrics_path, "configuring metrics");
+            http.put(format!("{base}/metrics{qs}"))
+                .json(&json!({
+                    "metrics_path": paths.metrics_path,
+                    "level": "Info"
+                }))
+                .send()
+                .await
+                .context("metrics request failed to send")?
+                .error_for_status()
+                .context("metrics returned error status")?;
+            info!(vm_id=%id, step="metrics", "ok");
+        } else {
+            info!(vm_id=%id, step="metrics", "skipped (MANAGER_ENABLE_METRICS not set)");
+        }
     }
 
     Ok(())

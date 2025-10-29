@@ -1,4 +1,7 @@
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 
 pub mod docker;
 pub mod repo;
@@ -9,7 +12,10 @@ pub mod vm;
 pub fn router() -> Router {
     Router::new()
         .route("/", post(routes::create).get(routes::list))
-        .route("/:id", get(routes::get).put(routes::update).delete(routes::delete))
+        .route(
+            "/:id",
+            get(routes::get).put(routes::update).delete(routes::delete),
+        )
         .route("/:id/start", post(routes::start))
         .route("/:id/stop", post(routes::stop))
         .route("/:id/restart", post(routes::restart))

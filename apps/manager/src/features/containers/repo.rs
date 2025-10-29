@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use nexus_types::{Container, ContainerLog, ContainerStats, CreateContainerReq, UpdateContainerReq};
+use nexus_types::{
+    Container, ContainerLog, ContainerStats, CreateContainerReq, UpdateContainerReq,
+};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -71,7 +73,8 @@ impl ContainerRepository {
         .await
         .context("container not found")?;
 
-        let args: Vec<String> = serde_json::from_value(row.args.unwrap_or_else(|| serde_json::json!([])))?;
+        let args: Vec<String> =
+            serde_json::from_value(row.args.unwrap_or_else(|| serde_json::json!([])))?;
         let env_vars: std::collections::HashMap<String, String> =
             serde_json::from_value(row.env_vars.unwrap_or_else(|| serde_json::json!({})))?;
         let volumes: Vec<nexus_types::VolumeMount> =
@@ -80,7 +83,8 @@ impl ContainerRepository {
             serde_json::from_value(row.port_mappings.unwrap_or_else(|| serde_json::json!([])))?;
 
         let uptime_seconds = if row.state == "running" {
-            row.started_at.map(|started| (Utc::now() - started).num_seconds())
+            row.started_at
+                .map(|started| (Utc::now() - started).num_seconds())
         } else {
             None
         };
@@ -111,7 +115,11 @@ impl ContainerRepository {
         })
     }
 
-    pub async fn list(&self, state_filter: Option<String>, host_filter: Option<Uuid>) -> Result<Vec<Container>> {
+    pub async fn list(
+        &self,
+        state_filter: Option<String>,
+        host_filter: Option<Uuid>,
+    ) -> Result<Vec<Container>> {
         let mut query_str = String::from(
             r#"
             SELECT
@@ -121,7 +129,7 @@ impl ContainerRepository {
                 started_at, stopped_at
             FROM containers
             WHERE 1=1
-            "#
+            "#,
         );
 
         if state_filter.is_some() {
@@ -151,7 +159,8 @@ impl ContainerRepository {
             .into_iter()
             .map(|row| {
                 let uptime_seconds = if row.state == "running" {
-                    row.started_at.map(|started| (Utc::now() - started).num_seconds())
+                    row.started_at
+                        .map(|started| (Utc::now() - started).num_seconds())
                 } else {
                     None
                 };
@@ -161,10 +170,18 @@ impl ContainerRepository {
                     name: row.name,
                     image: row.image,
                     command: row.command,
-                    args: serde_json::from_value(row.args.unwrap_or_else(|| serde_json::json!([])))?,
-                    env_vars: serde_json::from_value(row.env_vars.unwrap_or_else(|| serde_json::json!({})))?,
-                    volumes: serde_json::from_value(row.volumes.unwrap_or_else(|| serde_json::json!([])))?,
-                    port_mappings: serde_json::from_value(row.port_mappings.unwrap_or_else(|| serde_json::json!([])))?,
+                    args: serde_json::from_value(
+                        row.args.unwrap_or_else(|| serde_json::json!([])),
+                    )?,
+                    env_vars: serde_json::from_value(
+                        row.env_vars.unwrap_or_else(|| serde_json::json!({})),
+                    )?,
+                    volumes: serde_json::from_value(
+                        row.volumes.unwrap_or_else(|| serde_json::json!([])),
+                    )?,
+                    port_mappings: serde_json::from_value(
+                        row.port_mappings.unwrap_or_else(|| serde_json::json!([])),
+                    )?,
                     cpu_limit: row.cpu_limit,
                     memory_limit_mb: row.memory_limit_mb,
                     restart_policy: row.restart_policy.unwrap_or_else(|| "no".to_string()),
@@ -251,7 +268,12 @@ impl ContainerRepository {
         Ok(())
     }
 
-    pub async fn update_state(&self, id: Uuid, state: &str, error_message: Option<String>) -> Result<()> {
+    pub async fn update_state(
+        &self,
+        id: Uuid,
+        state: &str,
+        error_message: Option<String>,
+    ) -> Result<()> {
         let now = Utc::now();
         sqlx::query!(
             r#"
@@ -339,7 +361,11 @@ impl ContainerRepository {
         Ok(())
     }
 
-    pub async fn get_latest_stats(&self, container_id: Uuid, limit: i64) -> Result<Vec<ContainerStats>> {
+    pub async fn get_latest_stats(
+        &self,
+        container_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<ContainerStats>> {
         let rows = sqlx::query_as!(
             ContainerStats,
             r#"
@@ -360,7 +386,12 @@ impl ContainerRepository {
         Ok(rows)
     }
 
-    pub async fn append_log(&self, container_id: Uuid, stream: &str, message: String) -> Result<()> {
+    pub async fn append_log(
+        &self,
+        container_id: Uuid,
+        stream: &str,
+        message: String,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO container_logs (container_id, stream, message, timestamp)
@@ -376,7 +407,11 @@ impl ContainerRepository {
         Ok(())
     }
 
-    pub async fn get_logs(&self, container_id: Uuid, tail: Option<i64>) -> Result<Vec<ContainerLog>> {
+    pub async fn get_logs(
+        &self,
+        container_id: Uuid,
+        tail: Option<i64>,
+    ) -> Result<Vec<ContainerLog>> {
         let limit = tail.unwrap_or(100);
 
         let rows = sqlx::query_as!(

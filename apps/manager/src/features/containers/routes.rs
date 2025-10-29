@@ -187,16 +187,14 @@ pub async fn stop(
     Extension(st): Extension<AppState>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
 ) -> Result<Json<OkResponse>, StatusCode> {
-    super::service::stop_container(&st, id)
-        .await
-        .map_err(|e| {
-            eprintln!("Failed to stop container: {}", e);
-            if e.to_string().contains("not running") {
-                StatusCode::BAD_REQUEST
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-        })?;
+    super::service::stop_container(&st, id).await.map_err(|e| {
+        eprintln!("Failed to stop container: {}", e);
+        if e.to_string().contains("not running") {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
     Ok(Json(OkResponse::default()))
 }
 

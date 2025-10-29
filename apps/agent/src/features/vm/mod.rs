@@ -2,6 +2,7 @@ use axum::Router;
 
 pub mod balloon;
 pub mod entropy;
+pub mod exec;
 pub mod metrics;
 pub mod mmds;
 pub mod proxy;
@@ -27,4 +28,5 @@ pub fn router() -> Router {
         .merge(balloon::router())
         .merge(system::router())
         .merge(shell::router())
+        .merge(exec::router())
 }
