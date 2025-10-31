@@ -36,6 +36,8 @@ pub struct Vm {
     pub rootfs_path: String,
     pub source_snapshot_id: Option<uuid::Uuid>,
     pub guest_ip: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -69,6 +71,8 @@ pub struct CreateVmReq {
     pub username: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -98,6 +102,7 @@ impl TemplateSpec {
             source_snapshot_id: None,
             username: None,
             password: None,
+            tags: vec![], // Templates don't have tags, user VMs get no tags by default
         }
     }
 }
@@ -446,6 +451,55 @@ pub struct GetImageResp {
     pub item: Image,
 }
 
+// Docker Hub API types
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DockerHubSearchReq {
+    pub query: String,
+    #[serde(default)]
+    pub limit: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DockerHubImage {
+    pub name: String,
+    pub description: Option<String>,
+    pub star_count: i32,
+    pub is_official: bool,
+    pub is_automated: bool,
+    pub pull_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DockerHubSearchResp {
+    pub items: Vec<DockerHubImage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DockerImageTag {
+    pub name: String,
+    pub last_updated: Option<String>,
+    pub digest: Option<String>,
+    pub size: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DockerImageTagsResp {
+    pub items: Vec<DockerImageTag>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DownloadDockerImageReq {
+    pub image: String, // e.g., "nginx:latest" or "library/nginx:1.25"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_auth: Option<RegistryAuth>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DownloadDockerImageResp {
+    pub id: uuid::Uuid,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegisterHostRequest {
     pub name: String,
@@ -698,6 +752,8 @@ pub struct Container {
     pub cpu_percent: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_used_mb: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -713,6 +769,14 @@ pub struct VolumeMount {
     pub container: String,
     #[serde(default)]
     pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RegistryAuth {
+    pub username: String,
+    pub password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_address: Option<String>,  // e.g., "registry.example.com" or leave None for Docker Hub
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -735,6 +799,8 @@ pub struct CreateContainerReq {
     pub memory_limit_mb: Option<i32>,
     #[serde(default = "default_restart_policy")]
     pub restart_policy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_auth: Option<RegistryAuth>,
 }
 
 fn default_restart_policy() -> String {

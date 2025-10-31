@@ -19,6 +19,14 @@ import {
 import { formatRelativeTime } from "@/lib/utils/format"
 import type { Function } from "@/lib/types"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { useDeleteFunction } from "@/lib/queries"
 import { useToast } from "@/hooks/use-toast"
 
@@ -33,7 +41,16 @@ export function FunctionTable({ functions }: FunctionTableProps) {
   const [runtimeFilter, setRuntimeFilter] = useState<string>("all")
   const [stateFilter, setStateFilter] = useState<string>("all")
   const [currentPage, setCurrentPage] = useState(1)
-
+  const [showDialog, setShowDialog] = useState<{ open: boolean; fnId: string, fnName: string }>({
+    open: false,
+    fnId: "",
+    fnName: ""
+  })
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; fnId: string; fnName: string }>({
+    open: false,
+    fnId: "",
+    fnName: "",
+  })
   const filteredFunctions = functions.filter((fn) => {
     const matchesSearch = fn.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesRuntime = runtimeFilter === "all" || fn.runtime === runtimeFilter
@@ -41,18 +58,13 @@ export function FunctionTable({ functions }: FunctionTableProps) {
     return matchesSearch && matchesRuntime && matchesState
   })
 
+
   const totalPages = Math.ceil(filteredFunctions.length / ITEMS_PER_PAGE)
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
   const paginatedFunctions = filteredFunctions.slice(
     startIndex,
     startIndex + ITEMS_PER_PAGE
   )
-
-  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; fnId: string; fnName: string }>({
-    open: false,
-    fnId: "",
-    fnName: "",
-  })
 
   const { toast } = useToast()
   const deleteMutation = useDeleteFunction()
@@ -78,6 +90,11 @@ export function FunctionTable({ functions }: FunctionTableProps) {
       })
     }
   }
+
+  const handleInvoke = () => {
+    setShowDialog({ open: true, fnId: "", fnName: "" })
+  }
+
 
   const getRuntimeBadge = (runtime: string) => {
     const colors = {
@@ -180,6 +197,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
               <TableHead>Last Invoked</TableHead>
               <TableHead>24h Invocations</TableHead>
               <TableHead>Guest IP</TableHead>
+              <TableHead>CPU</TableHead>
               <TableHead>Memory</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -187,7 +205,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
           <TableBody>
             {paginatedFunctions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                   No functions found
                 </TableCell>
               </TableRow>
@@ -205,17 +223,24 @@ export function FunctionTable({ functions }: FunctionTableProps) {
                     {fn.last_invoked_at ? formatRelativeTime(fn.last_invoked_at) : "Never"}
                   </TableCell>
                   <TableCell className="text-sm">{fn.invocation_count_24h?.toLocaleString('en-US') || 0}</TableCell>
-                  <TableCell className="text-sm">192.128.1.1</TableCell>
+                  <TableCell className="text-sm font-mono">
+                    {fn.guest_ip ? (
+                      fn.port ? `${fn.guest_ip}:${fn.port}` : fn.guest_ip
+                    ) : (
+                      <span className="text-muted-foreground">N/A</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm">{fn.vcpu ? `${fn.vcpu} vCPU` : "N/A"}</TableCell>
                   <TableCell className="text-sm">{fn.memory_mb} MB</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
                       <Button variant="ghost" size="icon" title="Invoke" asChild>
-                        <Link href={`/functions/${fn.id}`}>
+                        <Button variant="outline" onClick={handleInvoke}>
                           <Play className="h-4 w-4" />
-                        </Link>
+                        </Button>
                       </Button>
                       <Button variant="ghost" size="icon" title="Logs" asChild>
-                        <Link href={`/functions/${fn.id}/logs`}>
+                        <Link href={`/functions/${fn.id}?tab=logs`}>
                           <FileText className="h-4 w-4" />
                         </Link>
                       </Button>
@@ -271,6 +296,14 @@ export function FunctionTable({ functions }: FunctionTableProps) {
         onConfirm={() => handleDelete()}
         variant="destructive"
       />
+
+      <Dialog open={showDialog.open} onOpenChange={(open) => setShowDialog({ ...showDialog, open })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Invoke Function</DialogTitle>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

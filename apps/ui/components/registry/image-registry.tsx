@@ -9,6 +9,18 @@ import { Badge } from "@/components/ui/badge"
 import { Download, Copy, Trash2, Search, HardDrive, Database } from "lucide-react"
 import { formatBytes, formatRelativeTime } from "@/lib/utils/format"
 import type { Image } from "@/lib/types"
+import { useDeleteRegistryItem } from "@/lib/queries"
+import { toast } from "sonner"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface ImageRegistryProps {
   images: Image[]
@@ -17,6 +29,10 @@ interface ImageRegistryProps {
 export function ImageRegistry({ images }: ImageRegistryProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>("all")
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [imageToDelete, setImageToDelete] = useState<Image | null>(null)
+
+  const deleteImage = useDeleteRegistryItem()
 
   const filteredImages = images.filter((image) => {
     const matchesSearch = image.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -24,13 +40,44 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
     return matchesSearch && matchesType
   })
 
+  const handleCopyPath = (path: string) => {
+    navigator.clipboard.writeText(path)
+    toast.success("Path copied to clipboard")
+  }
+
+  const handleDownload = (image: Image) => {
+    // For Docker images (tarballs), we could implement a download endpoint
+    // For now, copy the path which can be used for manual operations
+    handleCopyPath(image.host_path)
+    toast.info("Image path copied", {
+      description: "Use this path to access the image file on the server",
+    })
+  }
+
+  const handleDeleteClick = (image: Image) => {
+    setImageToDelete(image)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleDeleteConfirm = () => {
+    if (!imageToDelete) return
+
+    deleteImage.mutate(imageToDelete.id, {
+      onSuccess: () => {
+        setDeleteDialogOpen(false)
+        setImageToDelete(null)
+      },
+    })
+  }
+
   const getTypeBadge = (kind: string) => {
     const colors = {
       kernel: "bg-blue-100 text-blue-700 border-blue-200",
       rootfs: "bg-green-100 text-green-700 border-green-200",
+      docker: "bg-purple-100 text-purple-700 border-purple-200",
     }
     return (
-      <Badge variant="outline" className={colors[kind as keyof typeof colors]}>
+      <Badge variant="outline" className={colors[kind as keyof typeof colors] || "bg-gray-100 text-gray-700 border-gray-200"}>
         {kind.toUpperCase()}
       </Badge>
     )
@@ -54,6 +101,7 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="docker">Docker</SelectItem>
             <SelectItem value="kernel">Kernel</SelectItem>
             <SelectItem value="rootfs">Rootfs</SelectItem>
           </SelectContent>
@@ -101,13 +149,21 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
                       <div className="flex items-center gap-3">
                         <div
                           className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-                            image.kind === "kernel"
+                            image.kind === "docker"
+                              ? "bg-gradient-to-br from-purple-500/10 to-purple-600/10"
+                              : image.kind === "kernel"
                               ? "bg-gradient-to-br from-blue-500/10 to-blue-600/10"
                               : "bg-gradient-to-br from-green-500/10 to-green-600/10"
                           }`}
                         >
                           <HardDrive
-                            className={`h-5 w-5 ${image.kind === "kernel" ? "text-blue-600" : "text-green-600"}`}
+                            className={`h-5 w-5 ${
+                              image.kind === "docker"
+                                ? "text-purple-600"
+                                : image.kind === "kernel"
+                                ? "text-blue-600"
+                                : "text-green-600"
+                            }`}
                           />
                         </div>
                         <span className="font-medium">{image.name}</span>
@@ -115,25 +171,41 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
                     </TableCell>
                     <TableCell>{getTypeBadge(image.kind)}</TableCell>
                     <TableCell className="text-sm">
-                      {image.size_bytes ? formatBytes(image.size_bytes) : "N/A"}
+                      {image.size ? formatBytes(image.size) : "N/A"}
                     </TableCell>
                     <TableCell className="text-sm">{image.project || "—"}</TableCell>
                     <TableCell>
-                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{image.path}</code>
+                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{image.host_path}</code>
                     </TableCell>
-                    <TableCell className="text-sm">{image.usage_count || 0} VMs</TableCell>
+                    <TableCell className="text-sm">—</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {formatRelativeTime(image.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" title="Clone">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Copy Path"
+                          onClick={() => handleCopyPath(image.host_path)}
+                        >
                           <Copy className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" title="Download">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Download / Copy Path"
+                          onClick={() => handleDownload(image)}
+                        >
                           <Download className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" title="Delete">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Delete"
+                          onClick={() => handleDeleteClick(image)}
+                          disabled={deleteImage.isPending}
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -145,6 +217,29 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
           </Table>
         </div>
       )}
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Image</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{imageToDelete?.name}</strong>?
+              <br />
+              This action cannot be undone. The image file will be removed from the registry.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteImage.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={deleteImage.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteImage.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

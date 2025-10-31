@@ -21,6 +21,7 @@ pub struct VmRow {
     pub rootfs_path: String,
     pub source_snapshot_id: Option<Uuid>,
     pub guest_ip: Option<String>,
+    pub tags: Vec<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -28,8 +29,8 @@ pub struct VmRow {
 #[cfg(not(test))]
 pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO vm (id,name,state,host_id,template_id,api_sock,tap,log_path,http_port,fc_unit,vcpu,mem_mib,kernel_path,rootfs_path,source_snapshot_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
+        r#"INSERT INTO vm (id,name,state,host_id,template_id,api_sock,tap,log_path,http_port,fc_unit,vcpu,mem_mib,kernel_path,rootfs_path,source_snapshot_id,tags)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
     )
     .bind(row.id)
     .bind(&row.name)
@@ -46,6 +47,7 @@ pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     .bind(&row.kernel_path)
     .bind(&row.rootfs_path)
     .bind(row.source_snapshot_id)
+    .bind(&row.tags)
     .execute(db)
     .await?;
     Ok(())
@@ -78,6 +80,7 @@ pub async fn list(db: &PgPool) -> sqlx::Result<Vec<VmRow>> {
                vm.rootfs_path,
                vm.source_snapshot_id,
                vm.guest_ip,
+               vm.tags,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -117,6 +120,7 @@ pub async fn list_by_host(db: &PgPool, host_id: Uuid) -> sqlx::Result<Vec<VmRow>
                vm.rootfs_path,
                vm.source_snapshot_id,
                vm.guest_ip,
+               vm.tags,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -164,6 +168,7 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
                vm.rootfs_path,
                vm.source_snapshot_id,
                vm.guest_ip,
+               vm.tags,
                vm.created_at,
                vm.updated_at
         FROM vm

@@ -1585,6 +1585,9 @@ components:
         error_message:
           type: string
           nullable: true
+        guest_ip:
+          type: string
+          nullable: true
         host_id:
           type: string
           format: uuid
@@ -1756,6 +1759,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PortMapping'
+        registry_auth:
+          allOf:
+          - $ref: '#/components/schemas/RegistryAuth'
+          nullable: true
         restart_policy:
           type: string
         volumes:
@@ -1959,6 +1966,10 @@ components:
           type: string
           format: uuid
           nullable: true
+        tags:
+          type: array
+          items:
+            type: string
         username:
           type: string
           nullable: true
@@ -2589,6 +2600,10 @@ components:
           nullable: true
         state:
           type: string
+        tags:
+          type: array
+          items:
+            type: string
         tap:
           type: string
         template_id:

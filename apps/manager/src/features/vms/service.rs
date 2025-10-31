@@ -93,10 +93,11 @@ pub async fn create_and_start(
     let network = select_network(&host.capabilities_json)?;
     let paths = VmPaths::new(id, &st.storage).await?;
 
-    // Extract credentials before moving req into resolve_vm_spec
+    // Extract credentials and tags before moving req into resolve_vm_spec
     let username = req.username.clone().unwrap_or_else(|| "root".to_string());
     let password = req.password.clone()
         .unwrap_or_else(|| format!("vm-{}", &id.to_string()[..8]));
+    let tags = req.tags.clone();
 
     let spec = resolve_vm_spec(st, req, id).await?;
 
@@ -182,6 +183,7 @@ pub async fn create_and_start(
             rootfs_path: spec.rootfs_path.clone(),
             source_snapshot_id: None,
             guest_ip: None, // Will be set when guest agent reports
+            tags,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -330,6 +332,7 @@ pub async fn create_from_snapshot(
             rootfs_path: spec.rootfs_path.clone(),
             source_snapshot_id: Some(source_snapshot_id),
             guest_ip: None, // Will be set when guest agent reports
+            tags: source_vm.tags.clone(), // Preserve tags from source VM
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -1788,6 +1791,8 @@ mod tests {
             kernel_path: "/etc/passwd".into(),
             rootfs_path: "/srv/images/rootfs".into(),
             source_snapshot_id: None,
+            guest_ip: None,
+            tags: vec![],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1844,6 +1849,8 @@ mod tests {
             kernel_path: kernel_path.clone(),
             rootfs_path: rootfs_path.clone(),
             source_snapshot_id: None,
+            guest_ip: None,
+            tags: vec![],
             created_at: now,
             updated_at: now,
         };

@@ -24,7 +24,7 @@ impl DockerClient {
         let url = format!("{}/containers/create?name={}", self.base_url, req.name);
 
         // Build Docker container config
-        let mut env: Vec<String> = req
+        let env: Vec<String> = req
             .env_vars
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
@@ -346,13 +346,31 @@ impl DockerClient {
         })
     }
 
-    /// Pull an image from a registry
-    pub async fn pull_image(&self, image: &str) -> Result<()> {
+    /// Pull an image from a registry with optional authentication
+    pub async fn pull_image(&self, image: &str, registry_auth: Option<&nexus_types::RegistryAuth>) -> Result<()> {
         let url = format!("{}/images/create?fromImage={}", self.base_url, image);
 
-        tracing::info!(image = %image, "Pulling image");
+        tracing::info!(image = %image, has_auth = registry_auth.is_some(), "Pulling image");
 
-        let resp = self.client.post(&url).send().await?;
+        let mut request = self.client.post(&url);
+
+        // Add authentication header if provided
+        if let Some(auth) = registry_auth {
+            // Docker expects X-Registry-Auth header with base64-encoded JSON
+            let auth_config = serde_json::json!({
+                "username": auth.username,
+                "password": auth.password,
+                "serveraddress": auth.server_address.as_deref().unwrap_or("https://index.docker.io/v1/"),
+            });
+
+            let auth_json = serde_json::to_string(&auth_config)?;
+            let auth_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, auth_json.as_bytes());
+
+            request = request.header("X-Registry-Auth", auth_base64);
+            tracing::debug!("Added registry authentication header");
+        }
+
+        let resp = request.send().await?;
 
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());

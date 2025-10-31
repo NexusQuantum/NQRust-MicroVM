@@ -16,6 +16,7 @@ pub fn router() -> Router {
         .route("/:id/pause", post(routes::pause))
         .route("/:id/resume", post(routes::resume))
         .route("/:id/logs", get(routes::logs))
+        .route("/:id/logs/stream", get(routes::logs_stream))
         .route("/:id/stats", get(routes::stats))
         .route("/:id/exec", post(routes::exec))
 }

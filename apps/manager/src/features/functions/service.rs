@@ -212,8 +212,21 @@ pub async fn delete_function(st: &AppState, id: Uuid) -> Result<()> {
     // Delete the function's VM if it exists
     if let Some(vm_id) = func.vm_id {
         eprintln!("[Function {}] Deleting VM {}", id, vm_id);
+
+        // Delete the VM (this will stop it if running)
         if let Err(e) = crate::features::vms::service::stop_and_delete(st, vm_id).await {
-            eprintln!("[Function {}] Failed to delete VM: {}", id, e);
+            eprintln!("[Function {}] Failed to delete VM {}: {}", id, vm_id, e);
+            // Continue cleanup even if VM deletion fails
+        }
+
+        // Delete the function-specific rootfs image
+        let function_rootfs_path = format!("/srv/images/functions/{}.ext4", vm_id);
+        if tokio::fs::metadata(&function_rootfs_path).await.is_ok() {
+            if let Err(e) = tokio::fs::remove_file(&function_rootfs_path).await {
+                eprintln!("[Function {}] Failed to delete rootfs {}: {}", id, function_rootfs_path, e);
+            } else {
+                eprintln!("[Function {}] Deleted rootfs {}", id, function_rootfs_path);
+            }
         }
     }
 

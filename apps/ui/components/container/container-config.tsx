@@ -50,7 +50,7 @@ export function ContainerConfig({ container }: ContainerConfigProps) {
             </div>
             <div>
               <dt className="text-sm font-medium text-muted-foreground">CPU Limit</dt>
-              <dd className="mt-1 text-sm">Not configured</dd>
+              <dd className="mt-1 text-sm">{container.cpu_limit ? `${container.cpu_limit} cores` : "Not configured"}</dd>
             </div>
           </dl>
         </CardContent>

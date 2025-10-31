@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Server, Zap, Container, HardDrive, Plus, TrendingUp, Activity } from "lucide-react"
 import { ResourceTable } from "@/components/dashboard/resource-table"
 import Link from "next/link"
-import { useVMs, useFunctions } from "@/lib/queries"
+import { useVMs, useFunctions, useContainers } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 
 // Mock data for services that don't have APIs yet
@@ -21,12 +21,15 @@ const mockStats = {
 export default function DashboardPage() {
   const { data: vms = [], isLoading: vmsLoading } = useVMs()
   const { data: functions = [], isLoading: functionsLoading } = useFunctions()
+  const { data: containers = [], isLoading: containersLoading } = useContainers()
 
 
-  // Calculate VM stats from real data
+  // Calculate stats from real data
   const totalVMs = vms.length
   const totalFunctions = functions.length
+  const totalContainers = containers.length
   const runningVMs = vms.filter(vm => vm.state === 'running').length
+  const runningContainers = containers.filter(c => c.state === 'running').length
 
   // Transform VMs for resource table
   const vmResources = vms.map(vm => ({
@@ -34,12 +37,40 @@ export default function DashboardPage() {
     name: vm.name,
     type: "vm" as const,
     state: vm.state.toLowerCase(),
-    metrics: { cpu: 0, memory: 0 }, // TODO: Get real metrics when available
+    metrics: { 
+      cpu: vm.vcpu || 0, 
+      memory: vm.mem_mib || 0, // Memory in MiB
+    },
   }))
 
-  // Combine VMs with mock resources
-  const allResources = [...vmResources]
-  // console.log('all resource: ', allResources)
+  // Transform functions for resource table
+  const functionResources = functions.map(func => ({
+    id: func.id,
+    name: func.name,
+    type: "function" as const,
+    state: func.state?.toLowerCase() || 'unknown',
+    metrics: { 
+      cpu: func.vcpu || 0, 
+      memory: func.memory_mb || 0, // Memory in MB
+    },
+  }))
+
+  // Transform containers for resource table
+  const containerResources = containers.map(container => ({
+    id: container.id,
+    name: container.name,
+    type: "container" as const,
+    state: container.state?.toLowerCase() || 'unknown',
+    metrics: { 
+      cpu: container.cpu_limit || 0, 
+      memory: container.memory_limit_mb || 0, // Memory in MB
+    },
+  }))
+
+  // Combine all resources
+  const allResources = [...vmResources, ...functionResources, ...containerResources]
+
+  const isLoading = vmsLoading || functionsLoading || containersLoading
 
 
   return (
@@ -74,7 +105,9 @@ export default function DashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Virtual Machines</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              <Link href="/vms">Virtual Machines</Link>
+            </CardTitle>
             <div className="rounded-lg bg-blue-500/10 p-2">
               <Server className="h-4 w-4 text-blue-600" />
             </div>
@@ -96,7 +129,9 @@ export default function DashboardPage() {
 
         <Card className="overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Functions</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              <Link href="/functions">Functions</Link>
+            </CardTitle>
             <div className="rounded-lg bg-yellow-500/10 p-2">
               <Zap className="h-4 w-4 text-yellow-600" />
             </div>
@@ -112,19 +147,25 @@ export default function DashboardPage() {
 
         <Card className="overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Containers</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              <Link href="/containers">Container</Link>
+            </CardTitle>
             <div className="rounded-lg bg-purple-500/10 p-2">
               <Container className="h-4 w-4 text-purple-600" />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {mockStats.running_containers}/{mockStats.total_containers}
-            </div>
-            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+            {containersLoading ? (
+              <Skeleton className="h-8 w-16 mb-2" />
+            ) : (
+              <div className="text-2xl font-bold">
+                {runningContainers}/{totalContainers}
+              </div>
+            )}
+            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
               <TrendingUp className="h-3 w-3 text-green-600" />
-              {mockStats.running_containers} running
-            </p>
+              {containersLoading ? <Skeleton className="h-3 w-12" /> : `${runningContainers} running`}
+            </div>
           </CardContent>
         </Card>
 
@@ -147,7 +188,7 @@ export default function DashboardPage() {
           <CardTitle>All Resources</CardTitle>
         </CardHeader>
         <CardContent>
-          {vmsLoading ? (
+          {isLoading ? (
             <div className="space-y-4">
               {[...Array(4)].map((_, i) => (
                 <div key={i} className="flex items-center space-x-4 p-4 border rounded">

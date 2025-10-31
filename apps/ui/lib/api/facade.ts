@@ -1,4 +1,6 @@
-import { apiClient } from "./http";
+import { apiClient, ApiClient } from "./http";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:18080/v1";
 import type {
   CreateVmReq,
   CreateVmResponse,
@@ -31,7 +33,27 @@ import type {
   UpdateNicReq,
   ListNicsResponse,
   Function as Fn,
-} from "@/lib/types";
+  CreateFunction,
+  UpdateFunction,
+  InvokeFunction,
+  ListInvocationsResp,
+  Container,
+  CreateContainerReq,
+  CreateContainerResp,
+  ListContainersResp,
+  GetContainerResp,
+  ContainerStatsResp,
+  ContainerLogsResp,
+  ContainerExecReq,
+  UpdateContainerReq,
+  DockerHubSearchResp,
+  DockerHubImage,
+  DockerImageTag,
+  DockerImageTagsResp,
+  DownloadDockerImageReq,
+  DownloadDockerImageResp,
+  TestFunction
+} from "@/lib/types"
 
 /**
  * Composite façade endpoints that orchestrate multiple Firecracker API calls
@@ -208,6 +230,54 @@ export class FacadeApi {
   }
 
   /**
+   * Docker Hub API Methods
+   */
+  async searchDockerHub(query: string, limit?: number): Promise<DockerHubImage[]> {
+    const res = await apiClient.post<DockerHubSearchResp>("/images/dockerhub/search", {
+      query,
+      limit,
+    });
+    return res.items;
+  }
+
+  async getDockerImageTags(imageName: string): Promise<DockerImageTag[]> {
+    const res = await apiClient.post<DockerImageTagsResp>("/images/dockerhub/tags", imageName);
+    return res.items;
+  }
+
+  async downloadDockerImage(params: DownloadDockerImageReq): Promise<DownloadDockerImageResp> {
+    // Create a new client with extended timeout for downloads (10 minutes)
+    // Docker image downloads can take a long time depending on image size
+    const downloadClient = new ApiClient(API_BASE_URL, 10 * 60 * 1000);
+    return downloadClient.post<DownloadDockerImageResp>("/images/dockerhub/download", params);
+  }
+
+  async getDockerDownloadProgress(imageName: string): Promise<import("@/lib/types").DownloadProgress> {
+    const encodedImageName = encodeURIComponent(imageName);
+    return apiClient.get(`/images/dockerhub/download/progress/${encodedImageName}`);
+  }
+
+  async uploadImage(file: File, kind: "docker" | "kernel" | "rootfs", name?: string, project?: string): Promise<CreateImageResp> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("kind", kind);
+    if (name) formData.append("name", name);
+    if (project) formData.append("project", project);
+
+    const response = await fetch(`${apiClient.baseURL}/images/upload`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(error);
+    }
+
+    return response.json();
+  }
+
+  /**
    * Template Management - New backend feature
    */
   async getTemplates(): Promise<Template[]> {
@@ -349,17 +419,15 @@ export class FacadeApi {
     return `${wsBaseUrl}/v1/vms/${vmId}/shell/ws`;
   }
 
-  async getShellCredentials(
-    vmId: string
-  ): Promise<{ username: string; password: string }> {
-    return apiClient.get<{ username: string; password: string }>(
-      `/vms/${vmId}/shell`
-    );
+  async getShellCredentials(vmId: string): Promise<{ username: string; password: string }> {
+    return apiClient.get<{ username: string; password: string }>(`/vms/${vmId}/shell`)
   }
 
-  async getFunctions(): Promise<Fn[]> {
-    const res = await apiClient.get("/functions");
-    const json =
+
+  // Functions
+  async getFunctions(): Promise<Fn[]>{
+    const res = await apiClient.get(`/functions`)
+        const json =
       res && typeof res === "object" && "data" in res ? (res as any).data : res;
 
     const list = Array.isArray(json)
@@ -374,13 +442,109 @@ export class FacadeApi {
 
     return list as Fn[];
   }
-
   async getFunction(id: string): Promise<Fn> {
     const res = await apiClient.get(`/functions/${id}`);
     const json =
       res && typeof res === "object" && "data" in res ? (res as any).data : res;
 
     return json.item as Fn;
+  }
+
+  async deleteFunction(id: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/functions/${id}`)
+  }
+
+  async createFunction(params: CreateFunction) {
+    return apiClient.post<CreateFunction>("/functions", params)
+  }
+  
+  async updateFunction(id: string, data: UpdateFunction) {
+    return apiClient.put(`/functions/${id}`,data);
+  }
+
+  async invokeFunction(id: string, data: InvokeFunction) {
+    return apiClient.post(`/functions/${id}/invoke`, data )
+  }
+
+  async testFunction(params: TestFunction) {
+    return apiClient.post(`/functions/test`, params)
+  }
+
+  async getFunctionLogs(id: string, filters?: { status?: string; limit?: number }): Promise<ListInvocationsResp> {
+    let url = `/functions/${id}/logs`
+    if (filters) {
+      const params = new URLSearchParams()
+      if (filters.status) params.append("status", filters.status)
+      if (filters.limit) params.append("limit", filters.limit.toString())
+      if (params.toString()) url += `?${params.toString()}`
+    }
+    return apiClient.get(url)
+  }
+
+  /**
+   * Container Management
+   */
+  async getContainers(filters?: { state?: string; host_id?: string }): Promise<Container[]> {
+    let url = "/containers";
+    if (filters) {
+      const params = new URLSearchParams();
+      if (filters.state) params.append("state", filters.state);
+      if (filters.host_id) params.append("host_id", filters.host_id);
+      if (params.toString()) url += `?${params.toString()}`;
+    }
+    const res = await apiClient.get<ListContainersResp>(url);
+    return res.items;
+  }
+
+  async getContainer(id: string): Promise<Container> {
+    const res = await apiClient.get<GetContainerResp>(`/containers/${id}`);
+    return res.item;
+  }
+
+  async createContainer(params: CreateContainerReq): Promise<CreateContainerResp> {
+    return apiClient.post<CreateContainerResp>("/containers", params);
+  }
+
+  async updateContainer(id: string, params: UpdateContainerReq): Promise<Container> {
+    const res = await apiClient.put<GetContainerResp>(`/containers/${id}`, params);
+    return res.item;
+  }
+
+  async deleteContainer(id: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/containers/${id}`);
+  }
+
+  async startContainer(id: string): Promise<void> {
+    await apiClient.post<OkResponse>(`/containers/${id}/start`, {});
+  }
+
+  async stopContainer(id: string): Promise<void> {
+    await apiClient.post<OkResponse>(`/containers/${id}/stop`, {});
+  }
+
+  async restartContainer(id: string): Promise<void> {
+    await apiClient.post<OkResponse>(`/containers/${id}/restart`, {});
+  }
+
+  async pauseContainer(id: string): Promise<void> {
+    await apiClient.post<OkResponse>(`/containers/${id}/pause`, {});
+  }
+
+  async resumeContainer(id: string): Promise<void> {
+    await apiClient.post<OkResponse>(`/containers/${id}/resume`, {});
+  }
+
+  async getContainerLogs(id: string, tail?: number): Promise<ContainerLogsResp> {
+    const url = tail ? `/containers/${id}/logs?tail=${tail}` : `/containers/${id}/logs`;
+    return apiClient.get<ContainerLogsResp>(url);
+  }
+
+  async getContainerStats(id: string): Promise<ContainerStatsResp> {
+    return apiClient.get<ContainerStatsResp>(`/containers/${id}/stats`);
+  }
+
+  async execContainerCommand(id: string, params: ContainerExecReq): Promise<any> {
+    return apiClient.post(`/containers/${id}/exec`, params);
   }
 }
 

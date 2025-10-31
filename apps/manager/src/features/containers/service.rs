@@ -141,7 +141,7 @@ async fn provision_container_vm(
     // Pull image if needed
     if !docker.image_exists(&req.image).await.unwrap_or(false) {
         eprintln!("[Container {}] Pulling image: {}", container_id, req.image);
-        if let Err(e) = docker.pull_image(&req.image).await {
+        if let Err(e) = docker.pull_image(&req.image, req.registry_auth.as_ref()).await {
             let error_msg = format!("Failed to pull image: {}", e);
             repo.update_state(container_id, "error", Some(error_msg.clone()))
                 .await?;

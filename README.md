@@ -5,6 +5,7 @@ A Rust-based Firecracker microVM management system with a modern web frontend. M
 ## Features
 
 - 🚀 **VM Lifecycle Management** - Create, start, stop, pause, and delete VMs
+- 🐳 **Docker Container Management** - Run Docker containers in isolated Firecracker VMs
 - 📦 **Templates & Snapshots** - Reusable VM templates and snapshot management
 - 🖥️ **Web-based Shell** - Browser-based terminal access to VMs via WebSocket
 - 🔐 **Credential Injection** - Automatic username/password injection (rootfs + cloud-init)
@@ -18,6 +19,7 @@ A Rust-based Firecracker microVM management system with a modern web frontend. M
 - **Manager** - Central orchestration service (REST API + PostgreSQL)
 - **Agent** - Runs on KVM hosts to manage Firecracker VMs
 - **Frontend** - Next.js web UI with real-time terminal
+- **Container Runtime** - Alpine Linux + Docker for container isolation
 
 ## Requirements
 
@@ -232,6 +234,20 @@ sudo chown -R $USER:$USER /srv/fc
 sudo chown -R $USER:$USER /srv/images
 ```
 
+### 10.1. Build Container Runtime Image (Optional)
+
+For Docker container support:
+
+```bash
+# Build container runtime image
+sudo scripts/build-container-runtime-v2.sh
+
+# Verify image exists
+ls -lh /srv/images/container-runtime.ext4
+```
+
+See [CONTAINER.md](CONTAINER.md) for detailed container feature documentation.
+
 ### 11. Configure Environment
 
 Create `.env` files for manager and agent:
@@ -368,6 +384,25 @@ ping -c 3 8.8.8.8
 # For bridged mode, VM should have IP from your router
 # For NAT mode, VM will have 10.x.x.x IP
 ```
+
+### 5. Create Your First Container (Optional)
+
+If you built the container runtime image:
+
+```bash
+# Create hello-world container
+curl -X POST http://localhost:18080/v1/containers \
+  -H "Content-Type: application/json" \
+  -d '{"name": "hello-world", "image": "hello-world:latest"}'
+
+# Check container status (wait 2-3 minutes)
+curl http://localhost:18080/v1/containers/{id}
+
+# Get container logs
+curl http://localhost:18080/v1/containers/{id}/logs
+```
+
+See [CONTAINER.md](CONTAINER.md) for complete container API documentation.
 
 ## Project Structure
 

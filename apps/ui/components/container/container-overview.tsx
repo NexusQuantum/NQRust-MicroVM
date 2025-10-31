@@ -1,60 +1,17 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { StatusBadge } from "@/components/shared/status-badge"
-import { Play, Square, RotateCw, Trash2 } from "lucide-react"
-import { formatDuration, formatPercentage } from "@/lib/utils/format"
+import { ExternalLink } from "lucide-react"
 import type { Container } from "@/lib/types"
+import Link from "next/link"
 
 interface ContainerOverviewProps {
   container: Container
+  vmId?: string | null
 }
 
-export function ContainerOverview({ container }: ContainerOverviewProps) {
+export function ContainerOverview({ container, vmId }: ContainerOverviewProps) {
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Status & Actions</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium">Current Status:</span>
-              <StatusBadge status={container.status} />
-              {container.uptime_seconds && (
-                <span className="text-sm text-muted-foreground">
-                  Uptime: {formatDuration(container.uptime_seconds)}
-                </span>
-              )}
-            </div>
-            <div className="flex gap-2">
-              {container.status === "stopped" && (
-                <Button>
-                  <Play className="mr-2 h-4 w-4" />
-                  Start
-                </Button>
-              )}
-              {container.status === "running" && (
-                <>
-                  <Button variant="outline">
-                    <RotateCw className="mr-2 h-4 w-4" />
-                    Restart
-                  </Button>
-                  <Button variant="outline">
-                    <Square className="mr-2 h-4 w-4" />
-                    Stop
-                  </Button>
-                </>
-              )}
-              <Button variant="destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
@@ -67,11 +24,11 @@ export function ContainerOverview({ container }: ContainerOverviewProps) {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">CPU Usage</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">CPU</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {container.cpu_percent !== undefined ? formatPercentage(container.cpu_percent) : "N/A"}
+              {container.cpu_limit !== undefined ? `${container.cpu_limit} vCPU` : "N/A"}
             </div>
           </CardContent>
         </Card>
@@ -82,13 +39,8 @@ export function ContainerOverview({ container }: ContainerOverviewProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {container.memory_used_mb}/{container.memory_limit_mb} MB
+              {container.memory_limit_mb !== undefined ? `${container.memory_limit_mb} MB` : "N/A"}
             </div>
-            {container.memory_used_mb && container.memory_limit_mb && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {formatPercentage((container.memory_used_mb / container.memory_limit_mb) * 100)} usage
-              </p>
-            )}
           </CardContent>
         </Card>
 
@@ -102,20 +54,74 @@ export function ContainerOverview({ container }: ContainerOverviewProps) {
         </Card>
       </div>
 
+      {vmId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Container VM</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  This container is running in a dedicated microVM
+                </p>
+                <code className="text-xs bg-muted px-2 py-1 rounded">{container.container_runtime_id}</code>
+              </div>
+              <Button variant="outline" asChild>
+                <Link href={`/vms/${vmId}`}>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  View VM
+                </Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle>Port Mappings</CardTitle>
+          <CardTitle>Network & Access</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {container.port_mappings.map((mapping, i) => (
-              <div key={i} className="flex items-center gap-2 text-sm">
-                <code className="bg-muted px-2 py-1 rounded">
-                  {mapping.host}:{mapping.container} ({mapping.protocol})
-                </code>
+        <CardContent className="space-y-4">
+          {container.guest_ip && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-muted-foreground">VM IP Address</div>
+              <code className="bg-muted px-2 py-1 rounded text-sm font-medium">{container.guest_ip}</code>
+            </div>
+          )}
+          
+          {container.port_mappings && container.port_mappings.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-muted-foreground">Port Mappings</div>
+              <div className="space-y-2">
+                {container.port_mappings.map((mapping, i) => {
+                  const connectionInfo = container.guest_ip 
+                    ? `${container.guest_ip}:${mapping.host}`
+                    : `localhost:${mapping.host}`;
+                  return (
+                    <div key={i} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2 text-sm">
+                        <code className="bg-muted px-2 py-1 rounded">
+                          {mapping.host}:{mapping.container} ({mapping.protocol})
+                        </code>
+                      </div>
+                      {container.state === "running" && container.guest_ip && (
+                        <div className="text-xs text-muted-foreground pl-1">
+                          Access at: <code className="bg-muted px-1.5 py-0.5 rounded">{connectionInfo}</code>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+          
+          {!container.guest_ip && (!container.port_mappings || container.port_mappings.length === 0) && (
+            <p className="text-sm text-muted-foreground">
+              No network information available
+            </p>
+          )}
         </CardContent>
       </Card>
 

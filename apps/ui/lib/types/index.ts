@@ -29,6 +29,7 @@ export interface Vm {
   kernel_path: string;
   rootfs_path: string;
   source_snapshot_id?: string;
+  tags: string[];
   created_at: string;
   updated_at: string;
 }
@@ -131,7 +132,9 @@ export interface GetSnapshotResponse {
 }
 
 export interface InstantiateSnapshotReq {
-  name?: string;
+  name?: string
+  snapshot_path?: any,
+  mem_file_path?: string
 }
 
 export interface InstantiateSnapshotResp {
@@ -360,19 +363,18 @@ export interface RateLimiter {
 }
 
 // Function Types (for serverless functions)
-export interface CreateFunction {
-  name: string;
-  runtime: "node" | "python" | "go" | "rust";
-  handler: string;
+export interface TestFunction {
   code: string;
-  vcpu: number;
-  memory_mb: number;
+  runtime: 'node' | 'python';
+  handler: string;
+  event: any;
 }
 
 export interface Function {
+  state: "creating" | "booting" | "deploying" | "error" |"ready";
   id: string;
   name: string;
-  runtime: "node" | "python" | "go" | "rust";
+  runtime: "node" | "python" ;
   handler: string;
   timeout_seconds: number;
   code: string;
@@ -384,40 +386,86 @@ export interface Function {
   last_invoked_at?: string;
   invocation_count_24h?: number;
   avg_duration_ms?: number;
+  vm_id?: string
+  port?: number;
+  guest_ip?: string;
 }
 
 export interface FunctionInvocation {
-  id: string;
-  function_id: string;
-  status: "success" | "error" | "timeout";
-  duration_ms: number;
-  memory_used_mb: number;
-  request_id: string;
-  event: any;
-  response?: any;
-  logs: string[];
-  error?: string;
-  invoked_at: string;
+  id: string
+  function_id: string
+  status: "success" | "error" | "timeout"
+  duration_ms: number
+  memory_used_mb: number
+  request_id: string
+  event: any
+  response?: any
+  logs: string[]
+  error?: string
+  invoked_at: string
 }
 
-// Container Types
+export interface ListInvocationsResp {
+  items: FunctionInvocation[]
+}
+
+export type JSONValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: JSONValue }
+  | JSONValue[];
+
+export interface InvokeFunction {
+  event: {
+    [key: string]: JSONValue;
+  }
+}
+
+export interface CreateFunction {
+  "name": string,
+  "runtime": "node" | "python";
+  "handler": string,
+  "code": string,
+  "vcpu": number,
+  "memory_mb": number
+}
+
+export interface UpdateFunction {
+  "name": string,
+  // "runtime": string,  // "node" or "python"
+  "handler": string,
+  "code": string,
+  // "vcpu": number,
+  "memory_mb": number,
+  "timeout_seconds" : number
+}
+
+// Container Types (matching backend API)
 export interface Container {
   id: string;
   name: string;
   image: string;
-  status: "running" | "stopped" | "restarting" | "error";
+  command?: string;
+  args: string[];
+  env_vars: Record<string, string>;
+  volumes: VolumeMount[];
+  port_mappings: PortMapping[];
+  cpu_limit?: number;
+  memory_limit_mb?: number;
+  restart_policy: string;
+  state: "creating" | "booting" | "initializing" | "running" | "stopped" | "paused" | "error";
+  container_runtime_id?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  stopped_at?: string;
   uptime_seconds?: number;
   cpu_percent?: number;
   memory_used_mb?: number;
-  memory_limit_mb?: number;
-  port_mappings: PortMapping[];
-  env_vars?: Record<string, string>;
-  volumes?: VolumeMount[];
-  command?: string;
-  args?: string[];
-  restart_policy?: string;
-  created_at: string;
-  started_at?: string;
+  guest_ip?: string;
 }
 
 export interface PortMapping {
@@ -429,6 +477,80 @@ export interface PortMapping {
 export interface VolumeMount {
   host: string;
   container: string;
+  read_only?: boolean;
+}
+
+export interface RegistryAuth {
+  username: string;
+  password: string;
+  server_address?: string; // Optional, defaults to Docker Hub
+}
+
+export interface CreateContainerReq {
+  name: string;
+  image: string;
+  command?: string;
+  args?: string[];
+  env_vars?: Record<string, string>;
+  volumes?: VolumeMount[];
+  port_mappings?: PortMapping[];
+  cpu_limit?: number;
+  memory_limit_mb?: number;
+  restart_policy?: string;
+  registry_auth?: RegistryAuth;
+}
+
+export interface CreateContainerResp {
+  id: string;
+}
+
+export interface ListContainersResp {
+  items: Container[];
+}
+
+export interface GetContainerResp {
+  item: Container;
+}
+
+export interface ContainerStats {
+  cpu_percent?: number;
+  memory_used_mb?: number;
+  memory_limit_mb?: number;
+  network_rx_bytes?: number;
+  network_tx_bytes?: number;
+  block_read_bytes?: number;
+  block_write_bytes?: number;
+  pids?: number;
+  recorded_at: string;
+}
+
+export interface ContainerStatsResp {
+  items: ContainerStats[];
+}
+
+export interface ContainerLog {
+  container_id: string;
+  timestamp: string;
+  stream: string;
+  message: string;
+}
+
+export interface ContainerLogsResp {
+  items: ContainerLog[];
+}
+
+export interface ContainerExecReq {
+  command: string[];
+  attach_stdout?: boolean;
+  attach_stderr?: boolean;
+}
+
+export interface UpdateContainerReq {
+  name?: string;
+  env_vars?: Record<string, string>;
+  cpu_limit?: number;
+  memory_limit_mb?: number;
+  restart_policy?: string;
 }
 
 // Dashboard Stats
@@ -440,4 +562,53 @@ export interface DashboardStats {
   total_containers: number;
   running_containers: number;
   total_hosts: number;
+}
+
+// Docker Hub API Types
+export interface DockerHubSearchReq {
+  query: string;
+  limit?: number;
+}
+
+export interface DockerHubImage {
+  name: string;
+  description?: string;
+  star_count: number;
+  is_official: boolean;
+  is_automated: boolean;
+  pull_count: number;
+}
+
+export interface DockerHubSearchResp {
+  items: DockerHubImage[];
+}
+
+export interface DockerImageTag {
+  name: string;
+  last_updated?: string;
+  digest?: string;
+  size?: number;
+}
+
+export interface DockerImageTagsResp {
+  items: DockerImageTag[];
+}
+
+export interface DownloadDockerImageReq {
+  image: string; // e.g., "nginx:latest"
+  registry_auth?: RegistryAuth;
+}
+
+export interface DownloadDockerImageResp {
+  id: string;
+  path: string;
+}
+
+export interface DownloadProgress {
+  image: string;
+  status: string;
+  current_bytes: number;
+  total_bytes: number;
+  completed: boolean;
+  error?: string;
 }

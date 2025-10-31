@@ -3,6 +3,9 @@ mod docs;
 mod features;
 
 use sqlx::PgPool;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -14,6 +17,18 @@ use features::images::repo::ImageRepository;
 use features::snapshots::repo::SnapshotRepository;
 use features::vms::shell::ShellRepository;
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct DownloadProgress {
+    pub image: String,
+    pub status: String,
+    pub current_bytes: i64,
+    pub total_bytes: i64,
+    pub completed: bool,
+    pub error: Option<String>,
+}
+
+pub type DownloadProgressTracker = Arc<Mutex<HashMap<String, DownloadProgress>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
@@ -23,6 +38,7 @@ pub struct AppState {
     pub shell_repo: ShellRepository,
     pub allow_direct_image_paths: bool,
     pub storage: LocalStorage,
+    pub download_progress: DownloadProgressTracker,
 }
 
 #[tokio::main]
@@ -42,12 +58,14 @@ async fn main() -> anyhow::Result<()> {
     let allow_direct_image_paths = std::env::var("MANAGER_ALLOW_IMAGE_PATHS")
         .map(|value| matches_ignore_case(value.trim()))
         .unwrap_or(false);
+    let download_progress = Arc::new(Mutex::new(HashMap::new()));
     let state = AppState {
         db,
         hosts,
         images,
         snapshots,
         shell_repo,
+        download_progress,
         allow_direct_image_paths,
         storage: LocalStorage::new(),
     };

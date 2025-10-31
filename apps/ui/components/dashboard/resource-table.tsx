@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Server, Zap, Container, Play, Trash2, Search, Square, Pause } from "lucide-react"
-import { formatRelativeTime, formatPercentage } from "@/lib/utils/format"
+import { formatRelativeTime } from "@/lib/utils/format"
 import type { UnifiedResource } from "@/lib/api/dashboard"
 import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -177,15 +177,24 @@ export function ResourceTable({ resources }: ResourceTableProps) {
                     <StatusBadge status={resource.state as any} />
                   </TableCell>
                   <TableCell>
-                    <div className="text-sm text-muted-foreground">
-                      {resource.metrics?.cpu !== undefined && (
-                        <span>CPU: {formatPercentage(resource.metrics.cpu)}</span>
+                    <div className="text-sm text-muted-foreground flex items-center gap-4 flex-wrap">
+                      {resource.metrics?.cpu !== undefined && resource.metrics.cpu > 0 && (
+                        <span>CPU: {resource.metrics.cpu} vCPU</span>
                       )}
-                      {resource.metrics?.memory !== undefined && (
-                        <span className="ml-3">Memory: {formatPercentage(resource.metrics.memory)}</span>
+                      {resource.metrics?.memory !== undefined && resource.metrics.memory > 0 && (
+                        <span>
+                          Memory: {resource.type === "vm" 
+                            ? `${resource.metrics.memory} MiB` 
+                            : `${resource.metrics.memory} MB`}
+                        </span>
                       )}
                       {resource.metrics?.lastInvoked && (
                         <span>Last: {formatRelativeTime(resource.metrics.lastInvoked)}</span>
+                      )}
+                      {(!resource.metrics?.cpu || resource.metrics.cpu === 0) && 
+                       (!resource.metrics?.memory || resource.metrics.memory === 0) && 
+                       !resource.metrics?.lastInvoked && (
+                        <span className="text-muted-foreground/50">—</span>
                       )}
                     </div>
                   </TableCell>

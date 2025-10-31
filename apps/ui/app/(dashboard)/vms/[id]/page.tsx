@@ -177,7 +177,7 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
         </TabsContent>
 
         <TabsContent value="metrics" className="space-y-4">
-          <MetricsChart resourceId={vm.id} resourceType="vm" />
+          <MetricsChart resourceId={vm.id} />
         </TabsContent>
       </Tabs>
 

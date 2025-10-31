@@ -17,7 +17,7 @@ thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "3"
-axum = { version = "0.7", features = ["json", "macros", "tokio", "ws"] }
+axum = { version = "0.7", features = ["json", "macros", "tokio", "ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -32,3 +32,4 @@ metrics = "0.21"
 utoipa = "4"
 futures = "0.3"
 tokio-tungstenite = "0.21"
+sha2 = "0.10"

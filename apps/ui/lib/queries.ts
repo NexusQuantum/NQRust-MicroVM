@@ -1,8 +1,52 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { facadeApi, parseFacadeError } from "./api";
-import type { VmDrive, VmNic, Snapshot, Image, Template } from "@/lib/types";
-import type { CreateVmReq } from "@/lib/types";
-import { toast } from "sonner";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { facadeApi } from "./api"
+import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image } from "@/lib/types"
+import { toast } from "sonner"
+
+/**
+ * Filter out internal system images that should never be shown to users.
+ * These images are only used internally by the system to create functions and containers.
+ *
+ * Excludes:
+ * - Runtime images: container-runtime, node-runtime, python-runtime
+ * - Per-function/container rootfs copies in /functions/ or /containers/ directories
+ * - Images with runtime-related names
+ */
+function filterInternalImages(images: Image[]): Image[] {
+  return images.filter((img) => {
+    // Exclude per-function/container rootfs copies (internal, not user-facing)
+    // Functions create: /srv/images/functions/{vm-id}.ext4
+    // Containers create: /srv/images/containers/{vm-id}.ext4
+    if (img.host_path?.includes('/functions/') || img.host_path?.includes('/containers/')) {
+      console.log('🔒 Filtering out internal copy:', img.name, img.host_path)
+      return false
+    }
+
+    // Exclude system runtime images by project tag
+    if (img.project && ['container-runtime', 'node-runtime', 'python-runtime', 'internal'].includes(img.project)) {
+      console.log('🔒 Filtering out runtime by project:', img.name, img.project)
+      return false
+    }
+
+    // Exclude system runtime images by name pattern (fallback if project not set)
+    // Matches: container-runtime, node-runtime, python-runtime, alpine-docker, etc.
+    const runtimeNamePatterns = [
+      /runtime/i,           // Matches anything with "runtime"
+      /alpine-docker/i,     // Alpine Docker base
+      /function-base/i,     // Function base images
+      /container-base/i,    // Container base images
+    ]
+
+    const isRuntimeImage = runtimeNamePatterns.some(pattern => pattern.test(img.name))
+    if (isRuntimeImage) {
+      console.log('🔒 Filtering out runtime by name:', img.name)
+      return false
+    }
+
+    // Show all other images (user-created kernels, rootfs, docker images)
+    return true
+  })
+}
 
 // Query Keys
 export const queryKeys = {
@@ -17,12 +61,23 @@ export const queryKeys = {
   templates: ["templates"] as const,
   template: (id: string) => ["templates", id] as const,
 
+  // docker hub
+  dockerHubSearch: (query: string) => ["dockerhub", "search", query] as const,
+  dockerHubTags: (imageName: string) => ["dockerhub", "tags", imageName] as const,
+
   // functions
   functions: ["functions"] as const,
   function: (id: string) => ["functions", id] as const,
-};
 
-// Query Functions
+  // containers
+  containers: ["containers"] as const,
+  container: (id: string) => ["containers", id] as const,
+  containerLogs: (id: string) => ["containers", id, "logs"] as const,
+  containerStats: (id: string) => ["containers", id, "stats"] as const,
+}
+
+// Function Query
+// ! GET ALL
 export function useFunctions() {
   return useQuery({
     queryKey: queryKeys.functions,
@@ -31,6 +86,7 @@ export function useFunctions() {
   });
 }
 
+// !Detail
 export function useFunction(id: string) {
   return useQuery({
     queryKey: queryKeys.function(id),
@@ -40,11 +96,155 @@ export function useFunction(id: string) {
   });
 }
 
-// VM Queries
-export function useVMs() {
+// !DELETE
+export function useDeleteFunction() {
+  const queryClient = useQueryClient()
+  
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.deleteFunction(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.functions })
+      toast.success("Function deleted")
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || "Delete failed", {description: e.suggestion || e.fault_message})
+      } catch {
+        toast.error('Failed to delete Function')
+      }
+    }
+  })
+}
+  
+// !CREATE
+export function useCreateFunction() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ name, runtime, handler, code, vcpu, memory_mb}: CreateFunction) =>
+      facadeApi.createFunction({ name, runtime, handler, code, vcpu, memory_mb}),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.functions })
+      toast.success('Function Created')
+    },
+    onError: (error: Error) => {
+      try {
+        const errorData = JSON.parse(error.message)
+        toast.error(errorData.error, {
+          description: errorData.suggestion || errorData.fault_message,
+        })
+      } catch {
+        toast.error("Failed to create VM")
+      }
+    },
+  })
+}
+
+// !UPDATE
+export function useUpdateFunction() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ fnId, data }: { fnId: string, data: UpdateFunction }) => facadeApi.updateFunction(fnId, data),
+    onSuccess: (_, { fnId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.function(fnId) })
+      toast.success("Function updated")
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || "Failed o update function", {
+          description: e.suggestion || e.fault_message
+        })
+      } catch {
+        toast.error("Failed to update function")
+      }
+    }
+  })
+}
+
+// !Test
+export function useTestFunction() {
+  return useMutation({
+    mutationFn: (params: TestFunction) =>
+      facadeApi.testFunction(params),
+    onSuccess: (data: any) => {
+      toast.success("Test executed successfully", {
+        description: `Duration: ${data.duration_ms}ms`,
+      })
+      return data
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || "Test failed", {
+          description: e.suggestion || e.fault_message,
+        })
+      } catch {
+        toast.error("Failed to execute test")
+      }
+    },
+  })
+}
+
+// !Invoke
+export function useInvokeFunction() {
+  return useMutation({
+    mutationFn: ({ fnId, payload }: { fnId: string, payload: InvokeFunction }) =>
+      facadeApi.invokeFunction(fnId, payload),
+    onSuccess: (data: any) => {
+      toast.success("Function invoked successfully", {
+        description: `Duration: ${data.duration_ms}ms`,
+      })
+      return data
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message)
+        toast.error(e.error || "Invocation failed", {
+          description: e.suggestion || e.fault_message,
+        })
+      } catch {
+        toast.error("Failed to invoke function")
+      }
+    },
+  })
+}
+
+export function useFunctionLogs(id: string, filters?: { status?: string; limit?: number }) {
   return useQuery({
-    queryKey: queryKeys.vms,
-    queryFn: () => facadeApi.getVMs(),
+    queryKey: [...queryKeys.function(id), "logs", filters],
+    queryFn: () => facadeApi.getFunctionLogs(id, filters),
+    enabled: !!id,
+    staleTime: 5 * 1000,
+  })
+}
+
+// VM Queries
+/**
+ * Get all VMs, optionally filtering out internal VMs used by functions/containers
+ * @param includeInternal - If false, filters out VMs owned by functions/containers (default: false)
+ */
+export function useVMs(includeInternal = false) {
+  return useQuery({
+    queryKey: [...queryKeys.vms, includeInternal] as const,
+    queryFn: async () => {
+      const vms = await facadeApi.getVMs()
+
+      // If includeInternal is true, return all VMs
+      if (includeInternal) {
+        return vms
+      }
+
+      // Filter out VMs tagged as function or container VMs
+      // Functions have tag: "type:function"
+      // Containers have tag: "type:container"
+      return vms.filter(vm => {
+        const tags = vm.tags || []
+        return !tags.includes("type:function") && !tags.includes("type:container")
+      })
+    },
     staleTime: 30 * 1000, // 30 seconds
   });
 }
@@ -61,7 +261,11 @@ export function useVM(id: string) {
 export function useRegistryImages() {
   return useQuery({
     queryKey: queryKeys.registryImages,
-    queryFn: () => facadeApi.getRegistryImages(),
+    queryFn: async () => {
+      const images = await facadeApi.getRegistryImages()
+      // Filter out internal system images globally
+      return filterInternalImages(images)
+    },
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }
@@ -168,6 +372,66 @@ export function useUploadRegistryFile() {
       toast.success("File uploaded");
     },
     onError: () => toast.error("Upload not supported in current backend"),
+  });
+}
+
+// Docker Hub Queries
+export function useSearchDockerHub(query: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.dockerHubSearch(query),
+    queryFn: () => facadeApi.searchDockerHub(query, 25),
+    enabled: enabled && query.length > 0,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+}
+
+export function useDockerImageTags(imageName: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.dockerHubTags(imageName),
+    queryFn: () => facadeApi.getDockerImageTags(imageName),
+    enabled: enabled && imageName.length > 0,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+}
+
+export function useDownloadDockerImage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { image: string; registry_auth?: { username: string; password: string; server_address?: string } }) =>
+      facadeApi.downloadDockerImage(params),
+    onSuccess: async () => {
+      // Invalidate and immediately refetch the images list
+      await queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
+      await queryClient.refetchQueries({ queryKey: queryKeys.registryImages });
+      toast.success("Docker image downloaded and cached", {
+        description: "The image is now available in your cached Docker images",
+      });
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Download failed", { 
+          description: e.fault_message || e.message || "Please check the logs for details" 
+        });
+      } catch {
+        toast.error("Download failed", { description: error.message || "Please check the logs for details" });
+      }
+    },
+  });
+}
+
+export function useUploadImage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { file: File; kind: "docker" | "kernel" | "rootfs"; name?: string; project?: string }) =>
+      facadeApi.uploadImage(params.file, params.kind, params.name, params.project),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
+      toast.success("Image uploaded successfully");
+    },
+    onError: (error: Error) => {
+      toast.error("Upload failed", { description: error.message });
+    },
   });
 }
 
@@ -572,5 +836,228 @@ export function useDeleteVMNic() {
         toast.error("Failed to delete NIC");
       }
     },
+  });
+}
+
+// Container Queries and Mutations
+export function useContainers(filters?: { state?: string; host_id?: string }) {
+  return useQuery({
+    queryKey: [...queryKeys.containers, filters],
+    queryFn: () => facadeApi.getContainers(filters),
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useContainer(id: string) {
+  return useQuery({
+    queryKey: queryKeys.container(id),
+    queryFn: () => facadeApi.getContainer(id),
+    enabled: !!id,
+    staleTime: 5 * 1000, // 5 seconds for faster updates during provisioning
+  });
+}
+
+export function useCreateContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: import("@/lib/types").CreateContainerReq) =>
+      facadeApi.createContainer(params),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container created", {
+        description: "Container is being provisioned...",
+      });
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to create container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to create container");
+      }
+    },
+  });
+}
+
+export function useUpdateContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, params }: { id: string; params: import("@/lib/types").UpdateContainerReq }) =>
+      facadeApi.updateContainer(id, params),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container updated");
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to update container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to update container");
+      }
+    },
+  });
+}
+
+export function useDeleteContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.deleteContainer(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container deleted");
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to delete container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to delete container");
+      }
+    },
+  });
+}
+
+export function useStartContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.startContainer(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container started");
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to start container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to start container");
+      }
+    },
+  });
+}
+
+export function useStopContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.stopContainer(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container stopped");
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to stop container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to stop container");
+      }
+    },
+  });
+}
+
+export function useRestartContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.restartContainer(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container restarted");
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to restart container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to restart container");
+      }
+    },
+  });
+}
+
+export function usePauseContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.pauseContainer(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container paused");
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to pause container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to pause container");
+      }
+    },
+  });
+}
+
+export function useResumeContainer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.resumeContainer(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+      toast.success("Container resumed");
+    },
+    onError: (error: Error) => {
+      try {
+        const e = JSON.parse(error.message);
+        toast.error(e.error || "Failed to resume container", {
+          description: e.suggestion || e.fault_message,
+        });
+      } catch {
+        toast.error("Failed to resume container");
+      }
+    },
+  });
+}
+
+export function useContainerLogs(id: string, tail?: number) {
+  return useQuery({
+    queryKey: [...queryKeys.containerLogs(id), tail],
+    queryFn: () => facadeApi.getContainerLogs(id, tail),
+    enabled: !!id,
+    staleTime: 5 * 1000,
+  });
+}
+
+export function useContainerStats(id: string) {
+  return useQuery({
+    queryKey: queryKeys.containerStats(id),
+    queryFn: () => facadeApi.getContainerStats(id),
+    enabled: !!id,
+    staleTime: 5 * 1000,
+    refetchInterval: 10 * 1000, // Refetch every 10 seconds for live stats
   });
 }

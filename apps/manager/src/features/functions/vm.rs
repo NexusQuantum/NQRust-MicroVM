@@ -67,6 +67,7 @@ pub async fn create_function_vm(
         source_snapshot_id: None,
         username: Some("root".to_string()),
         password: Some("function".to_string()),
+        tags: vec!["type:function".to_string()],
     };
 
     // Create and start VM

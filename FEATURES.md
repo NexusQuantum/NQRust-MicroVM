@@ -27,6 +27,17 @@ This document provides a comprehensive mapping of all backend (Manager) and fron
 
 ## Feature Matrix
 
+### Container Management
+
+| Feature | Backend | Frontend | Status | Notes |
+|---------|---------|----------|---------|-------|
+| Create Container | ✅ | ❌ | 🔨 Backend Only | Full Docker container support |
+| List Containers | ✅ | ❌ | 🔨 Backend Only | REST API available |
+| Container Logs | ✅ | ❌ | 🔨 Backend Only | Docker API integration |
+| Delete Container | ✅ | ❌ | 🔨 Backend Only | Full lifecycle management |
+| Container Metrics | ✅ | ❌ | 🔨 Backend Only | Resource monitoring |
+| Container Networking | ✅ | ❌ | 🔨 Backend Only | Bridge networking support |
+
 ### VM Lifecycle Management
 
 | Feature | Backend Endpoint | Frontend Integration | Status | Notes |

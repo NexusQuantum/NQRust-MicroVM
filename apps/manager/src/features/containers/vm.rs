@@ -63,6 +63,7 @@ pub async fn create_container_vm(
         source_snapshot_id: None,
         username: Some("root".to_string()),
         password: Some("container".to_string()),
+        tags: vec!["type:container".to_string()],
     };
 
     // Create and start VM

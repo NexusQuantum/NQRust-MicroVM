@@ -1,54 +1,17 @@
+"use client"
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus } from "lucide-react"
+import { Plus, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { ContainerTable } from "@/components/container/container-table"
 import Image from "next/image"
-
-// Mock data
-const mockContainers = [
-  {
-    id: "ct-1",
-    name: "postgres-main",
-    image: "postgres:15",
-    status: "running" as const,
-    uptime_seconds: 345600,
-    cpu_percent: 32.1,
-    memory_used_mb: 512,
-    memory_limit_mb: 2048,
-    port_mappings: [{ host: 5432, container: 5432, protocol: "tcp" as const }],
-    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-    started_at: new Date(Date.now() - 345600000).toISOString(),
-  },
-  {
-    id: "ct-2",
-    name: "redis-cache",
-    image: "redis:7-alpine",
-    status: "running" as const,
-    uptime_seconds: 172800,
-    cpu_percent: 12.4,
-    memory_used_mb: 128,
-    memory_limit_mb: 512,
-    port_mappings: [{ host: 6379, container: 6379, protocol: "tcp" as const }],
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-    started_at: new Date(Date.now() - 172800000).toISOString(),
-  },
-  {
-    id: "ct-3",
-    name: "nginx-proxy",
-    image: "nginx:latest",
-    status: "stopped" as const,
-    cpu_percent: 0,
-    memory_used_mb: 0,
-    port_mappings: [
-      { host: 80, container: 80, protocol: "tcp" as const },
-      { host: 443, container: 443, protocol: "tcp" as const },
-    ],
-    created_at: new Date(Date.now() - 86400000).toISOString(),
-  },
-]
+import { useContainers } from "@/lib/queries"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 
 export default function ContainersPage() {
+  const { data: containers = [], isLoading, error, refetch } = useContainers()
+
   return (
     <div className="space-y-6">
       <div className="relative overflow-hidden rounded-xl border border-border bg-gradient-to-br from-purple-50 to-purple-100/50 p-8">
@@ -73,11 +36,30 @@ export default function ContainersPage() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>All Containers</CardTitle>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            Refresh
+          </Button>
         </CardHeader>
         <CardContent>
-          <ContainerTable containers={mockContainers} />
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <Alert variant="destructive">
+              <AlertDescription>
+                Failed to load containers. Please try again.
+              </AlertDescription>
+            </Alert>
+          ) : containers.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <p>No containers found. Deploy your first container to get started.</p>
+            </div>
+          ) : (
+            <ContainerTable containers={containers} />
+          )}
         </CardContent>
       </Card>
     </div>

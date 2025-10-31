@@ -55,18 +55,20 @@ impl ContainerRepository {
     }
 
     pub async fn get(&self, id: Uuid) -> Result<Container> {
-        let row = sqlx::query!(
+        let row = sqlx::query_as::<_, ContainerRow>(
             r#"
             SELECT
-                id, name, image, command, args, env_vars, volumes, port_mappings,
-                cpu_limit, memory_limit_mb, restart_policy, state, host_id,
-                container_runtime_id, error_message, created_at, updated_at,
-                started_at, stopped_at
-            FROM containers
-            WHERE id = $1
+                c.id, c.name, c.image, c.command, c.args, c.env_vars, c.volumes, c.port_mappings,
+                c.cpu_limit, c.memory_limit_mb, c.restart_policy, c.state, c.host_id,
+                c.container_runtime_id, c.error_message, c.created_at, c.updated_at,
+                c.started_at, c.stopped_at,
+                v.guest_ip
+            FROM containers c
+            LEFT JOIN vm v ON c.container_runtime_id = 'vm-' || v.id::text
+            WHERE c.id = $1
             "#,
-            id
         )
+        .bind(id)
         .fetch_one(&self.db)
         .await
         .context("container not found")?;
@@ -108,6 +110,7 @@ impl ContainerRepository {
             uptime_seconds,
             cpu_percent: None,
             memory_used_mb: None,
+            guest_ip: row.guest_ip,
         })
     }
 
@@ -115,11 +118,13 @@ impl ContainerRepository {
         let mut query_str = String::from(
             r#"
             SELECT
-                id, name, image, command, args, env_vars, volumes, port_mappings,
-                cpu_limit, memory_limit_mb, restart_policy, state, host_id,
-                container_runtime_id, error_message, created_at, updated_at,
-                started_at, stopped_at
-            FROM containers
+                c.id, c.name, c.image, c.command, c.args, c.env_vars, c.volumes, c.port_mappings,
+                c.cpu_limit, c.memory_limit_mb, c.restart_policy, c.state, c.host_id,
+                c.container_runtime_id, c.error_message, c.created_at, c.updated_at,
+                c.started_at, c.stopped_at,
+                v.guest_ip
+            FROM containers c
+            LEFT JOIN vm v ON c.container_runtime_id = 'vm-' || v.id::text
             WHERE 1=1
             "#
         );
@@ -179,6 +184,7 @@ impl ContainerRepository {
                     uptime_seconds,
                     cpu_percent: None,
                     memory_used_mb: None,
+                    guest_ip: row.guest_ip,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -420,6 +426,7 @@ struct ContainerRow {
     updated_at: chrono::DateTime<Utc>,
     started_at: Option<chrono::DateTime<Utc>>,
     stopped_at: Option<chrono::DateTime<Utc>>,
+    guest_ip: Option<String>,
 }
 
 // Stats data structure for recording

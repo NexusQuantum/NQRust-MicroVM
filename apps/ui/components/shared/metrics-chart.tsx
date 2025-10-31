@@ -1,40 +1,89 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Play, Square } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts"
 
 interface MetricsChartProps {
-  vmId: string
+  resourceId: string
+  resourceType?: "vm" | "container" | "function"
 }
 
-export function MetricsChart({ vmId }: MetricsChartProps) {
+interface VMMetrics {
+  cpu_usage_percent?: number
+  memory_usage_percent?: number
+  memory_used_mb?: number
+  memory_total_mb?: number
+  network_in_bytes?: number
+  network_out_bytes?: number
+  disk_read_bytes?: number
+  disk_write_bytes?: number
+}
+
+export function MetricsChart({ resourceId, resourceType = "vm" }: MetricsChartProps) {
   const [isMonitoring, setIsMonitoring] = useState(false)
   const [metrics, setMetrics] = useState<any[]>([])
+  const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
-    if (!isMonitoring) return
+    if (!isMonitoring || !resourceId) return
 
-    const interval = setInterval(() => {
-      const timestamp = new Date().toLocaleTimeString()
-      const newMetric = {
-        time: timestamp,
-        cpu: Math.random() * 100,
-        memory: Math.random() * 100,
-        network: Math.random() * 1000,
-        disk: Math.random() * 500,
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+    const wsUrl = `${protocol}//${window.location.hostname}:18080/v1/vms/${resourceId}/metrics/ws`
+
+    try {
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        console.log("WebSocket connected to VM metrics:", wsUrl)
       }
 
-      setMetrics((prev) => {
-        const updated = [...prev, newMetric]
-        return updated.slice(-60) // Keep last 60 data points
-      })
-    }, 1000)
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as VMMetrics
+          const timestamp = new Date().toLocaleTimeString()
+          const newMetric = {
+            time: timestamp,
+            cpu: data.cpu_usage_percent || 0,
+            memory: data.memory_usage_percent || 0,
+            network: ((data.network_in_bytes || 0) + (data.network_out_bytes || 0)) / 1024, // Total KB/s
+            disk: ((data.disk_read_bytes || 0) + (data.disk_write_bytes || 0)) / 1024, // Total KB/s
+            networkIn: (data.network_in_bytes || 0) / 1024,
+            networkOut: (data.network_out_bytes || 0) / 1024,
+            diskRead: (data.disk_read_bytes || 0) / 1024,
+            diskWrite: (data.disk_write_bytes || 0) / 1024,
+          }
 
-    return () => clearInterval(interval)
-  }, [isMonitoring])
+          setMetrics((prev) => {
+            const updated = [...prev, newMetric]
+            return updated.slice(-60) // Keep last 60 data points
+          })
+        } catch (e) {
+          console.error("Failed to parse metrics:", e)
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error)
+      }
+
+      ws.onclose = () => {
+        console.log("WebSocket disconnected")
+      }
+
+      return () => {
+        if (wsRef.current) {
+          wsRef.current.close()
+          wsRef.current = null
+        }
+      }
+    } catch (error) {
+      console.error("Failed to connect WebSocket:", error)
+    }
+  }, [isMonitoring, resourceId])
 
   const toggleMonitoring = () => {
     setIsMonitoring(!isMonitoring)

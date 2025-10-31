@@ -1,14 +1,15 @@
 use crate::AppState;
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, ws::{WebSocket, WebSocketUpgrade}},
     http::StatusCode,
-    Extension, Json,
+    Extension, Json, response::IntoResponse,
 };
 use nexus_types::{
     ContainerLogsParams, ContainerLogsResp, ContainerPathParams, ContainerStatsResp,
     CreateContainerReq, CreateContainerResp, ExecCommandReq, ExecCommandResp, GetContainerResp,
     ListContainersParams, ListContainersResp, OkResponse, UpdateContainerReq,
 };
+use tokio::time::{interval, Duration};
 
 #[utoipa::path(
     post,
@@ -305,6 +306,77 @@ pub async fn logs(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     Ok(Json(resp))
+}
+
+/// WebSocket endpoint for streaming container logs in real-time
+pub async fn logs_stream(
+    Extension(st): Extension<AppState>,
+    Path(ContainerPathParams { id }): Path<ContainerPathParams>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_logs_stream(socket, st, id))
+}
+
+async fn handle_logs_stream(mut socket: WebSocket, st: AppState, container_id: uuid::Uuid) {
+    // Poll for logs every 2 seconds
+    let mut ticker = interval(Duration::from_secs(2));
+    let mut last_timestamp = chrono::Utc::now().timestamp();
+
+    loop {
+        ticker.tick().await;
+
+        // Get container to check state
+        let container = match super::service::get_container(&st.db, container_id).await {
+            Ok(resp) => resp.item,
+            Err(e) => {
+                let _ = socket.send(axum::extract::ws::Message::Text(
+                    format!("{{\"error\": \"Failed to get container: {}\"}}", e)
+                )).await;
+                break;
+            }
+        };
+
+        // If container is in error or doesn't have a runtime ID, stop streaming
+        if container.state == "error" || container.container_runtime_id.is_none() {
+            let _ = socket.send(axum::extract::ws::Message::Text(
+                format!("{{\"info\": \"Container in {} state\"}}", container.state)
+            )).await;
+            break;
+        }
+
+        // Get new logs since last fetch
+        match super::service::get_container_logs(&st.db, container_id, Some(100)).await {
+            Ok(resp) => {
+                for log in resp.items {
+                    // Only send logs newer than last timestamp
+                    if log.timestamp.timestamp() > last_timestamp {
+                        let log_json = serde_json::json!({
+                            "timestamp": log.timestamp,
+                            "stream": log.stream,
+                            "message": log.message
+                        });
+
+                        if socket.send(axum::extract::ws::Message::Text(log_json.to_string())).await.is_err() {
+                            // Client disconnected
+                            return;
+                        }
+
+                        last_timestamp = log.timestamp.timestamp();
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = socket.send(axum::extract::ws::Message::Text(
+                    format!("{{\"error\": \"Failed to fetch logs: {}\"}}", e)
+                )).await;
+            }
+        }
+
+        // Check if client is still connected by trying to send a ping
+        if socket.send(axum::extract::ws::Message::Ping(vec![])).await.is_err() {
+            break;
+        }
+    }
 }
 
 #[utoipa::path(

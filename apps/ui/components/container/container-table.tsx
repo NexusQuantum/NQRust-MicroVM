@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Play, Square, RotateCw, FileText, Terminal, Trash2, Search } from "lucide-react"
-import { formatDuration, formatPercentage } from "@/lib/utils/format"
+import { formatDuration } from "@/lib/utils/format"
 import type { Container } from "@/lib/types"
+import { useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer } from "@/lib/queries"
 
 interface ContainerTableProps {
   containers: Container[]
@@ -19,11 +20,16 @@ export function ContainerTable({ containers }: ContainerTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
 
+  const startContainer = useStartContainer()
+  const stopContainer = useStopContainer()
+  const restartContainer = useRestartContainer()
+  const deleteContainer = useDeleteContainer()
+
   const filteredContainers = containers.filter((container) => {
     const matchesSearch =
       container.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       container.image.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesStatus = statusFilter === "all" || container.status === statusFilter
+    const matchesStatus = statusFilter === "all" || container.state === statusFilter
     return matchesSearch && matchesStatus
   })
 
@@ -47,7 +53,10 @@ export function ContainerTable({ containers }: ContainerTableProps) {
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="running">Running</SelectItem>
             <SelectItem value="stopped">Stopped</SelectItem>
-            <SelectItem value="restarting">Restarting</SelectItem>
+            <SelectItem value="creating">Creating</SelectItem>
+            <SelectItem value="booting">Booting</SelectItem>
+            <SelectItem value="initializing">Initializing</SelectItem>
+            <SelectItem value="paused">Paused</SelectItem>
             <SelectItem value="error">Error</SelectItem>
           </SelectContent>
         </Select>
@@ -86,25 +95,27 @@ export function ContainerTable({ containers }: ContainerTableProps) {
                     <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{container.image}</code>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={container.status} />
+                    <StatusBadge status={container.state} />
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {container.uptime_seconds ? formatDuration(container.uptime_seconds) : "N/A"}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {container.cpu_percent !== undefined ? formatPercentage(container.cpu_percent) : "N/A"}
+                    {container.cpu_limit !== undefined ? `${container.cpu_limit} vCPU` : "N/A"}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {container.memory_used_mb !== undefined
-                      ? `${container.memory_used_mb}/${container.memory_limit_mb} MB`
-                      : "N/A"}
+                    {container.memory_limit_mb !== undefined ? `${container.memory_limit_mb} MB` : "N/A"}
                   </TableCell>
                   <TableCell className="text-xs">
-                    {container.port_mappings.map((p, i) => (
-                      <div key={i}>
-                        {p.host}→{p.container}
-                      </div>
-                    ))}
+                    {container.port_mappings && container.port_mappings.length > 0 ? (
+                      container.port_mappings.map((p, i) => (
+                        <div key={i} className="font-mono">
+                          {p.host}:{p.container} ({p.protocol})
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-muted-foreground">No ports</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
@@ -118,22 +129,50 @@ export function ContainerTable({ containers }: ContainerTableProps) {
                           <Terminal className="h-4 w-4" />
                         </Link>
                       </Button>
-                      {container.status === "stopped" && (
-                        <Button variant="ghost" size="icon" title="Start">
+                      {container.state === "stopped" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Start"
+                          onClick={() => startContainer.mutate(container.id)}
+                          disabled={startContainer.isPending}
+                        >
                           <Play className="h-4 w-4" />
                         </Button>
                       )}
-                      {container.status === "running" && (
+                      {container.state === "running" && (
                         <>
-                          <Button variant="ghost" size="icon" title="Restart">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Restart"
+                            onClick={() => restartContainer.mutate(container.id)}
+                            disabled={restartContainer.isPending}
+                          >
                             <RotateCw className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" title="Stop">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Stop"
+                            onClick={() => stopContainer.mutate(container.id)}
+                            disabled={stopContainer.isPending}
+                          >
                             <Square className="h-4 w-4" />
                           </Button>
                         </>
                       )}
-                      <Button variant="ghost" size="icon" title="Delete">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Delete"
+                        onClick={() => {
+                          if (confirm(`Are you sure you want to delete container "${container.name}"?`)) {
+                            deleteContainer.mutate(container.id)
+                          }
+                        }}
+                        disabled={deleteContainer.isPending}
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>

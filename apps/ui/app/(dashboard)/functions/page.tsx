@@ -9,16 +9,14 @@ import Image from "next/image"
 import { useFunctions } from "@/lib/queries"
 import { useState } from "react"
 
-
 export default function FunctionsPage() {
-  const { data: functions, isLoading, error } = useFunctions()
+  const { data: functions, isLoading, error } = useFunctions() // useFunctions()
   const [searchTerm, setSearchTerm] = useState("")
 
   const filteredFunctions = functions?.filter(fn =>
     fn.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     fn?.id.toLowerCase().includes(searchTerm.toLowerCase())
   ) || []
-
 
   if (isLoading) {
     return (
@@ -42,7 +40,6 @@ export default function FunctionsPage() {
       </div>
     );
   }
-
 
   return (
     <div className="space-y-6">
@@ -78,7 +75,6 @@ export default function FunctionsPage() {
           <CardTitle>All Functions</CardTitle>
         </CardHeader>
         <CardContent>
-          {/* <FunctionTable functions={mockFunctions} /> */}
           {filteredFunctions.length === 0 ? (
             <div className="text-center py-12">
               <h3 className="text-lg font-medium">No Functions found</h3>
@@ -88,7 +84,7 @@ export default function FunctionsPage() {
                   : "Get started by creating your first Function."
                 }
               </p>
-              {!searchTerm && (
+              {!searchTerm && ( 
                 <Button asChild className="mt-4">
                   <Link href="/functions/new">
                     <Plus className="mr-2 h-4 w-4" />
