@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Plus, RotateCcw, Trash2, Camera } from "lucide-react"
-import { formatRelativeTime } from "@/lib/utils/format"
 import { useSnapshots, useCreateSnapshot, useRestoreSnapshot, useDeleteSnapshot } from "@/lib/queries"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -29,6 +29,7 @@ interface VMSnapshotsProps {
 }
 
 export function VMSnapshots({ vmId }: VMSnapshotsProps) {
+  const dateFormat = useDateFormat()
   const { data: snapshots = [], isLoading, error } = useSnapshots(vmId)
   const createSnapshot = useCreateSnapshot()
   const restoreSnapshot = useRestoreSnapshot()
@@ -39,16 +40,8 @@ export function VMSnapshots({ vmId }: VMSnapshotsProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null)
 
-  const [formData, setFormData] = useState({
-    snapshot_path: "",
-    mem_file_path: "",
-  })
-
   const resetForm = () => {
-    setFormData({
-      snapshot_path: "",
-      mem_file_path: "",
-    })
+    // No form data needed - backend auto-generates paths
   }
 
   const handleCreate = () => {
@@ -67,13 +60,9 @@ export function VMSnapshots({ vmId }: VMSnapshotsProps) {
   }
 
   const handleSubmitCreate = () => {
-    const payload: any = {
-      snapshot_path: formData.snapshot_path || undefined,
-      mem_file_path: formData.mem_file_path || undefined,
-    }
-
+    // No custom paths - backend will auto-generate
     createSnapshot.mutate(
-      { vmId, ...payload },
+      { vmId },
       {
         onSuccess: () => {
           setShowCreateDialog(false)
@@ -184,7 +173,7 @@ export function VMSnapshots({ vmId }: VMSnapshotsProps) {
                     </TableCell>
                     <TableCell className="text-sm">{formatBytes(snapshot.size_bytes)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {formatRelativeTime(snapshot.created_at)}
+                      {dateFormat.formatRelative(snapshot.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
@@ -219,36 +208,9 @@ export function VMSnapshots({ vmId }: VMSnapshotsProps) {
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                Leave the paths empty to let the backend auto-generate snapshot paths. Manual paths are
-                for advanced use only.
+                A snapshot will capture the entire VM state including memory and disk. Snapshot files will be automatically stored in the VM's snapshot directory.
               </AlertDescription>
             </Alert>
-
-            <div className="space-y-2">
-              <Label htmlFor="snapshot_path">Snapshot Path (optional)</Label>
-              <Input
-                id="snapshot_path"
-                placeholder="Auto-generated if empty"
-                value={formData.snapshot_path}
-                onChange={(e) => setFormData({ ...formData, snapshot_path: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Path where the snapshot state will be saved
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="mem_file_path">Memory File Path (optional)</Label>
-              <Input
-                id="mem_file_path"
-                placeholder="Auto-generated if empty"
-                value={formData.mem_file_path}
-                onChange={(e) => setFormData({ ...formData, mem_file_path: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Path where the memory snapshot will be saved
-              </p>
-            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
@@ -293,7 +255,7 @@ export function VMSnapshots({ vmId }: VMSnapshotsProps) {
                   <div>{formatBytes(selectedSnapshot.size_bytes)}</div>
 
                   <div className="text-muted-foreground">Created:</div>
-                  <div>{formatRelativeTime(selectedSnapshot.created_at)}</div>
+                  <div>{dateFormat.formatRelative(selectedSnapshot.created_at)}</div>
                 </div>
               </div>
             )}

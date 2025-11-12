@@ -8,6 +8,18 @@ export interface CreateVmResponse {
   id: string;
 }
 
+export interface ImageResponse {
+  "id": string,
+  "kind": string,
+  "name": string,
+  "host_path": string,
+  "sha256": string,
+  "size": number,
+  "project": string,
+  "created_at": string,
+  "updated_at": string
+}
+
 export interface Vm {
   memory_usage_percent: undefined;
   cpu_usage_percent: undefined;
@@ -69,7 +81,20 @@ export interface CreateTemplateReq {
   spec: TemplateSpec;
 }
 
+export interface UpdateTemplateReq {
+  name?: string;
+  description?: string;
+  spec?: {
+    vcpu?: number;
+    mem_mib?: number;
+  };
+}
+
 export interface Template {
+  kernel_path: string;
+  mem_mib: number;
+  vcpu: number;
+  description: string;
   id: string;
   name: string;
   spec: TemplateSpec;
@@ -263,6 +288,7 @@ export interface VmNic {
   guest_mac?: string;
   rx_rate_limiter?: any;
   tx_rate_limiter?: any;
+  assigned_ip?: string;
   created_at: string;
   updated_at: string;
 }
@@ -611,4 +637,215 @@ export interface DownloadProgress {
   total_bytes: number;
   completed: boolean;
   error?: string;
+}
+
+// Host Management Types
+export interface Host {
+  id: string;
+  name: string;
+  addr: string;
+  status: "healthy" | "degraded" | "offline";
+  capabilities_json?: {
+    bridge?: string;
+    run_dir?: string;
+    cpus?: number;
+    total_memory_mb?: number;
+    total_disk_gb?: number;
+    used_disk_gb?: number;
+  };
+  total_cpus?: number;
+  total_memory_mb?: number;
+  total_disk_gb?: number;
+  used_disk_gb?: number;
+  vm_count: number;
+  last_seen_at: string;
+  last_metrics_at?: string;
+}
+
+export interface ListHostsResponse {
+  items: Host[];
+}
+
+export interface GetHostResponse {
+  item: Host;
+}
+
+// Network Management Types
+export interface Network {
+  id: string;
+  name: string;
+  description?: string;
+  type: "bridge" | "vlan";
+  vlan_id?: number;
+  bridge_name: string;
+  host_id: string;
+  host_name?: string;
+  cidr?: string;
+  gateway?: string;
+  vm_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateNetworkRequest {
+  name: string;
+  description?: string;
+  type: "bridge" | "vlan";
+  vlan_id?: number;
+  bridge_name: string;
+  host_id: string;
+  cidr?: string;
+  gateway?: string;
+}
+
+export interface UpdateNetworkRequest {
+  name?: string;
+  description?: string;
+  cidr?: string;
+  gateway?: string;
+}
+
+export interface CreateNetworkResponse {
+  id: string;
+}
+
+export interface ListNetworksResponse {
+  items: Network[];
+}
+
+export interface GetNetworkResponse {
+  item: Network;
+}
+
+export interface NetworkVmsResponse {
+  items: VmSummary[];
+}
+
+// Volume Management Types
+export interface Volume {
+  id: string;
+  name: string;
+  description?: string;
+  path: string;
+  size_bytes: number;
+  size_gb: number;
+  type: "raw" | "qcow2" | "ext4";
+  status: "available" | "attached" | "creating" | "error";
+  host_id: string;
+  host_name?: string;
+  attached_to_vm_id?: string;
+  attached_to_vm_name?: string;
+  created_at: string;
+}
+
+export interface CreateVolumeRequest {
+  name: string;
+  description?: string;
+  size_gb: number;
+  type: "raw" | "qcow2" | "ext4";
+  host_id: string;
+}
+
+export interface AttachVolumeRequest {
+  vm_id: string;
+  drive_id: string;
+}
+
+export interface DetachVolumeRequest {
+  vm_id: string;
+}
+
+export interface CreateVolumeResponse {
+  id: string;
+}
+
+export interface ListVolumesResponse {
+  items: Volume[];
+}
+
+export interface GetVolumeResponse {
+  item: Volume;
+}
+
+// User Management Types
+export interface User {
+  id: string;
+  username: string;
+  role: "admin" | "user" | "viewer";
+  created_at: string;
+  last_login_at?: string;
+  avatar_path?: string;
+  timezone?: string;
+  theme?: string;
+}
+
+export interface CreateUserRequest {
+  username: string;
+  password: string;
+  role: "admin" | "user" | "viewer";
+}
+
+export interface UpdateUserRequest {
+  username?: string;
+  password?: string;
+  role?: "admin" | "user" | "viewer";
+}
+
+export interface ListUsersResponse {
+  items: User[];
+}
+
+export interface GetUserResponse {
+  item: User;
+}
+
+export interface CreateUserResponse {
+  id: string;
+}
+
+// User Preferences Types
+export interface NotificationPreferences {
+  email: boolean;
+  browser: boolean;
+  desktop: boolean;
+}
+
+export interface VmDefaults {
+  vcpu: number;
+  mem_mib: number;
+  disk_gb: number;
+}
+
+export interface UserPreferences {
+  timezone?: string;
+  theme?: string;
+  date_format?: string;
+  notifications: NotificationPreferences;
+  vm_defaults: VmDefaults;
+  auto_refresh?: number;
+  metrics_retention?: number;
+}
+
+export interface GetPreferencesResponse {
+  preferences: UserPreferences;
+}
+
+export interface UpdatePreferencesRequest {
+  timezone?: string;
+  theme?: string;
+  date_format?: string;
+  notifications?: NotificationPreferences;
+  vm_defaults?: VmDefaults;
+  auto_refresh?: number;
+  metrics_retention?: number;
+}
+
+// Profile Management Types
+export interface UpdateProfileRequest {
+  username?: string;
+}
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
 }

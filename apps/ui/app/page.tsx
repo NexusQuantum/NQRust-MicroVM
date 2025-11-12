@@ -43,7 +43,7 @@ export default function LandingPage() {
       toast({
         title: "Validation Error",
         description: "Please enter both username and password",
-        variant: "destructive",
+        variant: "error",
         duration: 2000,
       })
       return
@@ -54,18 +54,19 @@ export default function LandingPage() {
     try {
       const response = await authApi.login({ username, password })
       setAuth(response.token, response.user)
+      router.push("/dashboard")
       toast({
         title: "Login Successful",
         description: `Welcome back, ${response.user.username}!`,
+        variant: "success",
         duration: 2000,
       })
-      router.push("/dashboard")
     } catch (error) {
       const facadeError = parseFacadeError(error)
       toast({
         title: "Login Failed",
         description: facadeError?.error || "Invalid username or password",
-        variant: "destructive",
+        variant: "error",
         duration: 2000,
       })
     } finally {

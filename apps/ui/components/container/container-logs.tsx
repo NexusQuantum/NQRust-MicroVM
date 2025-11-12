@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Download, Loader2, Play, Square } from "lucide-react"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 interface ContainerLogsProps {
   containerId: string
@@ -24,6 +25,7 @@ export function ContainerLogs({ containerId }: ContainerLogsProps) {
   const [isConnected, setIsConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const dateFormat = useDateFormat()
 
   const getWebSocketUrl = () => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
@@ -152,7 +154,7 @@ export function ContainerLogs({ containerId }: ContainerLogsProps) {
           ) : (
             logs.map((log, i) => (
               <div key={i} className={log.stream === "stderr" ? "text-red-500" : "text-foreground"}>
-                <span className="text-muted-foreground">[{new Date(log.timestamp).toLocaleString()}]</span>{" "}
+                <span className="text-muted-foreground">[{dateFormat.formatDateTime(log.timestamp)}]</span>{" "}
                 <span className="text-blue-500">[{log.stream}]</span> {log.message}
               </div>
             ))

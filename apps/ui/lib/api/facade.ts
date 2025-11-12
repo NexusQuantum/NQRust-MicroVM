@@ -2,6 +2,7 @@ import { apiClient, ApiClient } from "./http";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:18080/v1";
 import type {
+  ImageResponse,
   CreateVmReq,
   CreateVmResponse,
   ListVmsResponse,
@@ -17,10 +18,12 @@ import type {
   Image,
   CreateImageReq,
   CreateImageResp,
+  GetImageResp,
   ListTemplatesResp,
   Template,
   CreateTemplateReq,
   CreateTemplateResp,
+  UpdateTemplateReq,
   InstantiateTemplateReq,
   InstantiateTemplateResp,
   OkResponse,
@@ -52,11 +55,28 @@ import type {
   DockerImageTagsResp,
   DownloadDockerImageReq,
   DownloadDockerImageResp,
-  TestFunction
+  TestFunction,
+  Host,
+  ListHostsResponse,
+  GetHostResponse,
+  Network,
+  CreateNetworkRequest,
+  UpdateNetworkRequest,
+  CreateNetworkResponse,
+  ListNetworksResponse,
+  GetNetworkResponse,
+  NetworkVmsResponse,
+  Volume,
+  CreateVolumeRequest,
+  AttachVolumeRequest,
+  DetachVolumeRequest,
+  CreateVolumeResponse,
+  ListVolumesResponse,
+  GetVolumeResponse
 } from "@/lib/types"
 
 /**
- * Composite façade endpoints that orchestrate multiple Firecracker API calls
+ * Composite façade endpoints for VM orchestration
  */
 export class FacadeApi {
   /**
@@ -278,6 +298,14 @@ export class FacadeApi {
   }
 
   /**
+   * Image Management
+   */
+  async getImage(id: string): Promise<Image> {
+    const res = await apiClient.get<GetImageResp>(`/images/${id}`);
+    return res.item;
+  }
+  
+  /**
    * Template Management - New backend feature
    */
   async getTemplates(): Promise<Template[]> {
@@ -294,6 +322,11 @@ export class FacadeApi {
     return res.item;
   }
 
+  async updateTemplate(id: string, params: UpdateTemplateReq): Promise<Template> {
+    const res = await apiClient.put<any>(`/templates/${id}`, params);
+    return res.item;
+  }
+
   async instantiateTemplate(
     id: string,
     params: InstantiateTemplateReq
@@ -302,6 +335,10 @@ export class FacadeApi {
       `/templates/${id}/instantiate`,
       params
     );
+  }
+
+  async deleteTemplate(id: string): Promise<OkResponse> {
+    return apiClient.delete<OkResponse>(`/templates/${id}`);
   }
 
   async uploadRegistryFile(params: {
@@ -545,6 +582,177 @@ export class FacadeApi {
 
   async execContainerCommand(id: string, params: ContainerExecReq): Promise<any> {
     return apiClient.post(`/containers/${id}/exec`, params);
+  }
+
+  // ==============
+  // Host Management
+  // ==============
+
+  async getHosts(): Promise<Host[]> {
+    const res = await apiClient.get<ListHostsResponse>("/hosts");
+    return res.items;
+  }
+
+  async getHost(id: string): Promise<Host> {
+    const res = await apiClient.get<GetHostResponse>(`/hosts/${id}`);
+    return res.item;
+  }
+
+  async deleteHost(id: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/hosts/${id}`);
+  }
+
+  // ==============
+  // Network Management
+  // ==============
+
+  async getNetworks(): Promise<Network[]> {
+    const res = await apiClient.get<ListNetworksResponse>("/networks");
+    return res.items;
+  }
+
+  async createNetwork(params: any): Promise<Network> {
+    const res = await apiClient.post<CreateNetworkResponse>("/networks", params);
+    // Backend returns { id: "..." } not { item: ... }
+    return res as any;
+  }
+
+  async getNetwork(id: string): Promise<Network> {
+    const res = await apiClient.get<GetNetworkResponse>(`/networks/${id}`);
+    return res.item;
+  }
+
+  async updateNetwork(id: string, params: UpdateNetworkRequest): Promise<Network> {
+    const res = await apiClient.patch<GetNetworkResponse>(`/networks/${id}`, params);
+    return res.item;
+  }
+
+  async deleteNetwork(id: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/networks/${id}`);
+  }
+
+  async getNetworkVms(id: string): Promise<NetworkVmsResponse> {
+    return apiClient.get<NetworkVmsResponse>(`/networks/${id}/vms`);
+  }
+
+  // ==============
+  // Volume Management
+  // ==============
+
+  async getVolumes(): Promise<Volume[]> {
+    const res = await apiClient.get<ListVolumesResponse>("/volumes");
+    return res.items;
+  }
+
+  async getVolume(id: string): Promise<Volume> {
+    const res = await apiClient.get<GetVolumeResponse>(`/volumes/${id}`);
+    return res.item;
+  }
+
+  async createVolume(params: CreateVolumeRequest): Promise<CreateVolumeResponse> {
+    return apiClient.post<CreateVolumeResponse>("/volumes", params);
+  }
+
+  async attachVolume(id: string, params: AttachVolumeRequest): Promise<void> {
+    await apiClient.post<OkResponse>(`/volumes/${id}/attach`, params);
+  }
+
+  async detachVolume(id: string, params: DetachVolumeRequest): Promise<void> {
+    await apiClient.post<OkResponse>(`/volumes/${id}/detach`, params);
+  }
+
+  async deleteVolume(id: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/volumes/${id}`);
+  }
+
+  // ==============
+  // User Management
+  // ==============
+
+  async getUsers(): Promise<import("@/lib/types").User[]> {
+    const res = await apiClient.get<import("@/lib/types").ListUsersResponse>("/users");
+    return res.items;
+  }
+
+  async getUser(id: string): Promise<import("@/lib/types").User> {
+    const res = await apiClient.get<import("@/lib/types").GetUserResponse>(`/users/${id}`);
+    return res.item;
+  }
+
+  async createUser(params: import("@/lib/types").CreateUserRequest): Promise<import("@/lib/types").CreateUserResponse> {
+    return apiClient.post<import("@/lib/types").CreateUserResponse>("/users", params);
+  }
+
+  async updateUser(id: string, params: import("@/lib/types").UpdateUserRequest): Promise<import("@/lib/types").User> {
+    const res = await apiClient.patch<import("@/lib/types").GetUserResponse>(`/users/${id}`, params);
+    return res.item;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/users/${id}`);
+  }
+
+  // User Preferences
+  async getPreferences(): Promise<import("@/lib/types").UserPreferences> {
+    const res = await apiClient.get<import("@/lib/types").GetPreferencesResponse>("/auth/me/preferences");
+    return res.preferences;
+  }
+
+  async updatePreferences(params: import("@/lib/types").UpdatePreferencesRequest): Promise<import("@/lib/types").UserPreferences> {
+    const res = await apiClient.patch<import("@/lib/types").GetPreferencesResponse>("/auth/me/preferences", params);
+    return res.preferences;
+  }
+
+  // Profile Management
+  async getProfile(): Promise<import("@/lib/types").User> {
+    return apiClient.get<import("@/lib/types").User>("/auth/me/profile");
+  }
+
+  async updateProfile(params: import("@/lib/types").UpdateProfileRequest): Promise<import("@/lib/types").User> {
+    return apiClient.patch<import("@/lib/types").User>("/auth/me/profile", params);
+  }
+
+  async changePassword(params: import("@/lib/types").ChangePasswordRequest): Promise<void> {
+    await apiClient.post<OkResponse>("/auth/me/password", params);
+  }
+
+  // Avatar Management
+  async uploadAvatar(file: File): Promise<void> {
+    const formData = new FormData();
+    formData.append("avatar", file);
+
+    // Get the auth token
+    const { getAuthToken } = await import("@/lib/auth/store");
+    const token = getAuthToken();
+
+    const headers: HeadersInit = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    // Use fetch directly for multipart/form-data to avoid setting Content-Type manually
+    const response = await fetch(`${apiClient.baseURL}/auth/me/avatar`, {
+      method: "POST",
+      body: formData,
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(error);
+    }
+  }
+
+  getAvatarUrl(userId: string): string {
+    return `${apiClient.baseURL}/users/${userId}/avatar`;
+  }
+
+  getMyAvatarUrl(): string {
+    return `${apiClient.baseURL}/auth/me/avatar`;
+  }
+
+  async deleteAvatar(): Promise<void> {
+    await apiClient.delete<OkResponse>("/auth/me/avatar");
   }
 }
 

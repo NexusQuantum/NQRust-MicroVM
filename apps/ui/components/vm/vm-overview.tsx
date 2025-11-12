@@ -2,14 +2,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Play, Square, Pause, Trash2, Power } from "lucide-react"
-import { formatRelativeTime, formatPercentage } from "@/lib/utils/format"
+import { formatPercentage } from "@/lib/utils/format"
 import type { Vm } from "@/lib/types"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 interface VMOverviewProps {
   vm: Vm
 }
 
 export function VMOverview({ vm }: VMOverviewProps) {
+  const dateFormat = useDateFormat()
   return (
     <div className="space-y-6">
       <Card>
@@ -88,11 +90,27 @@ export function VMOverview({ vm }: VMOverviewProps) {
             </div>
             <div>
               <dt className="text-sm font-medium text-muted-foreground">Created</dt>
-              <dd className="mt-1 text-sm">{formatRelativeTime(vm.created_at)}</dd>
+              <dd className="mt-1 text-sm">{dateFormat.formatRelative(vm.created_at)}</dd>
             </div>
             <div>
               <dt className="text-sm font-medium text-muted-foreground">Last Updated</dt>
-              <dd className="mt-1 text-sm">{formatRelativeTime(vm.updated_at)}</dd>
+              <dd className="mt-1 text-sm">{dateFormat.formatRelative(vm.updated_at)}</dd>
+            </div>
+            <div className="col-span-2">
+              <dt className="text-sm font-medium text-muted-foreground">Rootfs Path</dt>
+              <dd className="mt-1 text-sm font-mono break-all">{vm.rootfs_path}</dd>
+            </div>
+            <div className="col-span-2">
+              <dt className="text-sm font-medium text-muted-foreground">Kernel Path</dt>
+              <dd className="mt-1 text-sm font-mono break-all">{vm.kernel_path}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-muted-foreground">Network TAP</dt>
+              <dd className="mt-1 text-sm font-mono">{vm.tap || "N/A"}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-muted-foreground">API Socket</dt>
+              <dd className="mt-1 text-sm font-mono">{vm.api_sock}</dd>
             </div>
           </dl>
         </CardContent>

@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowLeft, Search, HardDrive, Cpu, Download } from "lucide-react"
 import { useRegistryImages, useImportRegistryImage, useCreateRegistryVolume, useDeleteRegistryItem, useRenameRegistryItem, useUploadRegistryFile } from "@/lib/queries"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 interface RegistryBrowserProps {
   type: "kernel" | "rootfs"
@@ -28,6 +29,7 @@ export function RegistryBrowser({ type, onSelect, onCancel }: RegistryBrowserPro
   const [volumeName, setVolumeName] = useState("")
   const [volumeSizeMb, setVolumeSizeMb] = useState(1024)
   const deleteItem = useDeleteRegistryItem()
+  const dateFormat = useDateFormat()
   const renameItem = useRenameRegistryItem()
   const [renameOpen, setRenameOpen] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState("")
@@ -234,7 +236,7 @@ export function RegistryBrowser({ type, onSelect, onCancel }: RegistryBrowserPro
 
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         <span>Size: {formatSize(image.size)}</span>
-                        <span>Updated: {new Date(image.updated_at).toLocaleDateString()}</span>
+                        <span>Updated: {dateFormat.formatDate(image.updated_at)}</span>
                         <span>SHA256: {image.sha256.substring(0, 12)}...</span>
                       </div>
                     </div>

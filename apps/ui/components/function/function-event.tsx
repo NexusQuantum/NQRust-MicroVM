@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { RefreshCw, Loader2, Clock, Info, AlertCircle, CheckCircle, Zap } from "lucide-react"
 import { useFunctionLogs } from "@/lib/queries"
 import type { Function as FunctionType } from "@/lib/types"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 interface FunctionEventProps {
   functionData?: FunctionType
@@ -81,6 +82,7 @@ export function FunctionEvent({ functionData }: FunctionEventProps) {
   const { data: logsResp, isLoading, refetch, isFetching } = useFunctionLogs(functionData?.id || "", {
     limit: 50,
   })
+  const dateFormat = useDateFormat()
 
   const events = useMemo<Event[]>(() => {
     const result: Event[] = []
@@ -181,7 +183,7 @@ export function FunctionEvent({ functionData }: FunctionEventProps) {
                     </Badge>
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <Clock className="h-3 w-3" />
-                      {new Date(event.timestamp).toLocaleString()}
+                      {dateFormat.formatDateTime(event.timestamp)}
                     </span>
                   </div>
                   <p className="text-sm text-foreground">{event.message}</p>

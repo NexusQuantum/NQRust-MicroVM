@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Server, Zap, Container, HardDrive, Plus, TrendingUp, Activity } from "lucide-react"
 import { ResourceTable } from "@/components/dashboard/resource-table"
 import Link from "next/link"
-import { useVMs, useFunctions, useContainers } from "@/lib/queries"
+import { useVMs, useFunctions, useContainers, usePreferences } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useAuthStore, canCreateResource } from "@/lib/auth/store"
 
 // Mock data for services that don't have APIs yet
 const mockStats = {
@@ -19,55 +20,110 @@ const mockStats = {
 
 
 export default function DashboardPage() {
-  const { data: vms = [], isLoading: vmsLoading } = useVMs()
-  const { data: functions = [], isLoading: functionsLoading } = useFunctions()
-  const { data: containers = [], isLoading: containersLoading } = useContainers()
+  // Load user preferences for auto-refresh settings
+  const { data: preferences } = usePreferences()
+  const autoRefreshInterval = preferences?.auto_refresh
+    ? preferences.auto_refresh * 1000 // Convert seconds to milliseconds
+    : undefined // No auto-refresh if not set
 
+  const { data: vms = [], isLoading: vmsLoading } = useVMs(true, autoRefreshInterval)
+  const { data: functions = [], isLoading: functionsLoading } = useFunctions(autoRefreshInterval)
+  const { data: containers = [], isLoading: containersLoading } = useContainers(autoRefreshInterval)
+  const { user } = useAuthStore()
 
-  // Calculate stats from real data
-  const totalVMs = vms.length
-  const totalFunctions = functions.length
-  const totalContainers = containers.length
-  const runningVMs = vms.filter(vm => vm.state === 'running').length
-  const runningContainers = containers.filter(c => c.state === 'running').length
+  // Filter resources by ownership
+  const filterByOwnership = (resource: any) => {
+    // Admin and viewer can see all resources
+    if (user?.role === "admin" || user?.role === "viewer") {
+      return true
+    }
+    // User can see resources without owner (system) or their own resources
+    return !resource.created_by_user_id || resource.created_by_user_id === user?.id
+  }
 
-  // Transform VMs for resource table
-  const vmResources = vms.map(vm => ({
-    id: vm.id,
-    name: vm.name,
-    type: "vm" as const,
-    state: vm.state.toLowerCase(),
-    metrics: { 
-      cpu: vm.vcpu || 0, 
-      memory: vm.mem_mib || 0, // Memory in MiB
-    },
-  }))
+  const filteredVMs = vms.filter(filterByOwnership)
+  const filteredFunctions = functions.filter(filterByOwnership)
+  const filteredContainers = containers.filter(filterByOwnership)
+
+  // Calculate stats from filtered data
+  const totalVMs = filteredVMs.length
+  const totalFunctions = filteredFunctions.length
+  const totalContainers = filteredContainers.length
+  const runningVMs = filteredVMs.filter(vm => vm.state === 'running').length
+  const runningContainers = filteredContainers.filter(c => c.state === 'running').length
+
+  // Get VM IDs that are used by functions and containers (to exclude from "all" view)
+  const functionVmIds = new Set(
+    filteredFunctions
+      .map(func => func.vm_id)
+      .filter((id): id is string => !!id)
+  )
+
+  const containerVmIds = new Set(
+    filteredContainers
+      .map(container => container.container_runtime_id?.replace('vm-', ''))
+      .filter((id): id is string => !!id)
+  )
+
+  const usedVmIds = new Set([...functionVmIds, ...containerVmIds])
+
+  // Transform VMs for resource table, excluding VMs used by functions/containers
+  const vmResources = filteredVMs
+    .filter(vm => {
+      // Exclude VMs used by functions/containers (by ID)
+      if (usedVmIds.has(vm.id)) return false
+
+      // Exclude VMs tagged as function or container VMs
+      if (vm.tags?.includes("type:function") || vm.tags?.includes("type:container")) {
+        return false
+      }
+
+      // Exclude VMs with names starting with "fn-" or "container-"
+      if (vm.name?.startsWith("fn-") || vm.name?.startsWith("container-")) {
+        return false
+      }
+
+      return true
+    })
+    .map(vm => ({
+      id: vm.id,
+      name: vm.name,
+      type: "vm" as const,
+      state: vm.state.toLowerCase(),
+      metrics: {
+        cpu: vm.vcpu || 0,
+        memory: vm.mem_mib || 0, // Memory in MiB
+      },
+      created_by_user_id: (vm as any).created_by_user_id,
+    }))
 
   // Transform functions for resource table
-  const functionResources = functions.map(func => ({
+  const functionResources = filteredFunctions.map(func => ({
     id: func.id,
     name: func.name,
     type: "function" as const,
     state: func.state?.toLowerCase() || 'unknown',
-    metrics: { 
-      cpu: func.vcpu || 0, 
+    metrics: {
+      cpu: func.vcpu || 0,
       memory: func.memory_mb || 0, // Memory in MB
     },
+    created_by_user_id: (func as any).created_by_user_id,
   }))
 
   // Transform containers for resource table
-  const containerResources = containers.map(container => ({
+  const containerResources = filteredContainers.map(container => ({
     id: container.id,
     name: container.name,
     type: "container" as const,
     state: container.state?.toLowerCase() || 'unknown',
-    metrics: { 
-      cpu: container.cpu_limit || 0, 
+    metrics: {
+      cpu: container.cpu_limit || 0,
       memory: container.memory_limit_mb || 0, // Memory in MB
     },
+    created_by_user_id: (container as any).created_by_user_id,
   }))
 
-  // Combine all resources
+  // Combine all resources (VMs used by functions/containers are already excluded)
   const allResources = [...vmResources, ...functionResources, ...containerResources]
 
   const isLoading = vmsLoading || functionsLoading || containersLoading
@@ -77,29 +133,31 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-          <p className="text-muted-foreground">Overview of all your workloads and resources</p>
+          <h1 className="text-3xl font-bold text-primary">Dashboard</h1>
+          <p className="text-primary">Overview of all your workloads and resources</p>
         </div>
-        <div className="flex gap-2">
-          <Button asChild>
-            <Link href="/vms/create">
-              <Plus className="mr-2 h-4 w-4" />
-              New VM
-            </Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/functions/new">
-              <Plus className="mr-2 h-4 w-4" />
-              New Function
-            </Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/containers/new">
-              <Plus className="mr-2 h-4 w-4" />
-              New Container
-            </Link>
-          </Button>
-        </div>
+        {canCreateResource(user) && (
+          <div className="flex gap-2">
+            <Button asChild>
+              <Link href="/vms/create">
+                <Plus className="mr-2 h-4 w-4" />
+                New VM
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="text-primary">
+              <Link href="/functions/new">
+                <Plus className="mr-2 h-4 w-4" />
+                New Function
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="text-primary">
+              <Link href="/containers/new">
+                <Plus className="mr-2 h-4 w-4" />
+                New Container
+              </Link>
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -120,7 +178,7 @@ export default function DashboardPage() {
                 {runningVMs}/{totalVMs}
               </div>
             )}
-            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+            <div className="text-xs text-foreground flex items-center gap-1 mt-1">
               <TrendingUp className="h-3 w-3 text-green-600" />
               {vmsLoading ? <Skeleton className="h-3 w-12" /> : `${runningVMs} running`}
             </div>
@@ -138,9 +196,9 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalFunctions}</div>
-            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+            <div className="text-xs text-foreground flex items-center gap-1 mt-1">
               <Activity className="h-3 w-3 text-yellow-600" />
-              {mockStats.invocations_24h.toLocaleString('en-US')} invocations (24h)
+              {totalFunctions} running
             </div>
           </CardContent>
         </Card>
@@ -162,7 +220,7 @@ export default function DashboardPage() {
                 {runningContainers}/{totalContainers}
               </div>
             )}
-            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+            <div className="text-xs text-foreground flex items-center gap-1 mt-1">
               <TrendingUp className="h-3 w-3 text-green-600" />
               {containersLoading ? <Skeleton className="h-3 w-12" /> : `${runningContainers} running`}
             </div>
@@ -178,7 +236,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{mockStats.total_hosts}</div>
-            <p className="text-xs text-muted-foreground mt-1">Available hosts</p>
+            <p className="text-xs text-foreground mt-1">Available hosts</p>
           </CardContent>
         </Card>
       </div>

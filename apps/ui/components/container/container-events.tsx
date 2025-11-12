@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { RefreshCw, Loader2, Clock, Info, AlertCircle, CheckCircle } from "lucide-react"
 import { useContainerLogs } from "@/lib/queries"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 interface ContainerEventsProps {
   containerId: string
@@ -61,6 +62,7 @@ const getEventBadgeColor = (type: Event["type"]) => {
 export function ContainerEvents({ containerId }: ContainerEventsProps) {
   const [events, setEvents] = useState<Event[]>([])
   const { data: logsResp, isLoading, refetch, isFetching } = useContainerLogs(containerId)
+  const dateFormat = useDateFormat()
 
   useEffect(() => {
     if (logsResp?.items) {
@@ -113,7 +115,7 @@ export function ContainerEvents({ containerId }: ContainerEventsProps) {
                     <Badge className={getEventBadgeColor(event.type)}>{event.type}</Badge>
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <Clock className="h-3 w-3" />
-                      {new Date(event.timestamp).toLocaleString()}
+                      {dateFormat.formatDateTime(event.timestamp)}
                     </span>
                   </div>
                   <p className="text-sm text-foreground font-mono break-all">{event.message}</p>

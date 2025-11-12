@@ -5,15 +5,15 @@
 
 :root {
   --background: oklch(1 0 0);
-  --foreground: oklch(0.6707 0.2212 37.59);
+  --foreground: #ff5001;
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.6707 0.2212 37.59);
+  --card-foreground: #ff5001;
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.6707 0.2212 37.59);
-  --primary: oklch(0.6707 0.2212 37.59);
+  --popover-foreground: #ff5001;
+  --primary: #ff5001;
   --primary-foreground: oklch(0.9842 0.0034 247.86);
   --secondary: oklch(0.9238 0.0426 47.48);
-  --secondary-foreground: oklch(0.6707 0.2212 37.59);
+  --secondary-foreground: #ff5001;
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.3133 0.0915 43.76);
   --accent: oklch(0.9683 0.0069 247.9);
@@ -30,11 +30,11 @@
   --chart-5: oklch(0.42 0.18 266);
   --radius: 0.5rem;
   --sidebar: oklch(0.9851 0 0);
-  --sidebar-foreground: oklch(0.6707 0.2212 37.59);
-  --sidebar-primary: oklch(0.6707 0.2212 37.59);
+  --sidebar-foreground: #ff5001;
+  --sidebar-primary: #ff5001;
   --sidebar-primary-foreground: oklch(0.9851 0 0);
   --sidebar-accent: oklch(0.9674 0.0013 286.37);
-  --sidebar-accent-foreground: oklch(0.6707 0.2212 37.59);
+  --sidebar-accent-foreground: #ff5001;
   --sidebar-border: oklch(0.9276 0.0058 264.53);
   --sidebar-ring: oklch(0.6231 0.188 259.81);
   --shadow-x: 0px;
@@ -52,7 +52,7 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.269 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
+  --primary: #ff5001;
   --primary-foreground: oklch(0.205 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
@@ -63,7 +63,7 @@
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.275 0 0);
-  --input: oklch(0.325 0 0);
+  --input: #343434;
   --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.81 0.1 252);
   --chart-2: oklch(0.62 0.19 260);
@@ -163,3 +163,86 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Ensure orange text colors stay orange in dark mode - override any text-foreground or white text */
+/* Placed outside @layer to ensure it overrides Tailwind defaults */
+.dark [class*="text-orange-"] {
+  color: rgb(234 88 12) !important; /* Default to orange-600 */
+}
+
+.dark .text-orange-50,
+.dark th.text-orange-50,
+.dark td.text-orange-50,
+.dark h1.text-orange-50,
+.dark h2.text-orange-50,
+.dark h3.text-orange-50 { color: rgb(255 247 237) !important; }
+
+.dark .text-orange-100,
+.dark th.text-orange-100,
+.dark td.text-orange-100,
+.dark h1.text-orange-100,
+.dark h2.text-orange-100,
+.dark h3.text-orange-100 { color: rgb(255 237 213) !important; }
+
+.dark .text-orange-200,
+.dark th.text-orange-200,
+.dark td.text-orange-200,
+.dark h1.text-orange-200,
+.dark h2.text-orange-200,
+.dark h3.text-orange-200 { color: rgb(254 215 170) !important; }
+
+.dark .text-orange-300,
+.dark th.text-orange-300,
+.dark td.text-orange-300,
+.dark h1.text-orange-300,
+.dark h2.text-orange-300,
+.dark h3.text-orange-300 { color: rgb(253 186 116) !important; }
+
+.dark .text-orange-400,
+.dark th.text-orange-400,
+.dark td.text-orange-400,
+.dark h1.text-orange-400,
+.dark h2.text-orange-400,
+.dark h3.text-orange-400 { color: rgb(251 146 60) !important; }
+
+.dark .text-orange-500,
+.dark th.text-orange-500,
+.dark td.text-orange-500,
+.dark h1.text-orange-500,
+.dark h2.text-orange-500,
+.dark h3.text-orange-500 { color: rgb(249 115 22) !important; }
+
+.dark .text-orange-600,
+.dark th.text-orange-600,
+.dark td.text-orange-600,
+.dark h1.text-orange-600,
+.dark h2.text-orange-600,
+.dark h3.text-orange-600 { color: rgb(234 88 12) !important; }
+
+.dark .text-orange-700,
+.dark th.text-orange-700,
+.dark td.text-orange-700,
+.dark h1.text-orange-700,
+.dark h2.text-orange-700,
+.dark h3.text-orange-700 { color: rgb(194 65 12) !important; }
+
+.dark .text-orange-800,
+.dark th.text-orange-800,
+.dark td.text-orange-800,
+.dark h1.text-orange-800,
+.dark h2.text-orange-800,
+.dark h3.text-orange-800 { color: rgb(154 52 18) !important; }
+
+.dark .text-orange-900,
+.dark th.text-orange-900,
+.dark td.text-orange-900,
+.dark h1.text-orange-900,
+.dark h2.text-orange-900,
+.dark h3.text-orange-900 { color: rgb(124 45 18) !important; }
+
+.dark .text-orange-950,
+.dark th.text-orange-950,
+.dark td.text-orange-950,
+.dark h1.text-orange-950,
+.dark h2.text-orange-950,
+.dark h3.text-orange-950 { color: rgb(67 20 7) !important; }

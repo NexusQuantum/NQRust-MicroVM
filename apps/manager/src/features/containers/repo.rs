@@ -28,8 +28,8 @@ impl ContainerRepository {
             INSERT INTO containers (
                 id, name, image, command, args, env_vars, volumes, port_mappings,
                 cpu_limit, memory_limit_mb, restart_policy, state, host_id,
-                created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                created_by_user_id, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             "#,
             id,
             req.name,
@@ -44,6 +44,7 @@ impl ContainerRepository {
             req.restart_policy,
             "creating",
             host_id,
+            None as Option<Uuid>, // created_by_user_id - TODO: Set from authenticated user context
             now,
             now
         )
@@ -60,7 +61,7 @@ impl ContainerRepository {
             SELECT
                 c.id, c.name, c.image, c.command, c.args, c.env_vars, c.volumes, c.port_mappings,
                 c.cpu_limit, c.memory_limit_mb, c.restart_policy, c.state, c.host_id,
-                c.container_runtime_id, c.error_message, c.created_at, c.updated_at,
+                c.container_runtime_id, c.error_message, c.created_by_user_id, c.created_at, c.updated_at,
                 c.started_at, c.stopped_at,
                 v.guest_ip
             FROM containers c
@@ -103,6 +104,7 @@ impl ContainerRepository {
             host_id: row.host_id,
             container_runtime_id: row.container_runtime_id,
             error_message: row.error_message,
+            created_by_user_id: row.created_by_user_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
             started_at: row.started_at,
@@ -120,7 +122,7 @@ impl ContainerRepository {
             SELECT
                 c.id, c.name, c.image, c.command, c.args, c.env_vars, c.volumes, c.port_mappings,
                 c.cpu_limit, c.memory_limit_mb, c.restart_policy, c.state, c.host_id,
-                c.container_runtime_id, c.error_message, c.created_at, c.updated_at,
+                c.container_runtime_id, c.error_message, c.created_by_user_id, c.created_at, c.updated_at,
                 c.started_at, c.stopped_at,
                 v.guest_ip
             FROM containers c
@@ -177,6 +179,7 @@ impl ContainerRepository {
                     host_id: row.host_id,
                     container_runtime_id: row.container_runtime_id,
                     error_message: row.error_message,
+                    created_by_user_id: row.created_by_user_id,
                     created_at: row.created_at,
                     updated_at: row.updated_at,
                     started_at: row.started_at,
@@ -422,6 +425,7 @@ struct ContainerRow {
     host_id: Option<Uuid>,
     container_runtime_id: Option<String>,
     error_message: Option<String>,
+    created_by_user_id: Option<Uuid>,
     created_at: chrono::DateTime<Utc>,
     updated_at: chrono::DateTime<Utc>,
     started_at: Option<chrono::DateTime<Utc>>,

@@ -17,10 +17,12 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination"
 import { Play, Square, Pause, Trash2, Search } from "lucide-react"
-import { formatRelativeTime, formatPercentage } from "@/lib/utils/format"
+import { formatPercentage } from "@/lib/utils/format"
 import { useToast } from "@/hooks/use-toast"
 import type { Vm } from "@/lib/types"
 import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
+import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 interface VMTableProps {
   vms: Vm[]
@@ -38,12 +40,20 @@ export function VMTable({ vms }: VMTableProps) {
     vmName: "",
   })
   const { toast } = useToast()
+  const { user } = useAuthStore()
+  const dateFormat = useDateFormat()
 
   const filteredVMs = vms.filter((vm) => {
     const vmName = vm.name || vm.vm_name || `VM-${vm.id}`
     const matchesSearch = vmName.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesState = stateFilter === "all" || vm.state === stateFilter
-    return matchesSearch && matchesState
+
+    // Filter by ownership for non-admin/non-viewer users
+    const canView = user?.role === "admin" || user?.role === "viewer" ||
+                    !(vm as any).created_by_user_id ||
+                    (vm as any).created_by_user_id === user?.id
+
+    return matchesSearch && matchesState && canView
   })
 
   const totalPages = Math.ceil(filteredVMs.length / ITEMS_PER_PAGE)
@@ -57,6 +67,8 @@ export function VMTable({ vms }: VMTableProps) {
     toast({
       title: `VM ${action}`,
       description: `${name} has been ${action.toLowerCase()}`,
+      variant: "success",
+      duration: 2000,
     })
   }
 
@@ -67,7 +79,8 @@ export function VMTable({ vms }: VMTableProps) {
           toast({
             title: "VM Deleted",
             description: `${deleteDialog.vmName} has been deleted`,
-            variant: "destructive",
+            variant: "error",
+            duration: 2000,
           })
           setDeleteDialog({ open: false, vmId: "", vmName: "" })
         },
@@ -75,7 +88,8 @@ export function VMTable({ vms }: VMTableProps) {
           toast({
             title: "Delete Failed",
             description: `Failed to delete ${deleteDialog.vmName}: ${error.message}`,
-            variant: "destructive",
+            variant: "error",
+            duration: 2000,
           })
         }
       })
@@ -126,6 +140,7 @@ export function VMTable({ vms }: VMTableProps) {
               <TableHead>Memory</TableHead>
               <TableHead>Guest IP</TableHead>
               <TableHead>Host</TableHead>
+              <TableHead>Owner</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -133,7 +148,7 @@ export function VMTable({ vms }: VMTableProps) {
           <TableBody>
             {paginatedVMs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                   No VMs found
                 </TableCell>
               </TableRow>
@@ -170,57 +185,74 @@ export function VMTable({ vms }: VMTableProps) {
                     <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{vm.guest_ip || "N/A"}</code>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{vm.host_addr}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{formatRelativeTime(vm.created_at)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {(vm as any).created_by_user_id ? (
+                      (vm as any).created_by_user_id === user?.id ? (
+                        <span className="text-primary font-medium">You</span>
+                      ) : (
+                        <span className="text-muted-foreground">Other User</span>
+                      )
+                    ) : (
+                      <span className="text-muted-foreground italic">System</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{dateFormat.formatRelative(vm.created_at)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      {vm.state === "stopped" && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Start"
-                          onClick={() => handleAction(vmName, vm.id, "start")}
-                        >
-                          <Play className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {vm.state === "running" && (
+                      {canModifyResource(user, (vm as any).created_by_user_id) && (
                         <>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Pause"
-                            onClick={() => handleAction(vmName, vm.id, "pause")}
-                          >
-                            <Pause className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Stop"
-                            onClick={() => handleAction(vmName, vm.id, "stop")}
-                          >
-                            <Square className="h-4 w-4" />
-                          </Button>
+                          {vm.state === "stopped" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Start"
+                              onClick={() => handleAction(vmName, vm.id, "start")}
+                            >
+                              <Play className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {vm.state === "running" && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Pause"
+                                onClick={() => handleAction(vmName, vm.id, "pause")}
+                              >
+                                <Pause className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Stop"
+                                onClick={() => handleAction(vmName, vm.id, "stop")}
+                              >
+                                <Square className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
+                          {vm.state === "paused" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Resume"
+                              onClick={() => handleAction(vmName, vm.id, "resume")}
+                            >
+                              <Play className="h-4 w-4" />
+                            </Button>
+                          )}
                         </>
                       )}
-                      {vm.state === "paused" && (
+                      {canDeleteResource(user, (vm as any).created_by_user_id) && (
                         <Button
                           variant="ghost"
                           size="icon"
-                          title="Resume"
-                          onClick={() => handleAction(vmName, vm.id, "resume")}
+                          title="Delete"
+                          onClick={() => setDeleteDialog({ open: true, vmId: vm.id, vmName })}
                         >
-                          <Play className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Delete"
-                        onClick={() => setDeleteDialog({ open: true, vmId: vm.id, vmName })}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>

@@ -13,10 +13,19 @@ export interface FacadeError {
 export class ApiClient {
   private baseUrl: string
   private timeout: number
+  private getToken: (() => string | null) | null = null
 
   constructor(baseUrl: string = API_BASE_URL, timeout: number = 12000) {
     this.baseUrl = baseUrl
     this.timeout = timeout
+  }
+
+  setTokenGetter(getToken: () => string | null) {
+    this.getToken = getToken
+  }
+
+  get baseURL(): string {
+    return this.baseUrl
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -26,13 +35,23 @@ export class ApiClient {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), this.timeout)
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-Request-Id": requestId,
+      ...(options.headers as Record<string, string>),
+    }
+
+    // Add auth token if available
+    if (this.getToken) {
+      const token = this.getToken()
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`
+      }
+    }
+
     const config: RequestInit = {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Request-Id": requestId,
-        ...options.headers,
-      },
+      headers,
       signal: controller.signal,
     }
 

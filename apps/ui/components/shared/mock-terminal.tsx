@@ -69,7 +69,7 @@ export function MockTerminal({ vmId, containerId }: MockTerminalProps) {
       pwd: ["/root"],
       whoami: ["root"],
       date: [new Date().toString()],
-      uname: ["Linux vm-firecracker 5.10.0 #1 SMP x86_64 GNU/Linux"],
+      uname: ["Linux vm-guest 5.10.0 #1 SMP x86_64 GNU/Linux"],
       free: [
         "              total        used        free      shared  buff/cache   available",
         "Mem:        2048000      512000     1024000       16000      512000     1400000",

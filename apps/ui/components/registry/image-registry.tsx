@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Download, Copy, Trash2, Search, HardDrive, Database } from "lucide-react"
-import { formatBytes, formatRelativeTime } from "@/lib/utils/format"
+import { formatBytes } from "@/lib/utils/format"
 import type { Image } from "@/lib/types"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 import { useDeleteRegistryItem } from "@/lib/queries"
 import { toast } from "sonner"
 import {
@@ -27,6 +28,7 @@ interface ImageRegistryProps {
 }
 
 export function ImageRegistry({ images }: ImageRegistryProps) {
+  const dateFormat = useDateFormat()
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>("all")
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -179,7 +181,7 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
                     </TableCell>
                     <TableCell className="text-sm">—</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {formatRelativeTime(image.created_at)}
+                      {dateFormat.formatRelative(image.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">

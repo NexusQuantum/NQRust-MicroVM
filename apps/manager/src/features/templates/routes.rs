@@ -2,7 +2,8 @@ use crate::AppState;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
 use nexus_types::{
     CreateTemplateReq, CreateTemplateResp, GetTemplateResp, InstantiateTemplateReq,
-    InstantiateTemplateResp, ListTemplatesResp, TemplatePathParams,
+    InstantiateTemplateResp, ListTemplatesResp, OkResponse, TemplatePathParams, UpdateTemplateReq,
+    UpdateTemplateResp,
 };
 use uuid::Uuid;
 
@@ -69,6 +70,56 @@ pub async fn get(
 }
 
 #[utoipa::path(
+    put,
+    path = "/v1/templates/{id}",
+    params(TemplatePathParams),
+    request_body = UpdateTemplateReq,
+    responses(
+        (status = 200, description = "Template updated", body = UpdateTemplateResp),
+        (status = 404, description = "Template not found"),
+        (status = 500, description = "Failed to update template"),
+    ),
+    tag = "Templates"
+)]
+pub async fn update(
+    Extension(st): Extension<AppState>,
+    Path(TemplatePathParams { id }): Path<TemplatePathParams>,
+    Json(req): Json<UpdateTemplateReq>,
+) -> Result<Json<UpdateTemplateResp>, StatusCode> {
+    let template = super::repo::update(&st.db, id, &req)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
+    Ok(Json(UpdateTemplateResp { item: template }))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/v1/templates/{id}",
+    params(TemplatePathParams),
+    responses(
+        (status = 200, description = "Template deleted", body = OkResponse),
+        (status = 404, description = "Template not found"),
+        (status = 500, description = "Failed to delete template"),
+    ),
+    tag = "Templates"
+)]
+pub async fn delete(
+    Extension(st): Extension<AppState>,
+    Path(TemplatePathParams { id }): Path<TemplatePathParams>,
+) -> Result<Json<OkResponse>, StatusCode> {
+    super::repo::delete(&st.db, id)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
+    Ok(Json(OkResponse::default()))
+}
+
+#[utoipa::path(
     post,
     path = "/v1/templates/{id}/instantiate",
     params(TemplatePathParams),
@@ -123,15 +174,21 @@ mod tests {
         let images = crate::features::images::repo::ImageRepository::new(pool.clone(), "/tmp");
 
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
+        let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let download_progress = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
             images: images.clone(),
             snapshots,
+            users,
+            shell_repo,
             allow_direct_image_paths: true,
             storage,
+            download_progress,
         };
 
         let create_req = CreateTemplateReq {

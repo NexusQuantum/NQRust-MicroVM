@@ -1,6 +1,6 @@
 # NQRust MicroVM - Features Documentation
 
-**Last Updated:** 2025-10-20
+**Last Updated:** 2025-11-03
 
 This document provides a comprehensive mapping of all backend (Manager) and frontend features, showing which features are fully integrated, partially wired, or missing integration.
 
@@ -37,6 +37,27 @@ This document provides a comprehensive mapping of all backend (Manager) and fron
 | Delete Container | ✅ | ❌ | 🔨 Backend Only | Full lifecycle management |
 | Container Metrics | ✅ | ❌ | 🔨 Backend Only | Resource monitoring |
 | Container Networking | ✅ | ❌ | 🔨 Backend Only | Bridge networking support |
+
+### Infrastructure Management
+
+| Feature | Backend Endpoint | Frontend Integration | Status | Notes |
+|---------|-----------------|---------------------|--------|-------|
+| List Hosts | `GET /v1/hosts` | `useHosts()` + Hosts Page | ✅ | Host monitoring with metrics |
+| Get Host Details | `GET /v1/hosts/{id}` | `useHost(id)` + Host Detail View | ✅ | CPU, memory, network metrics |
+| List Networks | `GET /v1/networks` | `useNetworks()` + Networks Page | ✅ | Network registry with VLAN support |
+| Get Network Details | `GET /v1/networks/{id}` | `useNetwork(id)` | ✅ | Network configuration and VM count |
+| Create Network | `POST /v1/networks` | `useCreateNetwork()` + Dialog | ✅ | Bridge networks with optional VLAN |
+| Update Network | `PATCH /v1/networks/{id}` | `useUpdateNetwork()` + Dialog | ✅ | Update name, description, CIDR, gateway |
+| Delete Network | `DELETE /v1/networks/{id}` | `useDeleteNetwork()` + Button | ✅ | With confirmation dialog |
+| List Volumes | `GET /v1/volumes` | `useVolumes()` + Volumes Page | ✅ | Central volume registry |
+| Get Volume Details | `GET /v1/volumes/{id}` | `useVolume(id)` | ✅ | Volume path, size, type, attachments |
+| Create Volume | `POST /v1/volumes` | `useCreateVolume()` + Dialog | ✅ | Create managed volumes |
+| Update Volume Status | `PATCH /v1/volumes/{id}/status` | `useUpdateVolume()` | ✅ | Change volume status |
+| Delete Volume | `DELETE /v1/volumes/{id}` | `useDeleteVolume()` + Button | ✅ | With confirmation dialog |
+| Attach Volume | `POST /v1/volumes/{volume_id}/attach` | `useAttachVolume()` | ✅ | Attach volume to VM |
+| Detach Volume | `POST /v1/volumes/{volume_id}/detach` | `useDetachVolume()` | ✅ | Detach volume from VM |
+| Auto-register Network | N/A | Automatic | ✅ | Networks auto-registered on VM creation |
+| Auto-register Volume | N/A | Automatic | ✅ | Rootfs volumes auto-registered on VM creation |
 
 ### VM Lifecycle Management
 
@@ -130,6 +151,8 @@ This document provides a comprehensive mapping of all backend (Manager) and fron
 |---------|-----------------|---------------------|--------|-------|
 | Register Host | `POST /v1/hosts/register` | Not in UI (server-to-server) | 🔨 | Backend-only (agent → manager) |
 | Host Heartbeat | `POST /v1/hosts/{id}/heartbeat` | Not in UI (server-to-server) | 🔨 | Backend-only (agent → manager) |
+| List Hosts | `GET /v1/hosts` | `useHosts()` + Hosts Page | ✅ | View registered hosts with metrics |
+| Get Host | `GET /v1/hosts/{id}` | `useHost(id)` + Host Detail | ✅ | Host details and statistics |
 
 ### MMDS (Metadata Service)
 
@@ -336,6 +359,40 @@ These features work end-to-end from frontend to backend:
 
 ---
 
+#### 8. **Infrastructure Management** (Complete)
+- **Host Monitoring**: List registered hosts with real-time metrics (CPU, memory, network)
+- **Network Registry**: Central network management with VLAN support and auto-registration
+- **Volume Registry**: Central volume tracking with attachment management and auto-registration
+- **Auto-Discovery**: Networks and volumes automatically registered when VMs are created
+
+**Frontend Files:**
+- `apps/ui/app/(dashboard)/hosts/page.tsx`
+- `apps/ui/app/(dashboard)/networks/page.tsx`
+- `apps/ui/app/(dashboard)/volumes/page.tsx`
+- `apps/ui/components/host/host-table.tsx`
+- `apps/ui/components/network/network-table.tsx`
+- `apps/ui/components/volume/volume-table.tsx`
+
+**Backend Files:**
+- `apps/manager/src/features/hosts/routes.rs`
+- `apps/manager/src/features/hosts/repo.rs`
+- `apps/manager/src/features/networks/routes.rs`
+- `apps/manager/src/features/networks/repo.rs`
+- `apps/manager/src/features/networks/service.rs`
+- `apps/manager/src/features/volumes/routes.rs`
+- `apps/manager/src/features/volumes/repo.rs`
+- `apps/manager/src/features/volumes/service.rs`
+
+**Key Features:**
+- **Host Metrics**: CPU usage, memory usage, uptime, network stats from heartbeats
+- **Network Management**: Bridge networks with optional VLAN tagging, CIDR/gateway configuration
+- **Volume Tracking**: Central registry of all VM volumes with attachment tracking
+- **Auto-Registration**: Networks and rootfs volumes automatically registered during VM creation
+- **Isolation**: VLAN support for network isolation between VMs
+- **Volume Naming**: Descriptive volume names like "{vm_name} (rootfs-{uuid}.ext4)"
+
+---
+
 ### ⚠️ Partially Wired Features
 
 These features are partially implemented or have limitations:
@@ -449,7 +506,9 @@ These backend endpoints have no frontend integration:
 | Images | 4 | 4 | 0 | 0 | 100% ✅ |
 | Templates | 4 | 0 | 2 | 2 | 25% ⚠️ |
 | VM Configuration | 12 | 1 | 0 | 11 | 8% ❌ |
-| Hosts | 2 | 0 | 0 | 2 | N/A 🔨 |
+| Hosts | 4 | 2 | 0 | 2 | 50% ✅ |
+| Networks | 5 | 5 | 0 | 0 | 100% ✅ |
+| Volumes | 8 | 8 | 0 | 0 | 100% ✅ |
 | Logs | 1 | 0 | 0 | 1 | N/A 🔨 |
 
 ---

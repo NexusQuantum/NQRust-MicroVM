@@ -15,6 +15,7 @@ use crate::features::storage::LocalStorage;
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
 use features::snapshots::repo::SnapshotRepository;
+use features::users::repo::UserRepository;
 use features::vms::shell::ShellRepository;
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -35,6 +36,7 @@ pub struct AppState {
     pub hosts: HostRepository,
     pub images: ImageRepository,
     pub snapshots: SnapshotRepository,
+    pub users: UserRepository,
     pub shell_repo: ShellRepository,
     pub allow_direct_image_paths: bool,
     pub storage: LocalStorage,
@@ -49,11 +51,29 @@ async fn main() -> anyhow::Result<()> {
     let db = PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
 
+    // Initialize default admin user if no users exist
+    let users_repo = UserRepository::new(db.clone());
+    let user_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+        .fetch_one(&db)
+        .await?;
+    if user_count == 0 {
+        info!("No users found, creating default admin user (username: root, password: root)");
+        match users_repo.create_user("root", "root", nexus_types::Role::Admin).await {
+            Ok(user) => {
+                info!(username = %user.username, user_id = %user.id, "Default admin user created");
+            }
+            Err(e) => {
+                warn!(error = ?e, "Failed to create default admin user");
+            }
+        }
+    }
+
     let hosts = HostRepository::new(db.clone());
     let image_root =
         std::env::var("MANAGER_IMAGE_ROOT").unwrap_or_else(|_| "/srv/images".to_string());
     let images = ImageRepository::new(db.clone(), image_root);
     let snapshots = SnapshotRepository::new(db.clone());
+    let users = UserRepository::new(db.clone());
     let shell_repo = ShellRepository::new(db.clone());
     let allow_direct_image_paths = std::env::var("MANAGER_ALLOW_IMAGE_PATHS")
         .map(|value| matches_ignore_case(value.trim()))
@@ -64,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
         hosts,
         images,
         snapshots,
+        users,
         shell_repo,
         download_progress,
         allow_direct_image_paths,
@@ -91,7 +112,8 @@ async fn main() -> anyhow::Result<()> {
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_headers(Any)
+                .max_age(std::time::Duration::from_secs(3600)),
         );
     let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".into());
     info!(%bind, "manager listening");

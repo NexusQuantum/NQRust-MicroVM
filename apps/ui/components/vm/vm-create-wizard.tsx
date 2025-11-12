@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
+import { usePreferences } from "@/lib/queries"
 import { z } from "zod"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -65,6 +66,9 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const createVM = useCreateVM()
 
+  // Load user preferences for VM defaults
+  const { data: preferences } = usePreferences()
+
   // Load kernel and rootfs options from backend
   const [kernelOptions, setKernelOptions] = useState<{ name: string; path: string; id: string }[]>([])
   const [rootfsOptions, setRootfsOptions] = useState<{ name: string; path: string; id: string }[]>([])
@@ -87,8 +91,8 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
       description: "",
       username: "root",
       password: "",
-      vcpu: 2,
-      memory: 2048,
+      vcpu: preferences?.vm_defaults?.vcpu || 2,
+      memory: preferences?.vm_defaults?.mem_mib || 2048,
       smtEnabled: false,
       trackDirtyPages: false,
       kernelPath: "",
@@ -102,6 +106,14 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
   })
 
   const formData = watch()
+
+  // Update form defaults when preferences load
+  useEffect(() => {
+    if (preferences?.vm_defaults) {
+      setValue('vcpu', preferences.vm_defaults.vcpu || 2, { shouldValidate: false })
+      setValue('memory', preferences.vm_defaults.mem_mib || 2048, { shouldValidate: false })
+    }
+  }, [preferences, setValue])
 
   useEffect(() => {
     (async () => {

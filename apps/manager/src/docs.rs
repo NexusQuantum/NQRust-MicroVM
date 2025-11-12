@@ -8,9 +8,14 @@ use utoipa_swagger_ui::SwaggerUi;
     paths(
         crate::features::hosts::routes::register,
         crate::features::hosts::routes::heartbeat,
+        crate::features::hosts::routes::list,
+        crate::features::hosts::routes::get,
+        crate::features::hosts::routes::delete,
         crate::features::templates::routes::create,
         crate::features::templates::routes::list,
         crate::features::templates::routes::get,
+        crate::features::templates::routes::update,
+        crate::features::templates::routes::delete,
         crate::features::templates::routes::instantiate,
         crate::features::vms::routes::create,
         crate::features::vms::routes::list,
@@ -66,6 +71,13 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::features::vms::routes::put_balloon,
         crate::features::vms::routes::patch_balloon,
         crate::features::vms::routes::patch_balloon_statistics,
+        crate::features::users::routes::login,
+        crate::features::users::routes::me,
+        crate::features::users::routes::list,
+        crate::features::users::routes::create,
+        crate::features::users::routes::get,
+        crate::features::users::routes::update,
+        crate::features::users::routes::delete,
     ),
     components(
         schemas(
@@ -75,6 +87,8 @@ use utoipa_swagger_ui::SwaggerUi;
             nexus_types::OkResponse,
             nexus_types::CreateTemplateReq,
             nexus_types::CreateTemplateResp,
+            nexus_types::UpdateTemplateReq,
+            nexus_types::UpdateTemplateResp,
             nexus_types::ListTemplatesResp,
             nexus_types::GetTemplateResp,
             nexus_types::InstantiateTemplateReq,
@@ -134,6 +148,13 @@ use utoipa_swagger_ui::SwaggerUi;
             nexus_types::VolumeMount,
             nexus_types::ExecCommandReq,
             nexus_types::ExecCommandResp,
+            nexus_types::User,
+            nexus_types::LoginRequest,
+            nexus_types::LoginResponse,
+            nexus_types::CreateUserRequest,
+            nexus_types::UpdateUserRequest,
+            nexus_types::ListUsersResponse,
+            nexus_types::GetUserResponse,
         )
     ),
     tags(
@@ -146,6 +167,8 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "Containers", description = "Docker container orchestration APIs."),
         (name = "Logs", description = "Development log utilities."),
         (name = "VM devices", description = "Block and network device management."),
+        (name = "Auth", description = "Authentication APIs."),
+        (name = "Users", description = "User management APIs."),
     )
 )]
 pub struct ApiDoc;

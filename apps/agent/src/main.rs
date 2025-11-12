@@ -126,9 +126,96 @@ async fn heartbeat_loop(
 }
 
 fn gather_capabilities(state: &AppState) -> serde_json::Value {
+    let (total_memory_mb, _free_memory_mb) = get_memory_info();
+    let (total_disk_gb, used_disk_gb) = get_disk_info(&state.run_dir);
+
     json!({
         "bridge": state.bridge.clone(),
         "run_dir": state.run_dir.clone(),
         "cpus": num_cpus::get(),
+        "total_memory_mb": total_memory_mb,
+        "total_disk_gb": total_disk_gb,
+        "used_disk_gb": used_disk_gb,
     })
+}
+
+fn get_memory_info() -> (i64, i64) {
+    // Read /proc/meminfo to get memory statistics
+    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+        let mut total_kb = 0;
+        let mut free_kb = 0;
+        let mut available_kb = 0;
+
+        for line in content.lines() {
+            if line.starts_with("MemTotal:") {
+                total_kb = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            } else if line.starts_with("MemFree:") {
+                free_kb = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            } else if line.starts_with("MemAvailable:") {
+                available_kb = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            }
+        }
+
+        let total_mb = total_kb / 1024;
+        let free_mb = if available_kb > 0 {
+            available_kb / 1024
+        } else {
+            free_kb / 1024
+        };
+
+        return (total_mb, free_mb);
+    }
+
+    (0, 0)
+}
+
+fn get_disk_info(path: &str) -> (i64, i64) {
+    // Use statvfs to get disk statistics for the given path
+    use std::os::unix::fs::MetadataExt;
+
+    if let Ok(metadata) = std::fs::metadata(path) {
+        // Try to get filesystem stats using statvfs
+        #[cfg(target_os = "linux")]
+        {
+            use std::ffi::CString;
+            use std::mem::MaybeUninit;
+
+            let path_cstr = match CString::new(path) {
+                Ok(p) => p,
+                Err(_) => return (0, 0),
+            };
+
+            unsafe {
+                let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
+                if libc::statvfs(path_cstr.as_ptr(), stat.as_mut_ptr()) == 0 {
+                    let stat = stat.assume_init();
+                    let block_size = stat.f_frsize as i64;
+                    let total_blocks = stat.f_blocks as i64;
+                    let free_blocks = stat.f_bfree as i64;
+
+                    let total_bytes = total_blocks * block_size;
+                    let used_bytes = (total_blocks - free_blocks) * block_size;
+
+                    let total_gb = total_bytes / (1024 * 1024 * 1024);
+                    let used_gb = used_bytes / (1024 * 1024 * 1024);
+
+                    return (total_gb, used_gb);
+                }
+            }
+        }
+    }
+
+    (0, 0)
 }

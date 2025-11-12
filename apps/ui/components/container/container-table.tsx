@@ -11,6 +11,7 @@ import { Play, Square, RotateCw, FileText, Terminal, Trash2, Search } from "luci
 import { formatDuration } from "@/lib/utils/format"
 import type { Container } from "@/lib/types"
 import { useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer } from "@/lib/queries"
+import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 
 interface ContainerTableProps {
   containers: Container[]
@@ -19,6 +20,7 @@ interface ContainerTableProps {
 export function ContainerTable({ containers }: ContainerTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const { user } = useAuthStore()
 
   const startContainer = useStartContainer()
   const stopContainer = useStopContainer()
@@ -30,7 +32,13 @@ export function ContainerTable({ containers }: ContainerTableProps) {
       container.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       container.image.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = statusFilter === "all" || container.state === statusFilter
-    return matchesSearch && matchesStatus
+
+    // Filter by ownership for non-admin/non-viewer users
+    const canView = user?.role === "admin" || user?.role === "viewer" ||
+                    !(container as any).created_by_user_id ||
+                    (container as any).created_by_user_id === user?.id
+
+    return matchesSearch && matchesStatus && canView
   })
 
   return (
@@ -73,13 +81,14 @@ export function ContainerTable({ containers }: ContainerTableProps) {
               <TableHead>CPU</TableHead>
               <TableHead>Memory</TableHead>
               <TableHead>Ports</TableHead>
+              <TableHead>Owner</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredContainers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                   No containers found
                 </TableCell>
               </TableRow>
@@ -117,65 +126,87 @@ export function ContainerTable({ containers }: ContainerTableProps) {
                       <span className="text-muted-foreground">No ports</span>
                     )}
                   </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {(container as any).created_by_user_id ? (
+                      (container as any).created_by_user_id === user?.id ? (
+                        <span className="text-primary font-medium">You</span>
+                      ) : (
+                        <span className="text-muted-foreground">Other User</span>
+                      )
+                    ) : (
+                      <span className="text-muted-foreground italic">System</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" title="Logs" asChild>
-                        <Link href={`/containers/${container.id}?tab=logs`}>
-                          <FileText className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                      <Button variant="ghost" size="icon" title="Shell" asChild>
-                        <Link href={`/containers/${container.id}?tab=shell`}>
-                          <Terminal className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                      {container.state === "stopped" && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Start"
-                          onClick={() => startContainer.mutate(container.id)}
-                          disabled={startContainer.isPending}
-                        >
-                          <Play className="h-4 w-4" />
+                    {!canModifyResource(user, (container as any).created_by_user_id) &&
+                     !canDeleteResource(user, (container as any).created_by_user_id) ? (
+                      <span className="text-muted-foreground text-sm">Not permitted</span>
+                    ) : (
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" title="Logs" asChild>
+                          <Link href={`/containers/${container.id}?tab=logs`}>
+                            <FileText className="h-4 w-4" />
+                          </Link>
                         </Button>
-                      )}
-                      {container.state === "running" && (
-                        <>
+                        <Button variant="ghost" size="icon" title="Shell" asChild>
+                          <Link href={`/containers/${container.id}?tab=shell`}>
+                            <Terminal className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                        {canModifyResource(user, (container as any).created_by_user_id) && (
+                          <>
+                            {container.state === "stopped" && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Start"
+                                onClick={() => startContainer.mutate(container.id)}
+                                disabled={startContainer.isPending}
+                              >
+                                <Play className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {container.state === "running" && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  title="Restart"
+                                  onClick={() => restartContainer.mutate(container.id)}
+                                  disabled={restartContainer.isPending}
+                                >
+                                  <RotateCw className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  title="Stop"
+                                  onClick={() => stopContainer.mutate(container.id)}
+                                  disabled={stopContainer.isPending}
+                                >
+                                  <Square className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </>
+                        )}
+                        {canDeleteResource(user, (container as any).created_by_user_id) && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            title="Restart"
-                            onClick={() => restartContainer.mutate(container.id)}
-                            disabled={restartContainer.isPending}
+                            title="Delete"
+                            onClick={() => {
+                              if (confirm(`Are you sure you want to delete container "${container.name}"?`)) {
+                                deleteContainer.mutate(container.id)
+                              }
+                            }}
+                            disabled={deleteContainer.isPending}
                           >
-                            <RotateCw className="h-4 w-4" />
+                            <Trash2 className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Stop"
-                            onClick={() => stopContainer.mutate(container.id)}
-                            disabled={stopContainer.isPending}
-                          >
-                            <Square className="h-4 w-4" />
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Delete"
-                        onClick={() => {
-                          if (confirm(`Are you sure you want to delete container "${container.name}"?`)) {
-                            deleteContainer.mutate(container.id)
-                          }
-                        }}
-                        disabled={deleteContainer.isPending}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                        )}
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

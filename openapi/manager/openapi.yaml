@@ -6,6 +6,44 @@ info:
     name: ''
   version: 0.1.0
 paths:
+  /v1/auth/login:
+    post:
+      tags:
+      - Auth
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+        '500':
+          description: Failed to authenticate
+  /v1/auth/me:
+    get:
+      tags:
+      - Auth
+      operationId: me
+      responses:
+        '200':
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Failed to fetch user
   /v1/containers:
     get:
       tags:
@@ -528,6 +566,20 @@ paths:
           description: Function not found
         '500':
           description: Failed to fetch logs
+  /v1/hosts:
+    get:
+      tags:
+      - Hosts
+      operationId: list
+      responses:
+        '200':
+          description: List of all hosts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostListResponse'
+        '500':
+          description: Failed to list hosts
   /v1/hosts/register:
     post:
       tags:
@@ -548,6 +600,53 @@ paths:
                 $ref: '#/components/schemas/RegisterHostResponse'
         '500':
           description: Failed to register host
+  /v1/hosts/{id}:
+    get:
+      tags:
+      - Hosts
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Host details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostDetailResponse'
+        '404':
+          description: Host not found
+        '500':
+          description: Failed to get host
+    delete:
+      tags:
+      - Hosts
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Host deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Cannot delete alive host
+        '404':
+          description: Host not found
+        '500':
+          description: Failed to delete host
   /v1/hosts/{id}/heartbeat:
     post:
       tags:
@@ -802,6 +901,56 @@ paths:
           description: Template not found
         '500':
           description: Failed to fetch template
+    put:
+      tags:
+      - Templates
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateReq'
+        required: true
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateTemplateResp'
+        '404':
+          description: Template not found
+        '500':
+          description: Failed to update template
+    delete:
+      tags:
+      - Templates
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Template deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Template not found
+        '500':
+          description: Failed to delete template
   /v1/templates/{id}/instantiate:
     post:
       tags:
@@ -831,6 +980,126 @@ paths:
           description: Template not found
         '500':
           description: Failed to instantiate template
+  /v1/users:
+    get:
+      tags:
+      - Users
+      operationId: list
+      responses:
+        '200':
+          description: Users listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListUsersResponse'
+        '403':
+          description: Forbidden - admin only
+        '500':
+          description: Failed to list users
+    post:
+      tags:
+      - Users
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+        required: true
+      responses:
+        '200':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid request
+        '403':
+          description: Forbidden - admin only
+        '500':
+          description: Failed to create user
+  /v1/users/{id}:
+    get:
+      tags:
+      - Users
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: User fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetUserResponse'
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: User not found
+        '500':
+          description: Failed to fetch user
+    delete:
+      tags:
+      - Users
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/nexus_types.OkResponse'
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: User not found
+        '500':
+          description: Failed to delete user
+    patch:
+      tags:
+      - Users
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+        required: true
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid request
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: User not found
+        '500':
+          description: Failed to update user
   /v1/vms:
     get:
       tags:
@@ -1578,6 +1847,10 @@ components:
         created_at:
           type: string
           format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
         env_vars:
           type: object
           additionalProperties:
@@ -1873,16 +2146,18 @@ components:
     CreateNicReq:
       type: object
       required:
-      - iface_id
-      - host_dev_name
+      - network_id
       properties:
         guest_mac:
           type: string
           nullable: true
-        host_dev_name:
-          type: string
         iface_id:
           type: string
+          description: Optional interface ID (e.g., "eth1"). If not provided, will auto-assign next sequential interface (eth1, eth2, eth3, etc.)
+          nullable: true
+        network_id:
+          type: string
+          format: uuid
         rx_rate_limiter:
           nullable: true
         tx_rate_limiter:
@@ -1932,6 +2207,19 @@ components:
         id:
           type: string
           format: uuid
+    CreateUserRequest:
+      type: object
+      required:
+      - username
+      - password
+      - role
+      properties:
+        password:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        username:
+          type: string
     CreateVmReq:
       type: object
       required:
@@ -2037,6 +2325,10 @@ components:
         created_at:
           type: string
           format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
         env_vars:
           nullable: true
         guest_ip:
@@ -2152,6 +2444,13 @@ components:
       properties:
         item:
           $ref: '#/components/schemas/Template'
+    GetUserResponse:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/User'
     GetVmResponse:
       type: object
       required:
@@ -2332,6 +2631,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Template'
+    ListUsersResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
     ListVmsResponse:
       type: object
       required:
@@ -2359,6 +2667,26 @@ components:
         show_log_origin:
           type: boolean
           nullable: true
+    LoginRequest:
+      type: object
+      required:
+      - username
+      - password
+      properties:
+        password:
+          type: string
+        username:
+          type: string
+    LoginResponse:
+      type: object
+      required:
+      - token
+      - user
+      properties:
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
     OkResponse:
       type: object
       required:
@@ -2542,6 +2870,67 @@ components:
           nullable: true
         tx_rate_limiter:
           nullable: true
+    UpdateTemplateReq:
+      type: object
+      required:
+      - name
+      - spec
+      properties:
+        name:
+          type: string
+        spec:
+          $ref: '#/components/schemas/TemplateSpec'
+    UpdateTemplateResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/Template'
+    UpdateUserRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          nullable: true
+        role:
+          allOf:
+          - $ref: '#/components/schemas/Role'
+          nullable: true
+        username:
+          type: string
+          nullable: true
+    User:
+      type: object
+      required:
+      - id
+      - username
+      - role
+      - created_at
+      properties:
+        avatar_path:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        role:
+          $ref: '#/components/schemas/Role'
+        theme:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        username:
+          type: string
     Vm:
       type: object
       required:
@@ -2567,6 +2956,10 @@ components:
         created_at:
           type: string
           format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
         fc_unit:
           type: string
         guest_ip:
@@ -2670,6 +3063,9 @@ components:
       - created_at
       - updated_at
       properties:
+        assigned_ip:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -2683,6 +3079,10 @@ components:
           format: uuid
         iface_id:
           type: string
+        network_id:
+          type: string
+          format: uuid
+          nullable: true
         rx_rate_limiter:
           nullable: true
         tx_rate_limiter:
@@ -2724,3 +3124,7 @@ tags:
   description: Development log utilities.
 - name: VM devices
   description: Block and network device management.
+- name: Auth
+  description: Authentication APIs.
+- name: Users
+  description: User management APIs.

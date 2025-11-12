@@ -34,6 +34,7 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
         guest_ip: None,
         port: 3000,
         state: "creating".to_string(),
+        created_by_user_id: None, // TODO: Set from authenticated user context
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         last_invoked_at: None,
@@ -362,6 +363,7 @@ fn row_to_function(row: FunctionRow) -> Function {
         guest_ip: row.guest_ip,
         port: row.port,
         state: row.state,
+        created_by_user_id: row.created_by_user_id,
         created_at: row.created_at,
         updated_at: row.updated_at,
         last_invoked_at: row.last_invoked_at,

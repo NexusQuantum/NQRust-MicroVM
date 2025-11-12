@@ -1,5 +1,5 @@
-use axum::{routing::get, Json, Router, extract::State};
-use serde::Serialize;
+use axum::{routing::{get, post}, Json, Router, extract::State};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -312,6 +312,149 @@ async fn get_metrics(
     Json(metrics)
 }
 
+/// Request to configure a network interface
+#[derive(Deserialize)]
+struct ConfigureInterfaceRequest {
+    interface: String,
+    /// Optional static IP with CIDR (e.g., "10.9.0.5/24")
+    /// If not provided, will try DHCP
+    static_ip: Option<String>,
+    /// Optional gateway IP (e.g., "10.9.0.1")
+    gateway: Option<String>,
+}
+
+/// Configure network interface endpoint
+/// Brings up the interface and starts DHCP client
+async fn configure_interface(
+    Json(req): Json<ConfigureInterfaceRequest>,
+) -> Json<serde_json::Value> {
+    eprintln!("Configuring network interface: {}", req.interface);
+
+    // Step 1: Bring up the interface
+    let link_up = std::process::Command::new("ip")
+        .args(["link", "set", &req.interface, "up"])
+        .output();
+
+    match link_up {
+        Ok(output) if output.status.success() => {
+            eprintln!("✅ Interface {} is now UP", req.interface);
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("❌ Failed to bring up {}: {}", req.interface, stderr);
+            return Json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to bring up interface: {}", stderr)
+            }));
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to execute ip command: {}", e);
+            return Json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to execute ip command: {}", e)
+            }));
+        }
+    }
+
+    // Step 2: Configure IP address (static or DHCP)
+    if let Some(static_ip) = &req.static_ip {
+        // Static IP configuration
+        eprintln!("Configuring static IP {} on {}", static_ip, req.interface);
+
+        let ip_result = std::process::Command::new("ip")
+            .args(["addr", "add", static_ip, "dev", &req.interface])
+            .output();
+
+        match ip_result {
+            Ok(output) if output.status.success() => {
+                eprintln!("✅ Static IP {} configured on {}", static_ip, req.interface);
+
+                // Configure gateway if provided
+                if let Some(gateway) = &req.gateway {
+                    eprintln!("Adding gateway {} via {}", gateway, req.interface);
+                    let route_result = std::process::Command::new("ip")
+                        .args(["route", "add", "default", "via", gateway, "dev", &req.interface])
+                        .output();
+
+                    if let Ok(output) = route_result {
+                        if output.status.success() {
+                            eprintln!("✅ Gateway configured: {}", gateway);
+                        } else {
+                            eprintln!("⚠️  Gateway configuration may have failed (route might already exist)");
+                        }
+                    }
+                }
+
+                return Json(serde_json::json!({
+                    "success": true,
+                    "interface": req.interface,
+                    "mode": "static",
+                    "ip": static_ip,
+                    "gateway": req.gateway
+                }));
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("❌ Failed to configure static IP: {}", stderr);
+                return Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to configure static IP: {}", stderr)
+                }));
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to execute ip addr command: {}", e);
+                return Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to execute ip addr command: {}", e)
+                }));
+            }
+        }
+    } else {
+        // DHCP configuration (background mode, don't wait for response)
+        let dhcp_result = std::process::Command::new("udhcpc")
+            .args(["-i", &req.interface, "-b", "-q", "-n", "-t", "3"])
+            .spawn();
+
+        match dhcp_result {
+            Ok(_) => {
+                eprintln!("✅ DHCP client started on {} using udhcpc (background)", req.interface);
+                return Json(serde_json::json!({
+                    "success": true,
+                    "interface": req.interface,
+                    "mode": "dhcp",
+                    "dhcp_client": "udhcpc"
+                }));
+            }
+            Err(_) => {
+                // Try dhclient as fallback
+                eprintln!("udhcpc not available, trying dhclient...");
+                let dhclient_result = std::process::Command::new("dhclient")
+                    .arg(&req.interface)
+                    .spawn();
+
+                match dhclient_result {
+                    Ok(_) => {
+                        eprintln!("✅ DHCP client started on {} using dhclient (background)", req.interface);
+                        return Json(serde_json::json!({
+                            "success": true,
+                            "interface": req.interface,
+                            "mode": "dhcp",
+                            "dhcp_client": "dhclient"
+                        }));
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to start DHCP client: {}", e);
+                        return Json(serde_json::json!({
+                            "success": false,
+                            "error": format!("Failed to start DHCP client: {}", e)
+                        }));
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct CpuState {
     last_cpu: Arc<AtomicU64>,
@@ -385,6 +528,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/metrics", get(get_metrics))
+        .route("/configure-interface", post(configure_interface))
         .with_state(cpu_state);
 
     // Try to bind to port 9000 (avoid conflict with manager on 8080)

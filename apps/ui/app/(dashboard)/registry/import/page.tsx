@@ -42,7 +42,8 @@ export default function ImportImagePage() {
       toast({
         title: "Missing information",
         description: "Please fill in all required fields.",
-        variant: "destructive",
+        variant: "error",
+        duration: 2000,
       })
       return
     }
@@ -53,6 +54,8 @@ export default function ImportImagePage() {
     toast({
       title: "Image imported",
       description: `${formData.name} has been imported successfully.`,
+      variant: "success",
+      duration: 2000,
     })
 
     setIsUploading(false)
@@ -64,7 +67,8 @@ export default function ImportImagePage() {
       toast({
         title: "Missing information",
         description: "Please fill in all required fields.",
-        variant: "destructive",
+        variant: "error",
+        duration: 2000,
       })
       return
     }
@@ -75,6 +79,8 @@ export default function ImportImagePage() {
     toast({
       title: "Image imported",
       description: `${formData.name} is being downloaded and imported.`,
+      variant: "success",
+      duration: 2000,
     })
 
     setIsUploading(false)

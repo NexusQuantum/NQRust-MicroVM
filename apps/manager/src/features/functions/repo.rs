@@ -17,6 +17,7 @@ pub struct FunctionRow {
     pub guest_ip: Option<String>,
     pub port: i32,
     pub state: String,
+    pub created_by_user_id: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub last_invoked_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -43,8 +44,8 @@ pub struct FunctionInvocationRow {
 
 pub async fn insert(db: &PgPool, row: &FunctionRow) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO function (id, name, runtime, code, handler, timeout_seconds, memory_mb, vcpu, env_vars, port, state)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
+        r#"INSERT INTO function (id, name, runtime, code, handler, timeout_seconds, memory_mb, vcpu, env_vars, port, state, created_by_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#,
     )
     .bind(row.id)
     .bind(&row.name)
@@ -57,6 +58,7 @@ pub async fn insert(db: &PgPool, row: &FunctionRow) -> sqlx::Result<()> {
     .bind(&row.env_vars)
     .bind(row.port)
     .bind(&row.state)
+    .bind(row.created_by_user_id)
     .execute(db)
     .await?;
     Ok(())
@@ -66,7 +68,7 @@ pub async fn list(db: &PgPool) -> sqlx::Result<Vec<FunctionRow>> {
     sqlx::query_as::<_, FunctionRow>(
         r#"
         SELECT id, name, runtime, code, handler, timeout_seconds, memory_mb, vcpu,
-               env_vars, vm_id, guest_ip, port, state, created_at, updated_at, last_invoked_at
+               env_vars, vm_id, guest_ip, port, state, created_by_user_id, created_at, updated_at, last_invoked_at
         FROM function
         ORDER BY created_at DESC
         "#,
@@ -79,7 +81,7 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<Option<FunctionRow>> {
     sqlx::query_as::<_, FunctionRow>(
         r#"
         SELECT id, name, runtime, code, handler, timeout_seconds, memory_mb, vcpu,
-               env_vars, vm_id, guest_ip, port, state, created_at, updated_at, last_invoked_at
+               env_vars, vm_id, guest_ip, port, state, created_by_user_id, created_at, updated_at, last_invoked_at
         FROM function
         WHERE id = $1
         "#,

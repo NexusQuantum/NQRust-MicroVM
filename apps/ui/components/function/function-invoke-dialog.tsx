@@ -59,7 +59,8 @@ export function FunctionInvokeDialog({
       toast({
         title: "Invalid JSON",
         description: "The payload is not valid JSON.",
-        variant: "destructive",
+        variant: "error",
+        duration: 2000,
       })
       return
     }
@@ -73,6 +74,8 @@ export function FunctionInvokeDialog({
           toast({
             title: "Invocation Succeeded",
             description: `Function ${fn.name} invoked successfully.`,
+            variant: "success",
+            duration: 2000,
           })
         },
         onError: (error: any) => {
@@ -81,7 +84,8 @@ export function FunctionInvokeDialog({
           toast({
             title: "Invocation Failed",
             description: `Failed to invoke ${fn.name}: ${errorMessage}`,
-            variant: "destructive",
+            variant: "error",
+            duration: 2000,
           })
         },
       }

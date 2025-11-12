@@ -9,7 +9,7 @@ cargo build -p manager
 export DATABASE_URL=postgres://nexus:nexus@localhost:5432/nexus
 # Optionally set custom image root (default: /srv/images)
 # export MANAGER_IMAGE_ROOT=$HOME/images  # Use home directory instead
-MANAGER_RECONCILER_DISABLED=1 MANAGER_ALLOW_IMAGE_PATHS=true RUST_LOG=info ./target/debug/manager
+sudo -E env MANAGER_RECONCILER_DISABLED=1 MANAGER_ALLOW_IMAGE_PATHS=true RUST_LOG=info ./target/debug/manager
 
 # If migrations fail, reset migration 10:
 # psql $DATABASE_URL -c "DELETE FROM _sqlx_migrations WHERE version = 10;"

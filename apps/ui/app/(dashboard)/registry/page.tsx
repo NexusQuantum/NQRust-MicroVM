@@ -7,7 +7,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ImageRegistry } from "@/components/registry/image-registry"
 import { DockerHubBrowser } from "@/components/registry/dockerhub-browser"
 import { UploadImageDialog } from "@/components/registry/upload-image-dialog"
-import Image from "next/image"
 import { useRegistryImages } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, Box, Container as ContainerIcon, Upload, RefreshCw } from "lucide-react"
@@ -15,10 +14,70 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useQueryClient } from "@tanstack/react-query"
 import { queryKeys } from "@/lib/queries"
 
+const RegistryFlowDiagram = () => (
+  <svg width="350" height="200" viewBox="0 0 350 200" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-lg">
+    <defs>
+      <linearGradient id="greenGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stopColor="#16a34a" />
+        <stop offset="100%" stopColor="#22c55e" />
+      </linearGradient>
+    </defs>
+
+    {/* Docker Hub (Top Left) */}
+    <rect x="0" y="30" width="80" height="50" rx="8" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="40" y="52" textAnchor="middle" fill="#15803d" fontWeight="700" fontSize="12">Docker Hub</text>
+    <text x="40" y="70" textAnchor="middle" fill="#15803d" fontSize="8">Images</text>
+
+    {/* Upload Source (Bottom Left) */}
+    <rect x="0" y="145" width="80" height="50" rx="8" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="40" y="167" textAnchor="middle" fill="#15803d" fontWeight="700" fontSize="12">Upload</text>
+    <text x="40" y="183" textAnchor="middle" fill="#15803d" fontSize="9">Local Files</text>
+
+    {/* Central Registry */}
+    <rect x="125" y="75" width="100" height="90" rx="10" fill="#f0fdf4" stroke="#16a34a" strokeWidth="3" />
+    <text x="175" y="100" textAnchor="middle" fill="#15803d" fontWeight="700" fontSize="16">Registry</text>
+    <line x1="140" y1="110" x2="210" y2="110" stroke="#22c55e" strokeWidth="1.5" opacity="0.4" />
+    <text x="175" y="125" textAnchor="middle" fill="#15803d" fontSize="10.5">VM Images</text>
+    <text x="175" y="140" textAnchor="middle" fill="#15803d" fontSize="10.5">Containers</text>
+    <text x="175" y="155" textAnchor="middle" fill="#15803d" fontSize="10.5">Kernels</text>
+
+    {/* Simple straight arrows to Registry */}
+    <line x1="80" y1="65" x2="125" y2="100" stroke="#16a34a" strokeWidth="2" />
+    <text x="110" y="84" textAnchor="middle" fill="#15803d" fontSize="10" fontWeight="400">Pull</text>
+
+    <line x1="80" y1="155" x2="125" y2="140" stroke="#16a34a" strokeWidth="2" />
+    <text x="100" y="141" textAnchor="middle" fill="#15803d" fontSize="10" fontWeight="400">Import</text>
+
+
+    {/* Simple straight arrows from Registry to Resources */}
+    <line x1="225" y1="95" x2="260" y2="60" stroke="#16a34a" strokeWidth="2" />
+    <text x="242" y="95" textAnchor="middle" fill="#15803d" fontSize="8" fontWeight="400">Deploy</text>
+
+    <line x1="225" y1="120" x2="260" y2="120" stroke="#16a34a" strokeWidth="2" />
+
+    <line x1="225" y1="145" x2="260" y2="168" stroke="#16a34a" strokeWidth="2" />
+
+    {/* Deployed Resources (Right) */}
+    {/* VM */}
+    <rect x="260" y="30" width="75" height="55" rx="8" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="297.5" y="56" textAnchor="middle" fill="#15803d" fontWeight="700" fontSize="12">VM</text>
+    <text x="297.5" y="75" textAnchor="middle" fill="#16a34a" fontWeight="600" fontSize="8">● Running</text>
+
+    {/* Container */}
+    <rect x="260" y="95" width="75" height="55" rx="8" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="297.5" y="121" textAnchor="middle" fill="#15803d" fontWeight="700" fontSize="12">Container</text>
+    <text x="297.5" y="140" textAnchor="middle" fill="#16a34a" fontWeight="600" fontSize="8">● Active</text>
+
+    {/* Function */}
+    <rect x="260" y="160" width="75" height="35" rx="8" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="297.5" y="182" textAnchor="middle" fill="#15803d" fontWeight="700" fontSize="12">Function</text>
+  </svg>
+)
+
 export default function RegistryPage() {
   const { data: images = [], isLoading, error, refetch } = useRegistryImages()
   const queryClient = useQueryClient()
-  
+
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.registryImages })
     refetch()
@@ -39,7 +98,7 @@ export default function RegistryPage() {
 
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-xl border border-border bg-gradient-to-br from-green-50 to-green-100/50 p-8">
+      <div className="relative overflow-hidden rounded-xl border border-border bg-gradient-to-br from-green-50 to-green-100/50 dark:from-green-950/30 dark:to-green-900/20 p-8">
         <div className="relative z-10 flex items-center justify-between">
           <div className="max-w-xl">
             <h1 className="text-3xl font-bold text-foreground">Image Registry</h1>
@@ -48,16 +107,10 @@ export default function RegistryPage() {
             </p>
           </div>
           <div className="hidden lg:block">
-            <Image
-              src="/image-registry-storage-database-illustration.jpg"
-              alt="Image Registry"
-              width={300}
-              height={200}
-              className="rounded-lg"
-            />
+            <RegistryFlowDiagram />
           </div>
         </div>
-        <div className="absolute right-0 top-0 h-64 w-64 translate-x-32 -translate-y-32 rounded-full bg-gradient-to-br from-green-400/30 to-green-600/30 blur-3xl" />
+        <div className="absolute right-0 top-0 h-64 w-64 translate-x-32 -translate-y-32 rounded-full bg-gradient-to-br from-green-400/30 to-green-600/30 dark:from-green-500/20 dark:to-green-600/10 blur-3xl" />
       </div>
 
       <Tabs defaultValue="docker" className="space-y-4">

@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Plus, Edit, Trash2, HardDrive } from "lucide-react"
-import { useVMDrives, useCreateVMDrive, useUpdateVMDrive, useDeleteVMDrive } from "@/lib/queries"
+import { useVMDrives, useCreateVMDrive, useUpdateVMDrive, useDeleteVMDrive, useVM } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -29,7 +29,26 @@ interface VMStorageProps {
 }
 
 export function VMStorage({ vmId }: VMStorageProps) {
+  const { data: vm } = useVM(vmId)
   const { data: drives = [], isLoading, error } = useVMDrives(vmId)
+
+  // Create a virtual rootfs drive from VM data
+  const allDrives = useMemo(() => {
+    if (!vm) return drives
+
+    const rootfsDrive: VmDrive = {
+      id: "default-rootfs",
+      vm_id: vmId,
+      drive_id: "rootfs",
+      path_on_host: vm.rootfs_path,
+      is_root_device: true,
+      is_read_only: false,
+      created_at: vm.created_at,
+      updated_at: vm.updated_at,
+    }
+
+    return [rootfsDrive, ...drives]
+  }, [vm, drives, vmId])
   const createDrive = useCreateVMDrive()
   const updateDrive = useUpdateVMDrive()
   const deleteDrive = useDeleteVMDrive()
@@ -84,17 +103,11 @@ export function VMStorage({ vmId }: VMStorageProps) {
       drive_id: formData.drive_id,
       is_root_device: formData.is_root_device,
       is_read_only: formData.is_read_only,
+      path_on_host: null, // Always auto-provision
     }
 
-    // If path is provided, use it; otherwise let backend auto-provision
-    if (formData.path_on_host) {
-      payload.path_on_host = formData.path_on_host
-    } else {
-      payload.path_on_host = null
-    }
-
-    // If size is provided and no path, use it for auto-provisioning
-    if (formData.size_bytes && !formData.path_on_host) {
+    // Always use size for auto-provisioning
+    if (formData.size_bytes) {
       payload.size_bytes = parseInt(formData.size_bytes, 10)
     }
 
@@ -121,7 +134,7 @@ export function VMStorage({ vmId }: VMStorageProps) {
     // Only send if there are changes
     if (Object.keys(payload).length > 0) {
       updateDrive.mutate(
-        { vmId, driveId: selectedDrive.drive_id, drive: payload },
+        { vmId, driveId: selectedDrive.id, drive: payload },
         {
           onSuccess: () => {
             setShowEditDialog(false)
@@ -141,7 +154,7 @@ export function VMStorage({ vmId }: VMStorageProps) {
     if (!selectedDrive) return
 
     deleteDrive.mutate(
-      { vmId, driveId: selectedDrive.drive_id },
+      { vmId, driveId: selectedDrive.id },
       {
         onSuccess: () => {
           setShowDeleteDialog(false)
@@ -159,7 +172,7 @@ export function VMStorage({ vmId }: VMStorageProps) {
             <HardDrive className="h-5 w-5" />
             <CardTitle>Attached Drives</CardTitle>
           </div>
-          <Button onClick={handleAdd}>
+          <Button onClick={handleAdd} disabled={vm?.state === 'running'}>
             <Plus className="mr-2 h-4 w-4" />
             Add Drive
           </Button>
@@ -183,12 +196,6 @@ export function VMStorage({ vmId }: VMStorageProps) {
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>Failed to load VM drives. Please try again later.</AlertDescription>
             </Alert>
-          ) : drives.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <HardDrive className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p>No drives attached to this VM.</p>
-              <p className="text-sm mt-1">Click "Add Drive" to attach a new drive.</p>
-            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -201,10 +208,17 @@ export function VMStorage({ vmId }: VMStorageProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {drives.map((drive) => (
+                {allDrives.map((drive) => (
                   <TableRow key={drive.drive_id}>
-                    <TableCell className="font-mono text-sm">{drive.drive_id}</TableCell>
-                    <TableCell className="font-mono text-sm">{drive.path_on_host}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {drive.drive_id}
+                      {drive.drive_id === "rootfs" && (
+                        <Badge variant="outline" className="ml-2 bg-purple-100 text-purple-700 border-purple-200">
+                          Default
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm break-all">{drive.path_on_host}</TableCell>
                     <TableCell>
                       {drive.is_root_device ? (
                         <Badge variant="outline" className="bg-blue-100 text-blue-700 border-blue-200">
@@ -216,19 +230,20 @@ export function VMStorage({ vmId }: VMStorageProps) {
                     </TableCell>
                     <TableCell>{drive.is_read_only ? "Yes" : "No"}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => handleEdit(drive)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDelete(drive)}
-                          disabled={drive.is_root_device}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      {drive.drive_id === "rootfs" ? (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      ) : (
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDelete(drive)}
+                            disabled={drive.is_root_device || vm?.state === 'running'}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -244,7 +259,9 @@ export function VMStorage({ vmId }: VMStorageProps) {
           <DialogHeader>
             <DialogTitle>Add New Drive</DialogTitle>
             <DialogDescription>
-              Attach a new drive to this VM. Leave path empty to auto-provision a new volume.
+              Create a new drive for this VM. A volume will be automatically provisioned.
+              <br />
+              <strong>Note:</strong> The VM must be restarted for this change to take effect (hot-plug is not supported).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -260,33 +277,18 @@ export function VMStorage({ vmId }: VMStorageProps) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="path_on_host">Host Path (optional)</Label>
+              <Label htmlFor="size_bytes">Size (MB) *</Label>
               <Input
-                id="path_on_host"
-                placeholder="/srv/images/my-disk.img"
-                value={formData.path_on_host}
-                onChange={(e) => setFormData({ ...formData, path_on_host: e.target.value })}
+                id="size_bytes"
+                type="number"
+                placeholder="1024"
+                value={formData.size_bytes}
+                onChange={(e) => setFormData({ ...formData, size_bytes: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
-                Path to existing image file. Leave empty to auto-provision.
+                Size for the volume in megabytes
               </p>
             </div>
-
-            {!formData.path_on_host && (
-              <div className="space-y-2">
-                <Label htmlFor="size_bytes">Size (MB)</Label>
-                <Input
-                  id="size_bytes"
-                  type="number"
-                  placeholder="1024"
-                  value={formData.size_bytes}
-                  onChange={(e) => setFormData({ ...formData, size_bytes: e.target.value })}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Size for auto-provisioned volume in megabytes
-                </p>
-              </div>
-            )}
 
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -318,45 +320,44 @@ export function VMStorage({ vmId }: VMStorageProps) {
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmitAdd} disabled={!formData.drive_id || createDrive.isPending}>
+            <Button onClick={handleSubmitAdd} disabled={!formData.drive_id || !formData.size_bytes || createDrive.isPending}>
               {createDrive.isPending ? "Adding..." : "Add Drive"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Edit Drive Dialog */}
+      {/* View Drive Dialog */}
       <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Drive</DialogTitle>
-            <DialogDescription>Update drive configuration (limited changes allowed)</DialogDescription>
+            <DialogTitle>Drive Details</DialogTitle>
+            <DialogDescription>View drive information</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Drive ID</Label>
               <Input value={formData.drive_id} disabled />
-              <p className="text-xs text-muted-foreground">Drive ID cannot be changed</p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="edit_path_on_host">Host Path</Label>
-              <Input
-                id="edit_path_on_host"
-                placeholder="/srv/images/my-disk.img"
-                value={formData.path_on_host}
-                onChange={(e) => setFormData({ ...formData, path_on_host: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">Update the path to the image file</p>
+              <Label>Host Path</Label>
+              <Input value={formData.path_on_host} disabled />
+              <p className="text-xs text-muted-foreground">Path to the volume on the host</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Root Device</Label>
+              <Input value={formData.is_root_device ? "Yes" : "No"} disabled />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Read Only</Label>
+              <Input value={formData.is_read_only ? "Yes" : "No"} disabled />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmitEdit} disabled={updateDrive.isPending}>
-              {updateDrive.isPending ? "Updating..." : "Update Drive"}
-            </Button>
+            <Button onClick={() => setShowEditDialog(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -367,7 +368,7 @@ export function VMStorage({ vmId }: VMStorageProps) {
         onOpenChange={setShowDeleteDialog}
         onConfirm={handleConfirmDelete}
         title="Delete Drive"
-        description={`Are you sure you want to delete drive "${selectedDrive?.drive_id}"? This action cannot be undone.`}
+        description={`Are you sure you want to delete drive "${selectedDrive?.drive_id}"? This action cannot be undone. The VM must be restarted for this change to take effect.`}
         confirmText="Delete"
         isLoading={deleteDrive.isPending}
       />

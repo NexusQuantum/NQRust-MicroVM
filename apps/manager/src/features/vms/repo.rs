@@ -22,6 +22,7 @@ pub struct VmRow {
     pub source_snapshot_id: Option<Uuid>,
     pub guest_ip: Option<String>,
     pub tags: Vec<String>,
+    pub created_by_user_id: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -29,8 +30,8 @@ pub struct VmRow {
 #[cfg(not(test))]
 pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO vm (id,name,state,host_id,template_id,api_sock,tap,log_path,http_port,fc_unit,vcpu,mem_mib,kernel_path,rootfs_path,source_snapshot_id,tags)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
+        r#"INSERT INTO vm (id,name,state,host_id,template_id,api_sock,tap,log_path,http_port,fc_unit,vcpu,mem_mib,kernel_path,rootfs_path,source_snapshot_id,tags,created_by_user_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"#,
     )
     .bind(row.id)
     .bind(&row.name)
@@ -48,6 +49,7 @@ pub async fn insert(db: &PgPool, row: &VmRow) -> sqlx::Result<()> {
     .bind(&row.rootfs_path)
     .bind(row.source_snapshot_id)
     .bind(&row.tags)
+    .bind(row.created_by_user_id)
     .execute(db)
     .await?;
     Ok(())
@@ -81,6 +83,7 @@ pub async fn list(db: &PgPool) -> sqlx::Result<Vec<VmRow>> {
                vm.source_snapshot_id,
                vm.guest_ip,
                vm.tags,
+               vm.created_by_user_id,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -121,6 +124,7 @@ pub async fn list_by_host(db: &PgPool, host_id: Uuid) -> sqlx::Result<Vec<VmRow>
                vm.source_snapshot_id,
                vm.guest_ip,
                vm.tags,
+               vm.created_by_user_id,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -169,6 +173,7 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
                vm.source_snapshot_id,
                vm.guest_ip,
                vm.tags,
+               vm.created_by_user_id,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -285,6 +290,8 @@ pub struct VmNic {
     pub guest_mac: Option<String>,
     pub rx_rate_limiter: Option<serde_json::Value>,
     pub tx_rate_limiter: Option<serde_json::Value>,
+    pub network_id: Option<Uuid>,
+    pub assigned_ip: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -318,6 +325,8 @@ impl From<VmNic> for nexus_types::VmNic {
             guest_mac: row.guest_mac,
             rx_rate_limiter: row.rx_rate_limiter,
             tx_rate_limiter: row.tx_rate_limiter,
+            network_id: row.network_id,
+            assigned_ip: row.assigned_ip,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -594,15 +603,17 @@ pub mod nics {
         guest_mac: Option<&str>,
         rx_rate_limiter: Option<&serde_json::Value>,
         tx_rate_limiter: Option<&serde_json::Value>,
+        network_id: Option<Uuid>,
+        assigned_ip: Option<&str>,
     ) -> sqlx::Result<VmNic> {
         #[cfg(not(test))]
         {
             sqlx::query_as::<_, VmNic>(
                 r#"
                 INSERT INTO vm_network_interface
-                    (id, vm_id, iface_id, host_dev_name, guest_mac, rx_rate_limiter, tx_rate_limiter)
+                    (id, vm_id, iface_id, host_dev_name, guest_mac, rx_rate_limiter, tx_rate_limiter, network_id, assigned_ip)
                 VALUES
-                    ($1, $2, $3, $4, $5, $6, $7)
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 RETURNING *
                 "#,
             )
@@ -613,6 +624,8 @@ pub mod nics {
             .bind(guest_mac)
             .bind(rx_rate_limiter)
             .bind(tx_rate_limiter)
+            .bind(network_id)
+            .bind(assigned_ip)
             .fetch_one(db)
             .await
         }
@@ -627,6 +640,8 @@ pub mod nics {
                 guest_mac: guest_mac.map(|s| s.to_string()),
                 rx_rate_limiter: rx_rate_limiter.cloned(),
                 tx_rate_limiter: tx_rate_limiter.cloned(),
+                network_id,
+                assigned_ip: assigned_ip.map(|s| s.to_string()),
                 created_at: now,
                 updated_at: now,
             };

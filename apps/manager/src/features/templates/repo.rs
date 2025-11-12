@@ -1,4 +1,4 @@
-use nexus_types::{CreateTemplateReq, Template, TemplateSpec};
+use nexus_types::{CreateTemplateReq, Template, TemplateSpec, UpdateTemplateReq};
 use sqlx::{error::BoxDynError, PgPool};
 use uuid::Uuid;
 
@@ -78,4 +78,35 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<Template> {
     .await?;
 
     row.try_into()
+}
+
+pub async fn update(db: &PgPool, id: Uuid, req: &UpdateTemplateReq) -> sqlx::Result<Template> {
+    let spec_json = serde_json::to_value(&req.spec).map_err(|err| {
+        let boxed: BoxDynError = Box::new(err);
+        sqlx::Error::Decode(boxed)
+    })?;
+
+    let row = sqlx::query_as::<_, TemplateRow>(
+        r#"
+        UPDATE template
+        SET name = $2, spec_json = $3, updated_at = now()
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(&req.name)
+    .bind(spec_json)
+    .fetch_one(db)
+    .await?;
+
+    row.try_into()
+}
+
+pub async fn delete(db: &PgPool, id: Uuid) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM template WHERE id = $1")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
 }

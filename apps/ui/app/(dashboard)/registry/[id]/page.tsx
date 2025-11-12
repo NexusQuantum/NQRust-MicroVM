@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { use } from "react"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 // Mock data
 const mockImage = {
@@ -28,6 +29,7 @@ const mockImage = {
 
 export default function RegistryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const dateFormat = useDateFormat()
   const { toast } = useToast()
   const router = useRouter()
   const [copied, setCopied] = useState(false)
@@ -41,6 +43,8 @@ export default function RegistryDetailPage({ params }: { params: Promise<{ id: s
     toast({
       title: "Copied to clipboard",
       description: "The text has been copied to your clipboard.",
+      variant: "success",
+      duration: 2000,
     })
   }
 
@@ -50,7 +54,8 @@ export default function RegistryDetailPage({ params }: { params: Promise<{ id: s
     toast({
       title: "Image deleted",
       description: `${mockImage.name} has been deleted from the registry.`,
-      variant: "destructive",
+      variant: "error",
+      duration: 2000,
     })
 
     router.push("/registry")
@@ -60,6 +65,8 @@ export default function RegistryDetailPage({ params }: { params: Promise<{ id: s
     toast({
       title: "Download started",
       description: `Downloading ${mockImage.name}...`,
+      variant: "info",
+      duration: 2000,
     })
   }
 
@@ -87,7 +94,7 @@ export default function RegistryDetailPage({ params }: { params: Promise<{ id: s
               <Badge variant="secondary">{mockImage.project}</Badge>
             </div>
             <p className="text-sm text-muted-foreground mt-1">
-              {formatBytes(mockImage.size_bytes)} • Created {new Date(mockImage.created_at).toLocaleDateString()}
+              {formatBytes(mockImage.size_bytes)} • Created {dateFormat.formatDate(mockImage.created_at)}
             </p>
           </div>
         </div>

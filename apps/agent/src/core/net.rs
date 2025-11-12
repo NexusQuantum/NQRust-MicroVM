@@ -55,6 +55,15 @@ pub async fn ensure_bridge(bridge: &str, uplink: Option<&str>) -> Result<()> {
 }
 
 pub async fn create_tap(name: &str, bridge: &str, owner: Option<&str>) -> Result<()> {
+    create_tap_with_vlan(name, bridge, None, owner).await
+}
+
+pub async fn create_tap_with_vlan(
+    name: &str,
+    bridge: &str,
+    vlan_id: Option<u16>,
+    owner: Option<&str>,
+) -> Result<()> {
     // Check if we're in test mode (no sudo available)
     if std::env::var("AGENT_TEST_MODE").is_ok() {
         eprintln!("AGENT_TEST_MODE: Skipping TAP device creation for {name}");
@@ -85,10 +94,85 @@ pub async fn create_tap(name: &str, bridge: &str, owner: Option<&str>) -> Result
         return Ok(());
     }
 
-    let _ = Command::new("sudo")
-        .args(["-n", "ip", "link", "set", name, "master", bridge])
-        .status()
-        .await?;
+    // If VLAN ID is specified, create VLAN interface and attach TAP to it
+    if let Some(vlan) = vlan_id {
+        let vlan_if = format!("{}.{}", bridge, vlan);
+
+        // Check if VLAN interface already exists
+        let vlan_check = Command::new("ip")
+            .args(["link", "show", &vlan_if])
+            .output()
+            .await?;
+
+        // Create VLAN interface if it doesn't exist
+        if !vlan_check.status.success() {
+            let _ = Command::new("sudo")
+                .args([
+                    "-n",
+                    "ip",
+                    "link",
+                    "add",
+                    "link",
+                    bridge,
+                    "name",
+                    &vlan_if,
+                    "type",
+                    "vlan",
+                    "id",
+                    &vlan.to_string(),
+                ])
+                .status()
+                .await?;
+
+            // Bring up VLAN interface
+            let _ = Command::new("sudo")
+                .args(["-n", "ip", "link", "set", &vlan_if, "up"])
+                .status()
+                .await?;
+
+            // Create a bridge for this VLAN if needed (for TAP attachments)
+            let vlan_br = format!("vlan{}-br", vlan);
+            let br_check = Command::new("ip")
+                .args(["link", "show", &vlan_br])
+                .output()
+                .await?;
+
+            if !br_check.status.success() {
+                let _ = Command::new("sudo")
+                    .args(["-n", "ip", "link", "add", &vlan_br, "type", "bridge"])
+                    .status()
+                    .await?;
+
+                // Attach VLAN interface to VLAN bridge
+                let _ = Command::new("sudo")
+                    .args(["-n", "ip", "link", "set", &vlan_if, "master", &vlan_br])
+                    .status()
+                    .await?;
+
+                // Bring up VLAN bridge
+                let _ = Command::new("sudo")
+                    .args(["-n", "ip", "link", "set", &vlan_br, "up"])
+                    .status()
+                    .await?;
+            }
+
+            eprintln!("Created VLAN interface {} with bridge {} for VLAN {}", vlan_if, vlan_br, vlan);
+        }
+
+        // Attach TAP to VLAN bridge instead of main bridge
+        let vlan_br = format!("vlan{}-br", vlan);
+        let _ = Command::new("sudo")
+            .args(["-n", "ip", "link", "set", name, "master", &vlan_br])
+            .status()
+            .await?;
+    } else {
+        // No VLAN - attach directly to bridge (original behavior)
+        let _ = Command::new("sudo")
+            .args(["-n", "ip", "link", "set", name, "master", bridge])
+            .status()
+            .await?;
+    }
+
     let _ = Command::new("sudo")
         .args(["-n", "ip", "link", "set", name, "up"])
         .status()

@@ -1,11 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Plus, Edit, Trash2, Network } from "lucide-react"
-import { useVMNics, useCreateVMNic, useUpdateVMNic, useDeleteVMNic } from "@/lib/queries"
+import { Badge } from "@/components/ui/badge"
+import { Plus, Trash2, Network, Tag } from "lucide-react"
+import { useVMNics, useCreateVMNic, useUpdateVMNic, useDeleteVMNic, useVM, useNetworks } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import type { VmNic } from "@/lib/types"
 
@@ -27,44 +29,79 @@ interface VMNetworkProps {
 }
 
 export function VMNetwork({ vmId }: VMNetworkProps) {
+  const { data: vm } = useVM(vmId)
   const { data: nics = [], isLoading, error } = useVMNics(vmId)
+  const { data: allNetworks = [] } = useNetworks()
+
+  // Filter networks to only those on this VM's host
+  const hostNetworks = useMemo(() => {
+    if (!vm) return []
+    return allNetworks.filter(network => network.host_id === vm.host_id)
+  }, [vm, allNetworks])
+
+  // Create a virtual default NIC from VM data only if eth0 doesn't exist in database
+  const allNics = useMemo(() => {
+    if (!vm) return nics
+
+    // Check if eth0 already exists in database
+    const hasEth0 = nics.some(nic => nic.iface_id === "eth0")
+
+    if (hasEth0) {
+      // eth0 exists in database, just return database NICs
+      return nics
+    }
+
+    // No eth0 in database, create virtual default NIC from VM data (legacy VMs)
+    const defaultNic: VmNic = {
+      id: "default-eth0",
+      vm_id: vmId,
+      iface_id: "eth0",
+      host_dev_name: vm.tap || "N/A",
+      guest_mac: undefined,
+      created_at: vm.created_at,
+      updated_at: vm.updated_at,
+    }
+
+    return [defaultNic, ...nics]
+  }, [vm, nics, vmId])
   const createNic = useCreateVMNic()
   const updateNic = useUpdateVMNic()
   const deleteNic = useDeleteVMNic()
 
   const [showAddDialog, setShowAddDialog] = useState(false)
-  const [showEditDialog, setShowEditDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [selectedNic, setSelectedNic] = useState<VmNic | null>(null)
 
   const [formData, setFormData] = useState({
-    iface_id: "",
-    host_dev_name: "",
-    guest_mac: "",
+    network_id: "",
   })
 
   const resetForm = () => {
     setFormData({
-      iface_id: "",
-      host_dev_name: "",
-      guest_mac: "",
+      network_id: "",
     })
   }
+
+  // Calculate next sequential interface ID
+  const nextInterfaceId = useMemo(() => {
+    const maxIndex = allNics
+      .map(nic => {
+        const match = nic.iface_id.match(/^eth(\d+)$/)
+        return match ? parseInt(match[1], 10) : 0
+      })
+      .reduce((max, num) => Math.max(max, num), 0)
+    return `eth${maxIndex + 1}`
+  }, [allNics])
 
   const handleAdd = () => {
     resetForm()
     setShowAddDialog(true)
   }
 
-  const handleEdit = (nic: VmNic) => {
-    setSelectedNic(nic)
-    setFormData({
-      iface_id: nic.iface_id,
-      host_dev_name: nic.host_dev_name,
-      guest_mac: nic.guest_mac || "",
-    })
-    setShowEditDialog(true)
-  }
+  // Edit is disabled - NICs are immutable after creation
+  // const handleEdit = (nic: VmNic) => {
+  //   // Not implemented - use delete + recreate workflow
+  // }
 
   const handleDelete = (nic: VmNic) => {
     setSelectedNic(nic)
@@ -73,12 +110,8 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
 
   const handleSubmitAdd = () => {
     const payload: any = {
-      iface_id: formData.iface_id,
-      host_dev_name: formData.host_dev_name,
-    }
-
-    if (formData.guest_mac) {
-      payload.guest_mac = formData.guest_mac
+      network_id: formData.network_id,
+      // iface_id is not provided - backend will auto-assign next sequential interface
     }
 
     createNic.mutate(
@@ -92,21 +125,13 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
     )
   }
 
-  const handleSubmitEdit = () => {
-    if (!selectedNic) return
-
-    // For NICs, we can only update rate limiters (not implemented in this UI yet)
-    // Just close the dialog for now
-    setShowEditDialog(false)
-    setSelectedNic(null)
-    resetForm()
-  }
+  // Edit functionality removed - NICs are immutable after creation
 
   const handleConfirmDelete = () => {
     if (!selectedNic) return
 
     deleteNic.mutate(
-      { vmId, nicId: selectedNic.iface_id },
+      { vmId, nicId: selectedNic.id },
       {
         onSuccess: () => {
           setShowDeleteDialog(false)
@@ -124,7 +149,7 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
             <Network className="h-5 w-5" />
             <CardTitle>Network Interfaces</CardTitle>
           </div>
-          <Button onClick={handleAdd}>
+          <Button onClick={handleAdd} disabled={vm?.state === 'running'}>
             <Plus className="mr-2 h-4 w-4" />
             Add NIC
           </Button>
@@ -149,37 +174,47 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
                 Failed to load VM network interfaces. Please try again later.
               </AlertDescription>
             </Alert>
-          ) : nics.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Network className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p>No network interfaces configured for this VM.</p>
-              <p className="text-sm mt-1">Click "Add NIC" to add a network interface.</p>
-            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Interface ID</TableHead>
+                  <TableHead>Assigned IP</TableHead>
                   <TableHead>Guest MAC</TableHead>
                   <TableHead>Host Device</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {nics.map((nic) => (
+                {allNics.map((nic) => (
                   <TableRow key={nic.iface_id}>
-                    <TableCell className="font-mono text-sm">{nic.iface_id}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {nic.iface_id}
+                      {nic.iface_id === "eth0" && (
+                        <Badge variant="outline" className="ml-2 bg-purple-100 text-purple-700 border-purple-200">
+                          Default
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {nic.assigned_ip ? (
+                        <span className="text-teal-600">{nic.assigned_ip}</span>
+                      ) : (
+                        <span className="text-muted-foreground">DHCP</span>
+                      )}
+                    </TableCell>
                     <TableCell className="font-mono text-sm">{nic.guest_mac || "Auto"}</TableCell>
                     <TableCell className="font-mono text-sm">{nic.host_dev_name}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => handleEdit(nic)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(nic)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      {nic.iface_id === "eth0" ? (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      ) : (
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="icon" onClick={() => handleDelete(nic)} disabled={vm?.state === 'running'}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -195,44 +230,69 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
           <DialogHeader>
             <DialogTitle>Add Network Interface</DialogTitle>
             <DialogDescription>
-              Add a new network interface to this VM. The VM must be stopped to attach a NIC.
+              Add a new network interface to this VM by selecting an existing network. The interface will be automatically assigned as <strong>{nextInterfaceId}</strong>.
+              <br />
+              <strong>Note:</strong> The VM must be restarted for this change to take effect (hot-plug is not supported).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="iface_id">Interface ID *</Label>
-              <Input
-                id="iface_id"
-                placeholder="e.g., eth0, eth1"
-                value={formData.iface_id}
-                onChange={(e) => setFormData({ ...formData, iface_id: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">Unique identifier for this interface</p>
-            </div>
+            {hostNetworks.length === 0 ? (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  No networks available on this host. Please create a network first on the Networks page.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="network_id">Network *</Label>
+                  <Select
+                    value={formData.network_id}
+                    onValueChange={(value) => setFormData({ ...formData, network_id: value })}
+                  >
+                    <SelectTrigger id="network_id">
+                      <SelectValue placeholder="Select network" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {hostNetworks.map((network) => (
+                        <SelectItem key={network.id} value={network.id}>
+                          <div className="flex items-center gap-2">
+                            <span>{network.name}</span>
+                            <Badge variant={network.type === "vlan" ? "default" : "secondary"} className="text-xs">
+                              {network.type === "vlan" && <Tag className="h-3 w-3 mr-1" />}
+                              {network.type.toUpperCase()}
+                            </Badge>
+                            <code className="text-xs bg-muted px-1 rounded">{network.bridge_name}</code>
+                            {network.vlan_id && (
+                              <Badge variant="outline" className="text-xs">VLAN {network.vlan_id}</Badge>
+                            )}
+                            {network.cidr && (
+                              <Badge variant="outline" className="text-xs bg-teal-50 text-teal-700 border-teal-200">
+                                {network.cidr}
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Choose which network to attach this interface to. If the network has a CIDR configured, a static IP will be automatically assigned.
+                  </p>
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="host_dev_name">Host Device *</Label>
-              <Input
-                id="host_dev_name"
-                placeholder="e.g., tap0, vmtap0"
-                value={formData.host_dev_name}
-                onChange={(e) => setFormData({ ...formData, host_dev_name: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">TAP device name on the host</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="guest_mac">Guest MAC Address (optional)</Label>
-              <Input
-                id="guest_mac"
-                placeholder="AA:BB:CC:DD:EE:FF"
-                value={formData.guest_mac}
-                onChange={(e) => setFormData({ ...formData, guest_mac: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                MAC address for the guest. Leave empty for auto-generation.
-              </p>
-            </div>
+                <div className="rounded-lg border border-border bg-muted/50 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Auto-assigned Interface ID</Label>
+                    <code className="text-sm bg-background px-2 py-1 rounded border font-mono">{nextInterfaceId}</code>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    The interface will be automatically assigned as {nextInterfaceId} (sequential numbering)
+                  </p>
+                </div>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>
@@ -240,52 +300,10 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
             </Button>
             <Button
               onClick={handleSubmitAdd}
-              disabled={!formData.iface_id || !formData.host_dev_name || createNic.isPending}
+              disabled={!formData.network_id || hostNetworks.length === 0 || createNic.isPending}
             >
-              {createNic.isPending ? "Adding..." : "Add NIC"}
+              {createNic.isPending ? "Adding..." : `Add ${nextInterfaceId}`}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit NIC Dialog */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Network Interface</DialogTitle>
-            <DialogDescription>
-              View network interface details. Most properties cannot be modified after creation.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Interface ID</Label>
-              <Input value={formData.iface_id} disabled />
-              <p className="text-xs text-muted-foreground">Cannot be changed</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Host Device</Label>
-              <Input value={formData.host_dev_name} disabled />
-              <p className="text-xs text-muted-foreground">Cannot be changed</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Guest MAC Address</Label>
-              <Input value={formData.guest_mac || "Auto-generated"} disabled />
-              <p className="text-xs text-muted-foreground">Cannot be changed</p>
-            </div>
-
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                Network interface properties cannot be modified after creation. To change
-                configuration, delete this NIC and create a new one.
-              </AlertDescription>
-            </Alert>
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setShowEditDialog(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -296,7 +314,7 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
         onOpenChange={setShowDeleteDialog}
         onConfirm={handleConfirmDelete}
         title="Delete Network Interface"
-        description={`Are you sure you want to delete network interface "${selectedNic?.iface_id}"? This action cannot be undone.`}
+        description={`Are you sure you want to delete network interface "${selectedNic?.iface_id}"? This action cannot be undone. The VM must be restarted for this change to take effect.`}
         confirmText="Delete"
         variant="destructive"
         isLoading={deleteNic.isPending}

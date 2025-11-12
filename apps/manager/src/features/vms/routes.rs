@@ -1131,6 +1131,7 @@ impl From<super::repo::VmRow> for Vm {
             source_snapshot_id: row.source_snapshot_id,
             guest_ip: row.guest_ip,
             tags: row.tags,
+            created_by_user_id: row.created_by_user_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }

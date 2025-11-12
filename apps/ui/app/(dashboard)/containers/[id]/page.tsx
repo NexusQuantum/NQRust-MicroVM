@@ -1,6 +1,6 @@
 "use client"
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ReusableTabs, TabItem, TabContentItem } from "@/components/dashboard/tabs-new"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ContainerOverview } from "@/components/container/container-overview"
@@ -9,12 +9,13 @@ import { ContainerLogs } from "@/components/container/container-logs"
 import { ContainerStats } from "@/components/container/container-stats"
 import { ContainerEvents } from "@/components/container/container-events"
 import { EditContainerDialog } from "@/components/container/edit-container-dialog"
-import { Play, Square, RotateCw, Trash2, ArrowLeft, Loader2, Pause, PlayCircle, Edit, ExternalLink } from "lucide-react"
+import { Play, Square, RotateCw, Trash2, ArrowLeft, Loader2, Pause, PlayCircle, Edit, ExternalLink, Eye, ScrollText, BarChart3, Settings, Activity } from "lucide-react"
 import Link from "next/link"
-import { use, useState } from "react"
+import { use, useState, useMemo } from "react"
 import { useContainer, useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer, usePauseContainer, useResumeContainer } from "@/lib/queries"
 import { useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 
 const getStatusColor = (status: string) => {
   switch (status) {
@@ -38,6 +39,7 @@ const getStatusColor = (status: string) => {
 export default function ContainerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
+  const { user } = useAuthStore()
 
   const { data: container, isLoading, error, refetch } = useContainer(id)
   const startContainer = useStartContainer()
@@ -71,6 +73,43 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
       router.push(`/vms/${vmId}`)
     }
   }
+
+  // Define tabs dengan icon
+  const tabs: TabItem[] = useMemo(() => [
+    { value: "overview", label: "Overview", icon: <Eye size={16} /> },
+    { value: "logs", label: "Logs", icon: <ScrollText size={16} /> },
+    { value: "stats", label: "Stats", icon: <BarChart3 size={16} /> },
+    { value: "config", label: "Config", icon: <Settings size={16} /> },
+    { value: "events", label: "Events", icon: <Activity size={16} /> },
+  ], [])
+
+  // Define contents untuk setiap tab
+  const tabContents: TabContentItem[] = useMemo(() => {
+    if (!container) return []
+
+    return [
+      {
+        value: "overview",
+        content: <ContainerOverview container={container} vmId={getVmId()} />,
+      },
+      {
+        value: "logs",
+        content: <ContainerLogs containerId={container.id} />,
+      },
+      {
+        value: "stats",
+        content: <ContainerStats containerId={container.id} vmId={getVmId()} containerState={container.state} />,
+      },
+      {
+        value: "config",
+        content: <ContainerConfig container={container} />,
+      },
+      {
+        value: "events",
+        content: <ContainerEvents containerId={container.id} />,
+      },
+    ]
+  }, [container])
 
   if (isLoading) {
     return (
@@ -116,69 +155,73 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
             Refresh
           </Button>
 
-          {/* Edit button - only enabled when stopped or error */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setEditDialogOpen(true)}
-            disabled={container.state !== "stopped" && container.state !== "error"}
-          >
-            <Edit className="mr-2 h-4 w-4" />
-            Edit
-          </Button>
-
-          {container.state === "stopped" && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => startContainer.mutate(container.id)}
-              disabled={startContainer.isPending}
-            >
-              <Play className="mr-2 h-4 w-4" />
-              Start
-            </Button>
-          )}
-          {container.state === "running" && (
+          {canModifyResource(user, (container as any).created_by_user_id) && (
             <>
+              {/* Edit button - only enabled when stopped or error */}
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => pauseContainer.mutate(container.id)}
-                disabled={pauseContainer.isPending}
+                onClick={() => setEditDialogOpen(true)}
+                disabled={container.state !== "stopped" && container.state !== "error"}
               >
-                <Pause className="mr-2 h-4 w-4" />
-                Pause
+                <Edit className="mr-2 h-4 w-4" />
+                Edit
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => stopContainer.mutate(container.id)}
-                disabled={stopContainer.isPending}
-              >
-                <Square className="mr-2 h-4 w-4" />
-                Stop
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => restartContainer.mutate(container.id)}
-                disabled={restartContainer.isPending}
-              >
-                <RotateCw className="mr-2 h-4 w-4" />
-                Restart
-              </Button>
+
+              {container.state === "stopped" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => startContainer.mutate(container.id)}
+                  disabled={startContainer.isPending}
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  Start
+                </Button>
+              )}
+              {container.state === "running" && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => pauseContainer.mutate(container.id)}
+                    disabled={pauseContainer.isPending}
+                  >
+                    <Pause className="mr-2 h-4 w-4" />
+                    Pause
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => stopContainer.mutate(container.id)}
+                    disabled={stopContainer.isPending}
+                  >
+                    <Square className="mr-2 h-4 w-4" />
+                    Stop
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => restartContainer.mutate(container.id)}
+                    disabled={restartContainer.isPending}
+                  >
+                    <RotateCw className="mr-2 h-4 w-4" />
+                    Restart
+                  </Button>
+                </>
+              )}
+              {container.state === "paused" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => resumeContainer.mutate(container.id)}
+                  disabled={resumeContainer.isPending}
+                >
+                  <PlayCircle className="mr-2 h-4 w-4" />
+                  Resume
+                </Button>
+              )}
             </>
-          )}
-          {container.state === "paused" && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => resumeContainer.mutate(container.id)}
-              disabled={resumeContainer.isPending}
-            >
-              <PlayCircle className="mr-2 h-4 w-4" />
-              Resume
-            </Button>
           )}
 
           {/* View Container VM button */}
@@ -192,47 +235,27 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
             View Container VM
           </Button>
 
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={handleDelete}
-            disabled={deleteContainer.isPending}
-          >
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete
-          </Button>
+          {canDeleteResource(user, (container as any).created_by_user_id) && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleDelete}
+              disabled={deleteContainer.isPending}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
+            </Button>
+          )}
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="bg-muted/50">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="logs">Logs</TabsTrigger>
-          <TabsTrigger value="stats">Stats</TabsTrigger>
-          <TabsTrigger value="config">Config</TabsTrigger>
-          <TabsTrigger value="events">Events</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <ContainerOverview container={container} vmId={getVmId()} />
-        </TabsContent>
-
-        <TabsContent value="logs" className="space-y-4">
-          <ContainerLogs containerId={container.id} />
-        </TabsContent>
-
-        <TabsContent value="stats" className="space-y-4">
-          <ContainerStats containerId={container.id} vmId={getVmId()} containerState={container.state} />
-        </TabsContent>
-
-        <TabsContent value="config" className="space-y-4">
-          <ContainerConfig container={container} />
-        </TabsContent>
-
-        <TabsContent value="events" className="space-y-4">
-          <ContainerEvents containerId={container.id} />
-        </TabsContent>
-      </Tabs>
+      <ReusableTabs
+        tabs={tabs}
+        contents={tabContents}
+        defaultValue="overview"
+        className="space-y-4"
+        tabsContentClassName="space-y-4"
+      />
 
       {/* Edit Container Dialog */}
       <EditContainerDialog

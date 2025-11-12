@@ -1,14 +1,15 @@
 "use client"
 
 import { FunctionEditor, FunctionOverview, FunctionStats, FunctionEvent, FunctionLogs } from "@/components/function"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ReusableTabs, TabItem, TabContentItem } from "@/components/dashboard/tabs-new"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Play, Trash2, FileText } from "lucide-react"
+import { ArrowLeft, Trash2, FileText, Code, FileText as FileTextIcon, BarChart, Calendar, Terminal } from "lucide-react"
 import Link from "next/link"
-import { use, useState } from "react"
+import { use, useState, useMemo } from "react"
 import { useDeleteFunction, useFunction } from "@/lib/queries"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { useAuthStore, canDeleteResource } from "@/lib/auth/store"
 
 
 const getStatusColor = (state: string) => {
@@ -28,6 +29,7 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
   const { id } = use(params)
   const { data: functions, isLoading, error } = useFunction(id)
   const [deleteDialog, setDeleteDialog] = useState(false)
+  const { user } = useAuthStore()
 
   const deleteFunction = useDeleteFunction()
   const handleDelete = () => {
@@ -37,6 +39,46 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
       }
     })
   }
+
+  // Define tabs dengan icon
+  const tabs: TabItem[] = useMemo(() => [
+    { value: "editor", label: "Editor" },
+    { value: "overview", label: "Overview" },
+    { value: "stats", label: "Stats" },
+    { value: "events", label: "Events" },
+    { value: "logs", label: "Logs" },
+  ], [])
+
+  // Define contents untuk setiap tab
+  const tabContents: TabContentItem[] = useMemo(() => [
+    {
+      value: "editor",
+      content: (
+        <FunctionEditor
+          functionData={functions}
+          mode="update"
+          functionId={id}
+          onComplete={() => location.reload()}
+        />
+      ),
+    },
+    {
+      value: "overview",
+      content: <FunctionOverview functionData={functions} />,
+    },
+    {
+      value: "stats",
+      content: <FunctionStats functionData={functions} />,
+    },
+    {
+      value: "events",
+      content: <FunctionEvent functionData={functions} />,
+    },
+    {
+      value: "logs",
+      content: <FunctionLogs functionId={id} />,
+    },
+  ], [functions, id])
 
   if (isLoading) {
     return (
@@ -97,50 +139,24 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
               View Logs
             </Button>
           </Link>
-          {/* <Button variant="outline" size="sm">
-            <Play className="mr-2 h-4 w-4" />
-            Test Function
-          </Button> */}
-          <Button variant="destructive" size="sm" onClick={() => setDeleteDialog(true)} className="cursor-pointer">
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete
-          </Button>
+          {canDeleteResource(user, (functions as any)?.created_by_user_id) && (
+            <Button variant="destructive" size="sm" onClick={() => setDeleteDialog(true)} className="cursor-pointer">
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
+            </Button>
+          )}
         </div>
       </div>
 
-      <Tabs defaultValue="editor" className="space-y-4">
-        <TabsList className="bg-muted/50">
-          <TabsTrigger value="editor">Editor</TabsTrigger>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="stats">Stats</TabsTrigger>
-          <TabsTrigger value="events">Events</TabsTrigger>
-          <TabsTrigger value="logs">Logs</TabsTrigger>
-        </TabsList>
-        <TabsContent value="editor" className="space-y-4">
-          <FunctionEditor
-            functionData={functions}
-            mode="update"
-            functionId={id}
-            onComplete={() => location.reload()}
-          />
-        </TabsContent>
-
-        <TabsContent value="overview" className="space-y-4">
-          <FunctionOverview functionData={functions} />
-        </TabsContent>
-
-        <TabsContent value="stats" className="space-y-4">
-          <FunctionStats functionData={functions} />
-        </TabsContent>
-
-        <TabsContent value="events" className="space-y-4">
-          <FunctionEvent functionData={functions} />
-        </TabsContent>
-
-        <TabsContent value="logs" className="space-y-4">
-          <FunctionLogs functionId={id} />
-        </TabsContent>
-      </Tabs>
+      <ReusableTabs
+        tabs={tabs}
+        contents={tabContents}
+        defaultValue="editor"
+        className="space-y-4"
+        tabsListClassName="bg-secondary gap-1"
+        tabsTriggerClassName="px-4"
+        tabsContentClassName="space-y-4"
+      />
 
       <ConfirmDialog
         open={deleteDialog}

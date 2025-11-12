@@ -38,6 +38,8 @@ pub struct Vm {
     pub guest_ip: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_user_id: Option<uuid::Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -139,6 +141,10 @@ pub struct VmNic {
     pub rx_rate_limiter: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_rate_limiter: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_ip: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -172,8 +178,10 @@ pub struct UpdateDriveReq {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateNicReq {
-    pub iface_id: String,
-    pub host_dev_name: String,
+    /// Optional interface ID (e.g., "eth1"). If not provided, will auto-assign next sequential interface (eth1, eth2, eth3, etc.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iface_id: Option<String>,
+    pub network_id: uuid::Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_mac: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -311,6 +319,17 @@ pub struct Template {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct CreateTemplateResp {
     pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateTemplateReq {
+    pub name: String,
+    pub spec: TemplateSpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateTemplateResp {
+    pub item: Template,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -586,6 +605,8 @@ pub struct Function {
     pub guest_ip: Option<String>,
     pub port: i32,
     pub state: String,  // creating, ready, error, stopped
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_user_id: Option<uuid::Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -739,6 +760,8 @@ pub struct Container {
     pub container_runtime_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_user_id: Option<uuid::Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -924,4 +947,305 @@ pub struct ExecCommandResp {
     pub output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+}
+
+// User Management Types
+
+/// User role for role-based access control (RBAC)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Administrator with full access to all resources
+    Admin,
+    /// Regular user who can create and manage their own resources
+    User,
+    /// Viewer with read-only access to all resources
+    Viewer,
+}
+
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::User => "user",
+            Role::Viewer => "viewer",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "admin" => Some(Role::Admin),
+            "user" => Some(Role::User),
+            "viewer" => Some(Role::Viewer),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Actions that can be audited in the system
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditAction {
+    // Authentication actions
+    Login,
+    Logout,
+    LoginFailed,
+
+    // User management actions
+    CreateUser,
+    UpdateUser,
+    DeleteUser,
+
+    // VM actions
+    CreateVm,
+    StartVm,
+    StopVm,
+    PauseVm,
+    ResumeVm,
+    DeleteVm,
+    UpdateVm,
+    CreateVmSnapshot,
+    RestoreVmSnapshot,
+
+    // Function actions
+    CreateFunction,
+    InvokeFunction,
+    UpdateFunction,
+    DeleteFunction,
+
+    // Container actions
+    CreateContainer,
+    StartContainer,
+    StopContainer,
+    DeleteContainer,
+
+    // Network actions
+    CreateNetwork,
+    UpdateNetwork,
+    DeleteNetwork,
+    CreateNic,
+    DeleteNic,
+
+    // Volume actions
+    CreateVolume,
+    AttachVolume,
+    DetachVolume,
+    DeleteVolume,
+}
+
+impl AuditAction {
+    pub fn as_str(&self) -> &str {
+        match self {
+            AuditAction::Login => "login",
+            AuditAction::Logout => "logout",
+            AuditAction::LoginFailed => "login_failed",
+            AuditAction::CreateUser => "create_user",
+            AuditAction::UpdateUser => "update_user",
+            AuditAction::DeleteUser => "delete_user",
+            AuditAction::CreateVm => "create_vm",
+            AuditAction::StartVm => "start_vm",
+            AuditAction::StopVm => "stop_vm",
+            AuditAction::PauseVm => "pause_vm",
+            AuditAction::ResumeVm => "resume_vm",
+            AuditAction::DeleteVm => "delete_vm",
+            AuditAction::UpdateVm => "update_vm",
+            AuditAction::CreateVmSnapshot => "create_vm_snapshot",
+            AuditAction::RestoreVmSnapshot => "restore_vm_snapshot",
+            AuditAction::CreateFunction => "create_function",
+            AuditAction::InvokeFunction => "invoke_function",
+            AuditAction::UpdateFunction => "update_function",
+            AuditAction::DeleteFunction => "delete_function",
+            AuditAction::CreateContainer => "create_container",
+            AuditAction::StartContainer => "start_container",
+            AuditAction::StopContainer => "stop_container",
+            AuditAction::DeleteContainer => "delete_container",
+            AuditAction::CreateNetwork => "create_network",
+            AuditAction::UpdateNetwork => "update_network",
+            AuditAction::DeleteNetwork => "delete_network",
+            AuditAction::CreateNic => "create_nic",
+            AuditAction::DeleteNic => "delete_nic",
+            AuditAction::CreateVolume => "create_volume",
+            AuditAction::AttachVolume => "attach_volume",
+            AuditAction::DetachVolume => "detach_volume",
+            AuditAction::DeleteVolume => "delete_volume",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct User {
+    pub id: uuid::Uuid,
+    pub username: String,
+    pub role: Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LoginResponse {
+    pub token: String,
+    pub user: User,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    pub role: Role,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateUserRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListUsersResponse {
+    pub items: Vec<User>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GetUserResponse {
+    pub item: User,
+}
+
+// User Preferences
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default)]
+pub struct NotificationPreferences {
+    #[serde(default)]
+    pub email: bool,
+    #[serde(default)]
+    pub browser: bool,
+    #[serde(default)]
+    pub desktop: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default)]
+pub struct VmDefaults {
+    #[serde(default)]
+    pub vcpu: u8,
+    #[serde(default)]
+    pub mem_mib: u32,
+    #[serde(default)]
+    pub disk_gb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default)]
+pub struct UserPreferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<String>,
+    #[serde(default)]
+    pub notifications: NotificationPreferences,
+    #[serde(default)]
+    pub vm_defaults: VmDefaults,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_refresh: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_retention: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GetPreferencesResponse {
+    pub preferences: UserPreferences,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdatePreferencesRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notifications: Option<NotificationPreferences>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_defaults: Option<VmDefaults>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_refresh: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_retention: Option<u32>,
+}
+
+// Profile Management
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProfileRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+pub struct UserPathParams {
+    pub id: uuid::Uuid,
+}
+
+// Audit Log Types
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AuditLog {
+    pub id: uuid::Uuid,
+    pub user_id: Option<uuid::Uuid>,
+    pub username: String,
+    pub action: String,
+    pub resource_type: Option<String>,
+    pub resource_id: Option<uuid::Uuid>,
+    pub details: Option<serde_json::Value>,
+    pub ip_address: Option<String>,
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListAuditLogsResponse {
+    pub items: Vec<AuditLog>,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+pub struct AuditLogQueryParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<i64>,
 }

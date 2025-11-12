@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useRef, useMemo, useEffect } from "react"
+import React, { useState, useRef, useMemo, useEffect, useRef as useRef2 } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,8 +13,7 @@ import { z } from "zod"
 import { useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import type { CreateFunction, UpdateFunction, Function as FnType } from "@/lib/types"
-import { useCreateFunction, useUpdateFunction, useInvokeFunction, useTestFunction } from "@/lib/queries"
-import { useMutation } from "@tanstack/react-query";
+import { useCreateFunction, useUpdateFunction, useInvokeFunction } from "@/lib/queries"
 
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
 
@@ -24,6 +23,10 @@ interface FunctionEditorProps {
   functionData?: FnType
   mode?: "create" | "update"
   functionId?: string
+  // New
+  initialRuntime?: "node" | "python"
+  initialCode?: string
+  initialEvent?: string
 }
 
 const fnCreationSchema = z.object({
@@ -38,6 +41,7 @@ const fnCreationSchema = z.object({
 
 type FnCreationForm = z.infer<typeof fnCreationSchema>
 
+// Default code (biarkan module.exports.handler agar familiar di UI)
 const DEFAULT_CODE_NODE = `// index.js (Node.js 20.x / CommonJS)
 module.exports.handler = async (event) => {
   const a = Number(event?.key1);  
@@ -77,14 +81,118 @@ def handler(event):
 const DEFAULT_PAYLOAD = `{
   "key1": 10,
   "key2": 5
-}`;
+}`
 
+/* ---------------------------------------------
+ * NORMALIZER #1 (BACKEND Create/Update):
+ * Paksa format: const <handlerName> = async (...) => {...}
+ * --------------------------------------------- */
+function normalizeToConstHandlerForBackend(
+  runtime: 'node' | 'python',
+  rawCode: string,
+  handlerName: string
+) {
+  if (runtime !== 'node') return rawCode;
 
-export function FunctionEditor({ functionId, mode = 'create', functionData, onComplete = () => { } }: FunctionEditorProps) {
-  const [testEvent, setTestEvent] = useState(DEFAULT_PAYLOAD)
+  let code = rawCode;
+
+  // module.exports.handler = <func>  →  const <handler> =
+  code = code.replace(/module\.exports\.handler\s*=\s*/g, `const ${handlerName} = `);
+
+  // exports.handler = <func> → const <handler> =
+  code = code.replace(/exports\.handler\s*=\s*/g, `const ${handlerName} = `);
+
+  // module.exports = { handler: <func> }  → ambil value after handler:
+  if (/module\.exports\s*=\s*{[\s\S]*?handler\s*:/m.test(code)) {
+    code = code.replace(
+      /module\.exports\s*=\s*{[\s\S]*?handler\s*:\s*/m,
+      `const ${handlerName} = `
+    );
+    // copot "}" terakhir
+    code = code.replace(/}\s*;?\s*$/, "");
+  }
+
+  // Bersihkan sisa ekspor lain
+  code = code.replace(/module\.exports\s*=\s*[^\n;]+;?/g, "");
+  code = code.replace(/exports\.[a-zA-Z0-9_$]+\s*=\s*[^\n;]+;?/g, "");
+
+  return code.trim();
+}
+
+/* ---------------------------------------------
+ * NORMALIZER #2 (RUN TEST /api/test):
+ * Pastikan selalu ada exports.handler (tanpa mengandalkan module),
+ * lalu mirror ke module.exports.handler jika module tersedia.
+ * --------------------------------------------- */
+function normalizeToModuleExportsForRunTest(
+  runtime: 'node' | 'python',
+  rawCode: string,
+  handlerName: string
+) {
+  if (runtime !== 'node') return rawCode;
+
+  let code = rawCode;
+
+  // 1) module.exports.handler = ... → exports.handler = ...
+  code = code.replace(/module\.exports\.handler\s*=\s*/g, "exports.handler = ");
+
+  // 2) module.exports = { handler: ... } → exports.handler = ...
+  if (/module\.exports\s*=\s*{[\s\S]*?handler\s*:/m.test(code)) {
+    code = code
+      .replace(/module\.exports\s*=\s*{[\s\S]*?handler\s*:\s*/m, "exports.handler = ")
+      .replace(/}\s*;?\s*$/, "");
+  }
+
+  // 3) Biarkan exports.handler = ... kalau sudah ada.
+
+  // 4) Jika belum ada ekspor, tapi ada deklarasi handlerName/handler → ekspor
+  const hasExportsHandler = /exports\.handler\s*=/.test(code);
+  const hasNamedHandlerDecl =
+    new RegExp(`\\b(const|let|var)\\s+${handlerName}\\s*=`).test(code) ||
+    new RegExp(`\\b(async\\s+)?function\\s+${handlerName}\\s*\\(`).test(code);
+  const hasDefaultHandlerDecl =
+    /\b(const|let|var)\s+handler\s*=/.test(code) ||
+    /\b(async\s+)?function\s+handler\s*\(/.test(code);
+
+  if (!hasExportsHandler) {
+    if (hasNamedHandlerDecl) {
+      code += `\n\n// Auto-export for test runner (named)\nexports.handler = ${handlerName};`;
+    } else if (hasDefaultHandlerDecl) {
+      code += `\n\n// Auto-export for test runner (default)\nexports.handler = handler;`;
+    } else {
+      code += `\n\n// Auto-export for test runner (fallback)\nexports.handler = async function(){ throw new Error("Handler '${handlerName}' is not defined."); };`;
+    }
+  }
+
+  // 5) Mirror aman ke module.exports.handler jika module tersedia
+  code += `
+
+/* Guarded mirror to module.exports.handler when module exists */
+try {
+  if (typeof module !== "undefined" && module && module.exports && !module.exports.handler && typeof exports !== "undefined" && exports && exports.handler) {
+    module.exports.handler = exports.handler;
+  }
+} catch {}
+`;
+
+  return code.trim();
+}
+
+export function FunctionEditor({
+  initialRuntime,
+  initialCode,
+  initialEvent,
+  functionId,
+  mode = 'create',
+  functionData,
+  onComplete = () => { },
+}: FunctionEditorProps) {
+  const [testEvent, setTestEvent] = useState(initialEvent ?? DEFAULT_PAYLOAD)
   const editorRef = useRef<any>(null)
+  // console.log('initial Event: ', initialEvent)
+  // console.log('initial Code: ', initialCode)
 
-  // Manual state for test results, inspired by Ide.tsx
+  // Test states
   const [testOutput, setTestOutput] = useState<any | null>(null);
   const [testLogs, setTestLogs] = useState<string[]>([]);
   const [testStatus, setTestStatus] = useState<"idle" | "running" | "done" | "error">("idle");
@@ -100,15 +208,20 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
     watch,
     control,
     setValue,
+    reset,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<FnCreationForm>({
     resolver: zodResolver(fnCreationSchema) as any,
     mode: 'onChange',
     defaultValues: {
       name: functionData?.name ?? "my-function",
-      runtime: functionData?.runtime ?? "node",
+      runtime: (initialRuntime ?? functionData?.runtime ?? "node") as "node" | "python",
       handler: functionData?.handler ?? "handler",
-      code: functionData?.code ?? (functionData?.runtime === 'python' ? DEFAULT_CODE_PY : DEFAULT_CODE_NODE),
+      code:
+        initialCode ??
+        functionData?.code ??
+        ((initialRuntime ?? functionData?.runtime) === 'python' ? DEFAULT_CODE_PY : DEFAULT_CODE_NODE),
       vcpu: functionData?.vcpu ?? 1,
       memory_mb: functionData?.memory_mb ?? 512,
       timeout_seconds: functionData?.timeout_seconds ?? 30
@@ -117,31 +230,56 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
 
   const runtime = watch('runtime')
 
+  // ✅ 1) Terapkan initial* yang datang setelah mount
+  useEffect(() => {
+    // kalau tidak ada apa-apa yang berubah dari playground, skip
+    if (initialRuntime == null && initialCode == null && initialEvent == null) return
+
+    // reset form agar nilai code/runtime sinkron (tanpa error/dirty lama)
+    reset({
+      // pertahankan field lain (atau isi default aman)
+      name: getValues('name') ?? "my-function",
+      handler: getValues('handler') ?? "handler",
+      vcpu: getValues('vcpu') ?? 1,
+      memory_mb: getValues('memory_mb') ?? 512,
+      timeout_seconds: getValues('timeout_seconds') ?? 30,
+
+      // ambil dari initial* jika ada, kalau tidak pakai nilai saat ini
+      runtime: (initialRuntime ?? getValues('runtime') ?? "node") as "node" | "python",
+      code: initialCode ?? getValues('code') ?? DEFAULT_CODE_NODE,
+    })
+
+    // set event editor juga
+    if (initialEvent != null) setTestEvent(initialEvent)
+  }, [initialRuntime, initialCode, initialEvent, reset, getValues])
+
   useEffect(() => {
     if (isUpdate) return
-    if (runtime === 'python') {
-      setValue('code', DEFAULT_CODE_PY)
-    } else {
-      setValue('code', DEFAULT_CODE_NODE)
-    }
-  }, [runtime, setValue, isUpdate])
-
+    if (initialCode != null) return
+    if (runtime === 'python') setValue('code', DEFAULT_CODE_PY)
+    else setValue('code', DEFAULT_CODE_NODE)
+  }, [runtime, setValue, isUpdate, initialCode])
 
   const getLanguage = () => (runtime === 'python' ? "python" : "javascript")
-
 
   const createFunction = useCreateFunction()
   const updateFunction = useUpdateFunction()
   const invokeMutation = useInvokeFunction()
 
+  // Create/Update → kirim SELALU versi const handler (khusus Node)
   const onSubmit = async (data: FnCreationForm) => {
     try {
+      const codeForBackend =
+        data.runtime === 'node'
+          ? normalizeToConstHandlerForBackend('node', data.code, data.handler)
+          : data.code
+
       if (isUpdate) {
         const id = functionId ?? functionData?.id
         if (!id) throw new Error("Missing function id for update")
         const payload: UpdateFunction = {
           name: data.name,
-          code: data.code,
+          code: codeForBackend,
           handler: data.handler,
           timeout_seconds: data.timeout_seconds,
           memory_mb: data.memory_mb,
@@ -153,7 +291,7 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
           name: data.name,
           runtime: data.runtime,
           handler: data.handler,
-          code: data.code,
+          code: codeForBackend,
           vcpu: data.vcpu,
           memory_mb: data.memory_mb
         }
@@ -165,6 +303,7 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
     }
   }
 
+  // Invoke function yang sudah dideploy (tidak kirim code)
   const handleInvoke = async () => {
     const id = functionId ?? functionData?.id
     if (!id) return
@@ -185,6 +324,7 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
     }
   }
 
+  // RUN TEST → selalu jalankan exports.handler (tanpa bergantung module)
   const handleTestRun = React.useCallback(async () => {
     setTestStatus('running');
     setTestOutput(null);
@@ -200,18 +340,25 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
     }
 
     try {
-      const currentRuntime = watch('runtime');  // 'node' | 'python'
+      const currentRuntime = watch('runtime');           // 'node' | 'python'
       const currentCode = watch('code');
-      const currentHandler = watch('handler') || 'handler'; // ← kirim ke API
+      const currentHandler = watch('handler') || 'handler';
+
+      // Khusus RUN TEST: normalisasi ke exports.handler (+ shim aman)
+      const codeForTest = normalizeToModuleExportsForRunTest(
+        currentRuntime as 'node' | 'python',
+        currentCode,
+        currentHandler
+      );
 
       const res = await fetch('/api/test', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           runtime: currentRuntime,
-          code: currentCode,
+          code: codeForTest,   // penting: kirim versi exports.handler
           event: eventObj,
-          handler: currentHandler,             // ← NEW
+          handler: currentHandler, // opsional bagi runner
         }),
       });
 
@@ -231,8 +378,6 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
       setTestOutput({ error: e?.message || String(e) });
     }
   }, [testEvent, watch]);
-
-
 
   return (
     <div className="space-y-6">
@@ -279,7 +424,7 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
                       value={field.value}
                       onChange={(value, ev) => {
                         field.onChange(value ?? "")
-                        if (ev.isFlush) {
+                        if ((ev as any)?.isFlush) {
                           setTimeout(() => editorRef.current?.getAction('editor.action.formatDocument')?.run(), 100)
                         }
                       }}
@@ -327,8 +472,8 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
                     <div className="flex items-center gap-4">
                       <div>
                         <div className="text-sm text-muted-foreground">Status</div>
-                        <div className={`font-medium capitalize ${testStatus === 'done' && testOutput.ok ? 'text-emerald-600' : 'text-red-600'}`}>
-                          {testStatus === 'running' ? 'Running' : (testOutput.ok ? 'Success' : 'Error')}
+                        <div className={`font-medium capitalize ${testOutput.status === 'success' ? 'text-green-600' : 'text-red-600'}`} >
+                          {testOutput.status}
                         </div>
                       </div>
                       <div>
@@ -383,7 +528,7 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
                   name='runtime'
                   control={control}
                   render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange}>
+                    <Select value={field.value} onValueChange={field.onChange} disabled={isUpdate}>
                       <SelectTrigger id="runtime">
                         <SelectValue />
                       </SelectTrigger>
@@ -464,7 +609,7 @@ export function FunctionEditor({ functionId, mode = 'create', functionData, onCo
               <CardTitle>Test Event</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="border rounded-lg overflow-hidden w-full">
+              <div className="border rounded-lg overflow-hidden w/full">
                 <Editor
                   height="150px"
                   language="json"

@@ -1,7 +1,7 @@
 "use client"
 
 import { useVM, useVmStatePatch, useDeleteVM } from "@/lib/queries"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ReusableTabs, TabItem, TabContentItem } from "@/components/dashboard/tabs-new"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { VMOverview } from "@/components/vm/vm-overview"
@@ -11,11 +11,13 @@ import { VMNetwork } from "@/components/vm/vm-network"
 import { VMSnapshots } from "@/components/vm/vm-snapshots"
 import { XTermWrapper } from "@/components/shared/xterm-wrapper"
 import { MetricsChart } from "@/components/shared/metrics-chart"
-import { Play, Square, RotateCw, Trash2, ArrowLeft, Zap, Pause } from "lucide-react"
+import { Play, Square, Trash2, ArrowLeft, Zap, Pause, Settings, HardDrive, Network, Terminal, Camera, BarChart3, Eye } from "lucide-react"
 import Link from "next/link"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { use } from "react"
+import { useSearchParams } from "next/navigation"
+import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 
 const getStatusColor = (state: string) => {
   switch (state) {
@@ -32,10 +34,17 @@ const getStatusColor = (state: string) => {
 
 export default function VMDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
   const { data: vm, isLoading, error } = useVM(id)
   const vmStatePatch = useVmStatePatch()
   const deleteVM = useDeleteVM()
   const [deleteDialog, setDeleteDialog] = useState(false)
+  const { user } = useAuthStore()
+
+  // Valid tab values
+  const validTabs = ['overview', 'config', 'storage', 'network', 'terminal', 'snapshots', 'metrics']
+  const defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview'
 
   const handleAction = (action: 'start' | 'stop' | 'pause' | 'resume' | 'ctrl_alt_del') => {
     vmStatePatch.mutate({ id, action })
@@ -48,6 +57,53 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
       }
     })
   }
+
+  // Define tabs dengan icon
+  const tabs: TabItem[] = useMemo(() => [
+    { value: "overview", label: "Overview", icon: <Eye size={16} /> },
+    { value: "config", label: "Config", icon: <Settings size={16} /> },
+    { value: "storage", label: "Storage", icon: <HardDrive size={16} /> },
+    { value: "network", label: "Network", icon: <Network size={16} /> },
+    { value: "terminal", label: "Terminal", icon: <Terminal size={16} /> },
+    { value: "snapshots", label: "Snapshots", icon: <Camera size={16} /> },
+    { value: "metrics", label: "Metrics", icon: <BarChart3 size={16} /> },
+  ], [])
+
+  // Define contents untuk setiap tab
+  const tabContents: TabContentItem[] = useMemo(() => {
+    if (!vm) return []
+
+    return [
+      {
+        value: "overview",
+        content: <VMOverview vm={vm} />,
+      },
+      {
+        value: "config",
+        content: <VMConfig vm={vm} />,
+      },
+      {
+        value: "storage",
+        content: <VMStorage vmId={vm.id} />,
+      },
+      {
+        value: "network",
+        content: <VMNetwork vmId={vm.id} />,
+      },
+      {
+        value: "terminal",
+        content: <XTermWrapper vmId={vm.id} />,
+      },
+      {
+        value: "snapshots",
+        content: <VMSnapshots vmId={vm.id} />,
+      },
+      {
+        value: "metrics",
+        content: <MetricsChart resourceId={vm.id} />,
+      },
+    ]
+  }, [vm])
 
   if (isLoading) {
     return (
@@ -106,80 +162,54 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {vm.state === 'stopped' && (
-            <Button variant="outline" size="sm" onClick={() => handleAction('start')}>
-              <Play className="mr-2 h-4 w-4" />
-              Start
-            </Button>
-          )}
-          {vm.state === 'running' && (
+          {canModifyResource(user, (vm as any).created_by_user_id) && (
             <>
-              <Button variant="outline" size="sm" onClick={() => handleAction('pause')}>
-                <Pause className="mr-2 h-4 w-4" />
-                Pause
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => handleAction('stop')}>
-                <Square className="mr-2 h-4 w-4" />
-                Stop
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => handleAction('ctrl_alt_del')}>
-                <Zap className="mr-2 h-4 w-4" />
-                Ctrl+Alt+Del
-              </Button>
+              {vm.state === 'stopped' && (
+                <Button variant="outline" size="sm" onClick={() => handleAction('start')}>
+                  <Play className="mr-2 h-4 w-4" />
+                  Start
+                </Button>
+              )}
+              {vm.state === 'running' && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => handleAction('pause')}>
+                    <Pause className="mr-2 h-4 w-4" />
+                    Pause
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => handleAction('stop')}>
+                    <Square className="mr-2 h-4 w-4" />
+                    Stop
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => handleAction('ctrl_alt_del')}>
+                    <Zap className="mr-2 h-4 w-4" />
+                    Ctrl+Alt+Del
+                  </Button>
+                </>
+              )}
+              {vm.state === 'paused' && (
+                <Button variant="outline" size="sm" onClick={() => handleAction('resume')}>
+                  <Play className="mr-2 h-4 w-4" />
+                  Resume
+                </Button>
+              )}
             </>
           )}
-          {vm.state === 'paused' && (
-            <Button variant="outline" size="sm" onClick={() => handleAction('resume')}>
-              <Play className="mr-2 h-4 w-4" />
-              Resume
+          {canDeleteResource(user, (vm as any).created_by_user_id) && (
+            <Button variant="destructive" size="sm" onClick={() => setDeleteDialog(true)}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
             </Button>
           )}
-          <Button variant="destructive" size="sm" onClick={() => setDeleteDialog(true)}>
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete
-          </Button>
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="bg-muted/50">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="config">Config</TabsTrigger>
-          <TabsTrigger value="storage">Storage</TabsTrigger>
-          <TabsTrigger value="network">Network</TabsTrigger>
-          <TabsTrigger value="terminal">Terminal</TabsTrigger>
-          <TabsTrigger value="snapshots">Snapshots</TabsTrigger>
-          <TabsTrigger value="metrics">Metrics</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <VMOverview vm={vm} />
-        </TabsContent>
-
-        <TabsContent value="config" className="space-y-4">
-          <VMConfig vm={vm} />
-        </TabsContent>
-
-        <TabsContent value="storage" className="space-y-4">
-          <VMStorage vmId={vm.id} />
-        </TabsContent>
-
-        <TabsContent value="network" className="space-y-4">
-          <VMNetwork vmId={vm.id} />
-        </TabsContent>
-
-        <TabsContent value="terminal" className="space-y-4">
-          <XTermWrapper vmId={vm.id} />
-        </TabsContent>
-
-        <TabsContent value="snapshots" className="space-y-4">
-          <VMSnapshots vmId={vm.id} />
-        </TabsContent>
-
-        <TabsContent value="metrics" className="space-y-4">
-          <MetricsChart resourceId={vm.id} />
-        </TabsContent>
-      </Tabs>
+      <ReusableTabs
+        tabs={tabs}
+        contents={tabContents}
+        defaultValue={defaultTab}
+        className="space-y-4"
+        tabsContentClassName="space-y-4"
+      />
 
       <ConfirmDialog
         open={deleteDialog}

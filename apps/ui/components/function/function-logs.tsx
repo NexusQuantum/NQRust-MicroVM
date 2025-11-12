@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { useFunctionLogs } from "@/lib/queries"
 import type { FunctionInvocation } from "@/lib/types"
-import { formatRelativeTime } from "@/lib/utils/format"
+import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 interface FunctionLogsProps {
   functionId: string
@@ -21,6 +21,7 @@ export function FunctionLogs({ functionId }: FunctionLogsProps) {
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set())
   const [autoScroll, setAutoScroll] = useState(true)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const dateFormat = useDateFormat()
   const { data: logsResp, isLoading, refetch } = useFunctionLogs(functionId, {
     status: statusFilter !== "all" ? statusFilter : undefined,
     limit: 100,
@@ -54,7 +55,7 @@ export function FunctionLogs({ functionId }: FunctionLogsProps) {
     const logText = filteredInvocations
       .map((inv) => {
         const lines = [
-          `[${new Date(inv.invoked_at).toLocaleString()}] Invocation ${inv.id}`,
+          `[${dateFormat.formatDateTime(inv.invoked_at)}] Invocation ${inv.id}`,
           `  Status: ${inv.status}`,
           `  Duration: ${inv.duration_ms}ms`,
           `  Memory: ${inv.memory_used_mb}MB`,
@@ -167,7 +168,7 @@ export function FunctionLogs({ functionId }: FunctionLogsProps) {
                       </Button>
                       <Badge className={getStatusColor(inv.status)}>{inv.status}</Badge>
                       <span className="text-sm text-muted-foreground">
-                        {formatRelativeTime(inv.invoked_at)}
+                        {dateFormat.formatRelative(inv.invoked_at)}
                       </span>
                       <span className="text-xs text-muted-foreground">Duration: {inv.duration_ms}ms</span>
                       <span className="text-xs text-muted-foreground">Memory: {inv.memory_used_mb}MB</span>
