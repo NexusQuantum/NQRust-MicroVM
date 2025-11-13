@@ -31,7 +31,7 @@ pub struct UserRow {
 impl UserRow {
     /// Convert role string to Role enum
     pub fn get_role(&self) -> nexus_types::Role {
-        nexus_types::Role::from_str(&self.role).unwrap_or(nexus_types::Role::User)
+        self.role.parse().unwrap_or(nexus_types::Role::User)
     }
 }
 

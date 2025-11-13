@@ -972,12 +972,17 @@ impl Role {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+}
+
+impl std::str::FromStr for Role {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "admin" => Some(Role::Admin),
-            "user" => Some(Role::User),
-            "viewer" => Some(Role::Viewer),
-            _ => None,
+            "admin" => Ok(Role::Admin),
+            "user" => Ok(Role::User),
+            "viewer" => Ok(Role::Viewer),
+            _ => Err(format!("Invalid role: {}", s)),
         }
     }
 }

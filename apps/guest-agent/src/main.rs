@@ -5,6 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// CPU statistics tuple: (user, nice, system, idle, iowait, irq, softirq)
+type CpuStats = (u64, u64, u64, u64, u64, u64, u64);
+
 #[derive(Debug, Clone)]
 struct AgentConfig {
     vm_id: String,
@@ -25,7 +28,7 @@ struct GuestMetrics {
 
 /// Read CPU statistics from /proc/stat
 /// Returns (user, nice, system, idle, iowait, irq, softirq)
-fn read_cpu_stats() -> Result<(u64, u64, u64, u64, u64, u64, u64), String> {
+fn read_cpu_stats() -> Result<CpuStats, String> {
     let stat = fs::read_to_string("/proc/stat").map_err(|e| e.to_string())?;
 
     // First line is aggregate CPU stats: "cpu user nice system idle iowait irq softirq ..."
@@ -49,8 +52,8 @@ fn read_cpu_stats() -> Result<(u64, u64, u64, u64, u64, u64, u64), String> {
 
 /// Calculate CPU usage percentage between two samples
 fn calculate_cpu_percent(
-    prev: (u64, u64, u64, u64, u64, u64, u64),
-    curr: (u64, u64, u64, u64, u64, u64, u64),
+    prev: CpuStats,
+    curr: CpuStats,
 ) -> f64 {
     let (prev_user, prev_nice, prev_system, prev_idle, prev_iowait, prev_irq, prev_softirq) = prev;
     let (curr_user, curr_nice, curr_system, curr_idle, curr_iowait, curr_irq, curr_softirq) = curr;
@@ -69,7 +72,7 @@ fn calculate_cpu_percent(
     }
 
     let usage_percent = ((total_diff - idle_diff) as f64 / total_diff as f64) * 100.0;
-    usage_percent.min(100.0).max(0.0)
+    usage_percent.clamp(0.0, 100.0)
 }
 
 /// Read memory statistics from /proc/meminfo
@@ -243,7 +246,7 @@ async fn report_ip_to_manager(config: &AgentConfig, ip: &str) -> Result<(), Box<
 }
 
 /// Get current metrics
-fn get_current_metrics(prev_cpu: Option<(u64, u64, u64, u64, u64, u64, u64)>) -> (GuestMetrics, Option<(u64, u64, u64, u64, u64, u64, u64)>) {
+fn get_current_metrics(prev_cpu: Option<CpuStats>) -> (GuestMetrics, Option<CpuStats>) {
     let cpu_stats = read_cpu_stats().unwrap_or((0, 0, 0, 0, 0, 0, 0));
     let cpu_percent = if let Some(prev) = prev_cpu {
         calculate_cpu_percent(prev, cpu_stats)
@@ -264,7 +267,7 @@ fn get_current_metrics(prev_cpu: Option<(u64, u64, u64, u64, u64, u64, u64)>) ->
         memory_available_kb: total_kb.saturating_sub(used_kb),
         uptime_seconds: uptime,
         load_average: load_avg,
-        process_count: process_count,
+        process_count,
     };
     
     (metrics, Some(cpu_stats))
@@ -385,28 +388,28 @@ async fn configure_interface(
                     }
                 }
 
-                return Json(serde_json::json!({
+                Json(serde_json::json!({
                     "success": true,
                     "interface": req.interface,
                     "mode": "static",
                     "ip": static_ip,
                     "gateway": req.gateway
-                }));
+                }))
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 eprintln!("❌ Failed to configure static IP: {}", stderr);
-                return Json(serde_json::json!({
+                Json(serde_json::json!({
                     "success": false,
                     "error": format!("Failed to configure static IP: {}", stderr)
-                }));
+                }))
             }
             Err(e) => {
                 eprintln!("❌ Failed to execute ip addr command: {}", e);
-                return Json(serde_json::json!({
+                Json(serde_json::json!({
                     "success": false,
                     "error": format!("Failed to execute ip addr command: {}", e)
-                }));
+                }))
             }
         }
     } else {
@@ -418,12 +421,12 @@ async fn configure_interface(
         match dhcp_result {
             Ok(_) => {
                 eprintln!("✅ DHCP client started on {} using udhcpc (background)", req.interface);
-                return Json(serde_json::json!({
+                Json(serde_json::json!({
                     "success": true,
                     "interface": req.interface,
                     "mode": "dhcp",
                     "dhcp_client": "udhcpc"
-                }));
+                }))
             }
             Err(_) => {
                 // Try dhclient as fallback
@@ -435,19 +438,19 @@ async fn configure_interface(
                 match dhclient_result {
                     Ok(_) => {
                         eprintln!("✅ DHCP client started on {} using dhclient (background)", req.interface);
-                        return Json(serde_json::json!({
+                        Json(serde_json::json!({
                             "success": true,
                             "interface": req.interface,
                             "mode": "dhcp",
                             "dhcp_client": "dhclient"
-                        }));
+                        }))
                     }
                     Err(e) => {
                         eprintln!("❌ Failed to start DHCP client: {}", e);
-                        return Json(serde_json::json!({
+                        Json(serde_json::json!({
                             "success": false,
                             "error": format!("Failed to start DHCP client: {}", e)
-                        }));
+                        }))
                     }
                 }
             }
