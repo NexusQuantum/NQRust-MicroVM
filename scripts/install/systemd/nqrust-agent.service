@@ -1,0 +1,39 @@
+[Unit]
+Description=NQRust-MicroVM Agent
+Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
+After=network-online.target
+Before=nqrust-manager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/nqrust-microvm
+
+# Load environment from file
+EnvironmentFile=/etc/nqrust-microvm/agent.env
+
+# Agent binary
+ExecStart=/opt/nqrust-microvm/bin/agent
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nqrust-agent
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=8192
+
+# Allow agent to manage systemd scopes and access KVM
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN
+
+[Install]
+WantedBy=multi-user.target

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ReusableTabs, TabItem } from "@/components/dashboard/tabs-new"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Server, Zap, Container, Play, Trash2, Search, Square, Pause } from "lucide-react"
 import type { UnifiedResource } from "@/lib/api/dashboard"
@@ -145,32 +145,42 @@ export function ResourceTable({ resources }: ResourceTableProps) {
     }
   }
 
+  // Define tabs with badges
+  const tabs: TabItem[] = useMemo(() => [
+    {
+      value: "all",
+      label: "All",
+      badge: (
+        <Badge variant="secondary" className="bg-background text-foreground px-1.5 py-0 text-xs dark:text-primary dark:bg-card">
+          {resourceCounts.all}
+        </Badge>
+      ),
+    },
+    {
+      value: "vm",
+      label: "VMs",
+      icon: <Server className="h-4 w-4" />,
+    },
+    {
+      value: "function",
+      label: "Functions",
+      icon: <Zap className="h-4 w-4" />,
+    },
+    {
+      value: "container",
+      label: "Containers",
+      icon: <Container className="h-4 w-4" />,
+    },
+  ], [resourceCounts])
 
   return (
     <div className="space-y-4">
       {/* Type Filter Tabs */}
-      <Tabs value={typeFilter} onValueChange={setTypeFilter} className="w-full">
-        <TabsList className="bg-secondary gap-1 h-auto p-1">
-          <TabsTrigger value="all" className="gap-2">
-            <span className="font-medium">All</span>
-            <Badge variant="secondary" className="bg-background text-foreground px-1.5 py-0 text-xs">
-              {resourceCounts.all}
-            </Badge>
-          </TabsTrigger>
-          <TabsTrigger value="vm" className="gap-2">
-            <Server className="h-4 w-4" />
-            <span className="font-medium">VMs</span>
-          </TabsTrigger>
-          <TabsTrigger value="function" className="gap-2">
-            <Zap className="h-4 w-4" />
-            <span className="font-medium">Functions</span>
-          </TabsTrigger>
-          <TabsTrigger value="container" className="gap-2">
-            <Container className="h-4 w-4" />
-            <span className="font-medium">Containers</span>
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <ReusableTabs
+        tabs={tabs}
+        value={typeFilter}
+        onValueChange={setTypeFilter}
+      />
 
       {/* Search and State Filter */}
       <div className="flex items-center gap-4">

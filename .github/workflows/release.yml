@@ -1,0 +1,372 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Optimize build performance
+  RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  build-binaries:
+    name: Build Release Binaries
+    runs-on: self-hosted
+    # Alternatives:
+    # runs-on: ubuntu-22.04
+    # runs-on: buildjet-4vcpu-ubuntu-2204
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,x86_64-unknown-linux-musl
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            musl-tools \
+            lld \
+            clang
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
+      - name: Build manager (release)
+        run: |
+          cargo build --release -p manager
+          strip target/release/manager
+
+      - name: Build agent (release)
+        run: |
+          cargo build --release -p agent
+          strip target/release/agent
+
+      - name: Build guest-agent (static musl)
+        run: |
+          cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
+          strip target/x86_64-unknown-linux-musl/release/guest-agent
+
+      - name: Verify binaries
+        run: |
+          ./target/release/manager --version
+          ./target/release/agent --version
+          file target/x86_64-unknown-linux-musl/release/guest-agent | grep "statically linked"
+
+      - name: Rename binaries with target suffix
+        run: |
+          cp target/release/manager nqrust-manager-${{ matrix.target }}
+          cp target/release/agent nqrust-agent-${{ matrix.target }}
+          cp target/x86_64-unknown-linux-musl/release/guest-agent nqrust-guest-agent-x86_64-linux-musl
+
+      - name: Upload binaries as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            nqrust-manager-${{ matrix.target }}
+            nqrust-agent-${{ matrix.target }}
+            nqrust-guest-agent-x86_64-linux-musl
+          retention-days: 1
+
+      - name: Show sccache statistics
+        run: sccache --show-stats
+
+  build-ui:
+    name: Build UI
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pnpm-store
+            apps/ui/node_modules
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('apps/ui/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install UI dependencies
+        working-directory: apps/ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Build UI
+        working-directory: apps/ui
+        run: pnpm build
+
+      - name: Package UI
+        run: |
+          cd apps/ui
+          tar czf ../../nqrust-ui.tar.gz \
+            .next/ \
+            public/ \
+            package.json \
+            next.config.js \
+            pnpm-lock.yaml
+
+      - name: Upload UI as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-build
+          path: nqrust-ui.tar.gz
+          retention-days: 1
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-binaries, build-ui]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Organize release files
+        run: |
+          mkdir -p release/
+          find artifacts/ -type f -name "nqrust-*" -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Generate checksums
+        working-directory: release
+        run: |
+          sha256sum nqrust-manager-* > checksums.txt
+          sha256sum nqrust-agent-* >> checksums.txt
+          sha256sum nqrust-guest-agent-* >> checksums.txt
+          sha256sum nqrust-ui.tar.gz >> checksums.txt
+          cat checksums.txt
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release manifest
+        working-directory: release
+        run: |
+          cat > release-manifest.json <<EOF
+          {
+            "version": "${{ steps.version.outputs.version }}",
+            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "min_compatible_version": "v1.0.0",
+            "changelog": "See CHANGELOG.md for details",
+            "components": {
+              "manager": {
+                "version": "${{ steps.version.outputs.version }}",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-manager-x86_64-unknown-linux-gnu",
+                "checksum": "$(sha256sum nqrust-manager-x86_64-unknown-linux-gnu | cut -d' ' -f1)",
+                "size": $(stat -f%z nqrust-manager-x86_64-unknown-linux-gnu 2>/dev/null || stat -c%s nqrust-manager-x86_64-unknown-linux-gnu)
+              },
+              "agent": {
+                "version": "${{ steps.version.outputs.version }}",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-unknown-linux-gnu",
+                "checksum": "$(sha256sum nqrust-agent-x86_64-unknown-linux-gnu | cut -d' ' -f1)",
+                "size": $(stat -f%z nqrust-agent-x86_64-unknown-linux-gnu 2>/dev/null || stat -c%s nqrust-agent-x86_64-unknown-linux-gnu)
+              },
+              "guest-agent": {
+                "version": "${{ steps.version.outputs.version }}",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-guest-agent-x86_64-linux-musl",
+                "checksum": "$(sha256sum nqrust-guest-agent-x86_64-linux-musl | cut -d' ' -f1)",
+                "size": $(stat -f%z nqrust-guest-agent-x86_64-linux-musl 2>/dev/null || stat -c%s nqrust-guest-agent-x86_64-linux-musl)
+              },
+              "ui": {
+                "version": "${{ steps.version.outputs.version }}",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-ui.tar.gz",
+                "checksum": "$(sha256sum nqrust-ui.tar.gz | cut -d' ' -f1)",
+                "size": $(stat -f%z nqrust-ui.tar.gz 2>/dev/null || stat -c%s nqrust-ui.tar.gz)
+              }
+            },
+            "migrations": {
+              "from": "v1.0.0",
+              "requires_downtime": false,
+              "breaking_changes": false
+            }
+          }
+          EOF
+
+          cat release-manifest.json
+          jq '.' release-manifest.json  # Validate JSON
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md <<'EOF'
+          ## NQRust-MicroVM ${{ steps.version.outputs.version }}
+
+          ### Installation
+
+          **Quick Install (Ubuntu 22.04+):**
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install/install.sh | sudo bash
+          ```
+
+          **Manual Install:**
+          ```bash
+          # Download installer
+          curl -LO https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install/install.sh
+          chmod +x install.sh
+
+          # Run installer
+          sudo ./install.sh --mode production
+          ```
+
+          ### Pre-built Binaries
+
+          Download and install manually:
+          - Manager: [nqrust-manager-x86_64-unknown-linux-gnu](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-manager-x86_64-unknown-linux-gnu)
+          - Agent: [nqrust-agent-x86_64-unknown-linux-gnu](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-unknown-linux-gnu)
+          - Guest Agent: [nqrust-guest-agent-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-guest-agent-x86_64-linux-musl)
+          - UI: [nqrust-ui.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-ui.tar.gz)
+
+          ### Checksums
+          ```
+          $(cat release/checksums.txt)
+          ```
+
+          ### Requirements
+          - Ubuntu 22.04+ or Debian 11+ or RHEL 8+
+          - x86_64 CPU with KVM support
+          - 2GB+ RAM
+          - 20GB+ disk space
+
+          ### What's New
+          - See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details
+
+          ### Documentation
+          - [Installation Guide](https://github.com/${{ github.repository }}/blob/main/README.md)
+          - [Quick Start](https://github.com/${{ github.repository }}/blob/main/RUN.md)
+          - [Features](https://github.com/${{ github.repository }}/blob/main/FEATURES.md)
+          EOF
+
+          echo "notes_file=release_notes.md" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body_path: ${{ steps.release_notes.outputs.notes_file }}
+          draft: false
+          prerelease: false
+          files: |
+            release/nqrust-manager-x86_64-unknown-linux-gnu
+            release/nqrust-agent-x86_64-unknown-linux-gnu
+            release/nqrust-guest-agent-x86_64-linux-musl
+            release/nqrust-ui.tar.gz
+            release/checksums.txt
+            release/release-manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release manifest as latest
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: Latest Release
+          body: "Latest release manifest for auto-updater"
+          draft: false
+          prerelease: false
+          files: release/release-manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-installer:
+    name: Test Installer
+    needs: create-release
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        mode: [production, dev, manager, agent]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Test installer (${{ matrix.mode }} mode)
+        run: |
+          # Test in non-interactive mode
+          sudo bash scripts/install/install.sh \
+            --mode ${{ matrix.mode }} \
+            --non-interactive \
+            --network-mode nat
+
+      - name: Verify services
+        if: matrix.mode != 'agent'
+        run: |
+          systemctl is-active nqrust-manager
+          curl -f http://localhost:18080/health
+
+      - name: Verify agent
+        if: matrix.mode != 'manager'
+        run: |
+          systemctl is-active nqrust-agent
+          curl -f http://localhost:19090/health
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          journalctl -u nqrust-manager -n 100 --no-pager || true
+          journalctl -u nqrust-agent -n 100 --no-pager || true
+
+      - name: Test uninstaller
+        run: |
+          sudo bash scripts/install/uninstall.sh \
+            --force \
+            --remove-all

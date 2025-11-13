@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { StatusBadge } from "@/components/shared/status-badge"
 import { FileText, Play, Trash2, Search, Check, AlertTriangle, Loader2, Clipboard } from "lucide-react"
 import {
   Pagination,
@@ -218,45 +219,6 @@ export function FunctionTable({ functions }: FunctionTableProps) {
     }
   }
 
-  // badge helper
-  const getRuntimeBadge = (runtime: string) => {
-    const colors = {
-      node: "bg-[#6cc24a] text-black border-[#44883e]",
-      python: "bg-[#ffde57] text-[#4584b6] border-[#4584b6]",
-    }
-    const labels = {
-      node: "Node.js",
-      python: "Python",
-    }
-    return (
-      <Badge variant="outline" className={colors[runtime as keyof typeof colors]}>
-        {labels[runtime as keyof typeof labels]}
-      </Badge>
-    )
-  }
-
-  const getStateBagde = (state: string) => {
-    const colors = {
-      creating: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      deploying: "bg-blue-100 text-blue-700 border-blue-200",
-      ready: "bg-green-100 text-green-700 border-green-200",
-      error: "bg-red-100 text-red-700 border-red-200",
-      booting: "bg-gray-100 text-gray-700 border-gray-200",
-    }
-    const labels = {
-      creating: "Creating",
-      deploying: "Deploying",
-      ready: "Ready",
-      error: "Error",
-      booting: "Booting",
-    }
-    return (
-      <Badge variant="outline" className={colors[state as keyof typeof colors]}>
-        {labels[state as keyof typeof labels]}
-      </Badge>
-    )
-  }
-
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -341,8 +303,12 @@ export function FunctionTable({ functions }: FunctionTableProps) {
                       {fn.name}
                     </Link>
                   </TableCell>
-                  <TableCell>{getRuntimeBadge(fn.runtime)}</TableCell>
-                  <TableCell>{getStateBagde(fn.state)}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={fn.runtime as any} />
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={fn.state as any} />
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {fn.last_invoked_at ? dateFormat.formatRelative(fn.last_invoked_at) : "Never"}
                   </TableCell>

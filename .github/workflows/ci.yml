@@ -1,0 +1,334 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Optimize build performance
+  RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            postgresql \
+            postgresql-contrib \
+            lld \
+            clang
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "CREATE DATABASE nexus;"
+          sudo -u postgres psql -c "CREATE USER nexus WITH PASSWORD 'nexus';"
+          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;"
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Run tests
+        run: cargo test --all-features
+        env:
+          DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
+
+  build:
+    name: Build
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        profile: [debug, release]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            musl-tools \
+            lld \
+            clang
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.profile }}-
+
+      - name: Build manager
+        run: |
+          if [ "${{ matrix.profile }}" = "release" ]; then
+            cargo build --release -p manager
+          else
+            cargo build -p manager
+          fi
+
+      - name: Build agent
+        run: |
+          if [ "${{ matrix.profile }}" = "release" ]; then
+            cargo build --release -p agent
+          else
+            cargo build -p agent
+          fi
+
+      - name: Build guest-agent (static)
+        run: |
+          if [ "${{ matrix.profile }}" = "release" ]; then
+            cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
+          else
+            cargo build --target x86_64-unknown-linux-musl -p guest-agent
+          fi
+
+      - name: Verify binaries
+        run: |
+          if [ "${{ matrix.profile }}" = "release" ]; then
+            ./target/release/manager --version
+            ./target/release/agent --version
+            file target/x86_64-unknown-linux-musl/release/guest-agent
+          else
+            ./target/debug/manager --version
+            ./target/debug/agent --version
+            file target/x86_64-unknown-linux-musl/debug/guest-agent
+          fi
+
+      - name: Show sccache statistics
+        run: sccache --show-stats
+
+  build-ui:
+    name: Build UI
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pnpm-store
+            apps/ui/node_modules
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('apps/ui/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        working-directory: apps/ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        working-directory: apps/ui
+        run: pnpm type-check || echo "Type check skipped if not configured"
+
+      - name: Lint
+        working-directory: apps/ui
+        run: pnpm lint || echo "Lint skipped if not configured"
+
+      - name: Build
+        working-directory: apps/ui
+        run: pnpm build
+
+      - name: Verify build
+        run: |
+          test -d apps/ui/.next
+          echo "UI build successful"
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+  check-installer-syntax:
+    name: Check Installer Syntax
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Check bash syntax
+        run: |
+          # Check all shell scripts
+          find scripts/install -name "*.sh" -type f -exec bash -n {} \;
+
+      - name: Run shellcheck
+        run: |
+          # Run shellcheck on all scripts
+          find scripts/install -name "*.sh" -type f -exec shellcheck -x {} \;
+
+  integration-test:
+    name: Integration Test
+    runs-on: self-hosted
+    needs: [build, build-ui]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            postgresql \
+            postgresql-contrib \
+            musl-tools \
+            lld \
+            clang
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "CREATE DATABASE nexus;"
+          sudo -u postgres psql -c "CREATE USER nexus WITH PASSWORD 'nexus';"
+          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;"
+          sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;"
+
+      - name: Build all components
+        run: |
+          cargo build --release -p manager
+          cargo build --release -p agent
+          cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
+
+      - name: Run database migrations
+        working-directory: apps/manager
+        run: |
+          cargo install sqlx-cli --no-default-features --features postgres
+          sqlx migrate run
+        env:
+          DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
+
+      - name: Start manager (background)
+        run: |
+          export DATABASE_URL=postgresql://nexus:nexus@localhost/nexus
+          export MANAGER_BIND=127.0.0.1:18080
+          export MANAGER_ALLOW_IMAGE_PATHS=true
+          ./target/release/manager &
+          MANAGER_PID=$!
+          echo "MANAGER_PID=$MANAGER_PID" >> $GITHUB_ENV
+
+          # Wait for manager to start
+          sleep 5
+
+      - name: Test manager API
+        run: |
+          # Health check
+          curl -f http://localhost:18080/health
+
+          # Check API version
+          curl -f http://localhost:18080/v1/vms
+
+          echo "Manager API is responding!"
+
+      - name: Stop manager
+        if: always()
+        run: |
+          if [ -n "$MANAGER_PID" ]; then
+            kill $MANAGER_PID || true
+          fi

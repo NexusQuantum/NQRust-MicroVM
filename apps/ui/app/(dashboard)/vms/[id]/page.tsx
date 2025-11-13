@@ -153,7 +153,7 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
           </Link>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold text-foreground">{vm.name}</h1>
+              <h1 className="text-3xl font-bold text-primary">{vm.name}</h1>
               <Badge className={getStatusColor(vm.state)}>{vm.state}</Badge>
             </div>
             <p className="text-sm text-muted-foreground mt-1">

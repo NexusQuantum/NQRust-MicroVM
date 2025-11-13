@@ -1,0 +1,46 @@
+[Unit]
+Description=NQRust-MicroVM Manager
+Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=nqrust
+Group=nqrust
+WorkingDirectory=/opt/nqrust-microvm
+
+# Load environment from file
+EnvironmentFile=/etc/nqrust-microvm/manager.env
+
+# Manager binary
+ExecStart=/opt/nqrust-microvm/bin/manager
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nqrust-manager
+
+# Security hardening (but allow sudo for rootfs operations)
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/fc /srv/images /var/log/nqrust-microvm /tmp
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Allow core dumps for debugging (optional)
+# LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target

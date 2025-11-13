@@ -1,0 +1,250 @@
+name: Test Installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/install/**'
+      - '.github/workflows/test-installer.yml'
+  pull_request:
+    paths:
+      - 'scripts/install/**'
+  workflow_dispatch:
+
+jobs:
+  test-installer-matrix:
+    name: Test on ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:11
+          - debian:12
+
+    container:
+      image: ${{ matrix.os }}
+      options: --privileged
+
+    steps:
+      - name: Install git
+        run: |
+          apt-get update
+          apt-get install -y git sudo curl
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install KVM dependencies
+        run: |
+          apt-get install -y qemu-kvm cpu-checker || true
+
+      - name: Run installer (production mode)
+        run: |
+          cd scripts/install
+          bash install.sh \
+            --mode production \
+            --non-interactive \
+            --network-mode nat
+
+      - name: Verify installation
+        run: |
+          # Check binaries
+          test -f /opt/nqrust-microvm/bin/manager
+          test -f /opt/nqrust-microvm/bin/agent
+          test -f /opt/nqrust-microvm/bin/guest-agent
+
+          # Check services installed
+          test -f /etc/systemd/system/nqrust-manager.service
+          test -f /etc/systemd/system/nqrust-agent.service
+
+          # Check config
+          test -f /etc/nqrust-microvm/manager.env
+          test -f /etc/nqrust-microvm/agent.env
+
+          # Check directories
+          test -d /srv/fc
+          test -d /srv/images
+
+      - name: Test idempotency (run installer twice)
+        run: |
+          cd scripts/install
+          bash install.sh \
+            --mode production \
+            --non-interactive \
+            --network-mode nat
+
+      - name: Test uninstaller
+        run: |
+          cd scripts/install
+          bash uninstall.sh --force --remove-all
+
+      - name: Verify cleanup
+        run: |
+          # Check binaries removed
+          ! test -d /opt/nqrust-microvm
+
+          # Check services removed
+          ! test -f /etc/systemd/system/nqrust-manager.service
+          ! test -f /etc/systemd/system/nqrust-agent.service
+
+  test-different-modes:
+    name: Test ${{ matrix.mode }} mode
+    runs-on: ubuntu-22.04
+
+    strategy:
+      matrix:
+        mode: [production, dev, manager, agent, minimal]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust (for dev mode)
+        if: matrix.mode == 'dev'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Run installer (${{ matrix.mode }} mode)
+        run: |
+          sudo bash scripts/install/install.sh \
+            --mode ${{ matrix.mode }} \
+            --non-interactive \
+            --network-mode nat
+
+      - name: Verify installation
+        run: |
+          # Common checks
+          test -f /opt/nqrust-microvm/bin/manager || \
+          test -f /opt/nqrust-microvm/bin/agent
+
+          # Mode-specific checks
+          if [ "${{ matrix.mode }}" != "agent" ]; then
+            test -f /opt/nqrust-microvm/bin/manager
+            test -f /etc/systemd/system/nqrust-manager.service
+          fi
+
+          if [ "${{ matrix.mode }}" != "manager" ]; then
+            test -f /opt/nqrust-microvm/bin/agent
+            test -f /etc/systemd/system/nqrust-agent.service
+          fi
+
+  test-network-modes:
+    name: Test ${{ matrix.network }} network mode
+    runs-on: ubuntu-22.04
+
+    strategy:
+      matrix:
+        network: [nat, bridged]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup network interface (for bridged mode)
+        if: matrix.network == 'bridged'
+        run: |
+          # Create dummy interface for testing
+          sudo ip link add dummy0 type dummy
+          sudo ip addr add 192.168.99.1/24 dev dummy0
+          sudo ip link set dummy0 up
+
+      - name: Run installer with ${{ matrix.network }} mode
+        run: |
+          if [ "${{ matrix.network }}" = "nat" ]; then
+            sudo bash scripts/install/install.sh \
+              --mode minimal \
+              --non-interactive \
+              --network-mode nat
+          else
+            # Bridged mode needs DETECTED_INTERFACE set
+            sudo DETECTED_INTERFACE=dummy0 bash scripts/install/install.sh \
+              --mode minimal \
+              --non-interactive \
+              --network-mode bridged
+          fi
+
+      - name: Verify network bridge
+        run: |
+          # Check bridge exists
+          ip link show fcbr0
+
+          # Check bridge is up
+          ip link show fcbr0 | grep "state UP"
+
+          # Check IP forwarding
+          test "$(cat /proc/sys/net/ipv4/ip_forward)" = "1"
+
+      - name: Verify NAT/Bridged setup
+        run: |
+          if [ "${{ matrix.network }}" = "nat" ]; then
+            # Check dnsmasq for NAT mode
+            systemctl is-active dnsmasq
+            # Check NAT rules
+            sudo iptables -t nat -L POSTROUTING -n | grep MASQUERADE
+          fi
+
+  test-preflight-checks:
+    name: Test Pre-flight Checks
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Test preflight checks directly
+        run: |
+          # Source the scripts
+          source scripts/install/lib/common.sh
+          source scripts/install/lib/preflight.sh
+
+          # Run individual checks
+          check_os
+          check_architecture
+          check_kernel
+          check_systemd
+          check_ram 2048
+          check_disk_space 20
+
+          echo "All preflight checks passed!"
+
+  test-upgrade-path:
+    name: Test Upgrade Path
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install v1.0.0 (simulated old version)
+        run: |
+          sudo bash scripts/install/install.sh \
+            --mode minimal \
+            --non-interactive
+
+      - name: Create some test data
+        run: |
+          # Create dummy VM data
+          sudo mkdir -p /srv/fc/vms/test-vm
+          echo "test" | sudo tee /srv/fc/vms/test-vm/test.txt
+
+      - name: Upgrade installation
+        run: |
+          # Re-run installer (should handle existing installation)
+          sudo bash scripts/install/install.sh \
+            --mode minimal \
+            --non-interactive
+
+      - name: Verify data preserved
+        run: |
+          # Check test data still exists
+          test -f /srv/fc/vms/test-vm/test.txt
+          grep -q "test" /srv/fc/vms/test-vm/test.txt
+
+      - name: Verify services still running
+        run: |
+          systemctl is-active nqrust-manager
+          systemctl is-active nqrust-agent

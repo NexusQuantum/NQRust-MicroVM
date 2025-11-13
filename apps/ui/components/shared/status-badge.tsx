@@ -22,8 +22,12 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
     // Function states (matching function-table.tsx)
     creating: "bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800",
     deploying: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
-    ready: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
+    ready: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
     booting: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800",
+
+    // Runtime states
+    node: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:border-cyan-800",
+    python: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
   }
 
   const labels = {
@@ -43,6 +47,10 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
     deploying: "Deploying",
     ready: "Ready",
     booting: "Booting",
+
+    // Runtime states
+    node: "Node.js",
+    python: "Python",
   }
 
   return (

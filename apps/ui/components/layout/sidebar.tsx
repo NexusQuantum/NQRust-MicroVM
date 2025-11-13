@@ -80,16 +80,16 @@ const SidebarItem = React.memo(function SidebarItem({
       className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
         active
-          ? "bg-orange-500 text-white dark:bg-orange-600 dark:text-white"
+          ? "bg-orange-500 text-white dark:bg-orange-600"
           : "text-muted-foreground hover:bg-orange-500/10 hover:text-orange-600 dark:hover:bg-orange-500/20 dark:hover:text-orange-500",
-        collapsed && "justify-center"
+        collapsed && "justify-center text-muted-foreground"
       )}
       title={collapsed ? item.name : undefined}
       aria-current={active ? "page" : undefined}
       aria-label={item.name}
     >
-      <item.icon className="h-5 w-5 flex-shrink-0" />
-      {!collapsed && <span className="truncate">{item.name}</span>}
+      <item.icon className="h-5 w-5 flex-shrink-0 dark:text-foreground" />
+      {!collapsed && <span className="truncate dark:text-foreground">{item.name}</span>}
     </Link>
   )
 })

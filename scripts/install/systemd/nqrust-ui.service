@@ -1,0 +1,42 @@
+[Unit]
+Description=NQRust-MicroVM UI (Next.js)
+Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
+After=network-online.target nqrust-manager.service
+Wants=network-online.target
+Requires=nqrust-manager.service
+
+[Service]
+Type=simple
+User=nqrust
+Group=nqrust
+WorkingDirectory=/opt/nqrust-microvm/ui
+
+# Load environment from file
+EnvironmentFile=/etc/nqrust-microvm/ui.env
+
+# Start Next.js production server
+ExecStart=/usr/bin/pnpm start
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nqrust-ui
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/nqrust-microvm/ui
+
+# Resource limits
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
