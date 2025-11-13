@@ -188,6 +188,8 @@ jobs:
             ./target/debug/agent --version
             file target/x86_64-unknown-linux-musl/debug/guest-agent
           fi
+        env:
+          DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
 
       - name: Show sccache statistics
         run: sccache --show-stats
