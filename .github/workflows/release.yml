@@ -24,7 +24,7 @@ jobs:
     name: Build Release Binaries
     runs-on: self-hosted
     # Alternatives:
-    # runs-on: ubuntu-22.04
+    # runs-on: ubuntu-24.04
     # runs-on: buildjet-4vcpu-ubuntu-2204
     strategy:
       matrix:
@@ -109,7 +109,7 @@ jobs:
 
   build-ui:
     name: Build UI
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -161,7 +161,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [build-binaries, build-ui]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
 
@@ -330,7 +330,7 @@ jobs:
   test-installer:
     name: Test Installer
     needs: create-release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         mode: [production, dev, manager, agent]

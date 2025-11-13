@@ -92,7 +92,7 @@ jobs:
 
   test-different-modes:
     name: Test ${{ matrix.mode }} mode
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     strategy:
       matrix:
@@ -134,7 +134,7 @@ jobs:
 
   test-network-modes:
     name: Test ${{ matrix.network }} network mode
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     strategy:
       matrix:
@@ -189,7 +189,7 @@ jobs:
 
   test-preflight-checks:
     name: Test Pre-flight Checks
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -213,7 +213,7 @@ jobs:
 
   test-upgrade-path:
     name: Test Upgrade Path
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
