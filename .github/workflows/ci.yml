@@ -180,16 +180,18 @@ jobs:
       - name: Verify binaries
         run: |
           if [ "${{ matrix.profile }}" = "release" ]; then
-            # Verify manager binary exists and is executable (skip --version to avoid port conflicts)
+            # Verify binaries exist and are executable (skip --version to avoid port conflicts)
             test -x ./target/release/manager
             file ./target/release/manager
-            ./target/release/agent --version
+            test -x ./target/release/agent
+            file ./target/release/agent
             file target/x86_64-unknown-linux-musl/release/guest-agent
           else
-            # Verify manager binary exists and is executable (skip --version to avoid port conflicts)
+            # Verify binaries exist and are executable (skip --version to avoid port conflicts)
             test -x ./target/debug/manager
             file ./target/debug/manager
-            ./target/debug/agent --version
+            test -x ./target/debug/agent
+            file ./target/debug/agent
             file target/x86_64-unknown-linux-musl/debug/guest-agent
           fi
 
