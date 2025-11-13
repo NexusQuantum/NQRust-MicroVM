@@ -108,7 +108,24 @@ jobs:
             libssl-dev \
             musl-tools \
             lld \
-            clang
+            clang \
+            postgresql \
+            postgresql-contrib
+
+      - name: Setup PostgreSQL
+        run: |
+          # Start PostgreSQL if not running
+          sudo systemctl start postgresql || true
+
+          # Create database and user if they don't exist
+          sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'nexus'" | grep -q 1 || \
+            sudo -u postgres psql -c "CREATE DATABASE nexus;"
+
+          sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'nexus'" | grep -q 1 || \
+            sudo -u postgres psql -c "CREATE USER nexus WITH PASSWORD 'nexus';"
+
+          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
+          sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
 
       - name: Setup sccache (local)
         run: |
@@ -141,6 +158,8 @@ jobs:
           else
             cargo build -p manager
           fi
+        env:
+          DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
 
       - name: Build agent
         run: |
@@ -309,6 +328,8 @@ jobs:
           cargo build --release -p manager
           cargo build --release -p agent
           cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
+        env:
+          DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
 
       - name: Run database migrations
         working-directory: apps/manager
