@@ -76,11 +76,10 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
   // Use react-hook-form with zod validation
   const {
     register,
-    handleSubmit,
     watch,
     setValue,
     trigger,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<VMCreationForm>({
     resolver: zodResolver(vmCreationSchema) as any,
     mode: "onChange",
@@ -137,14 +136,32 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         console.log('Kernel options:', kernels)
         setKernelOptions(kernels)
 
-        // Filter rootfs (kind === "rootfs")
+        // Filter rootfs (kind === "rootfs"), excluding container/function runtime images
+        // These runtime images are only for containers and functions, not classic VMs
+        const runtimeImageNames = [
+          'container-runtime',
+          'node-runtime',
+          'nodejs-runtime',
+          'python-runtime',
+          'go-runtime',
+          'rust-runtime',
+          'ruby-runtime'
+        ]
+
         const rootfs = (allImagesData.items || [])
-          .filter((i: any) => i.kind === 'rootfs')
+          .filter((i: any) => {
+            if (i.kind !== 'rootfs') return false
+
+            // Exclude runtime images by checking if name contains any runtime keyword
+            const lowerName = (i.name || '').toLowerCase()
+            const isRuntimeImage = runtimeImageNames.some(runtime => lowerName.includes(runtime))
+
+            return !isRuntimeImage
+          })
           .map((i: any) => ({
             name: i.name,
             path: i.host_path,
             id: i.id,
-            kind: i.kind
           }))
         console.log('Rootfs options:', rootfs)
         setRootfsOptions(rootfs)
@@ -248,6 +265,9 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
     // Only proceed if validation passes
     if (isValid && currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1)
+
+      // Scroll to top when moving to next step, especially important for review step
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     }
     // If validation fails, errors will be shown automatically
   }
@@ -267,12 +287,44 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
     setValue('guestMac', mac)
   }
 
-  const onSubmit = async (data: VMCreationForm) => {
-    // Only allow submission on the final review step
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    // ALWAYS prevent default form submission
+    e.preventDefault()
+    e.stopPropagation()
+    console.log('Form submit prevented - use explicit Create VM button instead')
+    return false
+  }
+
+  const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    // Prevent Enter key from submitting form
+    if (e.key === 'Enter') {
+      const target = e.target as HTMLElement
+      // Only allow Enter on textarea elements
+      if (target.tagName !== 'TEXTAREA') {
+        e.preventDefault()
+        return false
+      }
+    }
+  }
+
+  const handleCreateVM = async () => {
+    console.log('handleCreateVM called, currentStep:', currentStep)
+
+    // Only allow creation on the final review step
     if (currentStep !== 5) {
-      console.log('Form submitted but not on final step, ignoring')
+      console.warn('Not on review step (step', currentStep, '), cannot create VM')
       return
     }
+
+    // Manually trigger form validation
+    const isValid = await trigger()
+    if (!isValid) {
+      console.error('Form validation failed - please check all required fields')
+      return
+    }
+
+    const data = watch()
+    console.log('All validations passed. Creating VM...')
 
     try {
       const vmReq: CreateVmReq = {
@@ -285,11 +337,13 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         password: data.password,
       }
 
-      console.log('Creating VM with:', vmReq)
+      console.log('Submitting VM creation request:', vmReq)
       await createVM.mutateAsync(vmReq)
+      console.log('VM created successfully!')
       onComplete?.()
     } catch (error) {
       console.error('VM creation failed:', error)
+      // Error toast is already handled by useCreateVM hook
     }
   }
 
@@ -315,7 +369,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         ))}
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)}>
+      <form onSubmit={handleFormSubmit} onKeyDown={handleFormKeyDown}>
         <Card>
           <CardHeader>
             <CardTitle>{steps[currentStep]}</CardTitle>
@@ -475,7 +529,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                     {kernelOptions.length > 0 ? (
                       kernelOptions.map((kernel) => (
                         <SelectItem key={kernel.id} value={kernel.path}>
-                          {kernel.name} <span className="text-muted-foreground text-xs">({kernel.kind})</span>
+                          {kernel.name}
                         </SelectItem>
                       ))
                     ) : (
@@ -503,7 +557,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                     {rootfsOptions.length > 0 ? (
                       rootfsOptions.map((rootfs) => (
                         <SelectItem key={rootfs.id} value={rootfs.path}>
-                          {rootfs.name} <span className="text-muted-foreground text-xs">({rootfs.kind})</span>
+                          {rootfs.name}
                         </SelectItem>
                       ))
                     ) : (
@@ -564,6 +618,15 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
 
           {currentStep === 5 && (
             <div className="space-y-4">
+              <div className="rounded-lg border-l-4 border-l-primary bg-primary/5 p-4 mb-4">
+                <p className="text-sm font-medium">
+                  Please review your VM configuration before creating
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Make sure all settings are correct. You can go back to previous steps to make changes.
+                </p>
+              </div>
+
               <div className="rounded-lg border border-border p-4 space-y-3">
                 <h3 className="font-medium">Basic Information</h3>
                 <dl className="grid grid-cols-2 gap-2 text-sm">
@@ -644,10 +707,11 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
           </Button>
         ) : (
           <Button
-            type="submit"
-            disabled={isSubmitting}
+            type="button"
+            onClick={handleCreateVM}
+            disabled={createVM.isPending || currentStep !== 5}
           >
-            {isSubmitting ? "Creating VM..." : "Create VM"}
+            {createVM.isPending ? "Creating VM..." : "Create VM"}
           </Button>
         )}
       </div>
