@@ -5,10 +5,8 @@ use nexus_types::{
     EntropyConfigReq, LoggerUpdateReq, MachineConfigPatchReq, MmdsConfigReq, MmdsDataReq,
     SerialConfigReq, UpdateDriveReq, UpdateNicReq, VsockConfigReq,
 };
-#[cfg(not(test))]
 use reqwest::Client;
 use serde::Deserialize;
-#[cfg(not(test))]
 use serde_json::json;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -2036,6 +2034,9 @@ mod tests {
                 kernel_path: Some("/srv/images/vmlinux".into()),
                 rootfs_path: Some("/srv/images/rootfs".into()),
                 source_snapshot_id: None,
+                username: None,
+                password: None,
+                tags: vec![],
             },
             None,
         )
@@ -2095,8 +2096,6 @@ mod tests {
             kernel_path: "/etc/passwd".into(),
             rootfs_path: "/srv/images/rootfs".into(),
             source_snapshot_id: None,
-            guest_ip: None,
-            tags: vec![],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2163,8 +2162,6 @@ mod tests {
             kernel_path: kernel_path.clone(),
             rootfs_path: rootfs_path.clone(),
             source_snapshot_id: None,
-            guest_ip: None,
-            tags: vec![],
             created_at: now,
             updated_at: now,
         };

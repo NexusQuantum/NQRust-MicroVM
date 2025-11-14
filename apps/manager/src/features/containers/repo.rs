@@ -25,7 +25,7 @@ impl ContainerRepository {
         let volumes_json = serde_json::to_value(&req.volumes)?;
         let port_mappings_json = serde_json::to_value(&req.port_mappings)?;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO containers (
                 id, name, image, command, args, env_vars, volumes, port_mappings,
@@ -33,23 +33,23 @@ impl ContainerRepository {
                 created_by_user_id, created_at, updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             "#,
-            id,
-            req.name,
-            req.image,
-            req.command,
-            args_json,
-            env_vars_json,
-            volumes_json,
-            port_mappings_json,
-            req.cpu_limit,
-            req.memory_limit_mb,
-            req.restart_policy,
-            "creating",
-            host_id,
-            None as Option<Uuid>, // created_by_user_id - TODO: Set from authenticated user context
-            now,
-            now
         )
+        .bind(id)
+        .bind(&req.name)
+        .bind(&req.image)
+        .bind(&req.command)
+        .bind(args_json)
+        .bind(env_vars_json)
+        .bind(volumes_json)
+        .bind(port_mappings_json)
+        .bind(req.cpu_limit)
+        .bind(req.memory_limit_mb)
+        .bind(&req.restart_policy)
+        .bind("creating")
+        .bind(host_id)
+        .bind(None::<Option<Uuid>>) // created_by_user_id - TODO: Set from authenticated user context
+        .bind(now)
+        .bind(now)
         .execute(&self.db)
         .await
         .context("failed to insert container")?;
@@ -270,7 +270,8 @@ impl ContainerRepository {
     }
 
     pub async fn delete(&self, id: Uuid) -> Result<()> {
-        sqlx::query!("DELETE FROM containers WHERE id = $1", id)
+        sqlx::query("DELETE FROM containers WHERE id = $1")
+            .bind(id)
             .execute(&self.db)
             .await
             .context("failed to delete container")?;
@@ -284,45 +285,43 @@ impl ContainerRepository {
         error_message: Option<String>,
     ) -> Result<()> {
         let now = Utc::now();
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE containers
             SET state = $1, error_message = $2, updated_at = $3
             WHERE id = $4
             "#,
-            state,
-            error_message,
-            now,
-            id
         )
+        .bind(state)
+        .bind(error_message.as_ref())
+        .bind(now)
+        .bind(id)
         .execute(&self.db)
         .await?;
         Ok(())
     }
 
     pub async fn update_runtime_id(&self, id: Uuid, runtime_id: String) -> Result<()> {
-        sqlx::query!(
-            "UPDATE containers SET container_runtime_id = $1 WHERE id = $2",
-            runtime_id,
-            id
-        )
-        .execute(&self.db)
-        .await?;
+        sqlx::query("UPDATE containers SET container_runtime_id = $1 WHERE id = $2")
+            .bind(runtime_id)
+            .bind(id)
+            .execute(&self.db)
+            .await?;
         Ok(())
     }
 
     pub async fn set_started(&self, id: Uuid) -> Result<()> {
         let now = Utc::now();
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE containers
             SET state = 'running', started_at = $1, stopped_at = NULL, updated_at = $2
             WHERE id = $3
             "#,
-            now,
-            now,
-            id
         )
+        .bind(now)
+        .bind(now)
+        .bind(id)
         .execute(&self.db)
         .await?;
         Ok(())
@@ -330,23 +329,23 @@ impl ContainerRepository {
 
     pub async fn set_stopped(&self, id: Uuid) -> Result<()> {
         let now = Utc::now();
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE containers
             SET state = 'stopped', stopped_at = $1, updated_at = $2
             WHERE id = $3
             "#,
-            now,
-            now,
-            id
         )
+        .bind(now)
+        .bind(now)
+        .bind(id)
         .execute(&self.db)
         .await?;
         Ok(())
     }
 
     pub async fn record_stats(&self, container_id: Uuid, stats: &ContainerStatsData) -> Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO container_stats (
                 container_id, cpu_percent, memory_used_mb, memory_limit_mb,
@@ -354,17 +353,17 @@ impl ContainerRepository {
                 pids, recorded_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
-            container_id,
-            stats.cpu_percent,
-            stats.memory_used_mb,
-            stats.memory_limit_mb,
-            stats.network_rx_bytes,
-            stats.network_tx_bytes,
-            stats.block_read_bytes,
-            stats.block_write_bytes,
-            stats.pids,
-            Utc::now()
         )
+        .bind(container_id)
+        .bind(stats.cpu_percent)
+        .bind(stats.memory_used_mb)
+        .bind(stats.memory_limit_mb)
+        .bind(stats.network_rx_bytes)
+        .bind(stats.network_tx_bytes)
+        .bind(stats.block_read_bytes)
+        .bind(stats.block_write_bytes)
+        .bind(stats.pids)
+        .bind(Utc::now())
         .execute(&self.db)
         .await?;
         Ok(())
@@ -375,8 +374,7 @@ impl ContainerRepository {
         container_id: Uuid,
         limit: i64,
     ) -> Result<Vec<ContainerStats>> {
-        let rows = sqlx::query_as!(
-            ContainerStats,
+        let rows = sqlx::query_as::<_, ContainerStatsRow>(
             r#"
             SELECT id, container_id, cpu_percent, memory_used_mb, memory_limit_mb,
                    network_rx_bytes, network_tx_bytes, block_read_bytes, block_write_bytes,
@@ -386,13 +384,28 @@ impl ContainerRepository {
             ORDER BY recorded_at DESC
             LIMIT $2
             "#,
-            container_id,
-            limit
         )
+        .bind(container_id)
+        .bind(limit)
         .fetch_all(&self.db)
         .await?;
 
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|row| ContainerStats {
+                id: row.id,
+                container_id: row.container_id,
+                cpu_percent: row.cpu_percent,
+                memory_used_mb: row.memory_used_mb,
+                memory_limit_mb: row.memory_limit_mb,
+                network_rx_bytes: row.network_rx_bytes,
+                network_tx_bytes: row.network_tx_bytes,
+                block_read_bytes: row.block_read_bytes,
+                block_write_bytes: row.block_write_bytes,
+                pids: row.pids,
+                recorded_at: row.recorded_at,
+            })
+            .collect())
     }
 
     pub async fn append_log(
@@ -401,16 +414,16 @@ impl ContainerRepository {
         stream: &str,
         message: String,
     ) -> Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO container_logs (container_id, stream, message, timestamp)
             VALUES ($1, $2, $3, $4)
             "#,
-            container_id,
-            stream,
-            message,
-            Utc::now()
         )
+        .bind(container_id)
+        .bind(stream)
+        .bind(message)
+        .bind(Utc::now())
         .execute(&self.db)
         .await?;
         Ok(())
@@ -423,8 +436,7 @@ impl ContainerRepository {
     ) -> Result<Vec<ContainerLog>> {
         let limit = tail.unwrap_or(100);
 
-        let rows = sqlx::query_as!(
-            ContainerLog,
+        let rows = sqlx::query_as::<_, ContainerLogRow>(
             r#"
             SELECT id, container_id, timestamp, stream, message, created_at
             FROM container_logs
@@ -432,13 +444,23 @@ impl ContainerRepository {
             ORDER BY timestamp DESC
             LIMIT $2
             "#,
-            container_id,
-            limit
         )
+        .bind(container_id)
+        .bind(limit)
         .fetch_all(&self.db)
         .await?;
 
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|row| ContainerLog {
+                id: row.id,
+                container_id: row.container_id,
+                timestamp: row.timestamp,
+                stream: row.stream,
+                message: row.message,
+                created_at: row.created_at,
+            })
+            .collect())
     }
 }
 
@@ -466,6 +488,32 @@ struct ContainerRow {
     started_at: Option<chrono::DateTime<Utc>>,
     stopped_at: Option<chrono::DateTime<Utc>>,
     guest_ip: Option<String>,
+}
+
+// Helper structs for query results
+#[derive(sqlx::FromRow)]
+struct ContainerStatsRow {
+    id: Uuid,
+    container_id: Uuid,
+    cpu_percent: Option<f32>,
+    memory_used_mb: Option<i64>,
+    memory_limit_mb: Option<i64>,
+    network_rx_bytes: Option<i64>,
+    network_tx_bytes: Option<i64>,
+    block_read_bytes: Option<i64>,
+    block_write_bytes: Option<i64>,
+    pids: Option<i32>,
+    recorded_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ContainerLogRow {
+    id: Uuid,
+    container_id: Uuid,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    stream: String,
+    message: String,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 // Stats data structure for recording

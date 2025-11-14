@@ -1266,15 +1266,21 @@ mod tests {
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
+        let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let download_progress = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let state = crate::AppState {
             db: pool,
             hosts,
             images,
             snapshots,
+            users,
+            shell_repo,
             allow_direct_image_paths: true,
             storage,
+            download_progress,
         };
         let Json(body) = super::delete(Extension(state), Path(VmPathParams { id: Uuid::new_v4() }))
             .await

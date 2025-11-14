@@ -232,7 +232,6 @@ pub async fn update_function_code(
     // Retry with exponential backoff until successful (max 2 minutes)
     let mut attempt = 0;
     let max_attempts = 60; // ~5 minutes total with 5s delays
-    let mut last_error = String::new();
 
     loop {
         attempt += 1;
@@ -265,14 +264,12 @@ pub async fn update_function_code(
                 }
             }
             Err(e) => {
-                last_error = format!("{:?}", e);
-
                 if attempt >= max_attempts {
                     eprintln!("[CodeInjection] ERROR DETAILS: {:#?}", e);
                     anyhow::bail!(
-                        "Failed to call /write-code endpoint after {} attempts: {}",
+                        "Failed to call /write-code endpoint after {} attempts: {:?}",
                         max_attempts,
-                        last_error
+                        e
                     );
                 }
 
