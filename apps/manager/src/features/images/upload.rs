@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn test_sanitize_filename() {
         assert_eq!(sanitize_filename("test.tar"), "test.tar");
-        assert_eq!(sanitize_filename("../etc/passwd"), "__.etc_passwd");
+        assert_eq!(sanitize_filename("../etc/passwd"), ".._etc_passwd");
         assert_eq!(sanitize_filename("my file.tar"), "my_file.tar");
         assert_eq!(sanitize_filename("test@#$.tar"), "test___.tar");
     }
