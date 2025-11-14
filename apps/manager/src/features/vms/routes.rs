@@ -93,7 +93,11 @@ async fn proxy_to_agent_shell(
     client_ws: WebSocket,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to agent's WebSocket endpoint
-    let agent_url = format!("ws://{}/agent/v1/vms/{}/shell/ws", host_addr.trim_start_matches("http://"), vm_id);
+    let agent_url = format!(
+        "ws://{}/agent/v1/vms/{}/shell/ws",
+        host_addr.trim_start_matches("http://"),
+        vm_id
+    );
     tracing::info!("Connecting to agent shell at: {}", agent_url);
 
     let (agent_stream, _) = connect_async(&agent_url).await?;
@@ -193,7 +197,11 @@ pub async fn metrics_websocket(
     };
 
     if vm.state != "running" {
-        return (StatusCode::BAD_REQUEST, "VM must be running to stream metrics").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "VM must be running to stream metrics",
+        )
+            .into_response();
     }
 
     // Upgrade the WebSocket connection
@@ -209,9 +217,9 @@ async fn stream_metrics(
     vm_id: Uuid,
     ws: WebSocket,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::time::{interval, Duration};
-    use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::fs::OpenOptions;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::time::{interval, Duration};
 
     let (mut sender, mut receiver) = ws.split();
     let metrics_path = format!("/srv/fc/vms/{}/logs/metrics.json", vm_id);
@@ -329,8 +337,14 @@ fn simplify_firecracker_metrics(
             for (key, value) in o {
                 if key.starts_with("net_") {
                     if let Some(net_stats) = value.as_object() {
-                        let rx = net_stats.get("rx_bytes_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let tx = net_stats.get("tx_bytes_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let rx = net_stats
+                            .get("rx_bytes_count")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let tx = net_stats
+                            .get("tx_bytes_count")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
                         tracing::debug!("Found network interface {}: rx={}, tx={}", key, rx, tx);
                         rx_total += rx;
                         tx_total += tx;
@@ -353,8 +367,14 @@ fn simplify_firecracker_metrics(
             for (key, value) in o {
                 if key.starts_with("block_") {
                     if let Some(block_stats) = value.as_object() {
-                        let rd = block_stats.get("read_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let wr = block_stats.get("write_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let rd = block_stats
+                            .get("read_bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let wr = block_stats
+                            .get("write_bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
                         tracing::debug!("Found block device {}: read={}, write={}", key, rd, wr);
                         read_total += rd;
                         write_total += wr;

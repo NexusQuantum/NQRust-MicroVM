@@ -178,7 +178,8 @@ mod tests {
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
-        let download_progress = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),

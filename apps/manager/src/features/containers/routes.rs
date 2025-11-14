@@ -1,8 +1,12 @@
 use crate::AppState;
 use axum::{
-    extract::{Path, Query, ws::{WebSocket, WebSocketUpgrade}},
+    extract::{
+        ws::{WebSocket, WebSocketUpgrade},
+        Path, Query,
+    },
     http::StatusCode,
-    Extension, Json, response::IntoResponse,
+    response::IntoResponse,
+    Extension, Json,
 };
 use nexus_types::{
     ContainerLogsParams, ContainerLogsResp, ContainerPathParams, ContainerStatsResp,
@@ -188,16 +192,14 @@ pub async fn stop(
     Extension(st): Extension<AppState>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
 ) -> Result<Json<OkResponse>, StatusCode> {
-    super::service::stop_container(&st, id)
-        .await
-        .map_err(|e| {
-            eprintln!("Failed to stop container: {}", e);
-            if e.to_string().contains("not running") {
-                StatusCode::BAD_REQUEST
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-        })?;
+    super::service::stop_container(&st, id).await.map_err(|e| {
+        eprintln!("Failed to stop container: {}", e);
+        if e.to_string().contains("not running") {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
     Ok(Json(OkResponse::default()))
 }
 
@@ -329,18 +331,24 @@ async fn handle_logs_stream(mut socket: WebSocket, st: AppState, container_id: u
         let container = match super::service::get_container(&st.db, container_id).await {
             Ok(resp) => resp.item,
             Err(e) => {
-                let _ = socket.send(axum::extract::ws::Message::Text(
-                    format!("{{\"error\": \"Failed to get container: {}\"}}", e)
-                )).await;
+                let _ = socket
+                    .send(axum::extract::ws::Message::Text(format!(
+                        "{{\"error\": \"Failed to get container: {}\"}}",
+                        e
+                    )))
+                    .await;
                 break;
             }
         };
 
         // If container is in error or doesn't have a runtime ID, stop streaming
         if container.state == "error" || container.container_runtime_id.is_none() {
-            let _ = socket.send(axum::extract::ws::Message::Text(
-                format!("{{\"info\": \"Container in {} state\"}}", container.state)
-            )).await;
+            let _ = socket
+                .send(axum::extract::ws::Message::Text(format!(
+                    "{{\"info\": \"Container in {} state\"}}",
+                    container.state
+                )))
+                .await;
             break;
         }
 
@@ -356,7 +364,11 @@ async fn handle_logs_stream(mut socket: WebSocket, st: AppState, container_id: u
                             "message": log.message
                         });
 
-                        if socket.send(axum::extract::ws::Message::Text(log_json.to_string())).await.is_err() {
+                        if socket
+                            .send(axum::extract::ws::Message::Text(log_json.to_string()))
+                            .await
+                            .is_err()
+                        {
                             // Client disconnected
                             return;
                         }
@@ -366,14 +378,21 @@ async fn handle_logs_stream(mut socket: WebSocket, st: AppState, container_id: u
                 }
             }
             Err(e) => {
-                let _ = socket.send(axum::extract::ws::Message::Text(
-                    format!("{{\"error\": \"Failed to fetch logs: {}\"}}", e)
-                )).await;
+                let _ = socket
+                    .send(axum::extract::ws::Message::Text(format!(
+                        "{{\"error\": \"Failed to fetch logs: {}\"}}",
+                        e
+                    )))
+                    .await;
             }
         }
 
         // Check if client is still connected by trying to send a ping
-        if socket.send(axum::extract::ws::Message::Ping(vec![])).await.is_err() {
+        if socket
+            .send(axum::extract::ws::Message::Ping(vec![]))
+            .await
+            .is_err()
+        {
             break;
         }
     }

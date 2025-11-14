@@ -8,7 +8,11 @@ pub async fn spawn_fc_scope(unit: &str, sock: &str) -> Result<()> {
 
 /// Spawn firecracker inside a screen session for console access
 /// The screen session name will be the same as the unit name (e.g., "fc-{vm-id}")
-pub async fn spawn_fc_scope_with_screen(unit: &str, sock: &str, screen_name: Option<&str>) -> Result<()> {
+pub async fn spawn_fc_scope_with_screen(
+    unit: &str,
+    sock: &str,
+    screen_name: Option<&str>,
+) -> Result<()> {
     // Ensure parent dir exists is done by caller.
     let session_name = screen_name.unwrap_or(unit);
 
@@ -26,7 +30,7 @@ pub async fn spawn_fc_scope_with_screen(unit: &str, sock: &str, screen_name: Opt
             "TimeoutStopSec=5s",
             "--",
             "screen",
-            "-dmS",  // Create detached session with name
+            "-dmS", // Create detached session with name
             session_name,
             "firecracker",
             "--api-sock",
@@ -34,7 +38,10 @@ pub async fn spawn_fc_scope_with_screen(unit: &str, sock: &str, screen_name: Opt
         ])
         .status()
         .await?;
-    ensure!(status.success(), "systemd-run failed for firecracker with screen");
+    ensure!(
+        status.success(),
+        "systemd-run failed for firecracker with screen"
+    );
     Ok(())
 }
 

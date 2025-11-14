@@ -23,7 +23,10 @@ pub async fn preload_default_images(
     let dockerhub = DockerHubClient::new(image_root);
     let mut loaded_ids = Vec::new();
 
-    tracing::info!("Starting pre-load of {} default images", DEFAULT_IMAGES.len());
+    tracing::info!(
+        "Starting pre-load of {} default images",
+        DEFAULT_IMAGES.len()
+    );
 
     for image_name in DEFAULT_IMAGES {
         tracing::info!("Pre-loading image: {}", image_name);
@@ -43,7 +46,10 @@ pub async fn preload_default_images(
         }
 
         // Download the image
-        match dockerhub.download_image(image_name, None, progress_tracker.clone()).await {
+        match dockerhub
+            .download_image(image_name, None, progress_tracker.clone())
+            .await
+        {
             Ok((tarball_path, sha256, size)) => {
                 // Register in database
                 let image_req = CreateImageReq {
@@ -96,7 +102,10 @@ pub async fn preload_custom_images(
         tracing::info!("Pre-loading image: {}", image_name);
 
         // Download the image
-        match dockerhub.download_image(image_name, None, progress_tracker.clone()).await {
+        match dockerhub
+            .download_image(image_name, None, progress_tracker.clone())
+            .await
+        {
             Ok((tarball_path, sha256, size)) => {
                 // Register in database
                 let image_req = CreateImageReq {

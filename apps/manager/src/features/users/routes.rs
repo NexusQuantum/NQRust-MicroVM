@@ -1,21 +1,21 @@
-use crate::AppState;
 use crate::features::users::repo::AuthenticatedUser;
+use crate::AppState;
 use axum::{
-    extract::{Path, Multipart},
-    http::{StatusCode, header},
-    response::Response,
     body::Body,
+    extract::{Multipart, Path},
+    http::{header, StatusCode},
+    response::Response,
     Extension, Json,
 };
 use nexus_types::{
-    CreateUserRequest, GetUserResponse, ListUsersResponse, LoginRequest, LoginResponse,
-    UpdateUserRequest, User, UserPathParams, GetPreferencesResponse, UpdatePreferencesRequest,
-    UpdateProfileRequest, ChangePasswordRequest,
+    ChangePasswordRequest, CreateUserRequest, GetPreferencesResponse, GetUserResponse,
+    ListUsersResponse, LoginRequest, LoginResponse, UpdatePreferencesRequest, UpdateProfileRequest,
+    UpdateUserRequest, User, UserPathParams,
 };
-use tracing::{error, info};
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tracing::{error, info};
 
 #[utoipa::path(
     post,
@@ -41,14 +41,10 @@ pub async fn login(
             StatusCode::UNAUTHORIZED
         })?;
 
-    let token = st
-        .users
-        .create_token(user.id, None)
-        .await
-        .map_err(|e| {
-            error!(?e, "failed to create token");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let token = st.users.create_token(user.id, None).await.map_err(|e| {
+        error!(?e, "failed to create token");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(LoginResponse {
         token,
@@ -81,14 +77,10 @@ pub async fn me(
 ) -> Result<Json<User>, StatusCode> {
     info!(user_id = ?user.id, "fetching current user info");
 
-    let user_row = st
-        .users
-        .get_by_id(user.id)
-        .await
-        .map_err(|e| {
-            error!(?e, user_id = ?user.id, "failed to fetch user");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let user_row = st.users.get_by_id(user.id).await.map_err(|e| {
+        error!(?e, user_id = ?user.id, "failed to fetch user");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     info!(user_id = ?user.id, "current user info fetched successfully");
     Ok(Json(User {
@@ -116,14 +108,10 @@ pub async fn me(
 pub async fn list(
     Extension(st): Extension<AppState>,
 ) -> Result<Json<ListUsersResponse>, StatusCode> {
-    let users = st
-        .users
-        .list()
-        .await
-        .map_err(|e| {
-            error!(?e, "failed to list users");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let users = st.users.list().await.map_err(|e| {
+        error!(?e, "failed to list users");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let items: Vec<User> = users
         .into_iter()
@@ -204,17 +192,13 @@ pub async fn get(
     Extension(st): Extension<AppState>,
     Path(UserPathParams { id }): Path<UserPathParams>,
 ) -> Result<Json<GetUserResponse>, StatusCode> {
-    let user = st
-        .users
-        .get_by_id(id)
-        .await
-        .map_err(|e| match e {
-            crate::features::users::repo::UserRepoError::UserNotFound => StatusCode::NOT_FOUND,
-            _ => {
-                error!(?e, "failed to fetch user");
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-        })?;
+    let user = st.users.get_by_id(id).await.map_err(|e| match e {
+        crate::features::users::repo::UserRepoError::UserNotFound => StatusCode::NOT_FOUND,
+        _ => {
+            error!(?e, "failed to fetch user");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
 
     Ok(Json(GetUserResponse {
         item: User {
@@ -295,16 +279,13 @@ pub async fn delete(
     Extension(st): Extension<AppState>,
     Path(UserPathParams { id }): Path<UserPathParams>,
 ) -> Result<Json<nexus_types::OkResponse>, StatusCode> {
-    st.users
-        .delete(id)
-        .await
-        .map_err(|e| match e {
-            crate::features::users::repo::UserRepoError::UserNotFound => StatusCode::NOT_FOUND,
-            _ => {
-                error!(?e, "failed to delete user");
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-        })?;
+    st.users.delete(id).await.map_err(|e| match e {
+        crate::features::users::repo::UserRepoError::UserNotFound => StatusCode::NOT_FOUND,
+        _ => {
+            error!(?e, "failed to delete user");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
 
     Ok(Json(nexus_types::OkResponse::default()))
 }
@@ -325,14 +306,10 @@ pub async fn get_preferences(
 ) -> Result<Json<GetPreferencesResponse>, StatusCode> {
     info!(user_id = ?user.id, "fetching preferences for user");
 
-    let prefs = st
-        .users
-        .get_preferences(user.id)
-        .await
-        .map_err(|e| {
-            error!(?e, user_id = ?user.id, "failed to fetch preferences");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let prefs = st.users.get_preferences(user.id).await.map_err(|e| {
+        error!(?e, user_id = ?user.id, "failed to fetch preferences");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     info!(user_id = ?user.id, "preferences fetched successfully");
     Ok(Json(GetPreferencesResponse { preferences: prefs }))
@@ -385,14 +362,10 @@ pub async fn get_profile(
 ) -> Result<Json<User>, StatusCode> {
     info!(user_id = ?user.id, "fetching profile for user");
 
-    let user_row = st
-        .users
-        .get_by_id(user.id)
-        .await
-        .map_err(|e| {
-            error!(?e, user_id = ?user.id, "failed to fetch user");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let user_row = st.users.get_by_id(user.id).await.map_err(|e| {
+        error!(?e, user_id = ?user.id, "failed to fetch user");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     info!(user_id = ?user.id, "profile fetched successfully");
     Ok(Json(User {
@@ -587,14 +560,10 @@ pub async fn get_my_avatar(
     Extension(user): Extension<AuthenticatedUser>,
     Extension(st): Extension<AppState>,
 ) -> Result<Response, StatusCode> {
-    let avatar_path = st
-        .users
-        .get_avatar_path(user.id)
-        .await
-        .map_err(|e| {
-            error!(?e, "failed to fetch avatar path");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let avatar_path = st.users.get_avatar_path(user.id).await.map_err(|e| {
+        error!(?e, "failed to fetch avatar path");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let path = avatar_path.ok_or(StatusCode::NOT_FOUND)?;
 
@@ -627,14 +596,10 @@ pub async fn get_user_avatar(
     Extension(st): Extension<AppState>,
     Path(UserPathParams { id }): Path<UserPathParams>,
 ) -> Result<Response, StatusCode> {
-    let avatar_path = st
-        .users
-        .get_avatar_path(id)
-        .await
-        .map_err(|e| {
-            error!(?e, "failed to fetch avatar path");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let avatar_path = st.users.get_avatar_path(id).await.map_err(|e| {
+        error!(?e, "failed to fetch avatar path");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let path = avatar_path.ok_or(StatusCode::NOT_FOUND)?;
 
@@ -672,13 +637,10 @@ pub async fn delete_avatar(
     }
 
     // Update database
-    st.users
-        .delete_avatar(user.id)
-        .await
-        .map_err(|e| {
-            error!(?e, "failed to delete avatar");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    st.users.delete_avatar(user.id).await.map_err(|e| {
+        error!(?e, "failed to delete avatar");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     info!(user_id = ?user.id, "avatar deleted successfully");
 

@@ -1,4 +1,8 @@
-use axum::{routing::{get, post}, Json, Router, extract::State};
+use axum::{
+    extract::State,
+    routing::{get, post},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,18 +55,17 @@ fn read_cpu_stats() -> Result<CpuStats, String> {
 }
 
 /// Calculate CPU usage percentage between two samples
-fn calculate_cpu_percent(
-    prev: CpuStats,
-    curr: CpuStats,
-) -> f64 {
+fn calculate_cpu_percent(prev: CpuStats, curr: CpuStats) -> f64 {
     let (prev_user, prev_nice, prev_system, prev_idle, prev_iowait, prev_irq, prev_softirq) = prev;
     let (curr_user, curr_nice, curr_system, curr_idle, curr_iowait, curr_irq, curr_softirq) = curr;
 
     let prev_idle_total = prev_idle + prev_iowait;
     let curr_idle_total = curr_idle + curr_iowait;
 
-    let prev_total = prev_user + prev_nice + prev_system + prev_idle + prev_iowait + prev_irq + prev_softirq;
-    let curr_total = curr_user + curr_nice + curr_system + curr_idle + curr_iowait + curr_irq + curr_softirq;
+    let prev_total =
+        prev_user + prev_nice + prev_system + prev_idle + prev_iowait + prev_irq + prev_softirq;
+    let curr_total =
+        curr_user + curr_nice + curr_system + curr_idle + curr_iowait + curr_irq + curr_softirq;
 
     let total_diff = curr_total.saturating_sub(prev_total);
     let idle_diff = curr_idle_total.saturating_sub(prev_idle_total);
@@ -79,13 +82,13 @@ fn calculate_cpu_percent(
 /// Works across all Linux distributions
 fn read_memory_stats() -> Result<(u64, u64, u64), String> {
     let meminfo = fs::read_to_string("/proc/meminfo").map_err(|e| e.to_string())?;
-    
+
     let mut total_kb = 0u64;
     let mut available_kb = 0u64;
     let mut free_kb = 0u64;
     let mut buffers_kb = 0u64;
     let mut cached_kb = 0u64;
-    
+
     for line in meminfo.lines() {
         if line.starts_with("MemTotal:") {
             if let Some(kb_str) = line.split_whitespace().nth(1) {
@@ -109,23 +112,23 @@ fn read_memory_stats() -> Result<(u64, u64, u64), String> {
             }
         }
     }
-    
+
     if total_kb == 0 {
         return Err("Could not parse memory total".to_string());
     }
-    
+
     // If MemAvailable is not available (older kernels), calculate it
     if available_kb == 0 {
         available_kb = free_kb + buffers_kb + cached_kb;
     }
-    
+
     let used_kb = total_kb.saturating_sub(available_kb);
     let usage_percent = if total_kb > 0 {
         (used_kb as f64 / total_kb as f64) * 100.0
     } else {
         0.0
     };
-    
+
     Ok((total_kb, used_kb, usage_percent as u64))
 }
 
@@ -215,7 +218,10 @@ fn detect_ip() -> Option<String> {
 }
 
 /// Report IP address to the manager
-async fn report_ip_to_manager(config: &AgentConfig, ip: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn report_ip_to_manager(
+    config: &AgentConfig,
+    ip: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("{}/v1/vms/{}/guest-ip", config.manager_url, config.vm_id);
 
     // Create JSON payload as a string to ensure proper formatting
@@ -253,12 +259,12 @@ fn get_current_metrics(prev_cpu: Option<CpuStats>) -> (GuestMetrics, Option<CpuS
     } else {
         0.0 // Need two samples to calculate percentage
     };
-    
+
     let (total_kb, used_kb, usage_percent) = read_memory_stats().unwrap_or((0, 0, 0));
     let uptime = read_uptime().unwrap_or(0);
     let load_avg = read_load_average();
     let process_count = count_processes();
-    
+
     let metrics = GuestMetrics {
         cpu_usage_percent: cpu_percent,
         memory_usage_percent: usage_percent as f64,
@@ -269,7 +275,7 @@ fn get_current_metrics(prev_cpu: Option<CpuStats>) -> (GuestMetrics, Option<CpuS
         load_average: load_avg,
         process_count,
     };
-    
+
     (metrics, Some(cpu_stats))
 }
 
@@ -286,9 +292,7 @@ async fn health_check() -> Json<serde_json::Value> {
 }
 
 /// Metrics endpoint
-async fn get_metrics(
-    State(cpu_state): State<Arc<CpuState>>,
-) -> Json<GuestMetrics> {
+async fn get_metrics(State(cpu_state): State<Arc<CpuState>>) -> Json<GuestMetrics> {
     let prev_cpu = cpu_state.last_cpu.load(Ordering::Relaxed);
     let prev_cpu_tuple = if prev_cpu == 0 {
         None
@@ -300,18 +304,18 @@ async fn get_metrics(
         let idle = prev_cpu & 0xFFFF;
         Some((user, nice, system, idle, 0, 0, 0))
     };
-    
+
     let (metrics, new_cpu) = get_current_metrics(prev_cpu_tuple);
-    
+
     // Store new CPU stats (compressed as u64 to save space)
     if let Some(cpu) = new_cpu {
-        let compressed = ((cpu.0 & 0xFFFF) << 48) |
-                        ((cpu.1 & 0xFFFF) << 32) |
-                        ((cpu.2 & 0xFFFF) << 16) |
-                        (cpu.3 & 0xFFFF);
+        let compressed = ((cpu.0 & 0xFFFF) << 48)
+            | ((cpu.1 & 0xFFFF) << 32)
+            | ((cpu.2 & 0xFFFF) << 16)
+            | (cpu.3 & 0xFFFF);
         cpu_state.last_cpu.store(compressed, Ordering::Relaxed);
     }
-    
+
     Json(metrics)
 }
 
@@ -376,7 +380,15 @@ async fn configure_interface(
                 if let Some(gateway) = &req.gateway {
                     eprintln!("Adding gateway {} via {}", gateway, req.interface);
                     let route_result = std::process::Command::new("ip")
-                        .args(["route", "add", "default", "via", gateway, "dev", &req.interface])
+                        .args([
+                            "route",
+                            "add",
+                            "default",
+                            "via",
+                            gateway,
+                            "dev",
+                            &req.interface,
+                        ])
                         .output();
 
                     if let Ok(output) = route_result {
@@ -420,7 +432,10 @@ async fn configure_interface(
 
         match dhcp_result {
             Ok(_) => {
-                eprintln!("✅ DHCP client started on {} using udhcpc (background)", req.interface);
+                eprintln!(
+                    "✅ DHCP client started on {} using udhcpc (background)",
+                    req.interface
+                );
                 Json(serde_json::json!({
                     "success": true,
                     "interface": req.interface,
@@ -437,7 +452,10 @@ async fn configure_interface(
 
                 match dhclient_result {
                     Ok(_) => {
-                        eprintln!("✅ DHCP client started on {} using dhclient (background)", req.interface);
+                        eprintln!(
+                            "✅ DHCP client started on {} using dhclient (background)",
+                            req.interface
+                        );
                         Json(serde_json::json!({
                             "success": true,
                             "interface": req.interface,
@@ -471,7 +489,10 @@ async fn main() {
     // Read configuration
     let config = read_config();
     if let Some(ref cfg) = config {
-        eprintln!("Loaded config: VM ID = {}, Manager URL = {}", cfg.vm_id, cfg.manager_url);
+        eprintln!(
+            "Loaded config: VM ID = {}, Manager URL = {}",
+            cfg.vm_id, cfg.manager_url
+        );
     } else {
         eprintln!("Warning: No config found at /etc/guest-agent.conf - IP reporting disabled");
     }
@@ -487,11 +508,13 @@ async fn main() {
         loop {
             interval.tick().await;
             if let Ok(cpu_stats) = read_cpu_stats() {
-                let compressed = ((cpu_stats.0 & 0xFFFF) << 48) |
-                                ((cpu_stats.1 & 0xFFFF) << 32) |
-                                ((cpu_stats.2 & 0xFFFF) << 16) |
-                                (cpu_stats.3 & 0xFFFF);
-                cpu_state_clone.last_cpu.store(compressed, Ordering::Relaxed);
+                let compressed = ((cpu_stats.0 & 0xFFFF) << 48)
+                    | ((cpu_stats.1 & 0xFFFF) << 32)
+                    | ((cpu_stats.2 & 0xFFFF) << 16)
+                    | (cpu_stats.3 & 0xFFFF);
+                cpu_state_clone
+                    .last_cpu
+                    .store(compressed, Ordering::Relaxed);
             }
         }
     });

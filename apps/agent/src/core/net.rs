@@ -156,7 +156,10 @@ pub async fn create_tap_with_vlan(
                     .await?;
             }
 
-            eprintln!("Created VLAN interface {} with bridge {} for VLAN {}", vlan_if, vlan_br, vlan);
+            eprintln!(
+                "Created VLAN interface {} with bridge {} for VLAN {}",
+                vlan_if, vlan_br, vlan
+            );
         }
 
         // Attach TAP to VLAN bridge instead of main bridge

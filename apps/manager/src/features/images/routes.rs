@@ -7,9 +7,9 @@ use axum::{
     Extension, Json,
 };
 use nexus_types::{
-    CreateImageReq, CreateImageResp, DockerHubSearchReq, DockerHubSearchResp,
-    DockerImageTagsResp, DownloadDockerImageReq, DownloadDockerImageResp,
-    GetImageResp, ImageFilter, ImagePathParams, ListImagesResp, OkResponse,
+    CreateImageReq, CreateImageResp, DockerHubSearchReq, DockerHubSearchResp, DockerImageTagsResp,
+    DownloadDockerImageReq, DownloadDockerImageResp, GetImageResp, ImageFilter, ImagePathParams,
+    ListImagesResp, OkResponse,
 };
 
 #[utoipa::path(
@@ -129,13 +129,10 @@ pub async fn dockerhub_search(
 ) -> Result<Json<DockerHubSearchResp>, StatusCode> {
     let dockerhub = super::dockerhub::DockerHubClient::new(st.images.root().to_path_buf());
 
-    let items = dockerhub
-        .search(&req.query, req.limit)
-        .await
-        .map_err(|e| {
-            tracing::error!("Docker Hub search failed: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let items = dockerhub.search(&req.query, req.limit).await.map_err(|e| {
+        tracing::error!("Docker Hub search failed: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(DockerHubSearchResp { items }))
 }
@@ -156,13 +153,10 @@ pub async fn dockerhub_tags(
 ) -> Result<Json<DockerImageTagsResp>, StatusCode> {
     let dockerhub = super::dockerhub::DockerHubClient::new(st.images.root().to_path_buf());
 
-    let items = dockerhub
-        .get_tags(&image_name)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get Docker image tags: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let items = dockerhub.get_tags(&image_name).await.map_err(|e| {
+        tracing::error!("Failed to get Docker image tags: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(DockerImageTagsResp { items }))
 }
@@ -186,21 +180,28 @@ pub async fn dockerhub_download(
     // Initialize progress tracking
     {
         let mut progress_map = st.download_progress.lock().await;
-        progress_map.insert(req.image.clone(), DownloadProgress {
-            image: req.image.clone(),
-            status: "Initializing...".to_string(),
-            current_bytes: 0,
-            total_bytes: 0,
-            completed: false,
-            error: None,
-        });
+        progress_map.insert(
+            req.image.clone(),
+            DownloadProgress {
+                image: req.image.clone(),
+                status: "Initializing...".to_string(),
+                current_bytes: 0,
+                total_bytes: 0,
+                completed: false,
+                error: None,
+            },
+        );
     }
 
     let dockerhub = super::dockerhub::DockerHubClient::new(st.images.root().to_path_buf());
 
     // Download the image and save as tarball
     let download_result = dockerhub
-        .download_image(&req.image, req.registry_auth.as_ref(), st.download_progress.clone())
+        .download_image(
+            &req.image,
+            req.registry_auth.as_ref(),
+            st.download_progress.clone(),
+        )
         .await;
 
     let (tarball_path, sha256, size) = match download_result {
@@ -271,11 +272,14 @@ pub async fn dockerhub_download_progress(
     let decoded_name = urlencoding::decode(&image_name)
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .to_string();
-    
+
     let progress_map = st.download_progress.lock().await;
 
     // Try both encoded and decoded names for compatibility
-    if let Some(progress) = progress_map.get(&decoded_name).or_else(|| progress_map.get(&image_name)) {
+    if let Some(progress) = progress_map
+        .get(&decoded_name)
+        .or_else(|| progress_map.get(&image_name))
+    {
         Ok(Json(progress.clone()))
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -305,7 +309,9 @@ pub async fn dockerhub_preload(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    Ok(Json(loaded_ids.into_iter().map(|id| id.to_string()).collect()))
+    Ok(Json(
+        loaded_ids.into_iter().map(|id| id.to_string()).collect(),
+    ))
 }
 
 #[utoipa::path(
@@ -328,7 +334,11 @@ pub async fn upload_image(
     let mut project: Option<String> = None;
 
     // Extract metadata fields first
-    while let Some(field) = multipart.next_field().await.map_err(|_| StatusCode::BAD_REQUEST)? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+    {
         let field_name = field.name().unwrap_or("").to_string();
 
         match field_name.as_str() {
@@ -370,23 +380,11 @@ pub async fn upload_image(
             Ok(name) => name,
             Err(e) => {
                 tracing::warn!("Failed to load Docker image, using filename: {}", e);
-                name.unwrap_or_else(|| {
-                    file_path
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string()
-                })
+                name.unwrap_or_else(|| file_path.file_name().unwrap().to_string_lossy().to_string())
             }
         }
     } else {
-        name.unwrap_or_else(|| {
-            file_path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string()
-        })
+        name.unwrap_or_else(|| file_path.file_name().unwrap().to_string_lossy().to_string())
     };
 
     // Register in database
@@ -424,7 +422,8 @@ mod tests {
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
-        let download_progress = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let state = crate::AppState {
             db: pool.clone(),
             hosts,
@@ -480,7 +479,8 @@ mod tests {
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
-        let download_progress = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let state = crate::AppState {
             db: pool,
             hosts,

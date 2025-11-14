@@ -17,17 +17,22 @@ pub mod volumes;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .nest("/v1/auth", users::auth_router()
-            .route_layer(axum::middleware::from_fn_with_state(
+        .nest(
+            "/v1/auth",
+            users::auth_router().route_layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 users::middleware::auth_middleware,
-            )))
-        .nest("/v1/users", users::users_router()
-            .layer(axum::middleware::from_fn(users::middleware::require_admin))
-            .layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                users::middleware::auth_middleware,
-            )))
+            )),
+        )
+        .nest(
+            "/v1/users",
+            users::users_router()
+                .layer(axum::middleware::from_fn(users::middleware::require_admin))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    users::middleware::auth_middleware,
+                )),
+        )
         .nest("/v1/hosts", hosts::router())
         .nest("/v1/images", images::router())
         .nest("/v1/networks", networks::router())

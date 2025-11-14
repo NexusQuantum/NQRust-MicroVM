@@ -2,7 +2,6 @@
 ///
 /// This module provides functions to log user actions to the audit_logs table
 /// for compliance, security auditing, and debugging purposes.
-
 use anyhow::Result;
 use nexus_types::{AuditAction, AuditLog, AuditLogQueryParams, ListAuditLogsResponse};
 use sqlx::PgPool;
@@ -179,9 +178,7 @@ pub async fn list_audit_logs(
 
     // Get total count
     let count_query = format!("SELECT COUNT(*) FROM audit_logs {}", where_clause);
-    let total: i64 = sqlx::query_scalar(&count_query)
-        .fetch_one(pool)
-        .await?;
+    let total: i64 = sqlx::query_scalar(&count_query).fetch_one(pool).await?;
 
     // Get paginated results
     let logs_query = format!(

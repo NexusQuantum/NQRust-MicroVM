@@ -140,11 +140,7 @@ pub async fn list(
 
         // Get host name if host_id is present
         let host_name = if let Some(host_id) = network.host_id {
-            st.hosts
-                .get(host_id)
-                .await
-                .ok()
-                .map(|h| h.name)
+            st.hosts.get(host_id).await.ok().map(|h| h.name)
         } else {
             None
         };
@@ -195,11 +191,7 @@ pub async fn get(
 
     // Get host name
     let host_name = if let Some(host_id) = network.host_id {
-        st.hosts
-            .get(host_id)
-            .await
-            .ok()
-            .map(|h| h.name)
+        st.hosts.get(host_id).await.ok().map(|h| h.name)
     } else {
         None
     };

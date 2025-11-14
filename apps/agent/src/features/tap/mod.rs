@@ -10,7 +10,7 @@ struct TapReq {
     bridge: Option<String>,
     owner_user: Option<String>,
     vlan_id: Option<u16>,
-    tap_name: Option<String>,  // Allow custom TAP device name
+    tap_name: Option<String>, // Allow custom TAP device name
 }
 
 pub fn router() -> Router {

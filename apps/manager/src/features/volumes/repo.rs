@@ -142,12 +142,11 @@ impl VolumeRepository {
             .await?;
 
         // Update volume status to 'available' if no other attachments exist
-        let count: (i64,) = sqlx::query_as(
-            r#"SELECT COUNT(*) FROM volume_attachment WHERE volume_id = $1"#,
-        )
-        .bind(volume_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let count: (i64,) =
+            sqlx::query_as(r#"SELECT COUNT(*) FROM volume_attachment WHERE volume_id = $1"#)
+                .bind(volume_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         if count.0 == 0 {
             sqlx::query(r#"UPDATE volume SET status = 'available' WHERE id = $1"#)

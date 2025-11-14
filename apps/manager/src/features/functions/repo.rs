@@ -187,14 +187,12 @@ pub async fn update_vm_info(
     vm_id: Uuid,
     guest_ip: Option<&str>,
 ) -> sqlx::Result<()> {
-    sqlx::query(
-        "UPDATE function SET vm_id = $1, guest_ip = $2, updated_at = now() WHERE id = $3"
-    )
-    .bind(vm_id)
-    .bind(guest_ip)
-    .bind(id)
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE function SET vm_id = $1, guest_ip = $2, updated_at = now() WHERE id = $3")
+        .bind(vm_id)
+        .bind(guest_ip)
+        .bind(id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 

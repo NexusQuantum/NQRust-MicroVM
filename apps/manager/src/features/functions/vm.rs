@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
-use uuid::Uuid;
 use crate::AppState;
+use anyhow::{Context, Result};
 use nexus_types::CreateVmReq;
+use uuid::Uuid;
 
 /// Create a dedicated MicroVM for running a serverless function
 ///
@@ -34,11 +34,18 @@ pub async fn create_function_vm(
     let vm_id = Uuid::new_v4();
     let function_rootfs_path = format!("/srv/images/functions/{}.ext4", vm_id);
 
-    eprintln!("[Function {}] Creating VM {} with dedicated runtime image copy", function_id, vm_id);
-    eprintln!("[Function {}] Copying {} to {}", function_id, base_rootfs_path, function_rootfs_path);
+    eprintln!(
+        "[Function {}] Creating VM {} with dedicated runtime image copy",
+        function_id, vm_id
+    );
+    eprintln!(
+        "[Function {}] Copying {} to {}",
+        function_id, base_rootfs_path, function_rootfs_path
+    );
 
     // Ensure directory exists
-    tokio::fs::create_dir_all("/srv/images/functions").await
+    tokio::fs::create_dir_all("/srv/images/functions")
+        .await
         .context("Failed to create functions image directory")?;
 
     // Copy the base runtime image to a function-specific image
@@ -49,10 +56,17 @@ pub async fn create_function_vm(
         .context("Failed to execute cp command")?;
 
     if !copy_status.success() {
-        anyhow::bail!("Failed to copy runtime image from {} to {}", base_rootfs_path, function_rootfs_path);
+        anyhow::bail!(
+            "Failed to copy runtime image from {} to {}",
+            base_rootfs_path,
+            function_rootfs_path
+        );
     }
 
-    eprintln!("[Function {}] Runtime image copied successfully", function_id);
+    eprintln!(
+        "[Function {}] Runtime image copied successfully",
+        function_id
+    );
 
     // Create VM request using function-specific rootfs copy
     let vm_name = format!("fn-{}-{}", function_name, &function_id.to_string()[..8]);
@@ -121,8 +135,7 @@ pub async fn inject_function_code(
 
     // Create temporary mount point
     let mount_point = format!("/tmp/fn-inject-{}", vm_id);
-    fs::create_dir_all(&mount_point)
-        .context("Failed to create mount directory")?;
+    fs::create_dir_all(&mount_point).context("Failed to create mount directory")?;
 
     // Mount the rootfs
     let mount_output = Command::new("sudo")
@@ -132,7 +145,10 @@ pub async fn inject_function_code(
 
     if !mount_output.status.success() {
         let _ = fs::remove_dir_all(&mount_point);
-        anyhow::bail!("Failed to mount rootfs: {}", String::from_utf8_lossy(&mount_output.stderr));
+        anyhow::bail!(
+            "Failed to mount rootfs: {}",
+            String::from_utf8_lossy(&mount_output.stderr)
+        );
     }
 
     // Ensure we unmount on error or success
@@ -177,8 +193,7 @@ pub async fn inject_function_code(
     // Write environment variables if provided
     if let Some(env) = env_vars {
         let env_path = format!("{}/function/env.json", mount_point);
-        let env_json = serde_json::to_string_pretty(env)
-            .context("Failed to serialize env vars")?;
+        let env_json = serde_json::to_string_pretty(env).context("Failed to serialize env vars")?;
         if let Err(e) = fs::write(&env_path, env_json) {
             cleanup();
             anyhow::bail!("Failed to write env vars: {}", e);
@@ -222,26 +237,28 @@ pub async fn update_function_code(
     loop {
         attempt += 1;
 
-        match client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-        {
+        match client.post(&url).json(&payload).send().await {
             Ok(response) => {
                 if !response.status().is_success() {
-                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                    let error_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
                     anyhow::bail!("Write-code failed: {}", error_text);
                 }
 
-                let result: serde_json::Value = response.json().await
-                    .context("Failed to parse response")?;
+                let result: serde_json::Value =
+                    response.json().await.context("Failed to parse response")?;
 
                 if result.get("success") == Some(&serde_json::Value::Bool(true)) {
-                    eprintln!("[CodeInjection] Successfully wrote and loaded code at {} (attempt {})", guest_ip, attempt);
+                    eprintln!(
+                        "[CodeInjection] Successfully wrote and loaded code at {} (attempt {})",
+                        guest_ip, attempt
+                    );
                     return Ok(());
                 } else {
-                    let error = result.get("error")
+                    let error = result
+                        .get("error")
                         .and_then(|e| e.as_str())
                         .unwrap_or("Unknown error");
                     anyhow::bail!("Code injection failed: {}", error);
@@ -252,20 +269,34 @@ pub async fn update_function_code(
 
                 if attempt >= max_attempts {
                     eprintln!("[CodeInjection] ERROR DETAILS: {:#?}", e);
-                    anyhow::bail!("Failed to call /write-code endpoint after {} attempts: {}", max_attempts, last_error);
+                    anyhow::bail!(
+                        "Failed to call /write-code endpoint after {} attempts: {}",
+                        max_attempts,
+                        last_error
+                    );
                 }
 
                 let wait_secs = std::cmp::min(attempt, 5); // Cap at 5 seconds
-                eprintln!("[CodeInjection] Attempt {}/{} failed, retrying in {}s...
+                eprintln!(
+                    "[CodeInjection] Attempt {}/{} failed, retrying in {}s...
 Error type: {}
 Is timeout: {}
 Is connect: {}
 URL: {}",
-                    attempt, max_attempts, wait_secs,
-                    if e.is_timeout() { "TIMEOUT" } else if e.is_connect() { "CONNECTION_REFUSED" } else { "OTHER" },
+                    attempt,
+                    max_attempts,
+                    wait_secs,
+                    if e.is_timeout() {
+                        "TIMEOUT"
+                    } else if e.is_connect() {
+                        "CONNECTION_REFUSED"
+                    } else {
+                        "OTHER"
+                    },
                     e.is_timeout(),
                     e.is_connect(),
-                    url);
+                    url
+                );
                 tokio::time::sleep(std::time::Duration::from_secs(wait_secs as u64)).await;
             }
         }

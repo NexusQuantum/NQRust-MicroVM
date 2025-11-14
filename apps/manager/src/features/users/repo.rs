@@ -1,6 +1,6 @@
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::password_hash::{rand_core::OsRng, SaltString};
-use base64::{Engine as _, engine::general_purpose};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -68,8 +68,8 @@ impl UserRepository {
     }
 
     fn verify_password_hash(password: &str, hash: &str) -> Result<bool, UserRepoError> {
-        let parsed_hash = PasswordHash::new(hash)
-            .map_err(|e| UserRepoError::HashingError(e.to_string()))?;
+        let parsed_hash =
+            PasswordHash::new(hash).map_err(|e| UserRepoError::HashingError(e.to_string()))?;
         let argon2 = Argon2::default();
         Ok(argon2
             .verify_password(password.as_bytes(), &parsed_hash)
@@ -180,7 +180,6 @@ impl UserRepository {
         password: Option<&str>,
         role: Option<nexus_types::Role>,
     ) -> Result<UserRow, UserRepoError> {
-
         // Get current user first
         let mut user = self.get_by_id(id).await?;
 
@@ -229,7 +228,11 @@ impl UserRepository {
         Ok(())
     }
 
-    pub async fn verify_password(&self, username: &str, password: &str) -> Result<UserRow, UserRepoError> {
+    pub async fn verify_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<UserRow, UserRepoError> {
         let user = self.get_by_username(username).await?;
         let is_valid = Self::verify_password_hash(password, &user.password_hash)?;
         if !is_valid {
@@ -319,19 +322,24 @@ impl UserRepository {
     }
 
     // Preferences Management
-    pub async fn get_preferences(&self, user_id: Uuid) -> Result<nexus_types::UserPreferences, UserRepoError> {
+    pub async fn get_preferences(
+        &self,
+        user_id: Uuid,
+    ) -> Result<nexus_types::UserPreferences, UserRepoError> {
         debug!(user_id = ?user_id, "fetching preferences from database");
 
-        let row: Option<(Option<sqlx::types::JsonValue>, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT preferences, timezone, theme FROM users WHERE id = $1"
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            error!(?e, user_id = ?user_id, "database error fetching preferences");
-            e
-        })?;
+        let row: Option<(
+            Option<sqlx::types::JsonValue>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as("SELECT preferences, timezone, theme FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                error!(?e, user_id = ?user_id, "database error fetching preferences");
+                e
+            })?;
 
         let (prefs_json, timezone, theme) = row.ok_or_else(|| {
             debug!(user_id = ?user_id, "user not found when fetching preferences");
@@ -388,8 +396,8 @@ impl UserRepository {
         }
 
         // Save to database
-        let prefs_json = serde_json::to_value(&prefs)
-            .map_err(|e| UserRepoError::HashingError(e.to_string()))?;
+        let prefs_json =
+            serde_json::to_value(&prefs).map_err(|e| UserRepoError::HashingError(e.to_string()))?;
 
         sqlx::query(
             "UPDATE users SET preferences = $1, timezone = $2, theme = $3, updated_at = now() WHERE id = $4"
@@ -411,13 +419,11 @@ impl UserRepository {
         username: Option<&str>,
     ) -> Result<UserRow, UserRepoError> {
         if let Some(new_username) = username {
-            sqlx::query(
-                "UPDATE users SET username = $1, updated_at = now() WHERE id = $2"
-            )
-            .bind(new_username)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
+            sqlx::query("UPDATE users SET username = $1, updated_at = now() WHERE id = $2")
+                .bind(new_username)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await?;
         }
 
         self.get_by_id(user_id).await
@@ -441,48 +447,41 @@ impl UserRepository {
         let new_hash = Self::hash_password(new_password)?;
 
         // Update password
-        sqlx::query(
-            "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2"
-        )
-        .bind(new_hash)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2")
+            .bind(new_hash)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
 
     // Avatar Management
     pub async fn get_avatar_path(&self, user_id: Uuid) -> Result<Option<String>, UserRepoError> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT avatar_path FROM users WHERE id = $1"
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT avatar_path FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(row.and_then(|(path,)| path))
     }
 
     pub async fn set_avatar_path(&self, user_id: Uuid, path: &str) -> Result<(), UserRepoError> {
-        sqlx::query(
-            "UPDATE users SET avatar_path = $1, updated_at = now() WHERE id = $2"
-        )
-        .bind(path)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE users SET avatar_path = $1, updated_at = now() WHERE id = $2")
+            .bind(path)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
 
     pub async fn delete_avatar(&self, user_id: Uuid) -> Result<(), UserRepoError> {
-        sqlx::query(
-            "UPDATE users SET avatar_path = NULL, updated_at = now() WHERE id = $1"
-        )
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE users SET avatar_path = NULL, updated_at = now() WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
@@ -505,4 +504,3 @@ pub enum UserRepoError {
     #[error(transparent)]
     Sql(#[from] sqlx::Error),
 }
-

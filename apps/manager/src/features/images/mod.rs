@@ -17,6 +17,9 @@ pub fn router() -> Router {
         .route("/dockerhub/search", post(routes::dockerhub_search))
         .route("/dockerhub/tags", post(routes::dockerhub_tags))
         .route("/dockerhub/download", post(routes::dockerhub_download))
-        .route("/dockerhub/download/progress/:image_name", get(routes::dockerhub_download_progress))
+        .route(
+            "/dockerhub/download/progress/:image_name",
+            get(routes::dockerhub_download_progress),
+        )
         .route("/dockerhub/preload", post(routes::dockerhub_preload))
 }

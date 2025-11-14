@@ -3,11 +3,11 @@ use axum::{
     Router,
 };
 
+pub mod guest_agent;
 pub mod repo; // db
 pub mod routes; // handlers
 pub mod service; // orchestration
-pub mod shell; // shell session helpers
-pub mod guest_agent; // automatic guest agent installation
+pub mod shell; // shell session helpers // automatic guest agent installation
 
 pub fn router() -> Router {
     Router::new()

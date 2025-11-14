@@ -1,5 +1,5 @@
 /// Guest agent automatic installation for VMs
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::path::Path;
 use tokio::fs;
 use tokio::process::Command;
@@ -111,11 +111,14 @@ exit 0
 pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str) -> Result<()> {
     tracing::info!("=== GUEST AGENT INSTALLATION STARTED ===");
     tracing::info!(rootfs = %rootfs_path, vm_id = %vm_id, manager_url = %manager_url, "Installing guest agent to rootfs");
-    
+
     // Check if guest agent binary exists
     let guest_agent_binary = "target/x86_64-unknown-linux-musl/release/guest-agent";
     if !Path::new(guest_agent_binary).exists() {
-        tracing::warn!("Guest agent binary not found at {}, skipping installation", guest_agent_binary);
+        tracing::warn!(
+            "Guest agent binary not found at {}, skipping installation",
+            guest_agent_binary
+        );
         return Ok(());
     }
 
@@ -127,13 +130,7 @@ pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str
 
     // Mount the rootfs image
     let mount_result = Command::new("sudo")
-        .args([
-            "mount",
-            "-o",
-            "loop",
-            rootfs_path,
-            &mount_point,
-        ])
+        .args(["mount", "-o", "loop", rootfs_path, &mount_point])
         .status()
         .await?;
 
@@ -159,7 +156,12 @@ pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str
     result
 }
 
-async fn install_files(mount_point: &str, vm_id: Uuid, manager_url: &str, guest_agent_binary: &str) -> Result<()> {
+async fn install_files(
+    mount_point: &str,
+    vm_id: Uuid,
+    manager_url: &str,
+    guest_agent_binary: &str,
+) -> Result<()> {
     // 1. Copy guest-agent binary to /usr/local/bin/
     let agent_dest = format!("{}/usr/local/bin/guest-agent", mount_point);
 
@@ -245,18 +247,21 @@ MANAGER_URL={}
 
 /// Detect which init system the VM uses
 async fn detect_init_system(mount_point: &str) -> Result<String> {
-    tracing::info!("Detecting init system in mounted filesystem at {}", mount_point);
-    
+    tracing::info!(
+        "Detecting init system in mounted filesystem at {}",
+        mount_point
+    );
+
     // List what's actually in /etc to help with debugging
     if let Ok(output) = Command::new("sudo")
         .args(["ls", "-la", &format!("{}/etc", mount_point)])
         .output()
-        .await 
+        .await
     {
         let content = String::from_utf8_lossy(&output.stdout);
         tracing::info!("Contents of /etc: {}", content);
     }
-    
+
     // Check for systemd (most common)
     if Command::new("sudo")
         .args(["test", "-d", &format!("{}/etc/systemd", mount_point)])
@@ -296,16 +301,17 @@ async fn detect_init_system(mount_point: &str) -> Result<String> {
             .args(["test", "-f", &format!("{}/etc/inittab", mount_point)])
             .status()
             .await?
-            .success() || Command::new("sudo")
-            .args(["ls", &format!("{}/etc/rc*.d", mount_point)])
-            .status()
-            .await?
             .success()
+            || Command::new("sudo")
+                .args(["ls", &format!("{}/etc/rc*.d", mount_point)])
+                .status()
+                .await?
+                .success()
         {
             tracing::info!("Detected SysV init system");
             return Ok("sysvinit".to_string());
         }
-        
+
         // If we have /etc/init.d but no clear indicators, assume SysV-compatible
         tracing::info!("Found /etc/init.d directory, assuming SysV-compatible init system");
         return Ok("sysvinit".to_string());
@@ -333,7 +339,11 @@ async fn install_systemd_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
 
     let service_dest = format!("{}/etc/systemd/system/guest-agent.service", mount_point);
     Command::new("sudo")
-        .args(["mkdir", "-p", &format!("{}/etc/systemd/system", mount_point)])
+        .args([
+            "mkdir",
+            "-p",
+            &format!("{}/etc/systemd/system", mount_point),
+        ])
         .status()
         .await?;
 
@@ -352,7 +362,12 @@ async fn install_systemd_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
         .await?;
 
     Command::new("sudo")
-        .args(["ln", "-sf", "/etc/systemd/system/guest-agent.service", &format!("{}/guest-agent.service", enable_dir)])
+        .args([
+            "ln",
+            "-sf",
+            "/etc/systemd/system/guest-agent.service",
+            &format!("{}/guest-agent.service", enable_dir),
+        ])
         .status()
         .await?;
 
@@ -386,7 +401,12 @@ async fn install_openrc_service(mount_point: &str, vm_id: Uuid) -> Result<()> {
         .await?;
 
     Command::new("sudo")
-        .args(["ln", "-sf", "/etc/init.d/guest-agent", &format!("{}/guest-agent", runlevel_dir)])
+        .args([
+            "ln",
+            "-sf",
+            "/etc/init.d/guest-agent",
+            &format!("{}/guest-agent", runlevel_dir),
+        ])
         .status()
         .await?;
 
@@ -421,7 +441,12 @@ async fn install_sysvinit_service(mount_point: &str, vm_id: Uuid) -> Result<()> 
             .await?;
 
         Command::new("sudo")
-            .args(["ln", "-sf", "../init.d/guest-agent", &format!("{}/S99guest-agent", rc_dir)])
+            .args([
+                "ln",
+                "-sf",
+                "../init.d/guest-agent",
+                &format!("{}/S99guest-agent", rc_dir),
+            ])
             .status()
             .await?;
     }
@@ -557,7 +582,11 @@ if [ $RETRY -ge $MAX_RETRIES ]; then
     logger -t guest-agent "Failed to report IP after $MAX_RETRIES attempts"
 fi
 "#,
-        manager_url, vm_id, manager_url, vm_id, manager_url.split("://").nth(1).unwrap_or(manager_url)
+        manager_url,
+        vm_id,
+        manager_url,
+        vm_id,
+        manager_url.split("://").nth(1).unwrap_or(manager_url)
     )
 }
 

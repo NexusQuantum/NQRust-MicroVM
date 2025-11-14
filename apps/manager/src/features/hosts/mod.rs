@@ -1,4 +1,7 @@
-use axum::{routing::{delete, get, post}, Router};
+use axum::{
+    routing::{delete, get, post},
+    Router,
+};
 
 pub mod repo;
 pub mod routes;

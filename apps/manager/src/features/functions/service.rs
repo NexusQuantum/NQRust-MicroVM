@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
 use crate::AppState;
+use anyhow::{Context, Result};
 use sqlx::PgPool;
 use std::time::Instant;
 use uuid::Uuid;
@@ -71,7 +71,9 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
                 eprintln!("[Function {}] VM created: {}", function_id, vm_id);
 
                 // Update function with VM ID and state
-                if let Err(e) = super::repo::update_vm_info(&st_clone.db, function_id, vm_id, None).await {
+                if let Err(e) =
+                    super::repo::update_vm_info(&st_clone.db, function_id, vm_id, None).await
+                {
                     eprintln!("[Function {}] Failed to update VM info: {}", function_id, e);
                     let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
                     return;
@@ -93,7 +95,10 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
                     }
 
                     if attempt % 10 == 0 {
-                        eprintln!("[Function {}] Still waiting for guest IP... ({}s)", function_id, attempt);
+                        eprintln!(
+                            "[Function {}] Still waiting for guest IP... ({}s)",
+                            function_id, attempt
+                        );
                     }
                 }
 
@@ -109,7 +114,9 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
                 eprintln!("[Function {}] Got guest IP: {}", function_id, guest_ip);
 
                 // Update function with guest IP and state
-                let _ = super::repo::update_vm_info(&st_clone.db, function_id, vm_id, Some(&guest_ip)).await;
+                let _ =
+                    super::repo::update_vm_info(&st_clone.db, function_id, vm_id, Some(&guest_ip))
+                        .await;
                 let _ = super::repo::update_state(&st_clone.db, function_id, "deploying").await;
 
                 // Inject function code via HTTP (will retry until successful)
@@ -189,11 +196,16 @@ pub async fn update_function(
         let new_handler = req.handler.unwrap_or(existing.handler);
         let runtime = req.runtime.unwrap_or(existing.runtime);
 
-        eprintln!("[Function {}] Code/handler updated, reloading in VM at {}", id, guest_ip);
+        eprintln!(
+            "[Function {}] Code/handler updated, reloading in VM at {}",
+            id, guest_ip
+        );
 
         // Reload code in background (don't block the response)
         tokio::spawn(async move {
-            if let Err(e) = super::vm::update_function_code(&guest_ip, &runtime, &new_code, &new_handler).await {
+            if let Err(e) =
+                super::vm::update_function_code(&guest_ip, &runtime, &new_code, &new_handler).await
+            {
                 eprintln!("[Function {}] Failed to reload code: {}", id, e);
             } else {
                 eprintln!("[Function {}] Code reloaded successfully", id);
@@ -224,7 +236,10 @@ pub async fn delete_function(st: &AppState, id: Uuid) -> Result<()> {
         let function_rootfs_path = format!("/srv/images/functions/{}.ext4", vm_id);
         if tokio::fs::metadata(&function_rootfs_path).await.is_ok() {
             if let Err(e) = tokio::fs::remove_file(&function_rootfs_path).await {
-                eprintln!("[Function {}] Failed to delete rootfs {}: {}", id, function_rootfs_path, e);
+                eprintln!(
+                    "[Function {}] Failed to delete rootfs {}: {}",
+                    id, function_rootfs_path, e
+                );
             } else {
                 eprintln!("[Function {}] Deleted rootfs {}", id, function_rootfs_path);
             }
@@ -256,7 +271,10 @@ pub async fn invoke_function(
     }
 
     // Check if VM exists and has IP
-    let guest_ip = func.guest_ip.as_ref().context("Function VM has no IP yet")?;
+    let guest_ip = func
+        .guest_ip
+        .as_ref()
+        .context("Function VM has no IP yet")?;
 
     // Generate request ID
     let request_id = Uuid::new_v4().to_string();
@@ -271,7 +289,9 @@ pub async fn invoke_function(
     let http_result = client
         .post(&url)
         .json(&serde_json::json!({ "event": req.event }))
-        .timeout(std::time::Duration::from_secs(func.timeout_seconds as u64 + 5))
+        .timeout(std::time::Duration::from_secs(
+            func.timeout_seconds as u64 + 5,
+        ))
         .send()
         .await;
 
@@ -282,24 +302,49 @@ pub async fn invoke_function(
             if resp.status().is_success() {
                 match resp.json::<serde_json::Value>().await {
                     Ok(result) => {
-                        let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                        let status = result
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
                         let response = result.get("response").cloned();
-                        let logs = result.get("logs")
+                        let logs = result
+                            .get("logs")
                             .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default();
-                        let error = result.get("error").and_then(|v| v.as_str()).map(String::from);
+                        let error = result
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
                         (status, response, logs, error)
                     }
-                    Err(e) => ("error".to_string(), None, vec![], Some(format!("Failed to parse response: {}", e))),
+                    Err(e) => (
+                        "error".to_string(),
+                        None,
+                        vec![],
+                        Some(format!("Failed to parse response: {}", e)),
+                    ),
                 }
             } else {
-                ("error".to_string(), None, vec![], Some(format!("HTTP {}", resp.status())))
+                (
+                    "error".to_string(),
+                    None,
+                    vec![],
+                    Some(format!("HTTP {}", resp.status())),
+                )
             }
         }
-        Err(e) => {
-            ("error".to_string(), None, vec![], Some(format!("HTTP request failed: {}", e)))
-        }
+        Err(e) => (
+            "error".to_string(),
+            None,
+            vec![],
+            Some(format!("HTTP request failed: {}", e)),
+        ),
     };
 
     // Store invocation
@@ -338,8 +383,7 @@ pub async fn list_invocations(
     status: Option<String>,
     limit: Option<i64>,
 ) -> Result<ListInvocationsResp> {
-    let rows =
-        super::repo::list_invocations(db, function_id, status.as_deref(), limit).await?;
+    let rows = super::repo::list_invocations(db, function_id, status.as_deref(), limit).await?;
     let items = rows.into_iter().map(invocation_row_to_type).collect();
     Ok(ListInvocationsResp { items })
 }

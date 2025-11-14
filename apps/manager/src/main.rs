@@ -58,7 +58,10 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     if user_count == 0 {
         info!("No users found, creating default admin user (username: root, password: root)");
-        match users_repo.create_user("root", "root", nexus_types::Role::Admin).await {
+        match users_repo
+            .create_user("root", "root", nexus_types::Role::Admin)
+            .await
+        {
             Ok(user) => {
                 info!(username = %user.username, user_id = %user.id, "Default admin user created");
             }

@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
+use bollard::image::CreateImageOptions;
+use bollard::Docker;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::process::Command;
-use bollard::Docker;
-use bollard::image::CreateImageOptions;
-use futures::StreamExt;
 
 /// Docker Hub API client for searching and downloading images
 #[derive(Clone)]
@@ -60,15 +60,19 @@ impl DockerHubClient {
         let auth_token = std::env::var("DOCKER_HUB_TOKEN")
             .ok()
             .filter(|t| !t.is_empty());
-        
-        Self { 
+
+        Self {
             image_root,
             auth_token,
         }
     }
 
     /// Search Docker Hub for images
-    pub async fn search(&self, query: &str, limit: Option<i32>) -> Result<Vec<nexus_types::DockerHubImage>> {
+    pub async fn search(
+        &self,
+        query: &str,
+        limit: Option<i32>,
+    ) -> Result<Vec<nexus_types::DockerHubImage>> {
         let limit = limit.unwrap_or(25).min(100);
 
         let url = format!(
@@ -83,12 +87,12 @@ impl DockerHubClient {
             .context("Failed to create HTTP client")?;
 
         let mut request = client.get(&url).header("Search-Version", "v3");
-        
+
         // Add authentication if token is available (improves rate limits)
         if let Some(token) = &self.auth_token {
             request = request.header("Authorization", format!("Bearer {}", token));
         }
-        
+
         let response = request
             .send()
             .await
@@ -151,12 +155,12 @@ impl DockerHubClient {
             .context("Failed to create HTTP client")?;
 
         let mut request = client.get(&url);
-        
+
         // Add authentication if token is available (improves rate limits)
         if let Some(token) = &self.auth_token {
             request = request.header("Authorization", format!("Bearer {}", token));
         }
-        
+
         let response = request
             .send()
             .await
@@ -205,7 +209,10 @@ impl DockerHubClient {
         progress_tracker: crate::DownloadProgressTracker,
     ) -> Result<(PathBuf, String, i64)> {
         // Try bollard (Docker API) first for better progress tracking
-        match self.download_image_with_bollard(image, registry_auth, progress_tracker.clone()).await {
+        match self
+            .download_image_with_bollard(image, registry_auth, progress_tracker.clone())
+            .await
+        {
             Ok(result) => {
                 tracing::info!("Successfully downloaded {} using Docker API", image);
                 return Ok(result);
@@ -222,7 +229,8 @@ impl DockerHubClient {
 
         // Fallback to CLI-based download
         tracing::info!("Using CLI-based download for {}", image);
-        self.download_image_with_cli(image, registry_auth, progress_tracker).await
+        self.download_image_with_cli(image, registry_auth, progress_tracker)
+            .await
     }
 
     /// Download image using CLI (fallback method)
@@ -234,7 +242,7 @@ impl DockerHubClient {
     ) -> Result<(PathBuf, String, i64)> {
         // Create docker images directory if it doesn't exist
         let docker_dir = self.image_root.join("docker");
-        
+
         // Try to create the directory, providing helpful error message if it fails
         if let Err(e) = tokio::fs::create_dir_all(&docker_dir).await {
             anyhow::bail!(
@@ -249,14 +257,12 @@ impl DockerHubClient {
 
         // Login if authentication provided
         if let Some(auth) = registry_auth {
-            let server = auth.server_address.as_deref().unwrap_or("https://index.docker.io/v1/");
+            let server = auth
+                .server_address
+                .as_deref()
+                .unwrap_or("https://index.docker.io/v1/");
             let status = Command::new("docker")
-                .args([
-                    "login",
-                    server,
-                    "-u", &auth.username,
-                    "-p", &auth.password,
-                ])
+                .args(["login", server, "-u", &auth.username, "-p", &auth.password])
                 .output()
                 .await
                 .context("Failed to execute docker login")?;
@@ -325,7 +331,10 @@ impl DockerHubClient {
                     }
                 }
 
-                if trimmed.contains("Downloading") || trimmed.contains("Extracting") || trimmed.contains("Pull complete") {
+                if trimmed.contains("Downloading")
+                    || trimmed.contains("Extracting")
+                    || trimmed.contains("Pull complete")
+                {
                     tracing::info!("Docker pull progress: {}", trimmed);
                 }
 
@@ -333,27 +342,29 @@ impl DockerHubClient {
             }
         }
 
-        let pull_status = pull_process.wait().await
+        let pull_status = pull_process
+            .wait()
+            .await
             .context("Failed to wait for docker pull")?;
 
         if !pull_status.success() {
             let error_msg = if !error_output.is_empty() {
                 error_output.join("")
             } else {
-                format!("Docker pull exited with code: {}", pull_status.code().unwrap_or(-1))
+                format!(
+                    "Docker pull exited with code: {}",
+                    pull_status.code().unwrap_or(-1)
+                )
             };
-            
+
             tracing::error!("Docker pull failed for {}: {}", image, error_msg);
             anyhow::bail!("Docker pull failed: {}", error_msg);
         }
-        
+
         tracing::info!("Successfully pulled Docker image: {}", image);
 
         // Sanitize image name for filename
-        let safe_name = image
-            .replace('/', "_")
-            .replace(':', "_")
-            .replace('.', "_");
+        let safe_name = image.replace('/', "_").replace(':', "_").replace('.', "_");
         let tarball_path = docker_dir.join(format!("{}.tar", safe_name));
 
         // Save image as tarball
@@ -368,18 +379,15 @@ impl DockerHubClient {
         }
 
         let mut save_process = Command::new("docker")
-            .args([
-                "save",
-                "-o",
-                tarball_path.to_str().unwrap(),
-                image,
-            ])
+            .args(["save", "-o", tarball_path.to_str().unwrap(), image])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .context("Failed to spawn docker save command")?;
 
-        let save_status = save_process.wait().await
+        let save_status = save_process
+            .wait()
+            .await
             .context("Failed to wait for docker save")?;
 
         if !save_status.success() {
@@ -392,16 +400,22 @@ impl DockerHubClient {
                 if !buf.is_empty() {
                     buf
                 } else {
-                    format!("Docker save exited with code: {}", save_status.code().unwrap_or(-1))
+                    format!(
+                        "Docker save exited with code: {}",
+                        save_status.code().unwrap_or(-1)
+                    )
                 }
             } else {
-                format!("Docker save exited with code: {}", save_status.code().unwrap_or(-1))
+                format!(
+                    "Docker save exited with code: {}",
+                    save_status.code().unwrap_or(-1)
+                )
             };
-            
+
             tracing::error!("Docker save failed for {}: {}", image, error_msg);
             anyhow::bail!("Docker save failed: {}", error_msg);
         }
-        
+
         tracing::info!("Successfully saved Docker image to: {:?}", tarball_path);
 
         // Get image inspect data for SHA256
@@ -438,14 +452,20 @@ impl DockerHubClient {
         registry_auth: Option<&nexus_types::RegistryAuth>,
         progress_tracker: crate::DownloadProgressTracker,
     ) -> Result<(PathBuf, String, i64)> {
-        tracing::info!("🔷 Attempting to download {} using Docker API (bollard)", image);
+        tracing::info!(
+            "🔷 Attempting to download {} using Docker API (bollard)",
+            image
+        );
 
         // Connect to Docker daemon
         let docker = Docker::connect_with_local_defaults()
             .context("Failed to connect to Docker daemon - ensure Docker is running and socket is accessible")?;
 
         // Test connection
-        docker.ping().await.context("Docker daemon not responding")?;
+        docker
+            .ping()
+            .await
+            .context("Docker daemon not responding")?;
         tracing::info!("✅ Docker daemon connection successful");
 
         // Parse image name and tag
@@ -474,7 +494,8 @@ impl DockerHubClient {
         let mut stream = docker.create_image(Some(options), None, auth_config);
 
         // Track total progress across all layers
-        let mut layer_progress: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
+        let mut layer_progress: std::collections::HashMap<String, (u64, u64)> =
+            std::collections::HashMap::new();
 
         while let Some(result) = stream.next().await {
             match result {
@@ -487,7 +508,9 @@ impl DockerHubClient {
                     // Update progress based on layer information
                     if let Some(id) = &info.id {
                         if let Some(progress_detail) = &info.progress_detail {
-                            if let (Some(current), Some(total)) = (progress_detail.current, progress_detail.total) {
+                            if let (Some(current), Some(total)) =
+                                (progress_detail.current, progress_detail.total)
+                            {
                                 tracing::debug!("Layer {} progress: {} / {}", id, current, total);
                                 layer_progress.insert(id.clone(), (current as u64, total as u64));
                             }
@@ -495,7 +518,11 @@ impl DockerHubClient {
                             // Log when progress_detail is missing
                             if let Some(status) = &info.status {
                                 if status.contains("Downloading") || status.contains("Extracting") {
-                                    tracing::debug!("Status '{}' but no progress_detail for layer {}", status, id);
+                                    tracing::debug!(
+                                        "Status '{}' but no progress_detail for layer {}",
+                                        status,
+                                        id
+                                    );
                                 }
                             }
                         }
@@ -531,22 +558,34 @@ impl DockerHubClient {
                             // Update status based on Docker's status message
                             if let Some(status) = &info.status {
                                 match status.as_str() {
-                                    "Pulling fs layer" => progress.status = "Pulling layers...".to_string(),
+                                    "Pulling fs layer" => {
+                                        progress.status = "Pulling layers...".to_string()
+                                    }
                                     "Downloading" => {
                                         progress.status = "Downloading layers...".to_string();
                                         // Force update even if no progress_detail
                                         if total_total == 0 {
-                                            tracing::warn!("Downloading but no size information available yet");
+                                            tracing::warn!(
+                                                "Downloading but no size information available yet"
+                                            );
                                         }
-                                    },
-                                    "Extracting" => progress.status = "Extracting layers...".to_string(),
-                                    "Pull complete" => progress.status = "Pull complete".to_string(),
+                                    }
+                                    "Extracting" => {
+                                        progress.status = "Extracting layers...".to_string()
+                                    }
+                                    "Pull complete" => {
+                                        progress.status = "Pull complete".to_string()
+                                    }
                                     "Already exists" => {
                                         progress.status = "Using cached layers...".to_string();
                                         tracing::info!("Layer already exists (cached)");
-                                    },
-                                    "Download complete" => progress.status = "Download complete".to_string(),
-                                    "Status: Downloaded newer image" => progress.status = "Download complete".to_string(),
+                                    }
+                                    "Download complete" => {
+                                        progress.status = "Download complete".to_string()
+                                    }
+                                    "Status: Downloaded newer image" => {
+                                        progress.status = "Download complete".to_string()
+                                    }
                                     _ => {}
                                 }
                             }
@@ -556,7 +595,8 @@ impl DockerHubClient {
                     // Log progress for monitoring (every 10% to avoid spam)
                     if let Some(status) = &info.status {
                         if total_total > 0 {
-                            let percentage = (total_current as f64 / total_total as f64 * 100.0) as u32;
+                            let percentage =
+                                (total_current as f64 / total_total as f64 * 100.0) as u32;
                             if percentage % 10 == 0 && total_current > 0 {
                                 tracing::info!(
                                     "📦 Docker pull progress: {} - {}% ({} MB / {} MB)",
@@ -593,10 +633,7 @@ impl DockerHubClient {
             .context("Failed to create docker images directory")?;
 
         // Sanitize image name for filename
-        let safe_name = image
-            .replace('/', "_")
-            .replace(':', "_")
-            .replace('.', "_");
+        let safe_name = image.replace('/', "_").replace(':', "_").replace('.', "_");
         let tarball_path = docker_dir.join(format!("{}.tar", safe_name));
 
         // Export image as tarball using bollard
@@ -605,29 +642,32 @@ impl DockerHubClient {
         // Note: Bollard doesn't have a direct "save" equivalent yet
         // We'll fall back to CLI for this part
         let mut save_process = Command::new("docker")
-            .args([
-                "save",
-                "-o",
-                tarball_path.to_str().unwrap(),
-                image,
-            ])
+            .args(["save", "-o", tarball_path.to_str().unwrap(), image])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .context("Failed to spawn docker save command")?;
 
-        let save_status = save_process.wait().await
+        let save_status = save_process
+            .wait()
+            .await
             .context("Failed to wait for docker save")?;
 
         if !save_status.success() {
-            anyhow::bail!("Docker save failed with code: {}", save_status.code().unwrap_or(-1));
+            anyhow::bail!(
+                "Docker save failed with code: {}",
+                save_status.code().unwrap_or(-1)
+            );
         }
 
         // Get image inspect data for SHA256
-        let inspect_result = docker.inspect_image(image).await
+        let inspect_result = docker
+            .inspect_image(image)
+            .await
             .context("Failed to inspect image")?;
 
-        let sha256 = inspect_result.id
+        let sha256 = inspect_result
+            .id
             .unwrap_or_default()
             .trim_start_matches("sha256:")
             .to_string();

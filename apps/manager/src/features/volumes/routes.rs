@@ -74,11 +74,7 @@ async fn volume_to_list_item(
     let host_name = st.hosts.get(volume.host_id).await.ok().map(|h| h.name);
 
     // Get attached VM if any
-    let attached_vm_id = volume_repo
-        .get_attached_vm(volume.id)
-        .await
-        .ok()
-        .flatten();
+    let attached_vm_id = volume_repo.get_attached_vm(volume.id).await.ok().flatten();
 
     let attached_vm_name = if let Some(vm_id) = attached_vm_id {
         sqlx::query_as::<_, (String,)>(r#"SELECT name FROM vm WHERE id = $1"#)
@@ -145,7 +141,9 @@ pub async fn create(
 
     // Create volume file path
     let volume_id = Uuid::new_v4();
-    let run_dir = host.capabilities_json.get("run_dir")
+    let run_dir = host
+        .capabilities_json
+        .get("run_dir")
         .and_then(|v| v.as_str())
         .unwrap_or("/srv/fc");
     let path = format!("{}/volumes/vol-{}.{}", run_dir, volume_id, req.volume_type);
@@ -302,13 +300,10 @@ pub async fn detach(
     })?;
 
     // Detach volume
-    volume_repo
-        .detach(id, req.vm_id)
-        .await
-        .map_err(|err| {
-            error!(?err, "failed to detach volume");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    volume_repo.detach(id, req.vm_id).await.map_err(|err| {
+        error!(?err, "failed to detach volume");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(OkResponse {
         message: "Volume detached successfully".to_string(),

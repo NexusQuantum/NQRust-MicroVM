@@ -2,7 +2,6 @@
 ///
 /// This module provides permission checking functions for the RBAC system.
 /// It supports three roles (Admin, User, Viewer) with resource ownership checks.
-
 use nexus_types::Role;
 use uuid::Uuid;
 
@@ -45,7 +44,7 @@ pub fn can_view_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) -> b
 /// A resource with `owner_id = None` can only be modified by admins.
 pub fn can_modify_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) -> bool {
     match role {
-        Role::Admin => true,  // Admins can modify everything
+        Role::Admin => true,   // Admins can modify everything
         Role::Viewer => false, // Viewers cannot modify anything
         Role::User => {
             // Users can only modify resources they own
@@ -121,7 +120,11 @@ mod tests {
         assert!(can_view_resource(Role::Admin, None, admin_id));
 
         // Viewer can view everything
-        assert!(can_view_resource(Role::Viewer, Some(user_id), other_user_id));
+        assert!(can_view_resource(
+            Role::Viewer,
+            Some(user_id),
+            other_user_id
+        ));
         assert!(can_view_resource(Role::Viewer, None, other_user_id));
 
         // User can view own resources
@@ -155,14 +158,22 @@ mod tests {
         assert!(!can_modify_resource(Role::User, None, user_id));
 
         // User cannot modify other users' resources
-        assert!(!can_modify_resource(Role::User, Some(other_user_id), user_id));
+        assert!(!can_modify_resource(
+            Role::User,
+            Some(other_user_id),
+            user_id
+        ));
     }
 
     #[test]
     fn test_can_delete_resource() {
         // Same logic as modify
         let user_id = Uuid::new_v4();
-        assert!(can_delete_resource(Role::Admin, Some(user_id), Uuid::new_v4()));
+        assert!(can_delete_resource(
+            Role::Admin,
+            Some(user_id),
+            Uuid::new_v4()
+        ));
         assert!(can_delete_resource(Role::User, Some(user_id), user_id));
         assert!(!can_delete_resource(Role::Viewer, Some(user_id), user_id));
     }

@@ -5,9 +5,9 @@ use axum::{
     Extension, Json,
 };
 use nexus_types::{
-    CreateFunctionReq, CreateFunctionResp, FunctionPathParams, GetFunctionResp,
-    InvokeFunctionReq, InvokeFunctionResp, ListFunctionsResp, ListInvocationsParams,
-    ListInvocationsResp, OkResponse, UpdateFunctionReq,
+    CreateFunctionReq, CreateFunctionResp, FunctionPathParams, GetFunctionResp, InvokeFunctionReq,
+    InvokeFunctionResp, ListFunctionsResp, ListInvocationsParams, ListInvocationsResp, OkResponse,
+    UpdateFunctionReq,
 };
 
 #[utoipa::path(
@@ -46,12 +46,10 @@ pub async fn create(
 pub async fn list(
     Extension(st): Extension<AppState>,
 ) -> Result<Json<ListFunctionsResp>, StatusCode> {
-    let resp = super::service::list_functions(&st.db)
-        .await
-        .map_err(|e| {
-            eprintln!("Failed to list functions: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let resp = super::service::list_functions(&st.db).await.map_err(|e| {
+        eprintln!("Failed to list functions: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(resp))
 }
 

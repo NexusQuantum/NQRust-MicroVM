@@ -96,7 +96,9 @@ pub async fn create_and_start(
 
     // Extract credentials and tags before moving req into resolve_vm_spec
     let username = req.username.clone().unwrap_or_else(|| "root".to_string());
-    let password = req.password.clone()
+    let password = req
+        .password
+        .clone()
         .unwrap_or_else(|| format!("vm-{}", &id.to_string()[..8]));
     let tags = req.tags.clone();
 
@@ -104,13 +106,15 @@ pub async fn create_and_start(
 
     // Inject credentials into rootfs BEFORE VM starts (while rootfs is not in use)
     // This is the fallback for images without cloud-init
-    if let Err(e) = inject_credentials_to_rootfs(id, &spec.rootfs_path, &username, &password).await {
+    if let Err(e) = inject_credentials_to_rootfs(id, &spec.rootfs_path, &username, &password).await
+    {
         warn!(vm_id = %id, error = ?e, "rootfs credential injection failed (will try cloud-init)");
     }
 
     // Install guest agent into rootfs BEFORE VM starts (while rootfs is not in use)
     // Get manager URL from MANAGER_BIND (use bridge IP from network.bridge)
-    let manager_bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
+    let manager_bind =
+        std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
 
     // Get bridge IP for manager URL (VMs connect via bridge network)
     let bridge_ip = std::process::Command::new("ip")
@@ -130,11 +134,17 @@ pub async fn create_and_start(
             }
             None
         })
-        .unwrap_or_else(|| manager_bind.split(':').next().unwrap_or("127.0.0.1").to_string());
+        .unwrap_or_else(|| {
+            manager_bind
+                .split(':')
+                .next()
+                .unwrap_or("127.0.0.1")
+                .to_string()
+        });
 
     let manager_port = manager_bind.split(':').nth(1).unwrap_or("18080");
     let manager_url = format!("http://{}:{}", bridge_ip, manager_port);
-    
+
     eprintln!("=== GUEST AGENT INSTALLATION STARTED for VM {} ===", id);
     eprintln!("Rootfs path: {}", &spec.rootfs_path);
     eprintln!("Manager bind: {}", manager_bind);
@@ -142,7 +152,8 @@ pub async fn create_and_start(
     eprintln!("Bridge IP: {}", bridge_ip);
     eprintln!("Manager port: {}", manager_port);
     eprintln!("Manager URL: {}", &manager_url);
-    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await {
+    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await
+    {
         eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} ===", id);
         eprintln!("Error: {:?}", e);
         warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
@@ -198,7 +209,7 @@ pub async fn create_and_start(
         Ok(network_id) => {
             info!(vm_id = %id, bridge = %network.bridge, network_id = %network_id, "network auto-registration successful or already exists");
             Some(network_id)
-        },
+        }
         Err(e) => {
             warn!(vm_id = %id, bridge = %network.bridge, error = ?e, "failed to auto-register network");
             None
@@ -218,7 +229,9 @@ pub async fn create_and_start(
             None, // tx_rate_limiter
             Some(network_id),
             None, // assigned_ip - eth0 uses DHCP from bridge network
-        ).await {
+        )
+        .await
+        {
             Ok(_) => info!(vm_id = %id, "default eth0 NIC record created successfully"),
             Err(e) => warn!(vm_id = %id, error = ?e, "failed to create default eth0 NIC record"),
         }
@@ -227,12 +240,20 @@ pub async fn create_and_start(
     // Auto-register rootfs volume if it doesn't exist
     info!(vm_id = %id, rootfs = %spec.rootfs_path, host_id = %host.id, "attempting to auto-register rootfs volume");
     match ensure_volume_registered(st, id, &spec.rootfs_path, host.id).await {
-        Ok(_) => info!(vm_id = %id, rootfs = %spec.rootfs_path, "volume auto-registration successful or already exists"),
-        Err(e) => warn!(vm_id = %id, rootfs = %spec.rootfs_path, error = ?e, "failed to auto-register rootfs volume"),
+        Ok(_) => {
+            info!(vm_id = %id, rootfs = %spec.rootfs_path, "volume auto-registration successful or already exists")
+        }
+        Err(e) => {
+            warn!(vm_id = %id, rootfs = %spec.rootfs_path, error = ?e, "failed to auto-register rootfs volume")
+        }
     }
 
     // Store shell credentials for the VM (use the same credentials that were injected)
-    if let Err(e) = st.shell_repo.upsert_credentials(id, &username, &password).await {
+    if let Err(e) = st
+        .shell_repo
+        .upsert_credentials(id, &username, &password)
+        .await
+    {
         warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
     } else {
         info!(vm_id = %id, username = %username, "created shell credentials for VM");
@@ -299,7 +320,8 @@ pub async fn create_from_snapshot(
 
     // Install guest agent into rootfs BEFORE VM starts (while rootfs is not in use)
     // Get manager URL from MANAGER_BIND (use bridge IP from network.bridge)
-    let manager_bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
+    let manager_bind =
+        std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".to_string());
 
     // Get bridge IP for manager URL (VMs connect via bridge network)
     let bridge_ip = std::process::Command::new("ip")
@@ -319,24 +341,40 @@ pub async fn create_from_snapshot(
             }
             None
         })
-        .unwrap_or_else(|| manager_bind.split(':').next().unwrap_or("127.0.0.1").to_string());
+        .unwrap_or_else(|| {
+            manager_bind
+                .split(':')
+                .next()
+                .unwrap_or("127.0.0.1")
+                .to_string()
+        });
 
     let manager_port = manager_bind.split(':').nth(1).unwrap_or("18080");
     let manager_url = format!("http://{}:{}", bridge_ip, manager_port);
-    
-    eprintln!("=== GUEST AGENT INSTALLATION STARTED for VM {} (from snapshot) ===", id);
+
+    eprintln!(
+        "=== GUEST AGENT INSTALLATION STARTED for VM {} (from snapshot) ===",
+        id
+    );
     eprintln!("Rootfs path: {}", &spec.rootfs_path);
     eprintln!("Manager bind: {}", manager_bind);
     eprintln!("Bridge: {}", network.bridge);
     eprintln!("Bridge IP: {}", bridge_ip);
     eprintln!("Manager port: {}", manager_port);
     eprintln!("Manager URL: {}", &manager_url);
-    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await {
-        eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} (from snapshot) ===", id);
+    if let Err(e) = super::guest_agent::install_to_rootfs(&spec.rootfs_path, id, &manager_url).await
+    {
+        eprintln!(
+            "=== GUEST AGENT INSTALLATION FAILED for VM {} (from snapshot) ===",
+            id
+        );
         eprintln!("Error: {:?}", e);
         warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
     } else {
-        eprintln!("=== GUEST AGENT INSTALLATION SUCCESS for VM {} (from snapshot) ===", id);
+        eprintln!(
+            "=== GUEST AGENT INSTALLATION SUCCESS for VM {} (from snapshot) ===",
+            id
+        );
     }
 
     create_tap(&host.addr, id, &network.bridge).await?;
@@ -372,7 +410,7 @@ pub async fn create_from_snapshot(
             kernel_path: spec.kernel_path.clone(),
             rootfs_path: spec.rootfs_path.clone(),
             source_snapshot_id: Some(source_snapshot_id),
-            guest_ip: None, // Will be set when guest agent reports
+            guest_ip: None,               // Will be set when guest agent reports
             tags: source_vm.tags.clone(), // Preserve tags from source VM
             created_by_user_id: source_vm.created_by_user_id, // Preserve ownership from source VM
             created_at: chrono::Utc::now(),
@@ -387,7 +425,7 @@ pub async fn create_from_snapshot(
         Ok(network_id) => {
             info!(vm_id = %id, bridge = %network.bridge, network_id = %network_id, "network auto-registration successful or already exists");
             Some(network_id)
-        },
+        }
         Err(e) => {
             warn!(vm_id = %id, bridge = %network.bridge, error = ?e, "failed to auto-register network");
             None
@@ -407,7 +445,9 @@ pub async fn create_from_snapshot(
             None, // tx_rate_limiter
             Some(network_id),
             None, // assigned_ip - eth0 uses DHCP from bridge network
-        ).await {
+        )
+        .await
+        {
             Ok(_) => info!(vm_id = %id, "default eth0 NIC record created successfully"),
             Err(e) => warn!(vm_id = %id, error = ?e, "failed to create default eth0 NIC record"),
         }
@@ -416,7 +456,11 @@ pub async fn create_from_snapshot(
     // Auto-generate shell credentials for the VM
     let username = "root";
     let password = format!("vm-{}", &id.to_string()[..8]);
-    if let Err(e) = st.shell_repo.upsert_credentials(id, username, &password).await {
+    if let Err(e) = st
+        .shell_repo
+        .upsert_credentials(id, username, &password)
+        .await
+    {
         warn!(vm_id = %id, error = ?e, "failed to create shell credentials for VM");
     } else {
         info!(vm_id = %id, username = %username, "created shell credentials for VM");
@@ -466,7 +510,8 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
                     tokio::time::sleep(Duration::from_secs(3)).await;
 
                     info!(vm_id=%vm_id, "configuring secondary NICs via guest agent");
-                    if let Err(e) = configure_secondary_nics_via_guest_agent(&st_clone, vm_id).await {
+                    if let Err(e) = configure_secondary_nics_via_guest_agent(&st_clone, vm_id).await
+                    {
                         warn!(vm_id=%vm_id, error=?e, "failed to configure secondary NICs via guest agent");
                     }
                     return;
@@ -648,7 +693,10 @@ pub async fn get_process_stats(st: &AppState, id: Uuid) -> Result<ProcessStats> 
     }
 
     // Fallback: Get host-side process stats via agent
-    let url = format!("{}/agent/v1/vms/{}/metrics/process-stats", vm.host_addr, vm.id);
+    let url = format!(
+        "{}/agent/v1/vms/{}/metrics/process-stats",
+        vm.host_addr, vm.id
+    );
 
     let response = reqwest::Client::new()
         .post(&url)
@@ -821,7 +869,8 @@ async fn provision_rootfs(
     // These paths indicate the rootfs was already copied and should NOT be copied again:
     // - /srv/images/containers/{vm-id}.ext4
     // - /srv/images/functions/{vm-id}.ext4
-    let is_already_vm_copy = source_path.contains("/containers/") || source_path.contains("/functions/");
+    let is_already_vm_copy =
+        source_path.contains("/containers/") || source_path.contains("/functions/");
 
     if is_already_vm_copy {
         // Already a per-VM copy from container/function feature, use it directly
@@ -914,7 +963,9 @@ pub async fn create_drive(
 
     // Auto-register drive as a volume in the volume registry
     let vm = super::repo::get(&st.db, vm_id).await?;
-    if let Err(e) = ensure_data_drive_registered(st, vm_id, &host_path, &req.drive_id, vm.host_id).await {
+    if let Err(e) =
+        ensure_data_drive_registered(st, vm_id, &host_path, &req.drive_id, vm.host_id).await
+    {
         warn!(vm_id = %vm_id, drive_id = %req.drive_id, error = ?e, "failed to auto-register data drive as volume");
     }
 
@@ -1033,7 +1084,10 @@ pub async fn create_nic(
         }
 
         // Check for duplicate
-        if existing.iter().any(|nic| nic.iface_id.eq_ignore_ascii_case(&iface_id)) {
+        if existing
+            .iter()
+            .any(|nic| nic.iface_id.eq_ignore_ascii_case(&iface_id))
+        {
             bail!("interface id already exists for this VM");
         }
 
@@ -1062,7 +1116,9 @@ pub async fn create_nic(
     // Fetch network to get bridge_name and vlan_id
     use crate::features::networks::repo::NetworkRepository;
     let network_repo = NetworkRepository::new(st.db.clone());
-    let network = network_repo.get(req.network_id).await
+    let network = network_repo
+        .get(req.network_id)
+        .await
         .map_err(|_| anyhow::anyhow!("Network not found"))?;
 
     // Auto-generate TAP device name: tap-{vm-4chars}-{num}
@@ -1377,7 +1433,7 @@ async fn configure_cloud_init_with_network(
     username: &str,
     password: &str,
 ) -> Result<()> {
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
 
     // Generate cloud-init YAML with user credentials
     let cloud_init_yaml = format!(
@@ -1406,10 +1462,7 @@ chpasswd:
         ));
     }
 
-    let network_config_yaml = format!(
-        "version: 2\nethernets:\n{}",
-        ethernets_config
-    );
+    let network_config_yaml = format!("version: 2\nethernets:\n{}", ethernets_config);
 
     // Base64 encode both configs (cloud-init standard)
     let user_data_b64 = general_purpose::STANDARD.encode(cloud_init_yaml.as_bytes());
@@ -1452,12 +1505,7 @@ chpasswd:
 }
 
 #[cfg(test)]
-async fn configure_cloud_init_with_network(
-    _: &AppState,
-    _: Uuid,
-    _: &str,
-    _: &str,
-) -> Result<()> {
+async fn configure_cloud_init_with_network(_: &AppState, _: Uuid, _: &str, _: &str) -> Result<()> {
     Ok(())
 }
 
@@ -1470,8 +1518,8 @@ async fn inject_credentials_to_rootfs(
     username: &str,
     password: &str,
 ) -> Result<()> {
-    use tokio::process::Command;
     use std::path::PathBuf;
+    use tokio::process::Command;
 
     info!(vm_id = %vm_id, rootfs = %rootfs_path, username = %username,
           "attempting rootfs credential injection (cloud-init fallback)");
@@ -1490,7 +1538,8 @@ async fn inject_credentials_to_rootfs(
     };
 
     // Create mount directory
-    tokio::fs::create_dir_all(&mount_path).await
+    tokio::fs::create_dir_all(&mount_path)
+        .await
         .context("failed to create mount directory")?;
 
     // Mount the rootfs
@@ -1518,14 +1567,20 @@ async fn inject_credentials_to_rootfs(
     // Write password to stdin
     if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(password.as_bytes()).await
+        stdin
+            .write_all(password.as_bytes())
+            .await
             .context("failed to write password to openssl stdin")?;
-        stdin.write_all(b"\n").await
+        stdin
+            .write_all(b"\n")
+            .await
             .context("failed to write newline to openssl stdin")?;
         drop(stdin); // Close stdin to signal EOF
     }
 
-    let hash_output = child.wait_with_output().await
+    let hash_output = child
+        .wait_with_output()
+        .await
         .context("failed to wait for openssl")?;
 
     if !hash_output.status.success() {
@@ -1533,7 +1588,9 @@ async fn inject_credentials_to_rootfs(
         bail!("openssl passwd failed");
     }
 
-    let password_hash = String::from_utf8_lossy(&hash_output.stdout).trim().to_string();
+    let password_hash = String::from_utf8_lossy(&hash_output.stdout)
+        .trim()
+        .to_string();
 
     // Read current /etc/shadow using sudo (requires elevated permissions)
     let shadow_path = mount_path.join("etc/shadow");
@@ -1561,8 +1618,15 @@ async fn inject_credentials_to_rootfs(
             if parts.len() >= 9 {
                 new_shadow.push_str(&format!(
                     "{}:{}:{}:{}:{}:{}:{}:{}:{}\n",
-                    username, password_hash, parts[2], parts[3], parts[4],
-                    parts[5], parts[6], parts[7], parts[8]
+                    username,
+                    password_hash,
+                    parts[2],
+                    parts[3],
+                    parts[4],
+                    parts[5],
+                    parts[6],
+                    parts[7],
+                    parts[8]
                 ));
                 user_found = true;
             } else {
@@ -1577,7 +1641,10 @@ async fn inject_credentials_to_rootfs(
 
     // If user not found, add new entry (for root: no expiry, no aging)
     if !user_found {
-        new_shadow.push_str(&format!("{}:{}:19000:0:99999:7:::\n", username, password_hash));
+        new_shadow.push_str(&format!(
+            "{}:{}:19000:0:99999:7:::\n",
+            username, password_hash
+        ));
     }
 
     // Write updated shadow file using sudo via tee
@@ -1591,12 +1658,16 @@ async fn inject_credentials_to_rootfs(
 
     if let Some(mut stdin) = write_child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(new_shadow.as_bytes()).await
+        stdin
+            .write_all(new_shadow.as_bytes())
+            .await
             .context("failed to write to tee stdin")?;
         drop(stdin);
     }
 
-    let write_output = write_child.wait_with_output().await
+    let write_output = write_child
+        .wait_with_output()
+        .await
         .context("failed to wait for tee")?;
 
     if !write_output.status.success() {
@@ -1785,7 +1856,12 @@ exit 0
 
         let symlink_path = default_runlevel.join("networking");
         let ln_status = Command::new("sudo")
-            .args(["ln", "-sf", "/etc/init.d/networking", symlink_path.to_str().unwrap()])
+            .args([
+                "ln",
+                "-sf",
+                "/etc/init.d/networking",
+                symlink_path.to_str().unwrap(),
+            ])
             .status()
             .await
             .context("failed to create networking service symlink")?;
@@ -1807,12 +1883,7 @@ exit 0
 }
 
 #[cfg(test)]
-async fn inject_credentials_to_rootfs(
-    _: Uuid,
-    _: &str,
-    _: &str,
-    _: &str,
-) -> Result<()> {
+async fn inject_credentials_to_rootfs(_: Uuid, _: &str, _: &str, _: &str) -> Result<()> {
     Ok(())
 }
 
@@ -2147,7 +2218,10 @@ async fn allocate_ip_from_cidr(db: &PgPool, network_id: Uuid, cidr: &str) -> Res
     // Try IPs starting from .2 (skip .0 for network, .1 for gateway)
     // For /24 networks, try up to .254 (skip .255 for broadcast)
     for last_octet in 2..=254 {
-        let candidate = format!("{}.{}.{}.{}", base_octets[0], base_octets[1], base_octets[2], last_octet);
+        let candidate = format!(
+            "{}.{}.{}.{}",
+            base_octets[0], base_octets[1], base_octets[2], last_octet
+        );
 
         if !assigned_ips.contains(&candidate) {
             let ip_with_cidr = format!("{}/{}", candidate, prefix_len);
@@ -2267,7 +2341,12 @@ async fn configure_secondary_nics_via_guest_agent(st: &AppState, vm_id: Uuid) ->
     Ok(())
 }
 
-async fn create_all_tap_devices(st: &AppState, host_addr: &str, vm_id: Uuid, default_bridge: &str) -> Result<()> {
+async fn create_all_tap_devices(
+    st: &AppState,
+    host_addr: &str,
+    vm_id: Uuid,
+    default_bridge: &str,
+) -> Result<()> {
     use crate::features::networks::repo::NetworkRepository;
 
     let network_repo = NetworkRepository::new(st.db.clone());
@@ -2295,7 +2374,13 @@ async fn create_all_tap_devices(st: &AppState, host_addr: &str, vm_id: Uuid, def
 }
 
 /// Create a single TAP device with optional VLAN support
-async fn create_tap_with_vlan(host_addr: &str, id: Uuid, tap_name: &str, bridge: &str, vlan_id: Option<u16>) -> Result<()> {
+async fn create_tap_with_vlan(
+    host_addr: &str,
+    id: Uuid,
+    tap_name: &str,
+    bridge: &str,
+    vlan_id: Option<u16>,
+) -> Result<()> {
     let http = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -2349,7 +2434,12 @@ async fn create_tap(_: &str, _: Uuid, _: &str) -> Result<()> {
 }
 
 #[cfg(not(test))]
-async fn spawn_firecracker(_st: &AppState, host_addr: &str, id: Uuid, paths: &VmPaths) -> Result<()> {
+async fn spawn_firecracker(
+    _st: &AppState,
+    host_addr: &str,
+    id: Uuid,
+    paths: &VmPaths,
+) -> Result<()> {
     let http = Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
@@ -2607,26 +2697,30 @@ async fn configure_vm(
     // a different approach (e.g., vsock or network-based terminal)
     // For now, we configure it for logging purposes only
     if paths.snapshot_path.is_none() {
-        let console_log_path = st.storage.vm_dir(id).join("logs/console.log").display().to_string();
+        let console_log_path = st
+            .storage
+            .vm_dir(id)
+            .join("logs/console.log")
+            .display()
+            .to_string();
         info!(vm_id=%id, step="serial", console_path=%console_log_path, "configuring serial console output");
 
-        match http.put(format!("{base}/serial{qs}"))
+        match http
+            .put(format!("{base}/serial{qs}"))
             .json(&json!({
                 "output_path": console_log_path
             }))
             .send()
             .await
         {
-            Ok(resp) => {
-                match resp.error_for_status() {
-                    Ok(_) => {
-                        info!(vm_id=%id, step="serial", "serial console configured for logging");
-                    }
-                    Err(e) => {
-                        warn!(vm_id=%id, error=?e, "failed to configure serial console");
-                    }
+            Ok(resp) => match resp.error_for_status() {
+                Ok(_) => {
+                    info!(vm_id=%id, step="serial", "serial console configured for logging");
                 }
-            }
+                Err(e) => {
+                    warn!(vm_id=%id, error=?e, "failed to configure serial console");
+                }
+            },
             Err(e) => {
                 warn!(vm_id=%id, error=?e, "failed to send serial configuration request");
             }
@@ -2703,7 +2797,11 @@ async fn start_vm(_: &str, _: Uuid, _: &VmPaths) -> Result<()> {
 }
 
 /// Auto-register network if it doesn't already exist
-async fn ensure_network_registered(st: &AppState, bridge_name: &str, host_id: Uuid) -> Result<Uuid> {
+async fn ensure_network_registered(
+    st: &AppState,
+    bridge_name: &str,
+    host_id: Uuid,
+) -> Result<Uuid> {
     use crate::features::networks::repo::NetworkRepository;
     use tracing::info;
 
@@ -2715,7 +2813,10 @@ async fn ensure_network_registered(st: &AppState, bridge_name: &str, host_id: Uu
 
     for network in existing {
         // Only match bridge-type networks (not VLANs) for eth0
-        if network.bridge_name == bridge_name && network.type_ == "bridge" && network.vlan_id.is_none() {
+        if network.bridge_name == bridge_name
+            && network.type_ == "bridge"
+            && network.vlan_id.is_none()
+        {
             // Network already registered
             info!(bridge = %bridge_name, network_id = %network.id, network_type = %network.type_, "bridge network already registered, skipping creation");
             return Ok(network.id);
@@ -2728,16 +2829,18 @@ async fn ensure_network_registered(st: &AppState, bridge_name: &str, host_id: Uu
 
     info!(bridge = %bridge_name, host_id = %host_id, name = %name, "creating new network record");
 
-    let result = network_repo.create(
-        &name,
-        description,
-        "bridge",
-        None, // no VLAN ID for default bridge
-        bridge_name,
-        host_id,
-        None, // CIDR will be determined by DHCP/router
-        None, // Gateway will be determined by DHCP/router
-    ).await?;
+    let result = network_repo
+        .create(
+            &name,
+            description,
+            "bridge",
+            None, // no VLAN ID for default bridge
+            bridge_name,
+            host_id,
+            None, // CIDR will be determined by DHCP/router
+            None, // Gateway will be determined by DHCP/router
+        )
+        .await?;
 
     info!(bridge = %bridge_name, network_id = %result.id, "network created successfully");
 
@@ -2753,8 +2856,8 @@ async fn ensure_data_drive_registered(
     host_id: Uuid,
 ) -> Result<()> {
     use crate::features::volumes::repo::VolumeRepository;
-    use tracing::info;
     use std::fs;
+    use tracing::info;
 
     let volume_repo = VolumeRepository::new(st.db.clone());
 
@@ -2810,14 +2913,16 @@ async fn ensure_data_drive_registered(
     let description_text = format!("Data drive '{}' for VM: {}", drive_id, vm_name);
     let description = Some(description_text.as_str());
 
-    let volume = volume_repo.create(
-        &name,
-        description,
-        drive_path,
-        size_bytes,
-        volume_type,
-        host_id,
-    ).await?;
+    let volume = volume_repo
+        .create(
+            &name,
+            description,
+            drive_path,
+            size_bytes,
+            volume_type,
+            host_id,
+        )
+        .await?;
 
     info!(vm_id = %vm_id, volume_id = %volume.id, name = %name, size_bytes = %size_bytes, "data volume created successfully");
 
@@ -2830,10 +2935,15 @@ async fn ensure_data_drive_registered(
 }
 
 /// Auto-register rootfs volume if it doesn't already exist
-async fn ensure_volume_registered(st: &AppState, vm_id: Uuid, rootfs_path: &str, host_id: Uuid) -> Result<()> {
+async fn ensure_volume_registered(
+    st: &AppState,
+    vm_id: Uuid,
+    rootfs_path: &str,
+    host_id: Uuid,
+) -> Result<()> {
     use crate::features::volumes::repo::VolumeRepository;
-    use tracing::info;
     use std::fs;
+    use tracing::info;
 
     let volume_repo = VolumeRepository::new(st.db.clone());
 
@@ -2847,11 +2957,11 @@ async fn ensure_volume_registered(st: &AppState, vm_id: Uuid, rootfs_path: &str,
             info!(vm_id = %vm_id, volume_id = %volume.id, status = %volume.status, "volume already registered");
             if volume.status == "available" {
                 info!(vm_id = %vm_id, volume_id = %volume.id, "attaching existing available volume");
-                let _ = volume_repo.attach(
-                    volume.id,
-                    vm_id,
-                    "rootfs", // drive_id
-                ).await;
+                let _ = volume_repo
+                    .attach(
+                        volume.id, vm_id, "rootfs", // drive_id
+                    )
+                    .await;
             }
             return Ok(());
         }
@@ -2893,23 +3003,25 @@ async fn ensure_volume_registered(st: &AppState, vm_id: Uuid, rootfs_path: &str,
     let description_text = format!("Rootfs for VM: {}", vm_name);
     let description = Some(description_text.as_str());
 
-    let volume = volume_repo.create(
-        &name,
-        description,
-        rootfs_path,
-        size_bytes,
-        volume_type,
-        host_id,
-    ).await?;
+    let volume = volume_repo
+        .create(
+            &name,
+            description,
+            rootfs_path,
+            size_bytes,
+            volume_type,
+            host_id,
+        )
+        .await?;
 
     info!(vm_id = %vm_id, volume_id = %volume.id, name = %name, size_gb = size_bytes / (1024 * 1024 * 1024), "volume created successfully");
 
     // Attach the volume to the VM
-    volume_repo.attach(
-        volume.id,
-        vm_id,
-        "rootfs", // drive_id
-    ).await?;
+    volume_repo
+        .attach(
+            volume.id, vm_id, "rootfs", // drive_id
+        )
+        .await?;
 
     info!(vm_id = %vm_id, volume_id = %volume.id, "volume attached to VM successfully");
 

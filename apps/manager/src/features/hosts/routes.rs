@@ -77,7 +77,11 @@ pub async fn heartbeat(
             caps.get("used_disk_gb").and_then(|v| v.as_i64()),
         ) {
             // Update metrics in database
-            if let Err(err) = st.hosts.update_metrics(id, cpus, memory, total_disk, used_disk).await {
+            if let Err(err) = st
+                .hosts
+                .update_metrics(id, cpus, memory, total_disk, used_disk)
+                .await
+            {
                 error!(error = ?err, "failed to update host metrics");
                 // Don't fail the heartbeat if metrics update fails
             }
@@ -350,4 +354,3 @@ mod tests {
         assert_eq!(after.capabilities_json, json!({"memory": 8192}));
     }
 }
-

@@ -88,7 +88,10 @@ impl DockerClient {
             .context("Failed to send create container request")?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to create container: {}", error_text);
         }
 
@@ -106,7 +109,10 @@ impl DockerClient {
 
         if !resp.status().is_success() && resp.status().as_u16() != 304 {
             // 304 = already started
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to start container: {}", error_text);
         }
 
@@ -127,7 +133,10 @@ impl DockerClient {
 
         if !resp.status().is_success() && resp.status().as_u16() != 304 {
             // 304 = already stopped
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to stop container: {}", error_text);
         }
 
@@ -147,7 +156,10 @@ impl DockerClient {
         let resp = self.client.post(&url).send().await?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to restart container: {}", error_text);
         }
 
@@ -163,7 +175,10 @@ impl DockerClient {
         let resp = self.client.post(&url).send().await?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to pause container: {}", error_text);
         }
 
@@ -179,7 +194,10 @@ impl DockerClient {
         let resp = self.client.post(&url).send().await?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to unpause container: {}", error_text);
         }
 
@@ -198,7 +216,10 @@ impl DockerClient {
         let resp = self.client.delete(&url).send().await?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to remove container: {}", error_text);
         }
 
@@ -207,14 +228,20 @@ impl DockerClient {
 
     /// Get container stats
     pub async fn get_stats(&self, container_id: &str) -> Result<DockerStats> {
-        let url = format!("{}/containers/{}/stats?stream=false", self.base_url, container_id);
+        let url = format!(
+            "{}/containers/{}/stats?stream=false",
+            self.base_url, container_id
+        );
 
         tracing::debug!(container_id = %container_id, "Getting container stats");
 
         let resp = self.client.get(&url).send().await?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to get stats: {}", error_text);
         }
 
@@ -270,7 +297,10 @@ impl DockerClient {
         let resp = self.client.get(&url).send().await?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to get logs: {}", error_text);
         }
 
@@ -312,10 +342,18 @@ impl DockerClient {
             "AttachStderr": true,
         });
 
-        let create_resp = self.client.post(&create_url).json(&create_config).send().await?;
+        let create_resp = self
+            .client
+            .post(&create_url)
+            .json(&create_config)
+            .send()
+            .await?;
 
         if !create_resp.status().is_success() {
-            let error_text = create_resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = create_resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to create exec: {}", error_text);
         }
 
@@ -331,7 +369,12 @@ impl DockerClient {
             "Detach": false,
         });
 
-        let start_resp = self.client.post(&start_url).json(&start_config).send().await?;
+        let start_resp = self
+            .client
+            .post(&start_url)
+            .json(&start_config)
+            .send()
+            .await?;
 
         let output = if start_resp.status().is_success() {
             start_resp.text().await.ok()
@@ -347,7 +390,11 @@ impl DockerClient {
     }
 
     /// Pull an image from a registry with optional authentication
-    pub async fn pull_image(&self, image: &str, registry_auth: Option<&nexus_types::RegistryAuth>) -> Result<()> {
+    pub async fn pull_image(
+        &self,
+        image: &str,
+        registry_auth: Option<&nexus_types::RegistryAuth>,
+    ) -> Result<()> {
         let url = format!("{}/images/create?fromImage={}", self.base_url, image);
 
         tracing::info!(image = %image, has_auth = registry_auth.is_some(), "Pulling image");
@@ -364,7 +411,10 @@ impl DockerClient {
             });
 
             let auth_json = serde_json::to_string(&auth_config)?;
-            let auth_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, auth_json.as_bytes());
+            let auth_base64 = base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                auth_json.as_bytes(),
+            );
 
             request = request.header("X-Registry-Auth", auth_base64);
             tracing::debug!("Added registry authentication header");
@@ -373,7 +423,10 @@ impl DockerClient {
         let resp = request.send().await?;
 
         if !resp.status().is_success() {
-            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("Failed to pull image: {}", error_text);
         }
 
@@ -486,10 +539,7 @@ fn calculate_cpu_percent(stats: &DockerStatsResponse) -> f32 {
     let cpu_delta = stats.cpu_stats.cpu_usage.total_usage as f64
         - stats.precpu_stats.cpu_usage.total_usage as f64;
 
-    let system_delta = stats
-        .cpu_stats
-        .system_cpu_usage
-        .unwrap_or(0) as f64
+    let system_delta = stats.cpu_stats.system_cpu_usage.unwrap_or(0) as f64
         - stats.precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
 
     if system_delta > 0.0 && cpu_delta > 0.0 {

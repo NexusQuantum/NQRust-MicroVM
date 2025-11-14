@@ -1,3 +1,5 @@
+use crate::features::users::repo::{AuthenticatedUser, UserRepoError};
+use crate::AppState;
 use axum::{
     extract::Request,
     http::{header::AUTHORIZATION, StatusCode},
@@ -5,8 +7,6 @@ use axum::{
     response::Response,
     Extension,
 };
-use crate::AppState;
-use crate::features::users::repo::{AuthenticatedUser, UserRepoError};
 use nexus_types::Role;
 
 pub async fn auth_middleware(
@@ -34,14 +34,10 @@ pub async fn auth_middleware(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let user = st
-        .users
-        .validate_token(token)
-        .await
-        .map_err(|e| match e {
-            UserRepoError::InvalidToken | UserRepoError::TokenExpired => StatusCode::UNAUTHORIZED,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        })?;
+    let user = st.users.validate_token(token).await.map_err(|e| match e {
+        UserRepoError::InvalidToken | UserRepoError::TokenExpired => StatusCode::UNAUTHORIZED,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
 
     req.extensions_mut().insert(user);
     Ok(next.run(req).await)
@@ -65,7 +61,10 @@ fn get_client_ip(req: &Request) -> Option<String> {
     if let Some(forwarded) = req.headers().get("x-forwarded-for") {
         if let Ok(forwarded_str) = forwarded.to_str() {
             // Take the first IP if there are multiple
-            return forwarded_str.split(',').next().map(|s| s.trim().to_string());
+            return forwarded_str
+                .split(',')
+                .next()
+                .map(|s| s.trim().to_string());
         }
     }
 
@@ -79,4 +78,3 @@ fn get_client_ip(req: &Request) -> Option<String> {
     // TODO: Could extract from connection info if available
     None
 }
-
