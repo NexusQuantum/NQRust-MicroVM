@@ -54,6 +54,7 @@ pub async fn ensure_bridge(bridge: &str, uplink: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn create_tap(name: &str, bridge: &str, owner: Option<&str>) -> Result<()> {
     create_tap_with_vlan(name, bridge, None, owner).await
 }

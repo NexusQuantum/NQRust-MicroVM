@@ -71,30 +71,30 @@ async fn resolve_socket_path(
 }
 
 fn is_allowed_endpoint(method: &Method, segments: &[&str]) -> bool {
-    match (method, segments) {
-        (&Method::PUT, ["machine-config"]) => true,
-        (&Method::PATCH, ["machine-config"]) => true,
-        (&Method::PUT, ["boot-source"]) => true,
-        (&Method::PUT, ["logger"]) => true,
-        (&Method::PATCH, ["logger"]) => true,
-        (&Method::PUT, ["metrics"]) => true,
-        (&Method::PUT, ["actions"]) => true,
-        (&Method::PUT, ["drives", _]) => true,
-        (&Method::PATCH, ["drives", _]) => true,
-        (&Method::PUT, ["network-interfaces", _]) => true,
-        (&Method::PATCH, ["network-interfaces", _]) => true,
-        (&Method::PUT, ["snapshot", "create"]) => true,
-        (&Method::PUT, ["snapshot", "load"]) => true,
-        (&Method::PUT, ["snapshot", "remove"]) => true,
-        (&Method::PATCH, ["vm"]) => true,
-        (&Method::PUT, ["cpu-config"]) => true,
-        (&Method::PUT, ["vsock"]) => true,
-        (&Method::PUT, ["mmds"]) => true,
-        (&Method::PUT, ["mmds", "config"]) => true,
-        (&Method::PUT, ["entropy"]) => true,
-        (&Method::PUT, ["serial"]) => true,
-        _ => false,
-    }
+    matches!(
+        (method, segments),
+        (&Method::PUT, ["machine-config"])
+            | (&Method::PATCH, ["machine-config"])
+            | (&Method::PUT, ["boot-source"])
+            | (&Method::PUT, ["logger"])
+            | (&Method::PATCH, ["logger"])
+            | (&Method::PUT, ["metrics"])
+            | (&Method::PUT, ["actions"])
+            | (&Method::PUT, ["drives", _])
+            | (&Method::PATCH, ["drives", _])
+            | (&Method::PUT, ["network-interfaces", _])
+            | (&Method::PATCH, ["network-interfaces", _])
+            | (&Method::PUT, ["snapshot", "create"])
+            | (&Method::PUT, ["snapshot", "load"])
+            | (&Method::PUT, ["snapshot", "remove"])
+            | (&Method::PATCH, ["vm"])
+            | (&Method::PUT, ["cpu-config"])
+            | (&Method::PUT, ["vsock"])
+            | (&Method::PUT, ["mmds"])
+            | (&Method::PUT, ["mmds", "config"])
+            | (&Method::PUT, ["entropy"])
+            | (&Method::PUT, ["serial"])
+    )
 }
 
 #[cfg(test)]

@@ -183,9 +183,7 @@ fn get_memory_info() -> (i64, i64) {
 
 fn get_disk_info(path: &str) -> (i64, i64) {
     // Use statvfs to get disk statistics for the given path
-    use std::os::unix::fs::MetadataExt;
-
-    if let Ok(metadata) = std::fs::metadata(path) {
+    if let Ok(_metadata) = std::fs::metadata(path) {
         // Try to get filesystem stats using statvfs
         #[cfg(target_os = "linux")]
         {
