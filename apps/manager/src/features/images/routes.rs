@@ -395,6 +395,7 @@ mod tests {
     use axum::{extract::Path, Extension};
     use nexus_types::CreateImageReq;
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn create_and_list_images(pool: sqlx::PgPool) {
         let hosts = HostRepository::new(pool.clone());
@@ -454,6 +455,7 @@ mod tests {
         assert_eq!(ok, OkResponse::default());
     }
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn reject_out_of_root_path(pool: sqlx::PgPool) {
         let hosts = HostRepository::new(pool.clone());

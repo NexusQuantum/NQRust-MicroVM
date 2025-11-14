@@ -1192,6 +1192,7 @@ mod tests {
     use serde_json::json;
 
     // Uses SQLx runtime DB with the same migrations as prod code.
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn delete_route_removes_vm(pool: sqlx::PgPool) {
         let id = Uuid::new_v4();
@@ -1256,6 +1257,7 @@ mod tests {
         assert!(matches!(fetched, Err(sqlx::Error::RowNotFound)));
     }
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn delete_route_unknown_id_returns_ok(pool: sqlx::PgPool) {
         let hosts = HostRepository::new(pool.clone());

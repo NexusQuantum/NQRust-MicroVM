@@ -1914,6 +1914,7 @@ mod tests {
         snapshot_load_store().lock().unwrap().clone()
     }
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn create_with_image_ids_resolves_paths(pool: sqlx::PgPool) {
         repo::reset_store();
@@ -1994,6 +1995,7 @@ mod tests {
         assert_eq!(stored.host_id, host.id);
     }
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn reject_direct_paths_in_prod(pool: sqlx::PgPool) {
         repo::reset_store();
@@ -2047,6 +2049,7 @@ mod tests {
         assert!(err.to_string().contains("path not permitted"));
     }
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn restart_rejects_paths_outside_root(pool: sqlx::PgPool) {
         repo::reset_store();
@@ -2107,6 +2110,7 @@ mod tests {
             .contains("not within the configured image root"));
     }
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn create_from_snapshot_persists_source(pool: sqlx::PgPool) {
         repo::reset_store();

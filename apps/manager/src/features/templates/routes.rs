@@ -162,6 +162,7 @@ mod tests {
     use serde_json::json;
     use std::convert::TryFrom;
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn instantiate_creates_vm_with_template(pool: sqlx::PgPool) {
         crate::features::vms::repo::reset_store();

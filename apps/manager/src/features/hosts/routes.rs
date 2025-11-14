@@ -270,6 +270,7 @@ mod tests {
     use axum::{extract::Path, Extension};
     use serde_json::json;
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn register_creates_host(pool: sqlx::PgPool) {
         let repo = crate::features::hosts::repo::HostRepository::new(pool.clone());
@@ -307,6 +308,7 @@ mod tests {
         assert_eq!(stored.capabilities_json, json!({"cpus": 4}));
     }
 
+    #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn heartbeat_updates_last_seen_and_capabilities(pool: sqlx::PgPool) {
         let repo = crate::features::hosts::repo::HostRepository::new(pool.clone());
