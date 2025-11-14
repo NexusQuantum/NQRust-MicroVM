@@ -13,9 +13,18 @@ DISTRO="debian"
 VERSION="12"
 CODENAME="bookworm"
 OUTPUT_IMAGE="${1:-/srv/images/debian-12-minimal.ext4}"
-IMAGE_SIZE_MB="${2:-350}"  # 350MB should be enough for minimal Debian
+IMAGE_SIZE_MB="${2:-600}"  # 600MB to accommodate build process
 MOUNT_POINT="/tmp/debian-build-$$"
 ARCH="amd64"
+
+# Check available disk space in /tmp
+AVAILABLE_SPACE=$(df /tmp | tail -1 | awk '{print $4}')
+REQUIRED_SPACE=$((IMAGE_SIZE_MB * 1024 * 2))  # Need 2x image size for build
+
+if [ "$AVAILABLE_SPACE" -lt "$REQUIRED_SPACE" ]; then
+    error "Not enough space in /tmp. Available: ${AVAILABLE_SPACE}KB, Required: ${REQUIRED_SPACE}KB"
+    error "Try: IMAGE_SIZE_MB=300 $0 or free up space in /tmp"
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -41,9 +50,10 @@ info "Output: $OUTPUT_IMAGE ($IMAGE_SIZE_MB MB)"
 # Clean up on exit
 cleanup() {
     info "Cleaning up..."
+    umount "$MOUNT_POINT/dev/pts" 2>/dev/null || true
+    umount "$MOUNT_POINT/dev" 2>/dev/null || true
     umount "$MOUNT_POINT/proc" 2>/dev/null || true
     umount "$MOUNT_POINT/sys" 2>/dev/null || true
-    umount "$MOUNT_POINT/dev" 2>/dev/null || true
     umount "$MOUNT_POINT" 2>/dev/null || true
     rm -rf "$MOUNT_POINT"
 }
@@ -73,7 +83,8 @@ debootstrap \
 info "Setting up chroot environment..."
 mount -t proc none "$MOUNT_POINT/proc"
 mount -t sysfs none "$MOUNT_POINT/sys"
-mount --rbind /dev "$MOUNT_POINT/dev"
+mount --bind /dev "$MOUNT_POINT/dev"
+mount --bind /dev/pts "$MOUNT_POINT/dev/pts" 2>/dev/null || true
 
 # Configure APT sources
 info "Configuring APT sources..."
@@ -110,7 +121,12 @@ EOF
 info "Installing essential packages..."
 chroot "$MOUNT_POINT" /bin/bash -c "
 export DEBIAN_FRONTEND=noninteractive
+export APT_LISTCHANGES_FRONTEND=none
+
+# Update package lists
 apt-get update
+
+# Install packages
 apt-get install -y --no-install-recommends \
     cloud-init \
     openssh-server \
@@ -123,9 +139,13 @@ apt-get install -y --no-install-recommends \
     net-tools \
     vim-tiny
 
-# Clean up APT cache
+# Aggressive cleanup to free space during build
 apt-get clean
 rm -rf /var/lib/apt/lists/*
+rm -rf /usr/share/doc/*
+rm -rf /usr/share/man/*
+rm -rf /tmp/*
+rm -rf /var/tmp/*
 "
 
 # Configure cloud-init
@@ -230,9 +250,10 @@ find /var/log -type f -exec truncate -s 0 {} \;
 
 # Unmount everything
 info "Unmounting..."
+umount "$MOUNT_POINT/dev/pts" 2>/dev/null || true
+umount "$MOUNT_POINT/dev"
 umount "$MOUNT_POINT/proc"
 umount "$MOUNT_POINT/sys"
-umount "$MOUNT_POINT/dev"
 umount "$MOUNT_POINT"
 rm -rf "$MOUNT_POINT"
 
