@@ -89,7 +89,7 @@ pub async fn create(
             return Err(StatusCode::BAD_REQUEST);
         }
         if let Some(vlan_id) = req.vlan_id {
-            if vlan_id < 1 || vlan_id > 4094 {
+            if !(1..=4094).contains(&vlan_id) {
                 return Err(StatusCode::BAD_REQUEST);
             }
         }

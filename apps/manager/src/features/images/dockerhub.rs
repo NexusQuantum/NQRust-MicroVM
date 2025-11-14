@@ -364,7 +364,7 @@ impl DockerHubClient {
         tracing::info!("Successfully pulled Docker image: {}", image);
 
         // Sanitize image name for filename
-        let safe_name = image.replace('/', "_").replace(':', "_").replace('.', "_");
+        let safe_name = image.replace(['/', ':', '.'], "_");
         let tarball_path = docker_dir.join(format!("{}.tar", safe_name));
 
         // Save image as tarball
@@ -597,7 +597,7 @@ impl DockerHubClient {
                         if total_total > 0 {
                             let percentage =
                                 (total_current as f64 / total_total as f64 * 100.0) as u32;
-                            if percentage % 10 == 0 && total_current > 0 {
+                            if percentage.is_multiple_of(10) && total_current > 0 {
                                 tracing::info!(
                                     "📦 Docker pull progress: {} - {}% ({} MB / {} MB)",
                                     status,
@@ -633,7 +633,7 @@ impl DockerHubClient {
             .context("Failed to create docker images directory")?;
 
         // Sanitize image name for filename
-        let safe_name = image.replace('/', "_").replace(':', "_").replace('.', "_");
+        let safe_name = image.replace(['/', ':', '.'], "_");
         let tarball_path = docker_dir.join(format!("{}.tar", safe_name));
 
         // Export image as tarball using bollard
@@ -682,6 +682,7 @@ impl DockerHubClient {
     }
 
     /// Load Docker image tarball into a Docker daemon
+    #[allow(dead_code)]
     pub async fn load_image(&self, tarball_path: &PathBuf) -> Result<()> {
         tracing::info!("Loading Docker image from: {:?}", tarball_path);
 

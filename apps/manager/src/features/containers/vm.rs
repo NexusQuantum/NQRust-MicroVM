@@ -189,6 +189,7 @@ pub async fn cleanup_container_vm(st: &AppState, vm_id: Uuid) -> Result<()> {
 }
 
 /// Get Docker API base URL for a container's VM
+#[allow(dead_code)]
 pub fn get_docker_api_url(guest_ip: &str) -> String {
     format!("http://{}:2375", guest_ip)
 }

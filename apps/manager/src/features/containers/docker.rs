@@ -205,6 +205,7 @@ impl DockerClient {
     }
 
     /// Remove a container
+    #[allow(dead_code)]
     pub async fn remove_container(&self, container_id: &str, force: bool) -> Result<()> {
         let url = format!(
             "{}/containers/{}?force={}",
@@ -273,6 +274,7 @@ impl DockerClient {
     }
 
     /// Get container logs
+    #[allow(dead_code)]
     pub async fn get_logs(
         &self,
         container_id: &str,
@@ -521,6 +523,7 @@ pub struct DockerStats {
     pub pids: Option<i32>,
 }
 
+#[allow(dead_code)]
 pub struct LogEntry {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub stream: String,
@@ -553,7 +556,7 @@ fn extract_network_stats(stats: &DockerStatsResponse) -> (i64, i64) {
     let mut total_rx = 0i64;
     let mut total_tx = 0i64;
 
-    for (_interface, net_stats) in &stats.networks {
+    for net_stats in stats.networks.values() {
         total_rx += net_stats.rx_bytes as i64;
         total_tx += net_stats.tx_bytes as i64;
     }

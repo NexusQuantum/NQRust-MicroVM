@@ -91,6 +91,7 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<Option<FunctionRow>> {
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update(
     db: &PgPool,
     id: Uuid,

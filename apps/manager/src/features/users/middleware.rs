@@ -56,6 +56,7 @@ pub async fn require_admin(
 }
 
 /// Helper to extract client IP address from request
+#[allow(dead_code)]
 fn get_client_ip(req: &Request) -> Option<String> {
     // Try X-Forwarded-For header first (for proxied requests)
     if let Some(forwarded) = req.headers().get("x-forwarded-for") {

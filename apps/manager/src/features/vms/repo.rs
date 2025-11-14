@@ -414,7 +414,7 @@ pub mod drives {
         }
     }
 
-    #[allow(unused_variables)]
+    #[allow(unused_variables, clippy::too_many_arguments)]
     pub async fn insert(
         db: &PgPool,
         vm_id: Uuid,
@@ -594,7 +594,7 @@ pub mod nics {
         }
     }
 
-    #[allow(unused_variables)]
+    #[allow(unused_variables, clippy::too_many_arguments)]
     pub async fn insert(
         db: &PgPool,
         vm_id: Uuid,

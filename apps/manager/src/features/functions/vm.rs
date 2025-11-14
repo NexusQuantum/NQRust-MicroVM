@@ -10,6 +10,7 @@ use uuid::Uuid;
 /// - Function code written to /function/code.{js,py}
 /// - Runtime server auto-starting on boot
 /// - Minimal resources (configurable vCPU and memory)
+#[allow(clippy::too_many_arguments)]
 pub async fn create_function_vm(
     st: &AppState,
     function_id: Uuid,
@@ -122,6 +123,7 @@ fn get_runtime_image_paths(runtime: &str) -> Result<(String, String)> {
 ///
 /// This mounts the rootfs, writes the function code, handler config, and env vars,
 /// then unmounts it.
+#[allow(dead_code)]
 pub async fn inject_function_code(
     vm_id: Uuid,
     runtime: &str,
@@ -139,7 +141,7 @@ pub async fn inject_function_code(
 
     // Mount the rootfs
     let mount_output = Command::new("sudo")
-        .args(&["mount", "-o", "loop", rootfs_path, &mount_point])
+        .args(["mount", "-o", "loop", rootfs_path, &mount_point])
         .output()
         .context("Failed to execute mount command")?;
 
@@ -153,9 +155,7 @@ pub async fn inject_function_code(
 
     // Ensure we unmount on error or success
     let cleanup = || {
-        let _ = Command::new("sudo")
-            .args(&["umount", &mount_point])
-            .output();
+        let _ = Command::new("sudo").args(["umount", &mount_point]).output();
         let _ = fs::remove_dir_all(&mount_point);
     };
 

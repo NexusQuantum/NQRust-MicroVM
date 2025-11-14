@@ -656,8 +656,10 @@ pub async fn flush_vm_metrics(st: &AppState, id: Uuid) -> Result<()> {
 
 #[derive(serde::Deserialize)]
 pub struct ProcessStats {
+    #[allow(dead_code)]
     pub pid: u32,
     pub cpu_percent: f64,
+    #[allow(dead_code)]
     pub memory_rss_kb: u64,
     pub memory_percent: f64,
 }
@@ -667,6 +669,7 @@ struct GuestMetrics {
     cpu_usage_percent: f64,
     memory_usage_percent: f64,
     memory_used_kb: u64,
+    #[allow(dead_code)]
     memory_total_kb: u64,
 }
 
@@ -1392,9 +1395,7 @@ pub async fn load_snapshot(
     let qs = format!("?sock={}", urlencoding::encode(&vm.api_sock));
 
     let is_diff = snapshot.snapshot_type == "Diff";
-    let mem_value = if is_diff {
-        serde_json::Value::Null
-    } else if snapshot.mem_path.is_empty() {
+    let mem_value = if is_diff || snapshot.mem_path.is_empty() {
         serde_json::Value::Null
     } else {
         serde_json::Value::String(snapshot.mem_path.clone())

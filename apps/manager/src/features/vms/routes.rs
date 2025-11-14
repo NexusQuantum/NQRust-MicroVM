@@ -856,14 +856,12 @@ pub async fn create_drive(
         .await
         .map(Json)
         .map_err(|err| {
-            if err.to_string().contains("already exists") {
-                axum::http::StatusCode::BAD_REQUEST
-            } else if err
-                .to_string()
-                .contains("not within the configured image root")
+            let err_str = err.to_string();
+            if err_str.contains("already exists")
+                || err_str.contains("not within the configured image root")
             {
                 axum::http::StatusCode::BAD_REQUEST
-            } else if err.to_string().contains("not found") {
+            } else if err_str.contains("not found") {
                 axum::http::StatusCode::NOT_FOUND
             } else {
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR
@@ -917,11 +915,9 @@ pub async fn update_drive(
         .await
         .map(Json)
         .map_err(|err| {
-            if err.to_string().contains("does not belong") {
-                axum::http::StatusCode::BAD_REQUEST
-            } else if err
-                .to_string()
-                .contains("not within the configured image root")
+            let err_str = err.to_string();
+            if err_str.contains("does not belong")
+                || err_str.contains("not within the configured image root")
             {
                 axum::http::StatusCode::BAD_REQUEST
             } else {

@@ -31,11 +31,7 @@ pub async fn create(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let image = st
-        .images
-        .insert(&req)
-        .await
-        .map_err(|err| map_repo_error(err))?;
+    let image = st.images.insert(&req).await.map_err(map_repo_error)?;
 
     Ok(Json(CreateImageResp { id: image.id }))
 }
@@ -54,11 +50,7 @@ pub async fn list(
     Extension(st): Extension<AppState>,
     Query(filter): Query<ImageFilter>,
 ) -> Result<Json<ListImagesResp>, StatusCode> {
-    let items = st
-        .images
-        .list(&filter)
-        .await
-        .map_err(|err| map_repo_error(err))?;
+    let items = st.images.list(&filter).await.map_err(map_repo_error)?;
     Ok(Json(ListImagesResp { items }))
 }
 
@@ -77,7 +69,7 @@ pub async fn get(
     Extension(st): Extension<AppState>,
     Path(ImagePathParams { id }): Path<ImagePathParams>,
 ) -> Result<Json<GetImageResp>, StatusCode> {
-    let item = st.images.get(id).await.map_err(|err| map_repo_error(err))?;
+    let item = st.images.get(id).await.map_err(map_repo_error)?;
     Ok(Json(GetImageResp { item }))
 }
 
@@ -96,10 +88,7 @@ pub async fn delete(
     Extension(st): Extension<AppState>,
     Path(ImagePathParams { id }): Path<ImagePathParams>,
 ) -> Result<Json<OkResponse>, StatusCode> {
-    st.images
-        .delete(id)
-        .await
-        .map_err(|err| map_repo_error(err))?;
+    st.images.delete(id).await.map_err(map_repo_error)?;
     Ok(Json(OkResponse::default()))
 }
 
@@ -229,11 +218,7 @@ pub async fn dockerhub_download(
         project: Some("dockerhub".to_string()),
     };
 
-    let image = st
-        .images
-        .insert(&image_req)
-        .await
-        .map_err(|err| map_repo_error(err))?;
+    let image = st.images.insert(&image_req).await.map_err(map_repo_error)?;
 
     // Mark download as completed
     {
@@ -397,11 +382,7 @@ pub async fn upload_image(
         project: project.or(Some("uploaded".to_string())),
     };
 
-    let image = st
-        .images
-        .insert(&image_req)
-        .await
-        .map_err(|err| map_repo_error(err))?;
+    let image = st.images.insert(&image_req).await.map_err(map_repo_error)?;
 
     Ok(Json(CreateImageResp { id: image.id }))
 }

@@ -408,6 +408,7 @@ impl ContainerRepository {
             .collect())
     }
 
+    #[allow(dead_code)]
     pub async fn append_log(
         &self,
         container_id: Uuid,

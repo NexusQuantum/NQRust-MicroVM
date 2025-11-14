@@ -71,6 +71,7 @@ impl VolumeRepository {
         .await
     }
 
+    #[allow(dead_code)]
     pub async fn list_by_status(&self, status: &str) -> sqlx::Result<Vec<VolumeRow>> {
         sqlx::query_as::<_, VolumeRow>(
             r#"
@@ -84,6 +85,7 @@ impl VolumeRepository {
         .await
     }
 
+    #[allow(dead_code)]
     pub async fn update_status(&self, id: Uuid, status: &str) -> sqlx::Result<VolumeRow> {
         sqlx::query_as::<_, VolumeRow>(
             r#"
@@ -158,6 +160,7 @@ impl VolumeRepository {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn get_attachments(&self, volume_id: Uuid) -> sqlx::Result<Vec<AttachmentRow>> {
         sqlx::query_as::<_, AttachmentRow>(
             r#"

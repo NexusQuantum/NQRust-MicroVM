@@ -20,6 +20,7 @@ use uuid::Uuid;
 /// * `ip_address` - Client IP address
 /// * `success` - Whether the action succeeded
 /// * `error_message` - Error message if action failed
+#[allow(dead_code, clippy::too_many_arguments)]
 pub async fn log_action(
     pool: &PgPool,
     user_id: Option<Uuid>,
@@ -57,6 +58,7 @@ pub async fn log_action(
 }
 
 /// Helper function to log a successful action (success = true, no error message)
+#[allow(dead_code, clippy::too_many_arguments)]
 pub async fn log_success(
     pool: &PgPool,
     user_id: Uuid,
@@ -83,6 +85,7 @@ pub async fn log_success(
 }
 
 /// Helper function to log a failed action
+#[allow(dead_code, clippy::too_many_arguments)]
 pub async fn log_failure(
     pool: &PgPool,
     user_id: Option<Uuid>,
@@ -110,6 +113,7 @@ pub async fn log_failure(
 }
 
 /// Log a login attempt (success or failure)
+#[allow(dead_code)]
 pub async fn log_login(
     pool: &PgPool,
     username: &str,
@@ -140,6 +144,7 @@ pub async fn log_login(
 }
 
 /// Query audit logs with filters and pagination
+#[allow(dead_code)]
 pub async fn list_audit_logs(
     pool: &PgPool,
     params: AuditLogQueryParams,

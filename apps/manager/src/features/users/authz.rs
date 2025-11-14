@@ -11,6 +11,7 @@ use uuid::Uuid;
 /// - Admin: ✅ Can create
 /// - User: ✅ Can create
 /// - Viewer: ❌ Cannot create (read-only)
+#[allow(dead_code)]
 pub fn can_create_resource(role: Role) -> bool {
     matches!(role, Role::Admin | Role::User)
 }
@@ -23,6 +24,7 @@ pub fn can_create_resource(role: Role) -> bool {
 /// - Viewer: ✅ Can view all resources (read-only)
 ///
 /// A resource with `owner_id = None` is considered "unowned" and viewable by all authenticated users.
+#[allow(dead_code)]
 pub fn can_view_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) -> bool {
     match role {
         Role::Admin => true,  // Admins can view everything
@@ -42,6 +44,7 @@ pub fn can_view_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) -> b
 /// - Viewer: ❌ Cannot modify (read-only)
 ///
 /// A resource with `owner_id = None` can only be modified by admins.
+#[allow(dead_code)]
 pub fn can_modify_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) -> bool {
     match role {
         Role::Admin => true,   // Admins can modify everything
@@ -61,6 +64,7 @@ pub fn can_modify_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) ->
 /// - Viewer: ❌ Cannot delete (read-only)
 ///
 /// A resource with `owner_id = None` can only be deleted by admins.
+#[allow(dead_code)]
 pub fn can_delete_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) -> bool {
     // Same logic as modify - if you can modify it, you can delete it
     can_modify_resource(role, owner_id, user_id)
@@ -72,6 +76,7 @@ pub fn can_delete_resource(role: Role, owner_id: Option<Uuid>, user_id: Uuid) ->
 /// - Admin: ✅ Can manage users
 /// - User: ❌ Cannot manage users
 /// - Viewer: ❌ Cannot manage users
+#[allow(dead_code)]
 pub fn can_manage_users(role: Role) -> bool {
     matches!(role, Role::Admin)
 }
@@ -82,6 +87,7 @@ pub fn can_manage_users(role: Role) -> bool {
 /// - Admin: ✅ Can view audit logs
 /// - User: ❌ Cannot view audit logs
 /// - Viewer: ❌ Cannot view audit logs
+#[allow(dead_code)]
 pub fn can_view_audit_logs(role: Role) -> bool {
     matches!(role, Role::Admin)
 }
@@ -90,6 +96,7 @@ pub fn can_view_audit_logs(role: Role) -> bool {
 ///
 /// Networks are special - they can affect multiple VMs, so only admins
 /// and the creator can delete them. But users can create their own networks.
+#[allow(dead_code)]
 pub fn can_delete_network(role: Role, owner_id: Option<Uuid>, user_id: Uuid) -> bool {
     match role {
         Role::Admin => true,

@@ -8,6 +8,12 @@ pub struct LocalStorage {
     base: PathBuf,
 }
 
+impl Default for LocalStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalStorage {
     pub fn new() -> Self {
         let base = std::env::var("MANAGER_STORAGE_ROOT")
@@ -41,7 +47,7 @@ impl LocalStorage {
             .extension()
             .and_then(|s| s.to_str())
             .map(|s| format!(".{s}"))
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
         let target = target_dir.join(format!("rootfs-{uid}{ext}", uid = Uuid::new_v4()));
         fs::copy(src, &target)
             .await

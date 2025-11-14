@@ -87,6 +87,7 @@ pub async fn preload_default_images(
 }
 
 /// Pre-load a custom list of images
+#[allow(dead_code)]
 pub async fn preload_custom_images(
     image_root: PathBuf,
     image_repo: &ImageRepository,

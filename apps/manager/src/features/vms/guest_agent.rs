@@ -458,13 +458,12 @@ async fn install_sysvinit_service(mount_point: &str, vm_id: Uuid) -> Result<()> 
 /// Install as standalone binary (no init system support)
 async fn install_standalone(mount_point: &str, vm_id: Uuid, _manager_url: &str) -> Result<()> {
     // Create a startup script in /etc/rc.local or equivalent
-    let startup_script = format!(
-        r#"#!/bin/sh
+    let startup_script = r#"#!/bin/sh
 # Guest agent startup script
 /usr/local/bin/guest-agent &
 /usr/local/bin/report-ip.sh &
-"#,
-    );
+"#
+    .to_string();
 
     let script_temp = format!("/tmp/guest-agent-startup-{}", vm_id);
     fs::write(&script_temp, startup_script).await?;
@@ -482,7 +481,7 @@ async fn install_standalone(mount_point: &str, vm_id: Uuid, _manager_url: &str) 
             .status()
             .await
             .ok()
-            .map_or(false, |s| s.success())
+            .is_some_and(|s| s.success())
         {
             // Append to existing file
             Command::new("sudo")
@@ -495,7 +494,7 @@ async fn install_standalone(mount_point: &str, vm_id: Uuid, _manager_url: &str) 
             .status()
             .await
             .ok()
-            .map_or(false, |s| s.success())
+            .is_some_and(|s| s.success())
         {
             // Create new file
             Command::new("sudo")
@@ -591,6 +590,7 @@ fi
 }
 
 /// Check if guest agent binary exists
+#[allow(dead_code)]
 pub fn is_available() -> bool {
     Path::new("target/x86_64-unknown-linux-musl/release/guest-agent").exists()
 }
