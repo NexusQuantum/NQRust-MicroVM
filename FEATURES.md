@@ -842,4 +842,134 @@ When adding new features, please:
 
 ---
 
+## Linux Distribution Support
+
+### Supported Distributions
+
+NQRust-MicroVM supports multiple Linux distributions with varying levels of compatibility:
+
+| Distribution | Version | Status | Image Type | Notes |
+|--------------|---------|--------|------------|-------|
+| **Alpine Linux** | 3.18+ | ✅ Fully Supported | Minimal | Native support, optimized for microVMs (10-50 MB) |
+| **Ubuntu** | 22.04 LTS, 24.04 LTS | ✅ Fully Supported | Cloud Images | Cloud-init integration, systemd-networkd |
+| **Ubuntu** | 22.04 LTS, 24.04 LTS | ✅ Supported | Minimal | Build script provided, cloud-init required (200-400 MB) |
+| **Debian** | 12 (Bookworm) | ✅ Fully Supported | Cloud Images | Cloud-init integration, systemd-networkd |
+| **Debian** | 12 (Bookworm) | ✅ Supported | Minimal | Build script provided, cloud-init required (200-350 MB) |
+| **Fedora** | 39+ | ⚠️ Cloud Images Only | Cloud Images | Cloud-init required for full functionality |
+| **Rocky Linux / AlmaLinux** | 9+ | ⚠️ Cloud Images Only | Cloud Images | RHEL ecosystem, cloud-init required |
+| **BusyBox** | 1.36+ | ✅ Supported | Minimal | Testing/embedded use cases (5-80 MB) |
+
+### Distribution Feature Matrix
+
+| Feature | Alpine | Ubuntu/Debian Cloud | Ubuntu/Debian Minimal | Fedora/RHEL Cloud |
+|---------|--------|---------------------|----------------------|-------------------|
+| Credential Injection (Cloud-init) | ✅ | ✅ | ✅ | ✅ |
+| Credential Injection (Direct) | ✅ | ✅ | ✅ | ⚠️ Limited |
+| Network Configuration (DHCP) | ✅ | ✅ | ✅ | ✅ |
+| Guest Agent (systemd) | N/A | ✅ | ✅ | ✅ |
+| Guest Agent (OpenRC) | ✅ | N/A | N/A | N/A |
+| Boot Time | <1s | 3-4s | 3-4s | 4-5s |
+| Image Size | 10-50 MB | 200-400 MB | 200-400 MB | 300-500 MB |
+
+### Credential Injection Methods
+
+#### Cloud-Init (Recommended)
+- **How it works**: Credentials injected via Firecracker MMDS (Metadata Service)
+- **Compatibility**: Ubuntu/Debian/Fedora cloud images, Alpine cloud images
+- **Advantages**:
+  - ✅ No rootfs modification required
+  - ✅ Works universally across all distros with cloud-init
+  - ✅ Handles users, SSH keys, network config
+- **Requirements**: Guest image must have cloud-init pre-installed
+
+#### Direct Rootfs Modification (Fallback)
+- **How it works**: Mounts rootfs as loop device, modifies `/etc/shadow`, `/etc/passwd`, `/etc/group`
+- **Compatibility**: Alpine (fully supported), Ubuntu/Debian (supported), Fedora/RHEL (limited)
+- **Advantages**:
+  - ✅ Works without cloud-init
+  - ✅ Smaller images (no cloud-init overhead)
+- **Limitations**:
+  - ⚠️ Network configuration is distro-specific
+  - ⚠️ Requires distribution detection for full support
+
+### Build Scripts
+
+Pre-built scripts are available to create minimal rootfs images:
+
+```bash
+# Ubuntu 24.04 LTS Minimal (400 MB)
+sudo ./scripts/build-rootfs-ubuntu-minimal.sh /srv/images/ubuntu-24.04-minimal.ext4
+
+# Debian 12 Bookworm Minimal (350 MB)
+sudo ./scripts/build-rootfs-debian-minimal.sh /srv/images/debian-12-minimal.ext4
+
+# Alpine Linux (existing script)
+sudo ./scripts/build-alpine-rootfs.sh /srv/images/alpine-3.18-minimal.ext4
+```
+
+**What's included in build scripts:**
+- ✅ Cloud-init pre-configured for MMDS
+- ✅ systemd-networkd for DHCP
+- ✅ OpenSSH server
+- ✅ Guest agent auto-start support
+- ✅ Serial console enabled
+- ✅ Minimal size (docs/man pages removed)
+
+### Using Cloud Images (Recommended)
+
+For best compatibility, use official cloud images:
+
+**Ubuntu:**
+```bash
+wget https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+curl -X POST http://localhost:18080/v1/images \
+  -F "file=@ubuntu-24.04-server-cloudimg-amd64.img" \
+  -F "name=ubuntu-24.04-cloud" \
+  -F "kind=rootfs"
+```
+
+**Debian:**
+```bash
+wget https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2
+qemu-img convert -f qcow2 -O raw debian-12-generic-amd64.qcow2 debian-12-cloud.img
+curl -X POST http://localhost:18080/v1/images \
+  -F "file=@debian-12-cloud.img" \
+  -F "name=debian-12-cloud" \
+  -F "kind=rootfs"
+```
+
+### Guest Agent Compatibility
+
+The guest agent is automatically installed and configured for:
+
+| Init System | Distros | Status | Service Type |
+|-------------|---------|--------|--------------|
+| **systemd** | Ubuntu, Debian, Fedora, Arch, RHEL | ✅ | systemd unit |
+| **OpenRC** | Alpine, Gentoo | ✅ | OpenRC service |
+| **SysV init** | Old Debian/Ubuntu | ⚠️ | init.d script |
+| **runit** | Void Linux | ⚠️ | Fallback to standalone |
+
+**Guest Agent Features:**
+- ✅ CPU, memory, network, disk metrics
+- ✅ Automatic IP reporting to manager
+- ✅ Load average and process count
+- ✅ Auto-start on boot
+- ✅ Automatic restart on failure (systemd/OpenRC)
+
+### Troubleshooting
+
+**Issue**: VM doesn't get IP address
+- **Solution**: Ensure cloud-init is installed or network config is correct for your distro
+- **Check**: VM logs at `/var/log/cloud-init.log` (cloud images) or DHCP client logs
+
+**Issue**: Credentials don't work
+- **Solution**: Use cloud images with cloud-init for guaranteed compatibility
+- **Alternative**: Build custom image using provided scripts
+
+**Issue**: Guest agent not starting
+- **Solution**: Check init system detection in manager logs
+- **Manual**: Install agent using `apps/manager/src/features/vms/guest_agent.rs` logic
+
+---
+
 **End of Documentation**

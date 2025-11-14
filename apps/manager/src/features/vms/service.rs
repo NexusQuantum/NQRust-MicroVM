@@ -1506,6 +1506,56 @@ async fn configure_cloud_init_with_network(_: &AppState, _: Uuid, _: &str, _: &s
     Ok(())
 }
 
+/// Detect Linux distribution from mounted rootfs
+/// Returns: alpine, ubuntu, debian, fedora, rhel, centos, arch, or unknown
+#[cfg(not(test))]
+async fn detect_distro(mount_point: &str) -> Result<String> {
+    use tokio::fs;
+
+    let os_release_path = format!("{}/etc/os-release", mount_point);
+
+    // Try reading /etc/os-release (systemd standard)
+    if let Ok(contents) = fs::read_to_string(&os_release_path).await {
+        // Parse ID= line to get distro name
+        for line in contents.lines() {
+            if let Some(id) = line.strip_prefix("ID=") {
+                let distro = id.trim().trim_matches('"').to_lowercase();
+                info!(mount_point = %mount_point, distro = %distro, "detected Linux distribution");
+                return Ok(distro);
+            }
+        }
+    }
+
+    // Fallback: Check for distro-specific files
+    if fs::metadata(format!("{}/etc/alpine-release", mount_point)).await.is_ok() {
+        info!(mount_point = %mount_point, "detected Alpine Linux (via /etc/alpine-release)");
+        return Ok("alpine".to_string());
+    }
+
+    if fs::metadata(format!("{}/etc/debian_version", mount_point)).await.is_ok() {
+        info!(mount_point = %mount_point, "detected Debian/Ubuntu (via /etc/debian_version)");
+        return Ok("debian".to_string());
+    }
+
+    if fs::metadata(format!("{}/etc/fedora-release", mount_point)).await.is_ok() {
+        info!(mount_point = %mount_point, "detected Fedora (via /etc/fedora-release)");
+        return Ok("fedora".to_string());
+    }
+
+    if fs::metadata(format!("{}/etc/redhat-release", mount_point)).await.is_ok() {
+        info!(mount_point = %mount_point, "detected RHEL/CentOS (via /etc/redhat-release)");
+        return Ok("rhel".to_string());
+    }
+
+    if fs::metadata(format!("{}/etc/arch-release", mount_point)).await.is_ok() {
+        info!(mount_point = %mount_point, "detected Arch Linux (via /etc/arch-release)");
+        return Ok("arch".to_string());
+    }
+
+    warn!(mount_point = %mount_point, "could not detect distribution, assuming unknown");
+    Ok("unknown".to_string())
+}
+
 /// Fallback: Inject credentials directly into rootfs by mounting and modifying /etc/shadow
 /// This is used when cloud-init is not available in the guest OS
 #[cfg(not(test))]
@@ -1642,6 +1692,112 @@ async fn inject_credentials_to_rootfs(
             "{}:{}:19000:0:99999:7:::\n",
             username, password_hash
         ));
+
+        // Also create the user in /etc/passwd if it doesn't exist
+        info!(vm_id = %vm_id, username = %username, "creating new user in /etc/passwd");
+
+        let passwd_path = mount_path.join("etc/passwd");
+        let passwd_read = Command::new("sudo")
+            .args(["cat", passwd_path.to_str().unwrap()])
+            .output()
+            .await
+            .context("failed to read /etc/passwd")?;
+
+        if passwd_read.status.success() {
+            let passwd_contents = String::from_utf8_lossy(&passwd_read.stdout).to_string();
+
+            // Check if user already exists in passwd
+            let user_exists_in_passwd = passwd_contents.lines().any(|line| {
+                line.starts_with(&format!("{}:", username))
+            });
+
+            if !user_exists_in_passwd {
+                // Determine UID/GID (1000 for regular user, 0 for root)
+                let (uid, gid) = if username == "root" {
+                    (0, 0)
+                } else {
+                    (1000, 1000)
+                };
+
+                let home_dir = if username == "root" {
+                    "/root"
+                } else {
+                    &format!("/home/{}", username)
+                };
+
+                // Add user to /etc/passwd
+                let new_passwd_entry = format!(
+                    "{}:x:{}:{}::/{}:/bin/sh\n",
+                    username, uid, gid, home_dir
+                );
+
+                let mut passwd_write = Command::new("sudo")
+                    .args(["tee", "-a", passwd_path.to_str().unwrap()])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .context("failed to spawn tee for passwd")?;
+
+                if let Some(mut stdin) = passwd_write.stdin.take() {
+                    use tokio::io::AsyncWriteExt;
+                    stdin.write_all(new_passwd_entry.as_bytes()).await
+                        .context("failed to write passwd entry")?;
+                    drop(stdin);
+                }
+
+                passwd_write.wait().await
+                    .context("failed to wait for passwd write")?;
+
+                info!(vm_id = %vm_id, username = %username, uid = uid, "added user to /etc/passwd");
+
+                // Create group entry if not root
+                if username != "root" {
+                    let group_path = mount_path.join("etc/group");
+                    let group_entry = format!("{}:x:{}:\n", username, gid);
+
+                    let mut group_write = Command::new("sudo")
+                        .args(["tee", "-a", group_path.to_str().unwrap()])
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::null())
+                        .spawn()
+                        .context("failed to spawn tee for group")?;
+
+                    if let Some(mut stdin) = group_write.stdin.take() {
+                        use tokio::io::AsyncWriteExt;
+                        stdin.write_all(group_entry.as_bytes()).await
+                            .context("failed to write group entry")?;
+                        drop(stdin);
+                    }
+
+                    group_write.wait().await
+                        .context("failed to wait for group write")?;
+
+                    info!(vm_id = %vm_id, username = %username, gid = gid, "added group to /etc/group");
+                }
+
+                // Create home directory if not root
+                if username != "root" {
+                    let home_path = mount_path.join(format!("home/{}", username));
+                    Command::new("sudo")
+                        .args(["mkdir", "-p", home_path.to_str().unwrap()])
+                        .status()
+                        .await
+                        .context("failed to create home directory")?;
+
+                    Command::new("sudo")
+                        .args([
+                            "chown",
+                            &format!("{}:{}", uid, gid),
+                            home_path.to_str().unwrap()
+                        ])
+                        .status()
+                        .await
+                        .context("failed to chown home directory")?;
+
+                    info!(vm_id = %vm_id, username = %username, home = %home_path.display(), "created home directory");
+                }
+            }
+        }
     }
 
     // Write updated shadow file using sudo via tee
