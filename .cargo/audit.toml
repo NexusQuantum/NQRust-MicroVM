@@ -1,0 +1,23 @@
+# Cargo audit configuration
+# This file allows ignoring specific security advisories
+#
+# Ignore rsa vulnerability (RUSTSEC-2023-0071)
+# This comes from sqlx-mysql, but we only use PostgreSQL, so this dependency
+# is not actually used in our codebase. The vulnerability is in a transitive
+# dependency that we don't actively use.
+#
+# Ignore paste unmaintained warning (RUSTSEC-2024-0436)
+# This comes from utoipa-axum, which is actively maintained and will update
+# its dependencies when alternatives are available.
+#
+# Ignore proc-macro-error unmaintained warning (RUSTSEC-2024-0370)
+# This comes from utoipa-gen, which is actively maintained and will update
+# its dependencies when alternatives are available.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0071",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2024-0370",
+]
+
