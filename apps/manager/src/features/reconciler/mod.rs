@@ -392,6 +392,9 @@ mod tests {
             kernel_path: "/tmp/kernel".into(),
             rootfs_path: "/tmp/rootfs".into(),
             source_snapshot_id: None,
+            created_by_user_id: None,
+            guest_ip: None,
+            tags: vec![],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

@@ -456,7 +456,7 @@ async fn install_sysvinit_service(mount_point: &str, vm_id: Uuid) -> Result<()> 
 }
 
 /// Install as standalone binary (no init system support)
-async fn install_standalone(mount_point: &str, vm_id: Uuid, manager_url: &str) -> Result<()> {
+async fn install_standalone(mount_point: &str, vm_id: Uuid, _manager_url: &str) -> Result<()> {
     // Create a startup script in /etc/rc.local or equivalent
     let startup_script = format!(
         r#"#!/bin/sh

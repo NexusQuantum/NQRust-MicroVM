@@ -14,8 +14,6 @@ use serde_json::Value;
 use sqlx::PgPool;
 use std::path::Path;
 use std::time::{Duration, Instant};
-#[cfg(not(test))]
-#[allow(unused_imports)]
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -1951,6 +1949,10 @@ mod tests {
             .unwrap();
 
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
+        let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
         let state = AppState {
@@ -1958,8 +1960,11 @@ mod tests {
             hosts: hosts.clone(),
             images: images.clone(),
             snapshots,
+            users,
+            shell_repo,
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            download_progress,
         };
 
         let vm_id = Uuid::new_v4();
@@ -1975,6 +1980,9 @@ mod tests {
                 kernel_path: None,
                 rootfs_path: None,
                 source_snapshot_id: None,
+                username: None,
+                password: None,
+                tags: vec![],
             },
             None,
         )
@@ -1998,6 +2006,10 @@ mod tests {
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
+        let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
         let state = AppState {
@@ -2005,8 +2017,11 @@ mod tests {
             hosts,
             images,
             snapshots,
+            users,
+            shell_repo,
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            download_progress,
         };
 
         let err = create_and_start(
@@ -2042,6 +2057,10 @@ mod tests {
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
+        let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
         let state = AppState {
@@ -2049,8 +2068,11 @@ mod tests {
             hosts,
             images,
             snapshots,
+            users,
+            shell_repo,
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            download_progress,
         };
 
         let vm = repo::VmRow {
@@ -2060,6 +2082,9 @@ mod tests {
             host_id: host.id,
             template_id: None,
             host_addr: host.addr,
+            created_by_user_id: None,
+            guest_ip: None,
+            tags: vec![],
             api_sock: "/tmp/sock".into(),
             tap: "tap0".into(),
             log_path: "/tmp/log".into(),
@@ -2095,6 +2120,10 @@ mod tests {
         let images =
             crate::features::images::repo::ImageRepository::new(pool.clone(), "/srv/images");
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
+        let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
         let state = AppState {
@@ -2102,8 +2131,11 @@ mod tests {
             hosts: hosts.clone(),
             images: images.clone(),
             snapshots,
+            users,
+            shell_repo,
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            download_progress,
         };
 
         let now = chrono::Utc::now();
@@ -2120,6 +2152,9 @@ mod tests {
             host_addr: host.addr.clone(),
             api_sock: "/tmp/source.sock".into(),
             tap: "tap-source".into(),
+            created_by_user_id: None,
+            guest_ip: None,
+            tags: vec![],
             log_path: "/tmp/source.log".into(),
             http_port: 0,
             fc_unit: "fc-source.scope".into(),
@@ -2145,6 +2180,7 @@ mod tests {
             state: "available".into(),
             snapshot_type: "Full".into(),
             parent_id: None,
+            name: None,
             track_dirty_pages: false,
             created_at: now,
             updated_at: now,
@@ -2178,8 +2214,6 @@ mod tests {
     }
 }
 
-#[cfg(not(test))]
-/// Create TAP devices for all NICs in the database (supports VLANs)
 /// Allocate next available IP from a CIDR range
 /// Returns IP with CIDR notation (e.g., "10.9.0.5/24")
 async fn allocate_ip_from_cidr(db: &PgPool, network_id: Uuid, cidr: &str) -> Result<String> {
@@ -2410,6 +2444,7 @@ async fn create_tap_with_vlan(
     Ok(())
 }
 
+#[cfg(not(test))]
 async fn create_tap(host_addr: &str, id: Uuid, bridge: &str) -> Result<()> {
     let http = Client::builder()
         .timeout(Duration::from_secs(10))

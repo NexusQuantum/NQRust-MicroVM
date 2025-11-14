@@ -16,7 +16,7 @@ pub async fn handle_file_upload(
         .context("Failed to create upload directory")?;
 
     let mut file_path: Option<PathBuf> = None;
-    let mut original_filename: Option<String> = None;
+    let mut _original_filename: Option<String> = None;
 
     // Process multipart form data
     while let Some(field) = multipart.next_field().await? {
@@ -24,10 +24,10 @@ pub async fn handle_file_upload(
 
         if name == "file" {
             // Get original filename
-            original_filename = field.file_name().map(|s| s.to_string());
+            _original_filename = field.file_name().map(|s| s.to_string());
 
             // Generate safe filename
-            let filename = match &original_filename {
+            let filename = match &_original_filename {
                 Some(fname) => sanitize_filename(fname),
                 None => format!("{}-{}.img", kind, uuid::Uuid::new_v4()),
             };

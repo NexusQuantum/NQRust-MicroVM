@@ -1217,6 +1217,9 @@ mod tests {
             log_path: "/tmp/log".into(),
             http_port: 0,
             fc_unit: "fc-test.scope".into(),
+            created_by_user_id: None,
+            guest_ip: None,
+            tags: vec![],
             vcpu: 1,
             mem_mib: 512,
             kernel_path: "/tmp/kernel".into(),
@@ -1232,13 +1235,20 @@ mod tests {
         let snapshots = crate::features::snapshots::repo::SnapshotRepository::new(pool.clone());
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
+        let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
+        let download_progress =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
             images,
             snapshots,
+            users,
+            shell_repo,
             allow_direct_image_paths: true,
             storage,
+            download_progress,
         };
 
         let Json(body) = super::delete(Extension(state), Path(VmPathParams { id }))

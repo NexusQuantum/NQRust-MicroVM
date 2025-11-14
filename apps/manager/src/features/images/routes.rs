@@ -424,11 +424,13 @@ mod tests {
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let download_progress =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool.clone(),
             hosts,
             images: images.clone(),
             snapshots,
+            users,
             shell_repo,
             allow_direct_image_paths: true,
             storage,
@@ -481,11 +483,13 @@ mod tests {
         storage.init().await.unwrap();
         let download_progress =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let users = crate::features::users::repo::UserRepository::new(pool.clone());
         let state = crate::AppState {
             db: pool,
             hosts,
             images,
             snapshots,
+            users,
             shell_repo,
             allow_direct_image_paths: true,
             storage,
