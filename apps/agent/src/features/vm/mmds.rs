@@ -1,9 +1,4 @@
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    routing::put,
-    Extension, Json, Router,
-};
+use axum::{extract::Path, http::StatusCode, routing::put, Extension, Json, Router};
 use serde_json::Value;
 use tokio::fs;
 
