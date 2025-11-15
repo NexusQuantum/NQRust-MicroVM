@@ -13,7 +13,7 @@ DISTRO="debian"
 VERSION="12"
 CODENAME="bookworm"
 OUTPUT_IMAGE="${1:-/srv/images/debian-12-minimal.ext4}"
-IMAGE_SIZE_MB="${2:-600}"  # 600MB to accommodate build process
+IMAGE_SIZE_MB="${2:-800}"  # 800MB to accommodate build process with packages
 MOUNT_POINT="/tmp/debian-build-$$"
 ARCH="amd64"
 
@@ -126,26 +126,23 @@ export APT_LISTCHANGES_FRONTEND=none
 # Update package lists
 apt-get update
 
-# Install packages
-apt-get install -y --no-install-recommends \
-    cloud-init \
-    openssh-server \
-    iproute2 \
-    iputils-ping \
-    curl \
-    wget \
-    ca-certificates \
-    sudo \
-    net-tools \
-    vim-tiny
+# Install packages in batches with cleanup between each batch to save space
+info 'Installing batch 1: SSH and networking...'
+apt-get install -y --no-install-recommends openssh-server iproute2 iputils-ping
+apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-# Aggressive cleanup to free space during build
-apt-get clean
-rm -rf /var/lib/apt/lists/*
-rm -rf /usr/share/doc/*
-rm -rf /usr/share/man/*
-rm -rf /tmp/*
-rm -rf /var/tmp/*
+info 'Installing batch 2: cloud-init...'
+apt-get update
+apt-get install -y --no-install-recommends cloud-init
+apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
+
+info 'Installing batch 3: utilities...'
+apt-get update
+apt-get install -y --no-install-recommends curl wget ca-certificates sudo net-tools vim-tiny
+apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
+
+# Final aggressive cleanup
+rm -rf /tmp/* /var/tmp/* /var/cache/apt/* /var/log/*
 "
 
 # Configure cloud-init
