@@ -119,14 +119,14 @@ export default function LandingPage() {
       </div>
 
       {/* Right Side - Login Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-white">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-muted dark:bg-black">
         <div className="w-full max-w-lg">
           {/* Mobile Logo */}
           <div className="lg:hidden mb-8 flex justify-center">
             <Image src="/nqr-logo-full.png" alt="NQR-MicroVM" width={280} height={80} priority />
           </div>
 
-          <Card className="border-0 shadow-none">
+          <Card className="border-0 shadow-lg p-8">
             <CardHeader className="space-y-1 px-0">
               <CardTitle className="text-2xl font-bold mx-auto">Sign In</CardTitle>
               <CardTitle className="text-md font-medium mx-auto text-muted-foreground">Welcome back! Please enter your credentials to continue.</CardTitle>

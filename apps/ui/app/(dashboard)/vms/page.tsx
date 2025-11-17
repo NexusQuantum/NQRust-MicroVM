@@ -92,6 +92,15 @@ export default function VMsPage() {
     setQuickCreateOpen(true)
   }
 
+  const handleDialogClose = (open: boolean) => {
+    setQuickCreateOpen(open)
+    if (!open) {
+      // Reset state when dialog is closed
+      setSelectedTemplate(null)
+      setVmName("")
+    }
+  }
+
   const handleSelectTemplate = (template: Template) => {
     setSelectedTemplate(template)
     const defaultName = `${template.name}-${Date.now().toString().slice(-4)}`
@@ -99,24 +108,35 @@ export default function VMsPage() {
   }
 
   const handleDeploy = () => {
+    // console.log("Deploying VM with template: --")
     if (!vmName.trim()) {
       toast.error("Validation Error", {
         description: "Please enter a VM name"
       })
       return
     }
-    if (selectedTemplate) {
-      instantiateMutation.mutate(
-        { id: selectedTemplate.id, name: vmName },
-        {
-          onSuccess: () => {
-            setQuickCreateOpen(false)
-            setSelectedTemplate(null)
-            setVmName("")
-          }
-        }
-      )
+    if (!selectedTemplate) {
+      toast.error("No template selected", {
+        description: "Please select a template first"
+      })
+      return
     }
+
+    console.log("Id:", selectedTemplate.id)
+    console.log("Name:", vmName)
+
+    instantiateMutation.mutate(
+      { id: selectedTemplate.id, name: vmName },
+      {
+        onSuccess: () => {
+          setQuickCreateOpen(false)
+          setSelectedTemplate(null)
+          setVmName("")
+        },
+        onError: () => {
+        }
+      }
+    )
   }
 
   if (isLoading) {
@@ -208,7 +228,7 @@ export default function VMsPage() {
       </Card>
 
       {/* Quick Create Dialog */}
-      <Dialog open={quickCreateOpen} onOpenChange={setQuickCreateOpen}>
+      <Dialog open={quickCreateOpen} onOpenChange={handleDialogClose}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Quick Create VM from Template</DialogTitle>
@@ -246,11 +266,10 @@ export default function VMsPage() {
                     <button
                       key={template.id}
                       onClick={() => handleSelectTemplate(template)}
-                      className={`w-full text-left p-4 rounded-lg border-2 transition-all hover:border-primary/50 ${
-                        selectedTemplate?.id === template.id
-                          ? "border-primary bg-primary/5"
-                          : "border-border"
-                      }`}
+                      className={`w-full text-left p-4 rounded-lg border-2 transition-all hover:border-primary/50 ${selectedTemplate?.id === template.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border"
+                        }`}
                     >
                       <div className="flex items-start gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500/10 to-orange-600/10 flex-shrink-0">

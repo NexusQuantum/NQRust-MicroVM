@@ -55,3 +55,4 @@ sudo -u postgres psql -d "$DB_NAME" -c "ALTER DATABASE $DB_NAME OWNER TO $DB_USE
 
 echo "Database setup complete!"
 
+
