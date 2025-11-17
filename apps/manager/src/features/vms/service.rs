@@ -1509,6 +1509,7 @@ async fn configure_cloud_init_with_network(_: &AppState, _: Uuid, _: &str, _: &s
 /// Detect Linux distribution from mounted rootfs
 /// Returns: alpine, ubuntu, debian, fedora, rhel, centos, arch, or unknown
 #[cfg(not(test))]
+#[allow(dead_code)] // Will be used in Phase 2 for distribution-aware network configuration
 async fn detect_distro(mount_point: &str) -> Result<String> {
     use tokio::fs;
 
@@ -1527,27 +1528,42 @@ async fn detect_distro(mount_point: &str) -> Result<String> {
     }
 
     // Fallback: Check for distro-specific files
-    if fs::metadata(format!("{}/etc/alpine-release", mount_point)).await.is_ok() {
+    if fs::metadata(format!("{}/etc/alpine-release", mount_point))
+        .await
+        .is_ok()
+    {
         info!(mount_point = %mount_point, "detected Alpine Linux (via /etc/alpine-release)");
         return Ok("alpine".to_string());
     }
 
-    if fs::metadata(format!("{}/etc/debian_version", mount_point)).await.is_ok() {
+    if fs::metadata(format!("{}/etc/debian_version", mount_point))
+        .await
+        .is_ok()
+    {
         info!(mount_point = %mount_point, "detected Debian/Ubuntu (via /etc/debian_version)");
         return Ok("debian".to_string());
     }
 
-    if fs::metadata(format!("{}/etc/fedora-release", mount_point)).await.is_ok() {
+    if fs::metadata(format!("{}/etc/fedora-release", mount_point))
+        .await
+        .is_ok()
+    {
         info!(mount_point = %mount_point, "detected Fedora (via /etc/fedora-release)");
         return Ok("fedora".to_string());
     }
 
-    if fs::metadata(format!("{}/etc/redhat-release", mount_point)).await.is_ok() {
+    if fs::metadata(format!("{}/etc/redhat-release", mount_point))
+        .await
+        .is_ok()
+    {
         info!(mount_point = %mount_point, "detected RHEL/CentOS (via /etc/redhat-release)");
         return Ok("rhel".to_string());
     }
 
-    if fs::metadata(format!("{}/etc/arch-release", mount_point)).await.is_ok() {
+    if fs::metadata(format!("{}/etc/arch-release", mount_point))
+        .await
+        .is_ok()
+    {
         info!(mount_point = %mount_point, "detected Arch Linux (via /etc/arch-release)");
         return Ok("arch".to_string());
     }
@@ -1707,9 +1723,9 @@ async fn inject_credentials_to_rootfs(
             let passwd_contents = String::from_utf8_lossy(&passwd_read.stdout).to_string();
 
             // Check if user already exists in passwd
-            let user_exists_in_passwd = passwd_contents.lines().any(|line| {
-                line.starts_with(&format!("{}:", username))
-            });
+            let user_exists_in_passwd = passwd_contents
+                .lines()
+                .any(|line| line.starts_with(&format!("{}:", username)));
 
             if !user_exists_in_passwd {
                 // Determine UID/GID (1000 for regular user, 0 for root)
@@ -1726,10 +1742,8 @@ async fn inject_credentials_to_rootfs(
                 };
 
                 // Add user to /etc/passwd
-                let new_passwd_entry = format!(
-                    "{}:x:{}:{}::/{}:/bin/sh\n",
-                    username, uid, gid, home_dir
-                );
+                let new_passwd_entry =
+                    format!("{}:x:{}:{}::/{}:/bin/sh\n", username, uid, gid, home_dir);
 
                 let mut passwd_write = Command::new("sudo")
                     .args(["tee", "-a", passwd_path.to_str().unwrap()])
@@ -1740,12 +1754,16 @@ async fn inject_credentials_to_rootfs(
 
                 if let Some(mut stdin) = passwd_write.stdin.take() {
                     use tokio::io::AsyncWriteExt;
-                    stdin.write_all(new_passwd_entry.as_bytes()).await
+                    stdin
+                        .write_all(new_passwd_entry.as_bytes())
+                        .await
                         .context("failed to write passwd entry")?;
                     drop(stdin);
                 }
 
-                passwd_write.wait().await
+                passwd_write
+                    .wait()
+                    .await
                     .context("failed to wait for passwd write")?;
 
                 info!(vm_id = %vm_id, username = %username, uid = uid, "added user to /etc/passwd");
@@ -1764,12 +1782,16 @@ async fn inject_credentials_to_rootfs(
 
                     if let Some(mut stdin) = group_write.stdin.take() {
                         use tokio::io::AsyncWriteExt;
-                        stdin.write_all(group_entry.as_bytes()).await
+                        stdin
+                            .write_all(group_entry.as_bytes())
+                            .await
                             .context("failed to write group entry")?;
                         drop(stdin);
                     }
 
-                    group_write.wait().await
+                    group_write
+                        .wait()
+                        .await
                         .context("failed to wait for group write")?;
 
                     info!(vm_id = %vm_id, username = %username, gid = gid, "added group to /etc/group");
@@ -1788,7 +1810,7 @@ async fn inject_credentials_to_rootfs(
                         .args([
                             "chown",
                             &format!("{}:{}", uid, gid),
-                            home_path.to_str().unwrap()
+                            home_path.to_str().unwrap(),
                         ])
                         .status()
                         .await

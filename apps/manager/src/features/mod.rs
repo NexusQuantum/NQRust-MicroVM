@@ -1,5 +1,5 @@
 use crate::AppState;
-use axum::{Extension, Router, Json};
+use axum::{Extension, Json, Router};
 use serde::Serialize;
 
 pub mod containers;
