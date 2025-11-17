@@ -18,8 +18,40 @@ env:
   RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
 
 jobs:
+  # Gate: Ensure CI passes before building release
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+      - name: Check shell scripts
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          find scripts/install -name "*.sh" -type f -exec bash -n {} \;
+          find scripts/install -name "*.sh" -type f -exec shellcheck -x {} \;
+
   build-binaries:
     name: Build Release Binaries
+    needs: ci-gate
     runs-on: self-hosted
     # Alternatives:
     # runs-on: ubuntu-24.04
@@ -137,6 +169,7 @@ jobs:
 
   build-ui:
     name: Build UI
+    needs: ci-gate
     runs-on: ubuntu-24.04
 
     steps:
@@ -221,9 +254,17 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            VERSION="${{ github.event.inputs.version }}"
           else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Check if this is a pre-release (v0.x.x or contains -alpha, -beta, -rc)
+          if [[ "$VERSION" =~ ^v0\. ]] || [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Create release manifest
@@ -233,7 +274,7 @@ jobs:
           {
             "version": "${{ steps.version.outputs.version }}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "min_compatible_version": "v1.0.0",
+            "min_compatible_version": "v0.1.0",
             "changelog": "See CHANGELOG.md for details",
             "components": {
               "manager": {
@@ -262,7 +303,7 @@ jobs:
               }
             },
             "migrations": {
-              "from": "v1.0.0",
+              "from": "v0.1.0",
               "requires_downtime": false,
               "breaking_changes": false
             }
@@ -332,7 +373,7 @@ jobs:
           name: Release ${{ steps.version.outputs.version }}
           body_path: ${{ steps.release_notes.outputs.notes_file }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.version.outputs.prerelease }}
           files: |
             release/nqrust-manager-x86_64-unknown-linux-gnu
             release/nqrust-agent-x86_64-unknown-linux-gnu
@@ -385,7 +426,7 @@ jobs:
         if: matrix.mode != 'manager'
         run: |
           systemctl is-active nqrust-agent
-          curl -f http://localhost:19090/health
+          curl -f http://localhost:9090/health
 
       - name: Show logs on failure
         if: failure()
