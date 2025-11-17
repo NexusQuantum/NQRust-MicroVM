@@ -1,5 +1,6 @@
 use crate::AppState;
-use axum::{Extension, Router};
+use axum::{Extension, Router, Json};
+use serde::Serialize;
 
 pub mod containers;
 pub mod functions;
@@ -15,8 +16,22 @@ pub mod users;
 pub mod vms; // A2 core
 pub mod volumes;
 
+#[derive(Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+}
+
+async fn health_check() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/health", axum::routing::get(health_check))
         .nest(
             "/v1/auth",
             users::auth_router().route_layer(axum::middleware::from_fn_with_state(
