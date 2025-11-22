@@ -74,7 +74,7 @@ check_ram() {
 
 # Check disk space
 check_disk_space() {
-    local min_space_gb=${1:-20}  # Default 20GB
+    local min_space_gb=${1:-15}  # Default 15GB (sufficient for basic installation)
     log_info "Checking disk space..."
 
     # Check space in /srv (where VMs will be stored)

@@ -282,6 +282,8 @@ detect_network_interface() {
 init_logging() {
     LOG_DIR="${LOG_DIR:-/var/log/nqrust-install}"
     sudo mkdir -p "$LOG_DIR"
+    # Make log directory writable so tee can write as current user
+    sudo chmod 777 "$LOG_DIR"
     LOG_FILE="$LOG_DIR/install-$(date +%Y%m%d_%H%M%S).log"
 
     # Redirect all output to log file (in addition to stdout/stderr)
