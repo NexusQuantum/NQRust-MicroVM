@@ -25,11 +25,10 @@ pub async fn auth_middleware(
         .and_then(|h| h.to_str().ok())
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if !auth_header.starts_with("Bearer ") {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    let token = auth_header.strip_prefix("Bearer ").unwrap().trim();
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::UNAUTHORIZED)?
+        .trim();
     if token.is_empty() {
         return Err(StatusCode::UNAUTHORIZED);
     }

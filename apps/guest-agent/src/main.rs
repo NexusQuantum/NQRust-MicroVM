@@ -562,7 +562,10 @@ async fn main() {
     match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => {
             eprintln!("Guest agent listening on {}", addr);
-            axum::serve(listener, app).await.unwrap();
+            if let Err(e) = axum::serve(listener, app).await {
+                eprintln!("Guest agent server error: {}", e);
+                std::process::exit(1);
+            }
         }
         Err(e) => {
             eprintln!("Failed to bind to {}: {}", addr, e);

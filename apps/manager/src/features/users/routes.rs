@@ -532,8 +532,9 @@ pub async fn upload_avatar(
     })?;
 
     // Update database
+    let avatar_path_str = avatar_path.to_string_lossy();
     st.users
-        .set_avatar_path(user.id, avatar_path.to_str().unwrap())
+        .set_avatar_path(user.id, &avatar_path_str)
         .await
         .map_err(|e| {
             error!(?e, "failed to update avatar path");

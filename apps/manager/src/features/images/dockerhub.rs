@@ -379,7 +379,10 @@ impl DockerHubClient {
         }
 
         let mut save_process = Command::new("docker")
-            .args(["save", "-o", tarball_path.to_str().unwrap(), image])
+            .arg("save")
+            .arg("-o")
+            .arg(&tarball_path)
+            .arg(image)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -642,7 +645,10 @@ impl DockerHubClient {
         // Note: Bollard doesn't have a direct "save" equivalent yet
         // We'll fall back to CLI for this part
         let mut save_process = Command::new("docker")
-            .args(["save", "-o", tarball_path.to_str().unwrap(), image])
+            .arg("save")
+            .arg("-o")
+            .arg(&tarball_path)
+            .arg(image)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -687,7 +693,9 @@ impl DockerHubClient {
         tracing::info!("Loading Docker image from: {:?}", tarball_path);
 
         let output = Command::new("docker")
-            .args(["load", "-i", tarball_path.to_str().unwrap()])
+            .arg("load")
+            .arg("-i")
+            .arg(tarball_path)
             .output()
             .await
             .context("Failed to execute docker load")?;

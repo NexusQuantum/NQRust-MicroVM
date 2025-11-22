@@ -20,9 +20,9 @@ async fn configure_entropy(
     Json(req): Json<EntropyReq>,
 ) -> Result<Json<EntropyReq>, (StatusCode, String)> {
     let cfg_path = config_path(&st.run_dir, &id, "entropy.json");
-    fs::create_dir_all(cfg_path.parent().unwrap())
-        .await
-        .map_err(internal_error)?;
+    if let Some(parent) = cfg_path.parent() {
+        fs::create_dir_all(parent).await.map_err(internal_error)?;
+    }
     fs::write(
         &cfg_path,
         serde_json::to_vec_pretty(&req).map_err(internal_error)?,

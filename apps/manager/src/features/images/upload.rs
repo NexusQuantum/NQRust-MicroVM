@@ -103,7 +103,9 @@ pub async fn load_docker_image_from_tarball(tarball_path: &PathBuf) -> Result<St
     tracing::info!("Loading Docker image from tarball: {:?}", tarball_path);
 
     let output = Command::new("docker")
-        .args(["load", "-i", tarball_path.to_str().unwrap()])
+        .arg("load")
+        .arg("-i")
+        .arg(tarball_path)
         .output()
         .await
         .context("Failed to execute docker load")?;

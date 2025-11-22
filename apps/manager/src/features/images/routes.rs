@@ -360,16 +360,22 @@ pub async fn upload_image(
         })?;
 
     // If Docker image, load it to get the actual image name
+    let default_name = || {
+        file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    };
     let image_name = if kind == "docker" {
         match super::upload::load_docker_image_from_tarball(&file_path).await {
             Ok(name) => name,
             Err(e) => {
                 tracing::warn!("Failed to load Docker image, using filename: {}", e);
-                name.unwrap_or_else(|| file_path.file_name().unwrap().to_string_lossy().to_string())
+                name.unwrap_or_else(default_name)
             }
         }
     } else {
-        name.unwrap_or_else(|| file_path.file_name().unwrap().to_string_lossy().to_string())
+        name.unwrap_or_else(default_name)
     };
 
     // Register in database

@@ -190,8 +190,7 @@ pub async fn update_function(
     let code_changed = req.code.is_some();
     let handler_changed = req.handler.is_some();
 
-    if (code_changed || handler_changed) && existing.guest_ip.is_some() {
-        let guest_ip = existing.guest_ip.unwrap();
+    if let Some(guest_ip) = existing.guest_ip.filter(|ip| !ip.is_empty() && (code_changed || handler_changed)) {
         let new_code = req.code.unwrap_or(existing.code);
         let new_handler = req.handler.unwrap_or(existing.handler);
         let runtime = req.runtime.unwrap_or(existing.runtime);

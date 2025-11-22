@@ -498,8 +498,9 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             match super::repo::get(&st_clone.db, vm_id).await {
-                Ok(vm) if vm.guest_ip.is_some() && !vm.guest_ip.as_ref().unwrap().is_empty() => {
-                    info!(vm_id=%vm_id, attempt=%attempt, guest_ip=%vm.guest_ip.as_ref().unwrap(),
+                Ok(vm) if vm.guest_ip.as_ref().is_some_and(|ip| !ip.is_empty()) => {
+                    let guest_ip = vm.guest_ip.as_deref().unwrap_or("unknown");
+                    info!(vm_id=%vm_id, attempt=%attempt, guest_ip=%guest_ip,
                           "guest IP detected, waiting for it to stabilize...");
 
                     // Wait a bit for IP to stabilize (DHCP might reassign)
@@ -1658,7 +1659,8 @@ async fn inject_credentials_to_rootfs(
     // Read current /etc/shadow using sudo (requires elevated permissions)
     let shadow_path = mount_path.join("etc/shadow");
     let shadow_read = Command::new("sudo")
-        .args(["cat", shadow_path.to_str().unwrap()])
+        .arg("cat")
+        .arg(&shadow_path)
         .output()
         .await
         .context("failed to read /etc/shadow from rootfs")?;
@@ -1714,7 +1716,8 @@ async fn inject_credentials_to_rootfs(
 
         let passwd_path = mount_path.join("etc/passwd");
         let passwd_read = Command::new("sudo")
-            .args(["cat", passwd_path.to_str().unwrap()])
+            .arg("cat")
+            .arg(&passwd_path)
             .output()
             .await
             .context("failed to read /etc/passwd")?;
@@ -1746,7 +1749,9 @@ async fn inject_credentials_to_rootfs(
                     format!("{}:x:{}:{}::/{}:/bin/sh\n", username, uid, gid, home_dir);
 
                 let mut passwd_write = Command::new("sudo")
-                    .args(["tee", "-a", passwd_path.to_str().unwrap()])
+                    .arg("tee")
+                    .arg("-a")
+                    .arg(&passwd_path)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::null())
                     .spawn()
@@ -1774,7 +1779,9 @@ async fn inject_credentials_to_rootfs(
                     let group_entry = format!("{}:x:{}:\n", username, gid);
 
                     let mut group_write = Command::new("sudo")
-                        .args(["tee", "-a", group_path.to_str().unwrap()])
+                        .arg("tee")
+                        .arg("-a")
+                        .arg(&group_path)
                         .stdin(std::process::Stdio::piped())
                         .stdout(std::process::Stdio::null())
                         .spawn()
@@ -1801,17 +1808,17 @@ async fn inject_credentials_to_rootfs(
                 if username != "root" {
                     let home_path = mount_path.join(format!("home/{}", username));
                     Command::new("sudo")
-                        .args(["mkdir", "-p", home_path.to_str().unwrap()])
+                        .arg("mkdir")
+                        .arg("-p")
+                        .arg(&home_path)
                         .status()
                         .await
                         .context("failed to create home directory")?;
 
                     Command::new("sudo")
-                        .args([
-                            "chown",
-                            &format!("{}:{}", uid, gid),
-                            home_path.to_str().unwrap(),
-                        ])
+                        .arg("chown")
+                        .arg(format!("{}:{}", uid, gid))
+                        .arg(&home_path)
                         .status()
                         .await
                         .context("failed to chown home directory")?;
@@ -1824,7 +1831,8 @@ async fn inject_credentials_to_rootfs(
 
     // Write updated shadow file using sudo via tee
     let mut write_child = Command::new("sudo")
-        .args(["tee", shadow_path.to_str().unwrap()])
+        .arg("tee")
+        .arg(&shadow_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -1852,7 +1860,9 @@ async fn inject_credentials_to_rootfs(
 
     // Set proper permissions on shadow file (0640)
     let chmod_status = Command::new("sudo")
-        .args(["chmod", "640", shadow_path.to_str().unwrap()])
+        .arg("chmod")
+        .arg("640")
+        .arg(&shadow_path)
         .status()
         .await
         .context("failed to chmod /etc/shadow")?;
@@ -1878,7 +1888,8 @@ iface eth0 inet dhcp
 "#;
 
     let mut network_write = Command::new("sudo")
-        .args(["tee", interfaces_path.to_str().unwrap()])
+        .arg("tee")
+        .arg(&interfaces_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -1902,7 +1913,9 @@ iface eth0 inet dhcp
     let firecracker_tap_script = mount_path.join("etc/network/if-up.d/firecracker-tap");
     if firecracker_tap_script.exists() {
         let rm_status = Command::new("sudo")
-            .args(["rm", "-f", firecracker_tap_script.to_str().unwrap()])
+            .arg("rm")
+            .arg("-f")
+            .arg(&firecracker_tap_script)
             .status()
             .await;
 
@@ -1921,7 +1934,9 @@ iface eth0 inet dhcp
     // First create the directory with sudo
     let udhcpc_dir = mount_path.join("etc/udhcpc");
     let mkdir_status = Command::new("sudo")
-        .args(["mkdir", "-p", udhcpc_dir.to_str().unwrap()])
+        .arg("mkdir")
+        .arg("-p")
+        .arg(&udhcpc_dir)
         .status()
         .await
         .context("failed to create /etc/udhcpc directory")?;
@@ -1983,7 +1998,8 @@ exit 0
 "#;
 
     let mut udhcpc_write = Command::new("sudo")
-        .args(["tee", udhcpc_script_path.to_str().unwrap()])
+        .arg("tee")
+        .arg(&udhcpc_script_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -2002,7 +2018,9 @@ exit 0
     } else {
         // Make the script executable
         let chmod_udhcpc_status = Command::new("sudo")
-            .args(["chmod", "+x", udhcpc_script_path.to_str().unwrap()])
+            .arg("chmod")
+            .arg("+x")
+            .arg(&udhcpc_script_path)
             .status()
             .await
             .context("failed to chmod udhcpc script")?;
@@ -2031,12 +2049,10 @@ exit 0
 
         let symlink_path = default_runlevel.join("networking");
         let ln_status = Command::new("sudo")
-            .args([
-                "ln",
-                "-sf",
-                "/etc/init.d/networking",
-                symlink_path.to_str().unwrap(),
-            ])
+            .arg("ln")
+            .arg("-sf")
+            .arg("/etc/init.d/networking")
+            .arg(&symlink_path)
             .status()
             .await
             .context("failed to create networking service symlink")?;
@@ -2489,13 +2505,14 @@ async fn configure_secondary_nics_via_guest_agent(st: &AppState, vm_id: Uuid) ->
             };
 
             // Check if VM has guest IP
-            if vm.guest_ip.is_none() || vm.guest_ip.as_ref().unwrap().is_empty() {
-                warn!(vm_id=%vm_id, iface_id=%nic.iface_id, retry=%retry, "VM has no guest IP yet");
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
-            }
-
-            let guest_ip = vm.guest_ip.unwrap();
+            let guest_ip = match vm.guest_ip.as_ref().filter(|ip| !ip.is_empty()) {
+                Some(ip) => ip.clone(),
+                None => {
+                    warn!(vm_id=%vm_id, iface_id=%nic.iface_id, retry=%retry, "VM has no guest IP yet");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+            };
             let guest_agent_url = format!("http://{}:9000", guest_ip);
 
             if retry == 0 {

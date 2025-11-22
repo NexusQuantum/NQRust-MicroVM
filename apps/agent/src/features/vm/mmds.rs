@@ -16,9 +16,9 @@ async fn put_mmds(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let cfg_path = config_path(&st.run_dir, &id, "mmds.json");
-    fs::create_dir_all(cfg_path.parent().unwrap())
-        .await
-        .map_err(internal_error)?;
+    if let Some(parent) = cfg_path.parent() {
+        fs::create_dir_all(parent).await.map_err(internal_error)?;
+    }
     fs::write(
         &cfg_path,
         serde_json::to_vec_pretty(&body).map_err(internal_error)?,
@@ -46,9 +46,9 @@ async fn put_mmds_config(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let cfg_path = config_path(&st.run_dir, &id, "mmds-config.json");
-    fs::create_dir_all(cfg_path.parent().unwrap())
-        .await
-        .map_err(internal_error)?;
+    if let Some(parent) = cfg_path.parent() {
+        fs::create_dir_all(parent).await.map_err(internal_error)?;
+    }
     fs::write(
         &cfg_path,
         serde_json::to_vec_pretty(&body).map_err(internal_error)?,

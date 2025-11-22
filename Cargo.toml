@@ -2,6 +2,7 @@
 members = [
 "apps/agent", "apps/guest-agent",
 "apps/manager",
+"apps/installer",
 "crates/nexus-types",
 ]
 resolver = "2"

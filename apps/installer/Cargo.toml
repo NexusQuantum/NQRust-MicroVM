@@ -1,0 +1,46 @@
+[package]
+name = "nqr-installer"
+version = "0.1.0"
+edition.workspace = true
+description = "NQR-MicroVM Installer - Rust Firecracker MicroVM Platform by Nexus"
+authors = ["Nexus"]
+
+[[bin]]
+name = "nqr-installer"
+path = "src/main.rs"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Async runtime
+tokio = { workspace = true }
+
+# CLI parsing
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Utilities
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+
+# Networking/Downloads
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# System info
+sysinfo = "0.32"
+nix = { version = "0.29", features = ["user", "fs", "process"] }
+users = "0.11"
