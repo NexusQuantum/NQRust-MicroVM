@@ -43,4 +43,3 @@ tracing-subscriber = { workspace = true }
 # System info
 sysinfo = "0.32"
 nix = { version = "0.29", features = ["user", "fs", "process"] }
-users = "0.11"
