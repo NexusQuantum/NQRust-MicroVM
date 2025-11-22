@@ -109,18 +109,16 @@ jobs:
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_DIR=$HOME/.cache/sccache" >> $GITHUB_ENV
 
-      - name: Cache Cargo
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-registry-
 
       - name: Build manager (release)
         run: |
@@ -235,10 +233,21 @@ jobs:
         with:
           path: artifacts/
 
+      - name: Package installer scripts
+        run: |
+          tar czf nqrust-installer.tar.gz \
+            scripts/install/install.sh \
+            scripts/install/uninstall.sh \
+            scripts/install/README.md \
+            scripts/install/lib/ \
+            scripts/install/systemd/ \
+            scripts/install/sudoers.d/
+
       - name: Organize release files
         run: |
           mkdir -p release/
           find artifacts/ -type f -name "nqrust-*" -exec cp {} release/ \;
+          cp nqrust-installer.tar.gz release/
           ls -lh release/
 
       - name: Generate checksums
@@ -248,6 +257,7 @@ jobs:
           sha256sum nqrust-agent-* >> checksums.txt
           sha256sum nqrust-guest-agent-* >> checksums.txt
           sha256sum nqrust-ui.tar.gz >> checksums.txt
+          sha256sum nqrust-installer.tar.gz >> checksums.txt
           cat checksums.txt
 
       - name: Get version
@@ -300,6 +310,12 @@ jobs:
                 "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-ui.tar.gz",
                 "checksum": "$(sha256sum nqrust-ui.tar.gz | cut -d' ' -f1)",
                 "size": $(stat -f%z nqrust-ui.tar.gz 2>/dev/null || stat -c%s nqrust-ui.tar.gz)
+              },
+              "installer": {
+                "version": "${{ steps.version.outputs.version }}",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-installer.tar.gz",
+                "checksum": "$(sha256sum nqrust-installer.tar.gz | cut -d' ' -f1)",
+                "size": $(stat -f%z nqrust-installer.tar.gz 2>/dev/null || stat -c%s nqrust-installer.tar.gz)
               }
             },
             "migrations": {
@@ -343,6 +359,7 @@ jobs:
           - Agent: [nqrust-agent-x86_64-unknown-linux-gnu](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-unknown-linux-gnu)
           - Guest Agent: [nqrust-guest-agent-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-guest-agent-x86_64-linux-musl)
           - UI: [nqrust-ui.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-ui.tar.gz)
+          - Installer: [nqrust-installer.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-installer.tar.gz)
 
           ### Checksums
           ```
@@ -379,6 +396,7 @@ jobs:
             release/nqrust-agent-x86_64-unknown-linux-gnu
             release/nqrust-guest-agent-x86_64-linux-musl
             release/nqrust-ui.tar.gz
+            release/nqrust-installer.tar.gz
             release/checksums.txt
             release/release-manifest.json
         env:
