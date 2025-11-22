@@ -34,3 +34,23 @@ utoipa = "4"
 futures = "0.3"
 tokio-tungstenite = "0.21"
 sha2 = "0.10"
+
+# Release profile - maximum performance and minimal binary size
+[profile.release]
+opt-level = 3              # Maximum optimization
+lto = "fat"                # Link-time optimization (slower build, faster/smaller binary)
+codegen-units = 1          # Better optimization, slower compile
+strip = true               # Strip symbols automatically
+panic = "abort"            # Smaller binary, no unwinding
+
+# Release profile with debug info (for profiling production issues)
+[profile.release-with-debug]
+inherits = "release"
+strip = false
+debug = true
+
+# Dev profile - optimized for fast compilation
+[profile.dev]
+opt-level = 0              # No optimization (fast compile)
+debug = true               # Full debug info
+incremental = true         # Incremental compilation

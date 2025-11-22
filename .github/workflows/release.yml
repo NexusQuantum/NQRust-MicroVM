@@ -121,21 +121,15 @@ jobs:
             ${{ runner.os }}-cargo-registry-
 
       - name: Build manager (release)
-        run: |
-          cargo build --release -p manager
-          strip target/release/manager
+        run: cargo build --release -p manager
         env:
           DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
 
       - name: Build agent (release)
-        run: |
-          cargo build --release -p agent
-          strip target/release/agent
+        run: cargo build --release -p agent
 
       - name: Build guest-agent (static musl)
-        run: |
-          cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
-          strip target/x86_64-unknown-linux-musl/release/guest-agent
+        run: cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
 
       - name: Verify binaries
         run: |
@@ -208,7 +202,7 @@ jobs:
             .next/ \
             public/ \
             package.json \
-            next.config.js \
+            next.config.mjs \
             pnpm-lock.yaml
 
       - name: Upload UI as artifact
