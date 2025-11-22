@@ -13,7 +13,7 @@ import { Play, Square, RotateCw, Trash2, ArrowLeft, Loader2, Pause, PlayCircle, 
 import Link from "next/link"
 import { use, useState, useMemo } from "react"
 import { useContainer, useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer, usePauseContainer, useResumeContainer } from "@/lib/queries"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 
@@ -39,7 +39,13 @@ const getStatusColor = (status: string) => {
 export default function ContainerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
   const { user } = useAuthStore()
+
+  // Valid tab values
+  const validTabs = ['overview', 'logs', 'stats', 'config', 'events']
+  const defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview'
 
   const { data: container, isLoading, error, refetch } = useContainer(id)
   const startContainer = useStartContainer()
@@ -252,7 +258,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
       <ReusableTabs
         tabs={tabs}
         contents={tabContents}
-        defaultValue="overview"
+        defaultValue={defaultTab}
         className="space-y-4"
         tabsContentClassName="space-y-4"
       />

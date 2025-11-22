@@ -296,7 +296,7 @@ export function Sidebar({ isCollapsed }: { isCollapsed: boolean }) {
           </Link>
         ) : (
           <Link href="/dashboard" className="flex items-center" prefetch={false}>
-            <Image src="/nq-logo.png" alt="NQR-MicroVM" width={40} height={40} className="h-10 w-auto" priority />
+            <Image src="/nqr-icon.png" alt="NQR-MicroVM" width={40} height={40} className="h-10 w-auto" priority />
           </Link>
         )}
       </div>

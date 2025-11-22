@@ -10,6 +10,7 @@ import { use, useState, useMemo } from "react"
 import { useDeleteFunction, useFunction } from "@/lib/queries"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { useAuthStore, canDeleteResource } from "@/lib/auth/store"
+import { useSearchParams } from "next/navigation"
 
 
 const getStatusColor = (state: string) => {
@@ -27,9 +28,15 @@ const getStatusColor = (state: string) => {
 
 export default function FunctionEditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
   const { data: functions, isLoading, error } = useFunction(id)
   const [deleteDialog, setDeleteDialog] = useState(false)
   const { user } = useAuthStore()
+
+  // Valid tab values
+  const validTabs = ['editor', 'overview', 'stats', 'events', 'logs']
+  const defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'editor'
 
   const deleteFunction = useDeleteFunction()
   const handleDelete = () => {
@@ -151,7 +158,7 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
       <ReusableTabs
         tabs={tabs}
         contents={tabContents}
-        defaultValue="editor"
+        defaultValue={defaultTab}
         className="space-y-4"
         tabsListClassName="bg-secondary gap-1"
         tabsTriggerClassName="px-4"

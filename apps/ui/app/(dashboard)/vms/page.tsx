@@ -172,8 +172,8 @@ export default function VMsPage() {
       <div className="relative overflow-hidden rounded-xl border border-border bg-gradient-to-br from-yellow-50 to-yellow-100/50 dark:from-yellow-950/30 dark:to-yellow-900/20 p-8">
         <div className="relative z-10 flex items-center justify-between">
           <div className="max-w-xl">
-            <h1 className="text-3xl font-bold text-foreground dark:text-primary">Virtual Machines</h1>
-            <p className="mt-2 text-foreground font-medium">
+            <h1 className="text-3xl font-bold text-foreground dark:text-foreground">Virtual Machines</h1>
+            <p className="mt-2 text-muted-foreground font-medium">
               Manage your microVMs
             </p>
             {canCreateResource(user) && (

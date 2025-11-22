@@ -127,16 +127,16 @@ export APT_LISTCHANGES_FRONTEND=none
 apt-get update
 
 # Install packages in batches with cleanup between each batch to save space
-info 'Installing batch 1: SSH and networking...'
+echo '[CHROOT] Installing batch 1: SSH and networking...'
 apt-get install -y --no-install-recommends openssh-server iproute2 iputils-ping
 apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-info 'Installing batch 2: cloud-init...'
+echo '[CHROOT] Installing batch 2: cloud-init...'
 apt-get update
 apt-get install -y --no-install-recommends cloud-init
 apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-info 'Installing batch 3: utilities...'
+echo '[CHROOT] Installing batch 3: utilities...'
 apt-get update
 apt-get install -y --no-install-recommends curl wget ca-certificates sudo net-tools vim-tiny
 apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*

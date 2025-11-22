@@ -1,17 +1,17 @@
 "use client"
 
-import { Bell, Search, PanelLeft, PanelRight, Sun, Moon, Monitor } from "lucide-react"
+import { PanelLeft, PanelRight, Sun, Moon, Monitor } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { NotificationDropdown } from "./notification-dropdown"
+import { SearchCommand } from "./search-command"
 
 export function Topbar({ isCollapsed, onToggle }: { isCollapsed: boolean; onToggle: () => void }) {
   const { theme, setTheme } = useTheme()
@@ -44,10 +44,7 @@ export function Topbar({ isCollapsed, onToggle }: { isCollapsed: boolean; onTogg
           {isCollapsed ? <PanelRight className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
         </Button>
 
-        <div className="relative w-96 max-w-full">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input type="search" placeholder="Search resources..." className="pl-9 shadow-none" />
-        </div>
+        <SearchCommand />
       </div>
 
       <div className="flex items-center gap-2">
@@ -76,12 +73,7 @@ export function Topbar({ isCollapsed, onToggle }: { isCollapsed: boolean; onTogg
         </DropdownMenu>
 
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative h-9 w-9">
-          <Bell className="h-5 w-5" />
-          <Badge className="absolute -right-1 -top-1 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center">
-            3
-          </Badge>
-        </Button>
+        <NotificationDropdown />
       </div>
     </div>
   )

@@ -127,16 +127,16 @@ export APT_LISTCHANGES_FRONTEND=none
 apt-get update
 
 # Install packages in batches with cleanup between each batch to save space
-info 'Installing batch 1: SSH and networking...'
+echo '[CHROOT] Installing batch 1: SSH and networking...'
 apt-get install -y --no-install-recommends openssh-server iproute2 iputils-ping
 apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-info 'Installing batch 2: cloud-init...'
+echo '[CHROOT] Installing batch 2: cloud-init...'
 apt-get update
 apt-get install -y --no-install-recommends cloud-init
 apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-info 'Installing batch 3: utilities...'
+echo '[CHROOT] Installing batch 3: utilities...'
 apt-get update
 apt-get install -y --no-install-recommends curl wget ca-certificates sudo net-tools vim-tiny
 apt-get clean && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
@@ -149,14 +149,55 @@ rm -rf /tmp/* /var/tmp/* /var/cache/apt/* /var/log/*
 info "Configuring cloud-init..."
 cat > "$MOUNT_POINT/etc/cloud/cloud.cfg.d/99-nqrust.cfg" <<EOF
 # NQRust-MicroVM cloud-init configuration
+# Use NoCloud datasource without network metadata fetch (avoids timeout)
 datasource_list: [ NoCloud, None ]
-datasource:
-  NoCloud:
-    seedfrom: http://169.254.169.254/
 
-# Disable network config from cloud-init (use systemd-networkd)
+# Disable network config from cloud-init (use systemd-networkd instead)
 network:
   config: disabled
+
+# Disable waiting for network metadata to avoid long boot delays
+manual_cache_clean: true
+EOF
+
+# Disable cloud-init's network-dependent parts to speed up boot
+cat > "$MOUNT_POINT/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg" <<EOF
+# Disable network configuration entirely - use systemd-networkd
+network: {config: disabled}
+EOF
+
+# Configure cloud-init to not wait for datasource on network
+cat > "$MOUNT_POINT/etc/cloud/ds-identify.cfg" <<EOF
+policy: enabled
+EOF
+
+info "Cloud-init configured to skip network metadata fetch"
+
+# Create dummy NoCloud seed to prevent network fetch
+mkdir -p "$MOUNT_POINT/var/lib/cloud/seed/nocloud"
+cat > "$MOUNT_POINT/var/lib/cloud/seed/nocloud/meta-data" <<EOF
+instance-id: nqrust-vm-\$(date +%s)
+local-hostname: nqrust-vm
+EOF
+
+cat > "$MOUNT_POINT/var/lib/cloud/seed/nocloud/user-data" <<EOF
+#cloud-config
+# Default configuration - manager will inject actual credentials
+password: root
+chpasswd: { expire: False }
+ssh_pwauth: True
+EOF
+
+info "Created local NoCloud seed to avoid network metadata wait"
+
+# Append remaining cloud-init configuration
+cat >> "$MOUNT_POINT/etc/cloud/cloud.cfg.d/99-nqrust.cfg" <<'EOF'
+
+# Performance optimizations for microVM
+datasource:
+  NoCloud:
+    # Use local seed only, no network fetch
+    fs_label: cidata
 
 # Basic modules
 cloud_init_modules:
