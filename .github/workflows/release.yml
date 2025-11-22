@@ -144,7 +144,8 @@ jobs:
           file ./target/release/manager
           test -x ./target/release/agent
           file ./target/release/agent
-          file target/x86_64-unknown-linux-musl/release/guest-agent | grep "statically linked"
+          # Check guest-agent is statically linked (handles both "statically linked" and "static-pie linked")
+          file target/x86_64-unknown-linux-musl/release/guest-agent | grep -E "static.*linked"
 
       - name: Rename binaries with target suffix
         run: |
