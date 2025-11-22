@@ -367,12 +367,34 @@ jobs:
           export DATABASE_URL=postgresql://nexus:nexus@localhost/nexus
           export MANAGER_BIND=127.0.0.1:18080
           export MANAGER_ALLOW_IMAGE_PATHS=true
-          ./target/release/manager &
+          export MANAGER_RECONCILER_DISABLED=1
+          ./target/release/manager > /tmp/manager.log 2>&1 &
           MANAGER_PID=$!
           echo "MANAGER_PID=$MANAGER_PID" >> $GITHUB_ENV
+          echo "Manager started with PID $MANAGER_PID"
 
-          # Wait for manager to start
-          sleep 5
+      - name: Wait for manager to be ready
+        run: |
+          echo "Waiting for manager to be ready..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:18080/health > /dev/null 2>&1; then
+              echo "Manager is ready after $i seconds"
+              exit 0
+            fi
+            # Check if process is still running
+            if ! kill -0 $MANAGER_PID 2>/dev/null; then
+              echo "Manager process died!"
+              echo "=== Manager logs ==="
+              cat /tmp/manager.log || true
+              exit 1
+            fi
+            echo "Attempt $i/30 - waiting..."
+            sleep 1
+          done
+          echo "Manager failed to start within 30 seconds"
+          echo "=== Manager logs ==="
+          cat /tmp/manager.log || true
+          exit 1
 
       - name: Test manager API
         run: |
@@ -383,6 +405,15 @@ jobs:
           curl -f http://localhost:18080/v1/vms
 
           echo "Manager API is responding!"
+        env:
+          # Show manager logs on failure
+          MANAGER_LOG_FILE: /tmp/manager.log
+
+      - name: Show manager logs on failure
+        if: failure()
+        run: |
+          echo "=== Manager logs ==="
+          cat /tmp/manager.log || echo "No log file found"
 
       - name: Stop manager
         if: always()
