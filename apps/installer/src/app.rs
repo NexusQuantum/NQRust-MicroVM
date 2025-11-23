@@ -78,9 +78,9 @@ impl InstallMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NetworkMode {
     /// NAT mode with internal bridge (10.0.0.0/24)
-    #[default]
     Nat,
     /// Bridged mode connecting to external network
+    #[default]
     Bridged,
 }
 
@@ -95,7 +95,7 @@ impl NetworkMode {
     pub fn description(&self) -> &'static str {
         match self {
             NetworkMode::Nat => "Isolated network with NAT (10.0.0.0/24)",
-            NetworkMode::Bridged => "Bridge to external network (requires console access)",
+            NetworkMode::Bridged => "VMs get IPs from router (DHCP from external network)",
         }
     }
 }

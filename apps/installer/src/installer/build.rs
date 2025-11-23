@@ -35,7 +35,7 @@ pub fn build_from_source(config: &InstallConfig, source_dir: &Path) -> Result<Ve
             &[
                 "-c",
                 &format!(
-                    "cd {} && . $HOME/.cargo/env && cargo build --release -p manager 2>&1 | grep -E '(Compiling|Finished)'",
+                    "cd {} && . $HOME/.cargo/env && cargo build --release -p manager 2>&1",
                     source_dir.display()
                 ),
             ],
@@ -44,9 +44,21 @@ pub fn build_from_source(config: &InstallConfig, source_dir: &Path) -> Result<Ve
         if output.status.success() {
             logs.push(LogEntry::success("Manager built successfully"));
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            logs.push(LogEntry::error(format!("Manager build failed: {}", stderr)));
-            return Err(anyhow!("Manager build failed"));
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            let stderr_str = String::from_utf8_lossy(&output.stderr);
+
+            // Log the last 20 lines of output for debugging
+            for line in output_str.lines().rev().take(20).collect::<Vec<_>>().iter().rev() {
+                if !line.trim().is_empty() {
+                    logs.push(LogEntry::error(line.to_string()));
+                }
+            }
+
+            if !stderr_str.is_empty() {
+                logs.push(LogEntry::error(format!("Stderr: {}", stderr_str)));
+            }
+
+            return Err(anyhow!("Manager build failed - check logs above"));
         }
     }
 

@@ -282,19 +282,19 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         ))?;
     }
 
+    // Generate database password early (needed for both database setup and build phase)
+    let db_password = if config.db_password.is_empty() {
+        database::generate_password(32)
+    } else {
+        config.db_password.clone()
+    };
+
     // Phase 5: Setup Database
     if config.mode.includes_manager() {
         tx.send(InstallMessage::PhaseStart(Phase::Database))?;
         tx.send(InstallMessage::Log(LogEntry::info(
             "Setting up PostgreSQL database...",
         )))?;
-
-        // Generate password if not provided
-        let db_password = if config.db_password.is_empty() {
-            database::generate_password(32)
-        } else {
-            config.db_password.clone()
-        };
 
         match database::setup_database(&config.db_name, &config.db_user, &db_password) {
             Ok(logs) => {
@@ -337,6 +337,23 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
 
     // For now, always build from source (current directory)
     let source_dir = std::env::current_dir()?;
+
+    // Set DATABASE_URL environment variable for manager build (SQLx needs it)
+    let db_url = if config.mode.includes_manager() {
+        Some(database::build_database_url(
+            &config.db_host,
+            config.db_port,
+            &config.db_name,
+            &config.db_user,
+            &db_password,
+        ))
+    } else {
+        None
+    };
+
+    if let Some(url) = &db_url {
+        std::env::set_var("DATABASE_URL", url);
+    }
 
     match build::build_from_source(&config, &source_dir) {
         Ok(logs) => {
@@ -392,13 +409,6 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
     tx.send(InstallMessage::Log(LogEntry::info(
         "Generating configuration files...",
     )))?;
-
-    // Generate password if not already set
-    let db_password = if config.db_password.is_empty() {
-        database::generate_password(32)
-    } else {
-        config.db_password.clone()
-    };
 
     // Create system user
     match config::create_system_user() {
