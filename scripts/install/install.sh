@@ -4,8 +4,54 @@
 
 set -euo pipefail
 
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# GitHub repository information
+GITHUB_REPO="NexusQuantum/NQRust-MicroVM"
+GITHUB_BRANCH="${INSTALLER_BRANCH:-main}"
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
+
+# Detect if script is being piped (stdin is not a terminal and no file path)
+PIPED_INSTALL=false
+if [[ ! -t 0 ]] || [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]] || [[ "$0" == "/bin/bash" ]]; then
+    PIPED_INSTALL=true
+fi
+
+# Get script directory or download to temp if piped
+if [[ "$PIPED_INSTALL" == "true" ]]; then
+    # Create temporary directory for downloaded installer files
+    SCRIPT_DIR="$(mktemp -d)"
+    CLEANUP_TEMP=true
+
+    echo "Downloading installer files to temporary directory..."
+
+    # Download required library files
+    mkdir -p "$SCRIPT_DIR/lib" "$SCRIPT_DIR/systemd" "$SCRIPT_DIR/sudoers.d"
+
+    # Download lib files
+    for lib in common.sh preflight.sh deps.sh kvm.sh network.sh database.sh build.sh config.sh sudo.sh services.sh verify.sh; do
+        curl -fsSL "${GITHUB_RAW_BASE}/scripts/install/lib/${lib}" -o "$SCRIPT_DIR/lib/${lib}" || {
+            echo "Error: Failed to download lib/${lib}"
+            rm -rf "$SCRIPT_DIR"
+            exit 1
+        }
+    done
+
+    # Download systemd service files
+    for service in nqrust-manager.service nqrust-agent.service nqrust-ui.service; do
+        curl -fsSL "${GITHUB_RAW_BASE}/scripts/install/systemd/${service}" -o "$SCRIPT_DIR/systemd/${service}" 2>/dev/null || true
+    done
+
+    # Download sudoers file
+    curl -fsSL "${GITHUB_RAW_BASE}/scripts/install/sudoers.d/nqrust" -o "$SCRIPT_DIR/sudoers.d/nqrust" 2>/dev/null || true
+
+    echo "Installer files downloaded successfully"
+
+    # Cleanup on exit
+    trap "rm -rf '$SCRIPT_DIR'" EXIT INT TERM
+else
+    # Running from downloaded script
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    CLEANUP_TEMP=false
+fi
 
 # Default configuration
 INSTALL_MODE="${INSTALL_MODE:-production}"
