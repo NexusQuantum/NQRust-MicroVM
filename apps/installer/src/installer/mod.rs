@@ -8,6 +8,7 @@ pub mod build;
 pub mod config;
 pub mod database;
 pub mod deps;
+pub mod executor;
 pub mod kvm;
 pub mod network;
 pub mod preflight;

@@ -371,6 +371,8 @@ pub struct App {
     pub editing: bool,
     /// Spinner frame
     pub spinner_frame: usize,
+    /// Installation message receiver (from background thread)
+    pub install_rx: Option<std::sync::mpsc::Receiver<crate::installer::executor::InstallMessage>>,
 }
 
 impl Default for App {
@@ -396,6 +398,7 @@ impl App {
             input_buffer: String::new(),
             editing: false,
             spinner_frame: 0,
+            install_rx: None,
         }
     }
 

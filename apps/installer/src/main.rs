@@ -273,6 +273,43 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
             app.tick_spinner();
         }
 
+        // Handle messages from installation thread
+        // Collect all pending messages first to avoid borrow checker issues
+        let mut messages = Vec::new();
+        if let Some(rx) = &app.install_rx {
+            while let Ok(msg) = rx.try_recv() {
+                messages.push(msg);
+            }
+        }
+
+        // Process collected messages
+        for msg in messages {
+            use installer::executor::InstallMessage;
+            match msg {
+                InstallMessage::PhaseStart(phase) => {
+                    app.current_phase = Some(phase);
+                    app.set_phase_status(phase, app::Status::InProgress);
+                }
+                InstallMessage::PhaseProgress(_phase, message) => {
+                    app.log(app::LogEntry::info(message));
+                }
+                InstallMessage::PhaseComplete(phase, status) => {
+                    app.set_phase_status(phase, status);
+                    app.current_phase = None;
+                }
+                InstallMessage::Log(entry) => {
+                    app.log(entry);
+                }
+                InstallMessage::PreflightResult(checks) => {
+                    app.preflight_checks = checks;
+                }
+                InstallMessage::Error(msg) => {
+                    app.error_message = Some(msg);
+                    app.screen = app::Screen::Error;
+                }
+            }
+        }
+
         if app.should_quit {
             break;
         }
@@ -350,8 +387,8 @@ fn handle_config_input(app: &mut App, key: KeyCode) {
                 app.input_buffer = get_current_field_value(app);
             }
             KeyCode::Tab => {
-                // Continue to next screen
-                init_preflight_checks(app);
+                // Continue to next screen and run preflight checks
+                run_preflight_checks(app);
                 app.next_screen();
             }
             KeyCode::Esc => app.prev_screen(),
@@ -368,10 +405,31 @@ fn handle_preflight_input(app: &mut App, key: KeyCode) {
         .all(|c| c.status != app::Status::Error && c.status != app::Status::InProgress);
 
     match key {
-        KeyCode::Enter if can_continue => app.next_screen(),
+        KeyCode::Enter if can_continue => {
+            // Create message channel
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.install_rx = Some(rx);
+
+            // Clone config for thread
+            let config = app.config.clone();
+
+            // Spawn installation thread
+            std::thread::spawn(move || {
+                use installer::executor;
+                if let Err(e) = executor::run_installation(config, tx.clone()) {
+                    let _ = tx.send(executor::InstallMessage::Error(format!(
+                        "Installation failed: {}",
+                        e
+                    )));
+                }
+            });
+
+            // Transition to Progress screen
+            app.next_screen();
+        }
         KeyCode::Char('r') => {
-            init_preflight_checks(app);
-            // TODO: Actually run checks
+            // Run actual preflight checks
+            run_preflight_checks(app);
         }
         KeyCode::Esc => app.prev_screen(),
         KeyCode::Char('q') => app.should_quit = true,
@@ -469,25 +527,11 @@ fn apply_config_field(app: &mut App) {
     }
 }
 
-fn init_preflight_checks(app: &mut App) {
-    use app::{CheckItem, Status};
+fn run_preflight_checks(app: &mut App) {
+    use installer::preflight;
 
-    app.preflight_checks = vec![
-        CheckItem::new("Architecture", "x86_64 required").with_status(Status::Success),
-        CheckItem::new("Operating System", "Ubuntu 22.04+ / Debian 11+ / RHEL 8+")
-            .with_status(Status::Success),
-        CheckItem::new("Kernel Version", "4.14 or newer").with_status(Status::Success),
-        CheckItem::new("Systemd", "systemd init required").with_status(Status::Success),
-        CheckItem::new("KVM Support", "CPU virtualization enabled").with_status(Status::Success),
-        CheckItem::new("Memory", "Minimum 2GB RAM").with_status(Status::Success),
-        CheckItem::new("Disk Space", "Minimum 20GB available").with_status(Status::Success),
-        CheckItem::new("Required Commands", "curl, git, sudo, systemctl, ip")
-            .with_status(Status::Success),
-        CheckItem::new("Port 18080", "Manager API port").with_status(Status::Success),
-        CheckItem::new("Port 9090", "Agent API port").with_status(Status::Success),
-        CheckItem::new("Port 3000", "Web UI port").with_status(Status::Success),
-        CheckItem::new("Port 5432", "PostgreSQL port").with_status(Status::Success),
-    ];
+    // Run actual preflight checks
+    app.preflight_checks = preflight::run_preflight_checks();
 }
 
 fn run_non_interactive(_config: InstallConfig) -> Result<()> {
