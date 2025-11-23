@@ -48,7 +48,14 @@ pub fn build_from_source(config: &InstallConfig, source_dir: &Path) -> Result<Ve
             let stderr_str = String::from_utf8_lossy(&output.stderr);
 
             // Log the last 20 lines of output for debugging
-            for line in output_str.lines().rev().take(20).collect::<Vec<_>>().iter().rev() {
+            for line in output_str
+                .lines()
+                .rev()
+                .take(20)
+                .collect::<Vec<_>>()
+                .iter()
+                .rev()
+            {
                 if !line.trim().is_empty() {
                     logs.push(LogEntry::error(line.to_string()));
                 }
