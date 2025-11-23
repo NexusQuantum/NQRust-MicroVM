@@ -131,6 +131,9 @@ jobs:
       - name: Build guest-agent (static musl)
         run: cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
 
+      - name: Build installer (static musl)
+        run: cargo build --release --target x86_64-unknown-linux-musl -p nqr-installer
+
       - name: Verify binaries
         run: |
           # Verify binaries exist and are executable (skip --version to avoid port conflicts)
@@ -140,12 +143,16 @@ jobs:
           file ./target/release/agent
           # Check guest-agent is statically linked (handles both "statically linked" and "static-pie linked")
           file target/x86_64-unknown-linux-musl/release/guest-agent | grep -E "static.*linked"
+          # Check installer is statically linked
+          test -x target/x86_64-unknown-linux-musl/release/nqr-installer
+          file target/x86_64-unknown-linux-musl/release/nqr-installer | grep -E "static.*linked"
 
       - name: Rename binaries with target suffix
         run: |
           cp target/release/manager nqrust-manager-${{ matrix.target }}
           cp target/release/agent nqrust-agent-${{ matrix.target }}
           cp target/x86_64-unknown-linux-musl/release/guest-agent nqrust-guest-agent-x86_64-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/nqr-installer nqr-installer-x86_64-linux-musl
 
       - name: Upload binaries as artifacts
         uses: actions/upload-artifact@v4
@@ -155,6 +162,7 @@ jobs:
             nqrust-manager-${{ matrix.target }}
             nqrust-agent-${{ matrix.target }}
             nqrust-guest-agent-x86_64-linux-musl
+            nqr-installer-x86_64-linux-musl
           retention-days: 1
 
       - name: Show sccache statistics
@@ -242,6 +250,7 @@ jobs:
         run: |
           mkdir -p release/
           find artifacts/ -type f -name "nqrust-*" -exec cp {} release/ \;
+          find artifacts/ -type f -name "nqr-installer-*" -exec cp {} release/ \;
           cp nqrust-installer.tar.gz release/
           ls -lh release/
 
@@ -251,6 +260,7 @@ jobs:
           sha256sum nqrust-manager-* > checksums.txt
           sha256sum nqrust-agent-* >> checksums.txt
           sha256sum nqrust-guest-agent-* >> checksums.txt
+          sha256sum nqr-installer-* >> checksums.txt
           sha256sum nqrust-ui.tar.gz >> checksums.txt
           sha256sum nqrust-installer.tar.gz >> checksums.txt
           cat checksums.txt
@@ -334,27 +344,31 @@ jobs:
 
           **Quick Install (Ubuntu 22.04+):**
           ```bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install/install.sh | sudo bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install/install.sh | bash
           ```
 
           **Manual Install:**
           ```bash
           # Download installer
-          curl -LO https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install/install.sh
-          chmod +x install.sh
+          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqr-installer-x86_64-linux-musl
+          chmod +x nqr-installer-x86_64-linux-musl
 
-          # Run installer
-          sudo ./install.sh --mode production
+          # Run installer (interactive TUI)
+          sudo ./nqr-installer-x86_64-linux-musl install
+
+          # Or with options
+          sudo ./nqr-installer-x86_64-linux-musl install --mode production --yes
           ```
 
           ### Pre-built Binaries
 
           Download and install manually:
+          - **Installer (Rust TUI)**: [nqr-installer-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqr-installer-x86_64-linux-musl) (Recommended)
           - Manager: [nqrust-manager-x86_64-unknown-linux-gnu](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-manager-x86_64-unknown-linux-gnu)
           - Agent: [nqrust-agent-x86_64-unknown-linux-gnu](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-unknown-linux-gnu)
           - Guest Agent: [nqrust-guest-agent-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-guest-agent-x86_64-linux-musl)
           - UI: [nqrust-ui.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-ui.tar.gz)
-          - Installer: [nqrust-installer.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-installer.tar.gz)
+          - Legacy Installer Scripts: [nqrust-installer.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-installer.tar.gz)
 
           ### Checksums
           ```
@@ -390,6 +404,7 @@ jobs:
             release/nqrust-manager-x86_64-unknown-linux-gnu
             release/nqrust-agent-x86_64-unknown-linux-gnu
             release/nqrust-guest-agent-x86_64-linux-musl
+            release/nqr-installer-x86_64-linux-musl
             release/nqrust-ui.tar.gz
             release/nqrust-installer.tar.gz
             release/checksums.txt
