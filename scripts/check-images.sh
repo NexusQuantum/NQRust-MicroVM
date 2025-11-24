@@ -53,10 +53,10 @@ echo "=== 🎯 RECOMMENDED COMBINATIONS ==="
 echo ""
 
 if [ -f "$IMAGE_DIR/vmlinux-5.10.fc.bin" ] && [ -s "$IMAGE_DIR/vmlinux-5.10.fc.bin" ]; then
-    if [ -f "$IMAGE_DIR/busybox-1.36.ext4" ] && [ -s "$IMAGE_DIR/busybox-1.36.ext4" ]; then
+    if [ -f "$IMAGE_DIR/busybox-1.35.ext4" ] && [ -s "$IMAGE_DIR/busybox-1.35.ext4" ]; then
         echo "  ⭐ MINIMAL VM (CONFIRMED WORKING):"
         echo "     Kernel:  /srv/images/vmlinux-5.10.fc.bin"
-        echo "     Rootfs:  /srv/images/busybox-1.36.ext4"
+        echo "     Rootfs:  /srv/images/busybox-1.35.ext4"
         echo ""
     fi
 

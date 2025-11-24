@@ -479,7 +479,7 @@ pub const BASE_IMAGES: &[(&str, &str)] = &[
     ("vmlinux-5.10.fc.bin", "Firecracker kernel 5.10"),
     // Rootfs images
     ("alpine-3.18-minimal.ext4", "Alpine Linux 3.18 minimal"),
-    ("busybox-1.36.ext4", "BusyBox 1.36"),
+    ("busybox-1.35.ext4", "BusyBox 1.35"),
     ("ubuntu-24.04-minimal.ext4", "Ubuntu 24.04 minimal"),
     // Function runtimes
     ("node-runtime.ext4", "Node.js function runtime"),
