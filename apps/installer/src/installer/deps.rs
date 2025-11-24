@@ -62,16 +62,11 @@ impl PackageManager {
     }
 }
 
-/// Required system packages
+/// Required system packages (no build tools needed - we download pre-built binaries)
 pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
     match pm {
         PackageManager::Apt => vec![
-            "build-essential",
-            "pkg-config",
-            "libssl-dev",
-            "openssl",
             "curl",
-            "git",
             "screen",
             "iproute2",
             "iptables",
@@ -81,14 +76,7 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "lsof",
         ],
         PackageManager::Dnf | PackageManager::Yum => vec![
-            "gcc",
-            "gcc-c++",
-            "make",
-            "pkg-config",
-            "openssl-devel",
-            "openssl",
             "curl",
-            "git",
             "screen",
             "iproute",
             "iptables",
@@ -100,15 +88,13 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
     }
 }
 
-/// PostgreSQL packages
+/// PostgreSQL packages (no dev libraries needed)
 pub fn get_postgres_packages(pm: PackageManager) -> Vec<&'static str> {
     match pm {
-        PackageManager::Apt => vec!["postgresql", "postgresql-contrib", "libpq-dev"],
-        PackageManager::Dnf | PackageManager::Yum => vec![
-            "postgresql-server",
-            "postgresql-contrib",
-            "postgresql-devel",
-        ],
+        PackageManager::Apt => vec!["postgresql", "postgresql-contrib"],
+        PackageManager::Dnf | PackageManager::Yum => {
+            vec!["postgresql-server", "postgresql-contrib"]
+        }
     }
 }
 

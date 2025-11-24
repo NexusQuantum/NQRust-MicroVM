@@ -226,15 +226,21 @@ pub fn build_from_source(config: &InstallConfig, source_dir: &Path) -> Result<Ve
 pub fn download_binaries(config: &InstallConfig, version: &str) -> Result<Vec<LogEntry>> {
     let mut logs = Vec::new();
 
-    logs.push(LogEntry::info(format!(
-        "Downloading NQR-MicroVM binaries v{}...",
-        version
-    )));
+    let repo = "NexusQuantum/NQRust-MicroVM";
+    let base_url = if version == "latest" {
+        format!("https://github.com/{}/releases/latest/download", repo)
+    } else {
+        format!("https://github.com/{}/releases/download/v{}", repo, version)
+    };
 
-    let base_url = format!(
-        "https://github.com/your-org/nqrust-microvm/releases/download/v{}/",
-        version
-    );
+    logs.push(LogEntry::info(format!(
+        "Downloading NQR-MicroVM binaries from {}...",
+        if version == "latest" {
+            "latest release"
+        } else {
+            version
+        }
+    )));
 
     let download_dir = "/tmp/nqrust-download";
     let _ = fs::create_dir_all(download_dir);
@@ -243,15 +249,20 @@ pub fn download_binaries(config: &InstallConfig, version: &str) -> Result<Vec<Lo
     if config.mode.includes_manager() {
         logs.push(LogEntry::info("Downloading manager binary..."));
 
-        let url = format!("{}manager-linux-x86_64", base_url);
+        let url = format!("{}/nqrust-manager-x86_64-unknown-linux-gnu", base_url);
         let output_path = format!("{}/manager", download_dir);
 
-        let output = run_command("curl", &["-sSL", "-o", &output_path, &url])?;
+        let output = run_command("curl", &["-fsSL", "-o", &output_path, &url])?;
 
         if output.status.success() {
             logs.push(LogEntry::success("Manager downloaded"));
         } else {
-            logs.push(LogEntry::error("Failed to download manager"));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            logs.push(LogEntry::error(format!(
+                "Failed to download manager: {}",
+                stderr
+            )));
+            return Err(anyhow!("Failed to download manager binary"));
         }
     }
 
@@ -259,27 +270,43 @@ pub fn download_binaries(config: &InstallConfig, version: &str) -> Result<Vec<Lo
     if config.mode.includes_agent() {
         logs.push(LogEntry::info("Downloading agent binary..."));
 
-        let url = format!("{}agent-linux-x86_64", base_url);
+        let url = format!("{}/nqrust-agent-x86_64-unknown-linux-gnu", base_url);
         let output_path = format!("{}/agent", download_dir);
 
-        let output = run_command("curl", &["-sSL", "-o", &output_path, &url])?;
+        let output = run_command("curl", &["-fsSL", "-o", &output_path, &url])?;
 
         if output.status.success() {
             logs.push(LogEntry::success("Agent downloaded"));
         } else {
-            logs.push(LogEntry::error("Failed to download agent"));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            logs.push(LogEntry::error(format!(
+                "Failed to download agent: {}",
+                stderr
+            )));
+            return Err(anyhow!("Failed to download agent binary"));
         }
 
         // Download guest-agent
         logs.push(LogEntry::info("Downloading guest-agent binary..."));
 
-        let url = format!("{}guest-agent-linux-x86_64", base_url);
+        let url = format!("{}/nqrust-guest-agent-x86_64-linux-musl", base_url);
         let output_path = format!("{}/guest-agent", download_dir);
 
-        let _ = run_command("curl", &["-sSL", "-o", &output_path, &url]);
+        let output = run_command("curl", &["-fsSL", "-o", &output_path, &url])?;
+
+        if output.status.success() {
+            logs.push(LogEntry::success("Guest-agent downloaded"));
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            logs.push(LogEntry::error(format!(
+                "Failed to download guest-agent: {}",
+                stderr
+            )));
+            return Err(anyhow!("Failed to download guest-agent binary"));
+        }
     }
 
-    logs.push(LogEntry::success("Download complete"));
+    logs.push(LogEntry::success("All binaries downloaded successfully"));
 
     Ok(logs)
 }

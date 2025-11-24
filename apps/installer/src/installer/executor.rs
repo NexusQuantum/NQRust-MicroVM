@@ -131,27 +131,6 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         )))?;
     }
 
-    // Install Rust
-    tx.send(InstallMessage::Log(LogEntry::info("Installing Rust...")))?;
-    match deps::install_rust() {
-        Ok(logs) => {
-            for log in logs {
-                tx.send(InstallMessage::Log(log))?;
-            }
-        }
-        Err(e) => {
-            tx.send(InstallMessage::PhaseComplete(
-                Phase::Dependencies,
-                Status::Error,
-            ))?;
-            tx.send(InstallMessage::Error(format!(
-                "Failed to install Rust: {}",
-                e
-            )))?;
-            return Ok(());
-        }
-    }
-
     // Install Firecracker v1.13.1
     tx.send(InstallMessage::Log(LogEntry::info(
         "Installing Firecracker v1.13.1...",
@@ -172,46 +151,6 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
                 e
             )))?;
             return Ok(());
-        }
-    }
-
-    // Install Node.js if UI is included
-    if config.with_ui {
-        tx.send(InstallMessage::Log(LogEntry::info(
-            "Installing Node.js 20.x...",
-        )))?;
-        match deps::install_nodejs() {
-            Ok(logs) => {
-                for log in logs {
-                    tx.send(InstallMessage::Log(log))?;
-                }
-            }
-            Err(e) => {
-                tx.send(InstallMessage::Log(LogEntry::warning(format!(
-                    "Failed to install Node.js: {}",
-                    e
-                ))))?;
-            }
-        }
-    }
-
-    // Install SQLx CLI if building from source
-    if config.mode.includes_manager() {
-        tx.send(InstallMessage::Log(LogEntry::info(
-            "Installing SQLx CLI...",
-        )))?;
-        match deps::install_sqlx_cli() {
-            Ok(logs) => {
-                for log in logs {
-                    tx.send(InstallMessage::Log(log))?;
-                }
-            }
-            Err(e) => {
-                tx.send(InstallMessage::Log(LogEntry::warning(format!(
-                    "Failed to install SQLx CLI: {}",
-                    e
-                ))))?;
-            }
         }
     }
 
@@ -329,33 +268,14 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         ))?;
     }
 
-    // Phase 6: Build/Download Binaries
+    // Phase 6: Download Pre-built Binaries
     tx.send(InstallMessage::PhaseStart(Phase::Binaries))?;
     tx.send(InstallMessage::Log(LogEntry::info(
-        "Building binaries from source...",
+        "Downloading pre-built binaries from GitHub releases...",
     )))?;
 
-    // For now, always build from source (current directory)
-    let source_dir = std::env::current_dir()?;
-
-    // Set DATABASE_URL environment variable for manager build (SQLx needs it)
-    let db_url = if config.mode.includes_manager() {
-        Some(database::build_database_url(
-            &config.db_host,
-            config.db_port,
-            &config.db_name,
-            &config.db_user,
-            &db_password,
-        ))
-    } else {
-        None
-    };
-
-    if let Some(url) = &db_url {
-        std::env::set_var("DATABASE_URL", url);
-    }
-
-    match build::build_from_source(&config, &source_dir) {
+    // Download binaries from latest GitHub release
+    match build::download_binaries(&config, "latest") {
         Ok(logs) => {
             for log in logs {
                 tx.send(InstallMessage::Log(log))?;
@@ -371,7 +291,7 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
                 Status::Error,
             ))?;
             tx.send(InstallMessage::Error(format!(
-                "Failed to build binaries: {}",
+                "Failed to download binaries: {}",
                 e
             )))?;
             return Ok(());
@@ -384,7 +304,7 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         "Installing binaries...",
     )))?;
 
-    match build::install_binaries(&config, Some(source_dir.as_path())) {
+    match build::install_binaries(&config, None) {
         Ok(logs) => {
             for log in logs {
                 tx.send(InstallMessage::Log(log))?;
