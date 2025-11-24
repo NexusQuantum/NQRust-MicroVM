@@ -34,7 +34,7 @@ export function ReusableTabs({
   onValueChange,
   className = "space-y-4",
   tabsListClassName = "bg-secondary gap-1 h-auto dark:bg-[#4f1a00]",
-  tabsTriggerClassName = "px-4 gap-2 data-[state=active]:dark:bg-card data-[state=active]:dark:text-primary dark:border-none",
+  tabsTriggerClassName = "px-4 gap-1 data-[state=active]:dark:bg-card data-[state=active]:dark:text-primary dark:border-none",
   tabsContentClassName = "space-y-4",
 }: ReusableTabsProps) {
   const defaultTab = defaultValue || tabs[0]?.value

@@ -49,11 +49,11 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
 
   // Define tabs dengan icon
   const tabs: TabItem[] = useMemo(() => [
-    { value: "editor", label: "Editor" },
-    { value: "overview", label: "Overview" },
-    { value: "stats", label: "Stats" },
-    { value: "events", label: "Events" },
-    { value: "logs", label: "Logs" },
+    { value: "editor", label: "Editor", icon: <Code className="h-4 w-4" /> },
+    { value: "overview", label: "Overview", icon: <FileTextIcon className="h-4 w-4" /> },
+    { value: "stats", label: "Stats", icon: <BarChart className="h-4 w-4" /> },
+    { value: "events", label: "Events", icon: <Calendar className="h-4 w-4" /> },
+    { value: "logs", label: "Logs", icon: <Terminal className="h-4 w-4" /> },
   ], [])
 
   // Define contents untuk setiap tab
@@ -160,8 +160,6 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
         contents={tabContents}
         defaultValue={defaultTab}
         className="space-y-4"
-        tabsListClassName="bg-secondary gap-1"
-        tabsTriggerClassName="px-4"
         tabsContentClassName="space-y-4"
       />
 
