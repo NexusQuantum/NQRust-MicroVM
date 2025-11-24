@@ -1,6 +1,25 @@
 import { generateRequestId } from "@/lib/utils/format"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:18080/v1"
+// Determine API base URL at runtime
+// Priority: env var > same-host with manager port > localhost fallback
+function getApiBaseUrl(): string {
+  // If explicitly set via env var, use that
+  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+    return process.env.NEXT_PUBLIC_API_BASE_URL
+  }
+
+  // In browser, use same hostname but manager port (18080)
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname
+    const protocol = window.location.protocol
+    return `${protocol}//${hostname}:18080/v1`
+  }
+
+  // Server-side fallback
+  return "http://localhost:18080/v1"
+}
+
+const API_BASE_URL = getApiBaseUrl()
 
 export interface FacadeError {
   error: string

@@ -1,6 +1,20 @@
 import { apiClient, ApiClient } from "./http";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:18080/v1";
+// Determine API base URL at runtime
+// Priority: env var > same-host with manager port > localhost fallback
+function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+    return process.env.NEXT_PUBLIC_API_BASE_URL;
+  }
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    return `${protocol}//${hostname}:18080/v1`;
+  }
+  return "http://localhost:18080/v1";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 import type {
   ImageResponse,
   CreateVmReq,

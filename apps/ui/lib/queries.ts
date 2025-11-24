@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
 import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq } from "@/lib/types"
 import { toast } from "sonner"
+import { useNotificationStore } from "@/lib/stores/notification-store"
 
 /**
  * Filter out internal system images that should never be shown to users.
@@ -154,6 +155,17 @@ export function useCreateFunction() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.functions })
       toast.success('Function Created')
+
+      // Add notification to notification store
+      const { addNotification } = useNotificationStore.getState()
+      addNotification({
+        type: 'info',
+        title: 'Function Created',
+        message: `Function "${(data as any)?.name || 'New Function'}" is being created. You'll be notified when it's ready.`,
+        actionUrl: `/functions/${(data as any)?.id}`,
+        resourceType: 'function',
+        resourceId: (data as any)?.id,
+      })
     },
     onError: (error: Error) => {
       try {
