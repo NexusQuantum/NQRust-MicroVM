@@ -518,8 +518,30 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
         image_dir_str
     )));
 
-    // Create image directory
+    // Create image directory structure
     let _ = run_sudo("mkdir", &["-p", &image_dir_str]);
+
+    // Create subdirectories for functions and containers
+    // These are needed by the manager for function/container runtime image copies
+    let functions_dir = image_dir.join("functions");
+    let containers_dir = image_dir.join("containers");
+    let _ = run_sudo("mkdir", &["-p", &functions_dir.display().to_string()]);
+    let _ = run_sudo("mkdir", &["-p", &containers_dir.display().to_string()]);
+
+    // WORKAROUND: Manager code has /srv/images hardcoded for functions/containers
+    // Create this directory structure too until the manager is fixed to use MANAGER_IMAGE_ROOT
+    if image_dir_str != "/srv/images" {
+        logs.push(LogEntry::info(
+            "Creating /srv/images subdirectories (workaround for hardcoded paths)".to_string(),
+        ));
+        let _ = run_sudo("mkdir", &["-p", "/srv/images/functions"]);
+        let _ = run_sudo("mkdir", &["-p", "/srv/images/containers"]);
+        let _ = run_sudo("chmod", &["-R", "755", "/srv/images"]);
+    }
+
+    // Set ownership and permissions for the configured image directory tree
+    let _ = run_sudo("chown", &["-R", "root:root", &image_dir_str]);
+    let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
 
     // Download each image
     for (filename, description, is_compressed) in BASE_IMAGES {
