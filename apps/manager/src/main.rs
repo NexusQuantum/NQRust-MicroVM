@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     let hosts = HostRepository::new(db.clone());
     let image_root =
         std::env::var("MANAGER_IMAGE_ROOT").unwrap_or_else(|_| "/srv/images".to_string());
-    let images = ImageRepository::new(db.clone(), image_root);
+    let images = ImageRepository::new(db.clone(), &image_root);
     let snapshots = SnapshotRepository::new(db.clone());
     let users = UserRepository::new(db.clone());
     let shell_repo = ShellRepository::new(db.clone());
@@ -93,6 +93,18 @@ async fn main() -> anyhow::Result<()> {
         allow_direct_image_paths,
         storage: LocalStorage::new(),
     };
+
+    // Auto-register base images found in the image root directory
+    match features::images::scan::scan_and_register_base_images(&state.images).await {
+        Ok(count) => {
+            if count > 0 {
+                info!("Auto-registered {} base images from {}", count, image_root);
+            }
+        }
+        Err(e) => {
+            warn!(error = ?e, "Failed to scan and register base images");
+        }
+    }
 
     // Allow disabling the reconciler via env for test/debug to avoid races during VM creation
     let reconciler_disabled = std::env::var("MANAGER_RECONCILER_DISABLED")

@@ -7,6 +7,7 @@ pub mod dockerhub;
 pub mod preload;
 pub mod repo;
 pub mod routes;
+pub mod scan;
 pub mod upload;
 
 pub fn router() -> Router {
