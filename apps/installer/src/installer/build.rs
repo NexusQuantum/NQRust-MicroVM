@@ -474,18 +474,28 @@ pub fn install_binaries(
 }
 
 /// Base images to download
-pub const BASE_IMAGES: &[(&str, &str)] = &[
+/// Format: (filename, description, is_compressed)
+/// Note: container-runtime is compressed (.gz) due to GitHub's 2GB file size limit
+pub const BASE_IMAGES: &[(&str, &str, bool)] = &[
     // Kernels
-    ("vmlinux-5.10.fc.bin", "Firecracker kernel 5.10"),
+    ("vmlinux-5.10.fc.bin", "Firecracker kernel 5.10", false),
     // Rootfs images
-    ("alpine-3.18-minimal.ext4", "Alpine Linux 3.18 minimal"),
-    ("busybox-1.35.ext4", "BusyBox 1.35"),
-    ("ubuntu-24.04-minimal.ext4", "Ubuntu 24.04 minimal"),
+    (
+        "alpine-3.18-minimal.ext4",
+        "Alpine Linux 3.18 minimal",
+        false,
+    ),
+    ("busybox-1.35.ext4", "BusyBox 1.35", false),
+    ("ubuntu-24.04-minimal.ext4", "Ubuntu 24.04 minimal", false),
     // Function runtimes
-    ("node-runtime.ext4", "Node.js function runtime"),
-    ("python-runtime.ext4", "Python function runtime"),
-    // Container runtime (optional, large)
-    ("container-runtime.ext4", "Container runtime (Docker-in-VM)"),
+    ("node-runtime.ext4", "Node.js function runtime", false),
+    ("python-runtime.ext4", "Python function runtime", false),
+    // Container runtime (optional, large - compressed due to GitHub 2GB limit)
+    (
+        "container-runtime.ext4",
+        "Container runtime (Docker-in-VM)",
+        true,
+    ),
 ];
 
 /// Download base images (kernels, rootfs, runtimes)
@@ -511,7 +521,7 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
     let _ = run_sudo("mkdir", &["-p", image_dir]);
 
     // Download each image
-    for (filename, description) in BASE_IMAGES {
+    for (filename, description, is_compressed) in BASE_IMAGES {
         // Skip container runtime if not requested (it's large ~2GB)
         if *filename == "container-runtime.ext4" && !config.with_container_runtime {
             logs.push(LogEntry::info(format!(
@@ -534,18 +544,62 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
 
         logs.push(LogEntry::info(format!("Downloading {}...", description)));
 
-        let url = format!("{}/{}", base_url, filename);
-        let output = run_command("curl", &["-fsSL", "-o", &dst_path, &url])?;
+        // For compressed images, download .gz and decompress
+        if *is_compressed {
+            let gz_filename = format!("{}.gz", filename);
+            let gz_path = format!("{}/{}", image_dir, gz_filename);
+            let url = format!("{}/{}", base_url, gz_filename);
 
-        if output.status.success() {
-            logs.push(LogEntry::success(format!("{} downloaded", description)));
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            logs.push(LogEntry::warning(format!(
-                "Failed to download {}: {}",
-                filename, stderr
+            logs.push(LogEntry::info(format!(
+                "Downloading compressed {} (~500MB)...",
+                gz_filename
             )));
-            // Don't fail - images are optional, user can add them later
+
+            let output = run_command("curl", &["-fsSL", "-o", &gz_path, &url])?;
+
+            if output.status.success() {
+                logs.push(LogEntry::info(format!(
+                    "Decompressing {} (this may take a minute)...",
+                    gz_filename
+                )));
+
+                // Decompress using gunzip
+                let output = run_command("gunzip", &["-f", &gz_path])?;
+
+                if output.status.success() {
+                    logs.push(LogEntry::success(format!(
+                        "{} downloaded and decompressed",
+                        description
+                    )));
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    logs.push(LogEntry::warning(format!(
+                        "Failed to decompress {}: {}",
+                        gz_filename, stderr
+                    )));
+                }
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                logs.push(LogEntry::warning(format!(
+                    "Failed to download {}: {}",
+                    gz_filename, stderr
+                )));
+            }
+        } else {
+            // Regular uncompressed download
+            let url = format!("{}/{}", base_url, filename);
+            let output = run_command("curl", &["-fsSL", "-o", &dst_path, &url])?;
+
+            if output.status.success() {
+                logs.push(LogEntry::success(format!("{} downloaded", description)));
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                logs.push(LogEntry::warning(format!(
+                    "Failed to download {}: {}",
+                    filename, stderr
+                )));
+                // Don't fail - images are optional, user can add them later
+            }
         }
     }
 
