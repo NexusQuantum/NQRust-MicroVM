@@ -509,16 +509,17 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
         format!("https://github.com/{}/releases/download/v{}", repo, version)
     };
 
-    // Image directory
-    let image_dir = "/srv/images";
+    // Image directory - use data_dir/images to match manager config
+    let image_dir = config.data_dir.join("images");
+    let image_dir_str = image_dir.display().to_string();
 
     logs.push(LogEntry::info(format!(
         "Downloading base images to {}...",
-        image_dir
+        image_dir_str
     )));
 
     // Create image directory
-    let _ = run_sudo("mkdir", &["-p", image_dir]);
+    let _ = run_sudo("mkdir", &["-p", &image_dir_str]);
 
     // Download each image
     for (filename, description, is_compressed) in BASE_IMAGES {
@@ -531,7 +532,7 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
             continue;
         }
 
-        let dst_path = format!("{}/{}", image_dir, filename);
+        let dst_path = format!("{}/{}", image_dir_str, filename);
 
         // Skip if already exists
         if Path::new(&dst_path).exists() {
@@ -547,7 +548,7 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
         // For compressed images, download .gz and decompress
         if *is_compressed {
             let gz_filename = format!("{}.gz", filename);
-            let gz_path = format!("{}/{}", image_dir, gz_filename);
+            let gz_path = format!("{}/{}", image_dir_str, gz_filename);
             let url = format!("{}/{}", base_url, gz_filename);
 
             logs.push(LogEntry::info(format!(
@@ -604,7 +605,7 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
     }
 
     // Set permissions
-    let _ = run_sudo("chmod", &["-R", "755", image_dir]);
+    let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
 
     logs.push(LogEntry::success("Base images download complete"));
 
