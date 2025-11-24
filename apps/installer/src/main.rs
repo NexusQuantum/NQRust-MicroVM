@@ -79,6 +79,10 @@ enum Commands {
         #[arg(long)]
         with_container_runtime: bool,
 
+        /// Install Docker (for DockerHub image pulling and container features)
+        #[arg(long, default_value = "true")]
+        with_docker: bool,
+
         /// Non-interactive mode
         #[arg(long)]
         non_interactive: bool,
@@ -167,6 +171,7 @@ fn main() -> Result<()> {
             db_password,
             with_ui,
             with_container_runtime,
+            with_docker,
             non_interactive,
             config: _config_file,
             debug: _debug,
@@ -186,6 +191,7 @@ fn main() -> Result<()> {
                 db_password: db_password.unwrap_or_default(),
                 with_ui,
                 with_container_runtime,
+                with_docker,
                 non_interactive,
             };
 
@@ -376,7 +382,7 @@ fn handle_config_input(app: &mut App, key: KeyCode) {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if app.config_field < 8 {
+                if app.config_field < 9 {
                     // CONFIG_FIELDS.len() - 1
                     app.config_field += 1;
                 }
@@ -497,6 +503,13 @@ fn get_current_field_value(app: &App) -> String {
         6 => app.config.db_port.to_string(),
         7 => app.config.db_name.clone(),
         8 => app.config.db_user.clone(),
+        9 => {
+            if app.config.with_docker {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            }
+        }
         _ => String::new(),
     }
 }
@@ -523,6 +536,12 @@ fn apply_config_field(app: &mut App) {
         }
         7 => app.config.db_name = value,
         8 => app.config.db_user = value,
+        9 => {
+            // Toggle Docker installation (yes/no/y/n)
+            let lower = value.to_lowercase();
+            app.config.with_docker =
+                lower == "yes" || lower == "y" || lower == "true" || lower == "1";
+        }
         _ => {}
     }
 }

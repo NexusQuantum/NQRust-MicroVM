@@ -473,6 +473,109 @@ pub fn install_binaries(
     Ok(logs)
 }
 
+/// Base images to download
+pub const BASE_IMAGES: &[(&str, &str)] = &[
+    // Kernels
+    ("vmlinux-5.10.fc.bin", "Firecracker kernel 5.10"),
+    // Rootfs images
+    ("alpine-3.18-minimal.ext4", "Alpine Linux 3.18 minimal"),
+    ("busybox-1.36.ext4", "BusyBox 1.36"),
+    ("ubuntu-24.04-minimal.ext4", "Ubuntu 24.04 minimal"),
+    // Function runtimes
+    ("node-runtime.ext4", "Node.js function runtime"),
+    ("python-runtime.ext4", "Python function runtime"),
+    // Container runtime (optional, large)
+    ("container-runtime.ext4", "Container runtime (Docker-in-VM)"),
+];
+
+/// Download base images (kernels, rootfs, runtimes)
+pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    let repo = "NexusQuantum/NQRust-MicroVM";
+    let base_url = if version == "latest" {
+        format!("https://github.com/{}/releases/latest/download", repo)
+    } else {
+        format!("https://github.com/{}/releases/download/v{}", repo, version)
+    };
+
+    // Image directory
+    let image_dir = "/srv/images";
+
+    logs.push(LogEntry::info(format!(
+        "Downloading base images to {}...",
+        image_dir
+    )));
+
+    // Create image directory
+    let _ = run_sudo("mkdir", &["-p", image_dir]);
+
+    // Download each image
+    for (filename, description) in BASE_IMAGES {
+        // Skip container runtime if not requested (it's large ~2GB)
+        if *filename == "container-runtime.ext4" && !config.with_container_runtime {
+            logs.push(LogEntry::info(format!(
+                "Skipping {} (container runtime not selected)",
+                description
+            )));
+            continue;
+        }
+
+        let dst_path = format!("{}/{}", image_dir, filename);
+
+        // Skip if already exists
+        if Path::new(&dst_path).exists() {
+            logs.push(LogEntry::info(format!(
+                "{} already exists, skipping",
+                filename
+            )));
+            continue;
+        }
+
+        logs.push(LogEntry::info(format!("Downloading {}...", description)));
+
+        let url = format!("{}/{}", base_url, filename);
+        let output = run_command("curl", &["-fsSL", "-o", &dst_path, &url])?;
+
+        if output.status.success() {
+            logs.push(LogEntry::success(format!("{} downloaded", description)));
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            logs.push(LogEntry::warning(format!(
+                "Failed to download {}: {}",
+                filename, stderr
+            )));
+            // Don't fail - images are optional, user can add them later
+        }
+    }
+
+    // Set permissions
+    let _ = run_sudo("chmod", &["-R", "755", image_dir]);
+
+    logs.push(LogEntry::success("Base images download complete"));
+
+    Ok(logs)
+}
+
+/// Register downloaded images with the manager database
+pub fn register_images_with_manager(config: &InstallConfig) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    // Only register if manager is installed
+    if !config.mode.includes_manager() {
+        return Ok(logs);
+    }
+
+    logs.push(LogEntry::info(
+        "Images will be auto-registered when manager starts",
+    ));
+
+    // Note: We could call the manager API here, but it's cleaner to let
+    // the manager scan and register images on startup via MANAGER_IMAGE_ROOT
+
+    Ok(logs)
+}
+
 /// Verify binaries are installed
 pub fn verify_binaries(config: &InstallConfig) -> Result<bool> {
     let bin_dir = config.install_dir.join("bin");

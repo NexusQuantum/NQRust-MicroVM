@@ -98,6 +98,7 @@ fn get_phase_description(phase: Option<Phase>) -> &'static str {
         Some(Phase::Database) => "Configuring PostgreSQL database...",
         Some(Phase::Binaries) => "Building or downloading binaries...",
         Some(Phase::Install) => "Installing binaries to system...",
+        Some(Phase::Images) => "Downloading base images (kernels, rootfs, runtimes)...",
         Some(Phase::Configuration) => "Generating configuration files...",
         Some(Phase::Sudo) => "Configuring sudo permissions...",
         Some(Phase::Services) => "Installing and starting systemd services...",

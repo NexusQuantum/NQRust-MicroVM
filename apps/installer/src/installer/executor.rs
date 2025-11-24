@@ -174,6 +174,26 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
+    // Install Docker if requested (for DockerHub image pulling and container features)
+    if config.with_docker {
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "Installing Docker for container features...",
+        )))?;
+        match deps::install_docker() {
+            Ok(logs) => {
+                for log in logs {
+                    tx.send(InstallMessage::Log(log))?;
+                }
+            }
+            Err(e) => {
+                tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                    "Failed to install Docker: {} - DockerHub image pulling may not work",
+                    e
+                ))))?;
+            }
+        }
+    }
+
     tx.send(InstallMessage::PhaseComplete(
         Phase::Dependencies,
         Status::Success,
@@ -344,7 +364,36 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
-    // Phase 8: Generate Configuration
+    // Phase 8: Download Base Images (kernels, rootfs, runtimes)
+    tx.send(InstallMessage::PhaseStart(Phase::Images))?;
+    tx.send(InstallMessage::Log(LogEntry::info(
+        "Downloading base images (kernels, rootfs, function runtimes)...",
+    )))?;
+
+    match build::download_base_images(&config, "latest") {
+        Ok(logs) => {
+            for log in logs {
+                tx.send(InstallMessage::Log(log))?;
+            }
+            tx.send(InstallMessage::PhaseComplete(
+                Phase::Images,
+                Status::Success,
+            ))?;
+        }
+        Err(e) => {
+            // Don't fail - images are optional, user can add them later
+            tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                "Failed to download some images: {}",
+                e
+            ))))?;
+            tx.send(InstallMessage::PhaseComplete(
+                Phase::Images,
+                Status::Warning,
+            ))?;
+        }
+    }
+
+    // Phase 9: Generate Configuration
     tx.send(InstallMessage::PhaseStart(Phase::Configuration))?;
     tx.send(InstallMessage::Log(LogEntry::info(
         "Generating configuration files...",

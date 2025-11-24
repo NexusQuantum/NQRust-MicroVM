@@ -20,6 +20,7 @@ const CONFIG_FIELDS: &[(&str, &str)] = &[
     ("Database Port", "5432"),
     ("Database Name", "nqrust"),
     ("Database User", "nqrust"),
+    ("Install Docker", "Yes/No (for DockerHub features)"),
 ];
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
@@ -184,6 +185,13 @@ fn get_field_value(app: &App, field: usize) -> String {
         6 => app.config.db_port.to_string(),
         7 => app.config.db_name.clone(),
         8 => app.config.db_user.clone(),
+        9 => {
+            if app.config.with_docker {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            }
+        }
         _ => String::new(),
     }
 }

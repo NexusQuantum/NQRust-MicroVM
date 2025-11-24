@@ -131,6 +131,8 @@ pub struct InstallConfig {
     pub with_ui: bool,
     /// Install container runtime
     pub with_container_runtime: bool,
+    /// Install Docker (for container features and DockerHub image pulling)
+    pub with_docker: bool,
     /// Non-interactive mode
     pub non_interactive: bool,
 }
@@ -152,6 +154,7 @@ impl Default for InstallConfig {
             db_password: String::new(), // Will be generated
             with_ui: true,
             with_container_runtime: false,
+            with_docker: true, // Enable by default for DockerHub image pulling
             non_interactive: false,
         }
     }
@@ -189,14 +192,15 @@ pub enum Phase {
     Database = 5,
     Binaries = 6,
     Install = 7,
-    Configuration = 8,
-    Sudo = 9,
-    Services = 10,
-    Verification = 11,
+    Images = 8,
+    Configuration = 9,
+    Sudo = 10,
+    Services = 11,
+    Verification = 12,
 }
 
 impl Phase {
-    pub const ALL: [Phase; 11] = [
+    pub const ALL: [Phase; 12] = [
         Phase::Preflight,
         Phase::Dependencies,
         Phase::Kvm,
@@ -204,6 +208,7 @@ impl Phase {
         Phase::Database,
         Phase::Binaries,
         Phase::Install,
+        Phase::Images,
         Phase::Configuration,
         Phase::Sudo,
         Phase::Services,
@@ -219,6 +224,7 @@ impl Phase {
             Phase::Database => "Database",
             Phase::Binaries => "Build/Download",
             Phase::Install => "Installation",
+            Phase::Images => "Base Images",
             Phase::Configuration => "Configuration",
             Phase::Sudo => "Sudo Setup",
             Phase::Services => "Services",

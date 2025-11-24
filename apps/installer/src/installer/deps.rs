@@ -307,6 +307,57 @@ pub fn install_nodejs() -> Result<Vec<LogEntry>> {
     Ok(logs)
 }
 
+/// Install Docker
+pub fn install_docker() -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    // Check if already installed
+    if let Ok(output) = run_command("docker", &["--version"]) {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout);
+            logs.push(LogEntry::info(format!(
+                "Docker already installed: {}",
+                version.trim()
+            )));
+
+            // Ensure Docker service is enabled and running
+            let _ = run_sudo("systemctl", &["enable", "docker"]);
+            let _ = run_sudo("systemctl", &["start", "docker"]);
+
+            return Ok(logs);
+        }
+    }
+
+    logs.push(LogEntry::info("Installing Docker..."));
+
+    // Use official Docker install script
+    let output = run_command("sh", &["-c", "curl -fsSL https://get.docker.com | sudo sh"])?;
+
+    if !output.status.success() {
+        logs.push(LogEntry::error("Failed to install Docker"));
+        return Err(anyhow!("Docker installation failed"));
+    }
+
+    logs.push(LogEntry::success("Docker installed"));
+
+    // Enable and start Docker service
+    logs.push(LogEntry::info("Enabling Docker service..."));
+    let _ = run_sudo("systemctl", &["enable", "docker"]);
+    let _ = run_sudo("systemctl", &["start", "docker"]);
+    logs.push(LogEntry::success("Docker service enabled and started"));
+
+    // Add current user to docker group (optional, for non-root usage)
+    if let Ok(user) = std::env::var("SUDO_USER").or_else(|_| std::env::var("USER")) {
+        let _ = run_sudo("usermod", &["-aG", "docker", &user]);
+        logs.push(LogEntry::info(format!(
+            "Added user '{}' to docker group (re-login required)",
+            user
+        )));
+    }
+
+    Ok(logs)
+}
+
 /// Install SQLx CLI
 pub fn install_sqlx_cli() -> Result<Vec<LogEntry>> {
     let mut logs = Vec::new();

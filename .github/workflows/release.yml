@@ -168,6 +168,191 @@ jobs:
       - name: Show sccache statistics
         run: sccache --show-stats
 
+  build-images:
+    name: Build Base Images
+    needs: ci-gate
+    runs-on: self-hosted
+    # This job builds VM images (kernels, rootfs, runtimes)
+    # Requires: KVM access, ~10GB disk space, internet for downloads
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-utils \
+            debootstrap \
+            e2fsprogs \
+            curl \
+            xz-utils \
+            cpio \
+            bc \
+            flex \
+            bison \
+            libelf-dev \
+            libssl-dev
+
+      - name: Create images directory
+        run: mkdir -p images/
+
+      - name: Download Firecracker kernel
+        run: |
+          # Download pre-built Firecracker kernel 5.10
+          curl -fsSL -o images/vmlinux-5.10.fc.bin \
+            https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin
+          ls -lh images/vmlinux-5.10.fc.bin
+
+      - name: Build Alpine rootfs
+        run: |
+          # Use pre-built Alpine mini root filesystem
+          ALPINE_VERSION=3.18
+          curl -fsSL -o /tmp/alpine-minirootfs.tar.gz \
+            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
+
+          # Create ext4 image (10MB is enough for minimal Alpine)
+          dd if=/dev/zero of=images/alpine-3.18-minimal.ext4 bs=1M count=10
+          mkfs.ext4 -F images/alpine-3.18-minimal.ext4
+
+          # Mount and populate
+          sudo mkdir -p /mnt/alpine
+          sudo mount -o loop images/alpine-3.18-minimal.ext4 /mnt/alpine
+          sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/alpine
+
+          # Basic setup
+          sudo sh -c 'echo "nameserver 8.8.8.8" > /mnt/alpine/etc/resolv.conf'
+          sudo sh -c 'echo "root:root" | chpasswd -R /mnt/alpine'
+
+          sudo umount /mnt/alpine
+          ls -lh images/alpine-3.18-minimal.ext4
+
+      - name: Build BusyBox rootfs
+        run: |
+          # Create minimal BusyBox rootfs
+          BUSYBOX_VERSION=1.36.1
+          curl -fsSL -o /tmp/busybox \
+            https://busybox.net/downloads/binaries/${BUSYBOX_VERSION}-defconfig-multiarch-musl/busybox-x86_64
+
+          # Create ext4 image (80MB for BusyBox with basic utilities)
+          dd if=/dev/zero of=images/busybox-1.36.ext4 bs=1M count=80
+          mkfs.ext4 -F images/busybox-1.36.ext4
+
+          # Mount and populate
+          sudo mkdir -p /mnt/busybox
+          sudo mount -o loop images/busybox-1.36.ext4 /mnt/busybox
+
+          # Create directory structure
+          sudo mkdir -p /mnt/busybox/{bin,sbin,etc,proc,sys,usr/bin,usr/sbin,dev,tmp,root,var/run}
+
+          # Install BusyBox
+          sudo cp /tmp/busybox /mnt/busybox/bin/busybox
+          sudo chmod +x /mnt/busybox/bin/busybox
+          sudo chroot /mnt/busybox /bin/busybox --install -s
+
+          # Basic init script
+          sudo tee /mnt/busybox/init > /dev/null <<'INIT'
+          #!/bin/sh
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mount -t devtmpfs devtmpfs /dev
+          exec /bin/sh
+          INIT
+          sudo chmod +x /mnt/busybox/init
+
+          sudo umount /mnt/busybox
+          ls -lh images/busybox-1.36.ext4
+
+      - name: Build Ubuntu minimal rootfs
+        run: |
+          # Build minimal Ubuntu 24.04 rootfs using debootstrap
+          sudo debootstrap --variant=minbase --include=systemd,systemd-sysv,openssh-server,curl,iproute2,iputils-ping \
+            noble /tmp/ubuntu-rootfs http://archive.ubuntu.com/ubuntu/
+
+          # Create ext4 image (800MB for Ubuntu minimal)
+          dd if=/dev/zero of=images/ubuntu-24.04-minimal.ext4 bs=1M count=800
+          mkfs.ext4 -F images/ubuntu-24.04-minimal.ext4
+
+          # Mount and copy
+          sudo mkdir -p /mnt/ubuntu
+          sudo mount -o loop images/ubuntu-24.04-minimal.ext4 /mnt/ubuntu
+          sudo cp -a /tmp/ubuntu-rootfs/* /mnt/ubuntu/
+
+          # Set root password
+          sudo chroot /mnt/ubuntu sh -c 'echo "root:root" | chpasswd'
+
+          # Enable serial console
+          sudo chroot /mnt/ubuntu systemctl enable serial-getty@ttyS0.service || true
+
+          sudo umount /mnt/ubuntu
+          ls -lh images/ubuntu-24.04-minimal.ext4
+
+      - name: Build Node.js function runtime
+        run: |
+          # Build Node.js runtime for serverless functions
+          sudo debootstrap --variant=minbase --include=systemd,systemd-sysv,curl,ca-certificates \
+            noble /tmp/node-rootfs http://archive.ubuntu.com/ubuntu/
+
+          # Install Node.js
+          sudo chroot /tmp/node-rootfs sh -c '
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            apt-get install -y nodejs
+            npm install -g pnpm
+          '
+
+          # Create ext4 image (1GB for Node.js runtime)
+          dd if=/dev/zero of=images/node-runtime.ext4 bs=1M count=1024
+          mkfs.ext4 -F images/node-runtime.ext4
+
+          sudo mkdir -p /mnt/node
+          sudo mount -o loop images/node-runtime.ext4 /mnt/node
+          sudo cp -a /tmp/node-rootfs/* /mnt/node/
+          sudo chroot /mnt/node sh -c 'echo "root:root" | chpasswd'
+          sudo umount /mnt/node
+          ls -lh images/node-runtime.ext4
+
+      - name: Build Python function runtime
+        run: |
+          # Build Python runtime for serverless functions
+          sudo debootstrap --variant=minbase --include=systemd,systemd-sysv,python3,python3-pip,curl,ca-certificates \
+            noble /tmp/python-rootfs http://archive.ubuntu.com/ubuntu/
+
+          # Create ext4 image (1GB for Python runtime)
+          dd if=/dev/zero of=images/python-runtime.ext4 bs=1M count=1024
+          mkfs.ext4 -F images/python-runtime.ext4
+
+          sudo mkdir -p /mnt/python
+          sudo mount -o loop images/python-runtime.ext4 /mnt/python
+          sudo cp -a /tmp/python-rootfs/* /mnt/python/
+          sudo chroot /mnt/python sh -c 'echo "root:root" | chpasswd'
+          sudo umount /mnt/python
+          ls -lh images/python-runtime.ext4
+
+      - name: Compress large images
+        run: |
+          # Compress images to reduce upload size
+          cd images
+          for img in *.ext4; do
+            if [ -f "$img" ]; then
+              gzip -9 -k "$img"
+              ls -lh "${img}.gz"
+            fi
+          done
+
+      - name: Upload images as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: base-images
+          path: |
+            images/vmlinux-5.10.fc.bin
+            images/alpine-3.18-minimal.ext4
+            images/busybox-1.36.ext4
+            images/ubuntu-24.04-minimal.ext4.gz
+            images/node-runtime.ext4.gz
+            images/python-runtime.ext4.gz
+          retention-days: 1
+
   build-ui:
     name: Build UI
     needs: ci-gate
@@ -222,7 +407,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-binaries, build-ui]
+    needs: [build-binaries, build-ui, build-images]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -235,6 +420,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
+
+      - name: Decompress large images
+        run: |
+          cd artifacts/base-images
+          for gz in *.gz; do
+            if [ -f "$gz" ]; then
+              gunzip -k "$gz"
+            fi
+          done
+          ls -lh
 
       - name: Package installer scripts
         run: |
@@ -252,6 +447,13 @@ jobs:
           find artifacts/ -type f -name "nqrust-*" -exec cp {} release/ \;
           find artifacts/ -type f -name "nqr-installer-*" -exec cp {} release/ \;
           cp nqrust-installer.tar.gz release/
+          # Copy base images (uncompressed .ext4 and kernel)
+          cp artifacts/base-images/vmlinux-5.10.fc.bin release/
+          cp artifacts/base-images/alpine-3.18-minimal.ext4 release/
+          cp artifacts/base-images/busybox-1.36.ext4 release/
+          cp artifacts/base-images/ubuntu-24.04-minimal.ext4 release/
+          cp artifacts/base-images/node-runtime.ext4 release/
+          cp artifacts/base-images/python-runtime.ext4 release/
           ls -lh release/
 
       - name: Generate checksums
@@ -263,6 +465,8 @@ jobs:
           sha256sum nqr-installer-* >> checksums.txt
           sha256sum nqrust-ui.tar.gz >> checksums.txt
           sha256sum nqrust-installer.tar.gz >> checksums.txt
+          sha256sum vmlinux-*.bin >> checksums.txt
+          sha256sum *.ext4 >> checksums.txt
           cat checksums.txt
 
       - name: Get version
@@ -370,6 +574,16 @@ jobs:
           - UI: [nqrust-ui.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-ui.tar.gz)
           - Legacy Installer Scripts: [nqrust-installer.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-installer.tar.gz)
 
+          ### Base Images (for VMs and Functions)
+
+          The installer downloads these automatically, or download manually:
+          - **Kernel**: [vmlinux-5.10.fc.bin](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/vmlinux-5.10.fc.bin) - Firecracker kernel 5.10
+          - **Alpine**: [alpine-3.18-minimal.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/alpine-3.18-minimal.ext4) - Alpine Linux 3.18 minimal
+          - **BusyBox**: [busybox-1.36.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/busybox-1.36.ext4) - BusyBox 1.36
+          - **Ubuntu**: [ubuntu-24.04-minimal.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/ubuntu-24.04-minimal.ext4) - Ubuntu 24.04 minimal
+          - **Node.js Runtime**: [node-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/node-runtime.ext4) - For serverless functions
+          - **Python Runtime**: [python-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/python-runtime.ext4) - For serverless functions
+
           ### Checksums
           ```
           $(cat release/checksums.txt)
@@ -409,6 +623,12 @@ jobs:
             release/nqrust-installer.tar.gz
             release/checksums.txt
             release/release-manifest.json
+            release/vmlinux-5.10.fc.bin
+            release/alpine-3.18-minimal.ext4
+            release/busybox-1.36.ext4
+            release/ubuntu-24.04-minimal.ext4
+            release/node-runtime.ext4
+            release/python-runtime.ext4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
