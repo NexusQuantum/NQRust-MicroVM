@@ -1,3 +1,9 @@
+-- Add tags column to vm table (if not exists)
+ALTER TABLE vm ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+
+-- Create index for tags array
+CREATE INDEX IF NOT EXISTS idx_vm_tags ON vm USING GIN(tags);
+
 -- Add tags to existing function VMs (idempotent - only updates if not already tagged)
 UPDATE vm
 SET tags = ARRAY['type:function']
