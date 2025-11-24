@@ -612,11 +612,16 @@ jobs:
         with:
           path: artifacts/
 
-      - name: Decompress large images
+      - name: Decompress large images (except container-runtime which exceeds 2GB limit)
         run: |
           cd artifacts/base-images
           for gz in *.gz; do
             if [ -f "$gz" ]; then
+              # Skip container-runtime - it's >2GB uncompressed, keep it gzipped
+              if [ "$gz" = "container-runtime.ext4.gz" ]; then
+                echo "Keeping $gz compressed (>2GB uncompressed)"
+                continue
+              fi
               gunzip -k "$gz"
             fi
           done
@@ -645,7 +650,8 @@ jobs:
           cp artifacts/base-images/ubuntu-24.04-minimal.ext4 release/
           cp artifacts/base-images/node-runtime.ext4 release/
           cp artifacts/base-images/python-runtime.ext4 release/
-          cp artifacts/base-images/container-runtime.ext4 release/
+          # Container runtime stays compressed (>2GB uncompressed exceeds GitHub limit)
+          cp artifacts/base-images/container-runtime.ext4.gz release/
           ls -lh release/
 
       - name: Generate checksums
@@ -659,6 +665,7 @@ jobs:
           sha256sum nqrust-installer.tar.gz >> checksums.txt
           sha256sum vmlinux-*.bin >> checksums.txt
           sha256sum *.ext4 >> checksums.txt
+          sha256sum *.ext4.gz >> checksums.txt 2>/dev/null || true
           cat checksums.txt
 
       - name: Get version
@@ -775,7 +782,7 @@ jobs:
           - **Ubuntu**: [ubuntu-24.04-minimal.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/ubuntu-24.04-minimal.ext4) - Ubuntu 24.04 minimal
           - **Node.js Runtime**: [node-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/node-runtime.ext4) - For serverless functions
           - **Python Runtime**: [python-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/python-runtime.ext4) - For serverless functions
-          - **Container Runtime**: [container-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/container-runtime.ext4) - Docker-in-VM (~2.2GB)
+          - **Container Runtime**: [container-runtime.ext4.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/container-runtime.ext4.gz) - Docker-in-VM (~2.2GB, gzipped)
 
           ### Checksums
           ```
@@ -822,7 +829,7 @@ jobs:
             release/ubuntu-24.04-minimal.ext4
             release/node-runtime.ext4
             release/python-runtime.ext4
-            release/container-runtime.ext4
+            release/container-runtime.ext4.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
