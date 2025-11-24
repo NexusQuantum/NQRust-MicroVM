@@ -15,20 +15,50 @@ use super::repo::ImageRepository;
 /// Format: (filename_pattern, kind, display_name, project)
 const BASE_IMAGES: &[(&str, &str, &str, &str)] = &[
     // Kernels
-    ("vmlinux-5.10.fc.bin", "kernel", "firecracker-v5.10", "firecracker-official"),
-    ("vmlinux.bin", "kernel", "firecracker-kernel", "firecracker-official"),
+    (
+        "vmlinux-5.10.fc.bin",
+        "kernel",
+        "firecracker-v5.10",
+        "firecracker-official",
+    ),
+    (
+        "vmlinux.bin",
+        "kernel",
+        "firecracker-kernel",
+        "firecracker-official",
+    ),
     // Rootfs images
-    ("alpine-3.18-minimal.ext4", "rootfs", "alpine-minimal", "alpine"),
+    (
+        "alpine-3.18-minimal.ext4",
+        "rootfs",
+        "alpine-minimal",
+        "alpine",
+    ),
     ("busybox-1.35.ext4", "rootfs", "busybox-minimal", "busybox"),
     ("busybox-1.36.ext4", "rootfs", "busybox-minimal", "busybox"),
-    ("ubuntu-24.04-minimal.ext4", "rootfs", "ubuntu-24.04-minimal", "ubuntu"),
-    ("ubuntu-22.04-minimal.ext4", "rootfs", "ubuntu-22.04-minimal", "ubuntu"),
+    (
+        "ubuntu-24.04-minimal.ext4",
+        "rootfs",
+        "ubuntu-24.04-minimal",
+        "ubuntu",
+    ),
+    (
+        "ubuntu-22.04-minimal.ext4",
+        "rootfs",
+        "ubuntu-22.04-minimal",
+        "ubuntu",
+    ),
     // Function runtimes
     ("node-runtime.ext4", "rootfs", "node-runtime", "runtime"),
     ("python-runtime.ext4", "rootfs", "python-runtime", "runtime"),
     ("ruby-runtime.ext4", "rootfs", "ruby-runtime", "runtime"),
     // Container runtime
-    ("container-runtime.ext4", "rootfs", "container-runtime", "container"),
+    (
+        "container-runtime.ext4",
+        "rootfs",
+        "container-runtime",
+        "container",
+    ),
 ];
 
 /// Scan the image root directory and register any base images not already in the database
@@ -36,7 +66,10 @@ pub async fn scan_and_register_base_images(image_repo: &ImageRepository) -> anyh
     let image_root = image_repo.root();
 
     if !image_root.exists() {
-        info!("Image root {} does not exist, skipping base image scan", image_root.display());
+        info!(
+            "Image root {} does not exist, skipping base image scan",
+            image_root.display()
+        );
         return Ok(0);
     }
 
