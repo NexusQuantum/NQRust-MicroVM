@@ -212,8 +212,8 @@ jobs:
           curl -fsSL -o /tmp/alpine-minirootfs.tar.gz \
             https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
 
-          # Create ext4 image (10MB is enough for minimal Alpine)
-          dd if=/dev/zero of=images/alpine-3.18-minimal.ext4 bs=1M count=10
+          # Create ext4 image (50MB for Alpine minirootfs - it's about 8MB compressed but needs space for extraction)
+          dd if=/dev/zero of=images/alpine-3.18-minimal.ext4 bs=1M count=50
           mkfs.ext4 -F images/alpine-3.18-minimal.ext4
 
           # Mount and populate
@@ -223,7 +223,7 @@ jobs:
 
           # Basic setup
           sudo sh -c 'echo "nameserver 8.8.8.8" > /mnt/alpine/etc/resolv.conf'
-          sudo sh -c 'echo "root:root" | chpasswd -R /mnt/alpine'
+          sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd' || true
 
           sudo umount /mnt/alpine
           ls -lh images/alpine-3.18-minimal.ext4
@@ -329,6 +329,68 @@ jobs:
           sudo umount /mnt/python
           ls -lh images/python-runtime.ext4
 
+      - name: Build container runtime (Alpine + Docker)
+        run: |
+          # Build container runtime for Docker-in-VM feature
+          ALPINE_VERSION=3.18
+          curl -fsSL -o /tmp/alpine-container.tar.gz \
+            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
+
+          # Create ext4 image (2.2GB for Docker runtime)
+          dd if=/dev/zero of=images/container-runtime.ext4 bs=1M count=2200
+          mkfs.ext4 -F images/container-runtime.ext4
+
+          sudo mkdir -p /mnt/container
+          sudo mount -o loop images/container-runtime.ext4 /mnt/container
+          sudo tar -xzf /tmp/alpine-container.tar.gz -C /mnt/container
+
+          # Configure DNS
+          sudo cp /etc/resolv.conf /mnt/container/etc/resolv.conf
+
+          # Install Docker and dependencies
+          sudo chroot /mnt/container sh -c '
+            apk update
+            apk add --no-cache \
+              docker \
+              docker-openrc \
+              openrc \
+              util-linux \
+              coreutils \
+              bash \
+              curl \
+              wget \
+              ca-certificates \
+              e2fsprogs \
+              iptables \
+              ip6tables \
+              iproute2 \
+              bridge-utils \
+              openssh \
+              shadow
+
+            # Enable Docker service
+            rc-update add docker default
+            rc-update add networking default
+
+            # Set root password
+            echo "root:root" | chpasswd
+
+            # Configure serial console
+            sed -i "s|^#ttyS0|ttyS0|" /etc/inittab 2>/dev/null || true
+          '
+
+          # Create basic network config
+          sudo tee /mnt/container/etc/network/interfaces > /dev/null <<EOF
+          auto lo
+          iface lo inet loopback
+
+          auto eth0
+          iface eth0 inet dhcp
+          EOF
+
+          sudo umount /mnt/container
+          ls -lh images/container-runtime.ext4
+
       - name: Compress large images
         run: |
           # Compress images to reduce upload size
@@ -351,6 +413,7 @@ jobs:
             images/ubuntu-24.04-minimal.ext4.gz
             images/node-runtime.ext4.gz
             images/python-runtime.ext4.gz
+            images/container-runtime.ext4.gz
           retention-days: 1
 
   build-ui:
@@ -454,6 +517,7 @@ jobs:
           cp artifacts/base-images/ubuntu-24.04-minimal.ext4 release/
           cp artifacts/base-images/node-runtime.ext4 release/
           cp artifacts/base-images/python-runtime.ext4 release/
+          cp artifacts/base-images/container-runtime.ext4 release/
           ls -lh release/
 
       - name: Generate checksums
@@ -583,6 +647,7 @@ jobs:
           - **Ubuntu**: [ubuntu-24.04-minimal.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/ubuntu-24.04-minimal.ext4) - Ubuntu 24.04 minimal
           - **Node.js Runtime**: [node-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/node-runtime.ext4) - For serverless functions
           - **Python Runtime**: [python-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/python-runtime.ext4) - For serverless functions
+          - **Container Runtime**: [container-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/container-runtime.ext4) - Docker-in-VM (~2.2GB)
 
           ### Checksums
           ```
@@ -629,6 +694,7 @@ jobs:
             release/ubuntu-24.04-minimal.ext4
             release/node-runtime.ext4
             release/python-runtime.ext4
+            release/container-runtime.ext4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
