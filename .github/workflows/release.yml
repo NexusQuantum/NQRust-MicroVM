@@ -179,6 +179,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Clean up and check disk space
+        run: |
+          # Clean up from any previous runs
+          sudo rm -rf /tmp/ubuntu-rootfs /tmp/node-rootfs /tmp/python-rootfs /tmp/alpine-*.tar.gz 2>/dev/null || true
+          sudo rm -rf /mnt/alpine /mnt/busybox /mnt/ubuntu /mnt/node /mnt/python /mnt/container 2>/dev/null || true
+          # Show available disk space
+          echo "=== Disk space ==="
+          df -h /tmp
+          df -h .
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -266,18 +276,21 @@ jobs:
 
       - name: Build Ubuntu minimal rootfs
         run: |
-          # Build minimal Ubuntu 24.04 rootfs using debootstrap
-          sudo debootstrap --variant=minbase --include=systemd,systemd-sysv,openssh-server,curl,iproute2,iputils-ping \
-            noble /tmp/ubuntu-rootfs http://archive.ubuntu.com/ubuntu/
+          # Download official Ubuntu 24.04 cloud image (minimal rootfs)
+          # Using cloud image instead of debootstrap - faster and more reliable
+          UBUNTU_URL="https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz"
+
+          echo "Downloading Ubuntu 24.04 minimal cloud image..."
+          curl -fsSL -o /tmp/ubuntu-rootfs.tar.xz "$UBUNTU_URL"
 
           # Create ext4 image (800MB for Ubuntu minimal)
           dd if=/dev/zero of=images/ubuntu-24.04-minimal.ext4 bs=1M count=800
           mkfs.ext4 -F images/ubuntu-24.04-minimal.ext4
 
-          # Mount and copy
+          # Mount and extract
           sudo mkdir -p /mnt/ubuntu
           sudo mount -o loop images/ubuntu-24.04-minimal.ext4 /mnt/ubuntu
-          sudo cp -a /tmp/ubuntu-rootfs/* /mnt/ubuntu/
+          sudo tar -xJf /tmp/ubuntu-rootfs.tar.xz -C /mnt/ubuntu
 
           # Set root password
           sudo chroot /mnt/ubuntu sh -c 'echo "root:root" | chpasswd'
@@ -285,7 +298,20 @@ jobs:
           # Enable serial console
           sudo chroot /mnt/ubuntu systemctl enable serial-getty@ttyS0.service || true
 
+          # Configure networking
+          sudo tee /mnt/ubuntu/etc/netplan/01-dhcp.yaml > /dev/null <<'NETPLAN'
+          network:
+            version: 2
+            ethernets:
+              eth0:
+                dhcp4: true
+          NETPLAN
+
           sudo umount /mnt/ubuntu
+
+          # Clean up
+          rm -f /tmp/ubuntu-rootfs.tar.xz
+
           ls -lh images/ubuntu-24.04-minimal.ext4
 
       - name: Build Node.js function runtime
@@ -358,6 +384,10 @@ jobs:
           sudo mount -o loop images/node-runtime.ext4 /mnt/node
           sudo cp -a /tmp/node-rootfs/* /mnt/node/
           sudo umount /mnt/node
+
+          # Clean up to free space
+          sudo rm -rf /tmp/node-rootfs /tmp/alpine-node.tar.gz
+
           ls -lh images/node-runtime.ext4
 
       - name: Build Python function runtime
@@ -429,6 +459,10 @@ jobs:
           sudo mount -o loop images/python-runtime.ext4 /mnt/python
           sudo cp -a /tmp/python-rootfs/* /mnt/python/
           sudo umount /mnt/python
+
+          # Clean up to free space for container runtime build
+          sudo rm -rf /tmp/python-rootfs /tmp/alpine-python.tar.gz
+
           ls -lh images/python-runtime.ext4
 
       - name: Build container runtime (Alpine + Docker)
