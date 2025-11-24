@@ -65,8 +65,23 @@ pub fn setup_database(db_name: &str, db_user: &str, db_password: &str) -> Result
             "Database '{}' already exists",
             db_name
         )));
+
+        // Even if DB exists, ensure user password is correct
+        logs.push(LogEntry::info(format!(
+            "Updating password for user '{}'...",
+            db_user
+        )));
+        let alter_user_sql = format!(
+            "ALTER USER {} WITH ENCRYPTED PASSWORD '{}';",
+            db_user, db_password
+        );
+        let _ = run_command("sudo", &["-u", "postgres", "psql", "-c", &alter_user_sql]);
+        logs.push(LogEntry::success(format!(
+            "User '{}' password updated",
+            db_user
+        )));
     } else {
-        // Create user
+        // Create user or update password if exists
         logs.push(LogEntry::info(format!("Creating user '{}'...", db_user)));
 
         let create_user_sql = format!(
@@ -76,10 +91,23 @@ pub fn setup_database(db_name: &str, db_user: &str, db_password: &str) -> Result
         let output = run_command("sudo", &["-u", "postgres", "psql", "-c", &create_user_sql]);
 
         if let Ok(out) = output {
-            if out.status.success()
-                || String::from_utf8_lossy(&out.stderr).contains("already exists")
-            {
-                logs.push(LogEntry::success(format!("User '{}' ready", db_user)));
+            if out.status.success() {
+                logs.push(LogEntry::success(format!("User '{}' created", db_user)));
+            } else if String::from_utf8_lossy(&out.stderr).contains("already exists") {
+                // User exists, update password
+                logs.push(LogEntry::info(format!(
+                    "User '{}' exists, updating password...",
+                    db_user
+                )));
+                let alter_user_sql = format!(
+                    "ALTER USER {} WITH ENCRYPTED PASSWORD '{}';",
+                    db_user, db_password
+                );
+                let _ = run_command("sudo", &["-u", "postgres", "psql", "-c", &alter_user_sql]);
+                logs.push(LogEntry::success(format!(
+                    "User '{}' password updated",
+                    db_user
+                )));
             }
         }
 

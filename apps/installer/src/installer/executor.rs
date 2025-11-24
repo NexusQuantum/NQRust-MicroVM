@@ -154,6 +154,26 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
+    // Install Node.js if UI is included
+    if config.with_ui {
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "Installing Node.js for UI...",
+        )))?;
+        match deps::install_nodejs() {
+            Ok(logs) => {
+                for log in logs {
+                    tx.send(InstallMessage::Log(log))?;
+                }
+            }
+            Err(e) => {
+                tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                    "Failed to install Node.js: {} - UI may not work",
+                    e
+                ))))?;
+            }
+        }
+    }
+
     tx.send(InstallMessage::PhaseComplete(
         Phase::Dependencies,
         Status::Success,

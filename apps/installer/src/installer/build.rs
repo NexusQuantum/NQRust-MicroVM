@@ -306,6 +306,27 @@ pub fn download_binaries(config: &InstallConfig, version: &str) -> Result<Vec<Lo
         }
     }
 
+    // Download UI if needed
+    if config.with_ui {
+        logs.push(LogEntry::info("Downloading UI package..."));
+
+        let url = format!("{}/nqrust-ui.tar.gz", base_url);
+        let output_path = format!("{}/nqrust-ui.tar.gz", download_dir);
+
+        let output = run_command("curl", &["-fsSL", "-o", &output_path, &url])?;
+
+        if output.status.success() {
+            logs.push(LogEntry::success("UI package downloaded"));
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            logs.push(LogEntry::warning(format!(
+                "Failed to download UI: {}",
+                stderr
+            )));
+            // Don't fail - UI is optional
+        }
+    }
+
     logs.push(LogEntry::success("All binaries downloaded successfully"));
 
     Ok(logs)
@@ -391,6 +412,53 @@ pub fn install_binaries(
             logs.push(LogEntry::success("Guest-agent binary installed"));
         } else {
             logs.push(LogEntry::warning("Guest-agent binary not found"));
+        }
+    }
+
+    // Install UI if needed
+    if config.with_ui {
+        let ui_tarball = release_dir.join("nqrust-ui.tar.gz");
+        let ui_dir = install_dir.join("ui");
+
+        if ui_tarball.exists() {
+            logs.push(LogEntry::info("Installing UI..."));
+
+            // Create UI directory
+            let _ = run_sudo("mkdir", &["-p", &ui_dir.display().to_string()]);
+
+            // Extract tarball
+            let output = run_sudo(
+                "tar",
+                &[
+                    "-xzf",
+                    &ui_tarball.display().to_string(),
+                    "-C",
+                    &ui_dir.display().to_string(),
+                ],
+            )?;
+
+            if output.status.success() {
+                logs.push(LogEntry::success("UI installed"));
+
+                // Install Node.js dependencies if needed
+                logs.push(LogEntry::info("Installing UI dependencies..."));
+                let _ = run_command(
+                    "sh",
+                    &[
+                        "-c",
+                        &format!(
+                            "cd {} && npm install --production 2>&1 || pnpm install --prod 2>&1 || true",
+                            ui_dir.display()
+                        ),
+                    ],
+                );
+            } else {
+                logs.push(LogEntry::warning("Failed to extract UI"));
+            }
+        } else {
+            logs.push(LogEntry::warning(
+                "UI tarball not found - skipping UI installation",
+            ));
         }
     }
 
