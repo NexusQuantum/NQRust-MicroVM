@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::Output;
 
 use anyhow::{anyhow, Result};
 
@@ -10,6 +11,40 @@ use crate::installer::{run_command, run_sudo};
 
 /// Firecracker version to install
 pub const FIRECRACKER_VERSION: &str = "1.13.1";
+
+/// Write build failure debug log
+fn write_debug_log(
+    component: &str,
+    command: &str,
+    directory: &Path,
+    output: &Output,
+) -> Result<String> {
+    let debug_log = format!("/tmp/nqr-installer-{}.log", component);
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let stderr_str = String::from_utf8_lossy(&output.stderr);
+
+    let debug_content = format!(
+        "=== {} Build Failed ===\n\
+         Time: {}\n\
+         Command: {}\n\
+         Directory: {}\n\
+         Exit Code: {:?}\n\n\
+         === STDOUT ({} bytes) ===\n{}\n\n\
+         === STDERR ({} bytes) ===\n{}\n\n",
+        component,
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+        command,
+        directory.display(),
+        output.status.code(),
+        output.stdout.len(),
+        output_str,
+        output.stderr.len(),
+        stderr_str
+    );
+
+    std::fs::write(&debug_log, debug_content)?;
+    Ok(debug_log)
+}
 
 /// Build binaries from source
 pub fn build_from_source(config: &InstallConfig, source_dir: &Path) -> Result<Vec<LogEntry>> {
@@ -44,14 +79,36 @@ pub fn build_from_source(config: &InstallConfig, source_dir: &Path) -> Result<Ve
         if output.status.success() {
             logs.push(LogEntry::success("Manager built successfully"));
         } else {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            let stderr_str = String::from_utf8_lossy(&output.stderr);
+            // Write full debug log
+            match write_debug_log(
+                "manager",
+                "cargo build --release -p manager",
+                source_dir,
+                &output,
+            ) {
+                Ok(debug_log) => {
+                    logs.push(LogEntry::error(format!(
+                        "Manager build failed. Full output saved to: {}",
+                        debug_log
+                    )));
+                    logs.push(LogEntry::info(
+                        "You can view the log with: cat /tmp/nqr-installer-manager.log".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    logs.push(LogEntry::warning(format!(
+                        "Failed to write debug log: {}",
+                        e
+                    )));
+                }
+            }
 
-            // Log the last 20 lines of output for debugging
+            // Log the last 30 lines of output for debugging
+            let output_str = String::from_utf8_lossy(&output.stdout);
             for line in output_str
                 .lines()
                 .rev()
-                .take(20)
+                .take(30)
                 .collect::<Vec<_>>()
                 .iter()
                 .rev()
@@ -61,11 +118,9 @@ pub fn build_from_source(config: &InstallConfig, source_dir: &Path) -> Result<Ve
                 }
             }
 
-            if !stderr_str.is_empty() {
-                logs.push(LogEntry::error(format!("Stderr: {}", stderr_str)));
-            }
-
-            return Err(anyhow!("Manager build failed - check logs above"));
+            return Err(anyhow!(
+                "Manager build failed - see /tmp/nqr-installer-manager.log for full output"
+            ));
         }
     }
 
