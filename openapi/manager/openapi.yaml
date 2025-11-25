@@ -3105,6 +3105,14 @@ components:
           type: string
         read_only:
           type: boolean
+  securitySchemes:
+    bearer_auth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter your Bearer token from /v1/auth/login
+security:
+- bearer_auth: []
 tags:
 - name: Hosts
   description: Host lifecycle operations.

@@ -112,17 +112,17 @@ pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str
     tracing::info!("=== GUEST AGENT INSTALLATION STARTED ===");
     tracing::info!(rootfs = %rootfs_path, vm_id = %vm_id, manager_url = %manager_url, "Installing guest agent to rootfs");
 
-    // Check if guest agent binary exists
-    let guest_agent_binary = "target/x86_64-unknown-linux-musl/release/guest-agent";
-    if !Path::new(guest_agent_binary).exists() {
+    // Check if guest agent binary exists - try multiple locations
+    let guest_agent_binary = find_guest_agent_binary();
+    let Some(guest_agent_binary) = guest_agent_binary else {
         tracing::warn!(
-            "Guest agent binary not found at {}, skipping installation",
-            guest_agent_binary
+            "Guest agent binary not found in any standard location, skipping installation"
         );
         return Ok(());
-    }
+    };
+    tracing::info!("Found guest agent binary at: {}", guest_agent_binary);
 
-    tracing::info!("Guest agent binary found at {}", guest_agent_binary);
+    tracing::info!("Found guest agent binary at: {}", guest_agent_binary);
 
     // Mount the rootfs
     let mount_point = format!("/tmp/vm-{}-rootfs", vm_id);
@@ -139,7 +139,7 @@ pub async fn install_to_rootfs(rootfs_path: &str, vm_id: Uuid, manager_url: &str
     }
 
     // Ensure we unmount on any error
-    let result = install_files(&mount_point, vm_id, manager_url, guest_agent_binary).await;
+    let result = install_files(&mount_point, vm_id, manager_url, &guest_agent_binary).await;
 
     // Always unmount
     let unmount_result = Command::new("sudo")
@@ -592,5 +592,27 @@ fi
 /// Check if guest agent binary exists
 #[allow(dead_code)]
 pub fn is_available() -> bool {
-    Path::new("target/x86_64-unknown-linux-musl/release/guest-agent").exists()
+    find_guest_agent_binary().is_some()
+}
+
+/// Find the guest agent binary in standard locations
+fn find_guest_agent_binary() -> Option<String> {
+    // List of possible locations for the guest-agent binary
+    let locations = [
+        // Production/installed location
+        "/opt/nqrust-microvm/bin/guest-agent",
+        // Development locations
+        "target/x86_64-unknown-linux-musl/release/guest-agent",
+        "target/release/guest-agent",
+        // Alternative installed locations
+        "/usr/local/bin/guest-agent",
+        "/usr/bin/guest-agent",
+    ];
+
+    for location in locations {
+        if Path::new(location).exists() {
+            return Some(location.to_string());
+        }
+    }
+    None
 }

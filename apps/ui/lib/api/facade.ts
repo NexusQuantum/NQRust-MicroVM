@@ -461,7 +461,14 @@ export class FacadeApi {
    * Shell Access - WebSocket terminal connection
    */
   getShellWebSocketUrl(vmId: string): string {
-    // Get WebSocket base URL from environment or derive from API base URL
+    // Dynamically determine WebSocket URL based on current browser location
+    // This ensures WebSocket connections work when accessing the UI remotely
+    if (typeof window !== "undefined") {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const hostname = window.location.hostname;
+      return `${protocol}//${hostname}:18080/v1/vms/${vmId}/shell/ws`;
+    }
+    // Fallback for SSR (shouldn't be used for actual WebSocket connections)
     const apiBaseUrl =
       process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:18080/v1";
     const wsBaseUrl =
