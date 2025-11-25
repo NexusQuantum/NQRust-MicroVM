@@ -67,12 +67,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nqrust-manager
 
-# Security hardening - NoNewPrivileges=false required for guest agent installation (mount/sudo)
+# Manager needs to run sudo for guest agent installation (mount rootfs)
+# Therefore we cannot use restrictive security settings like ProtectSystem=strict
+# The manager runs as unprivileged 'nqrust' user, security comes from that
 NoNewPrivileges=false
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths={} {} /srv/images /var/log/nqrust-microvm /tmp
 
 # Resource limits
 LimitNOFILE=65536
@@ -83,9 +81,7 @@ WantedBy=multi-user.target
 "#,
         config.install_dir.display(),
         env_file.display(),
-        bin_path.display(),
-        config.data_dir.display(),
-        config.data_dir.join("vms").display()
+        bin_path.display()
     );
 
     write_service_file("nqrust-manager.service", &service_content)?;
