@@ -47,37 +47,45 @@ fn install_manager_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
     let service_content = format!(
         r#"[Unit]
 Description=NQR-MicroVM Manager Service
-Documentation=https://github.com/your-org/nqrust-microvm
-After=network.target postgresql.service
-Wants=postgresql.service
+Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
 
 [Service]
 Type=simple
 User=nqrust
 Group=nqrust
+WorkingDirectory={}
 EnvironmentFile={}
 ExecStart={}
 Restart=on-failure
-RestartSec=5
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nqrust-manager
 
-# Security hardening
-NoNewPrivileges=yes
+# Security hardening - NoNewPrivileges=false required for guest agent installation (mount/sudo)
+NoNewPrivileges=false
 ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths={} {} {} /srv/images
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={} {} /srv/images /var/log/nqrust-microvm /tmp
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target
 "#,
+        config.install_dir.display(),
         env_file.display(),
         bin_path.display(),
         config.data_dir.display(),
-        config.data_dir.join("vms").display(),
-        config.data_dir.join("images").display()
+        config.data_dir.join("vms").display()
     );
 
     write_service_file("nqrust-manager.service", &service_content)?;
@@ -96,27 +104,37 @@ fn install_agent_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
     let service_content = format!(
         r#"[Unit]
 Description=NQR-MicroVM Agent Service
-Documentation=https://github.com/your-org/nqrust-microvm
-After=network.target nqrust-bridge.service
-Wants=nqrust-bridge.service
+Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
+After=network-online.target
+Before=nqrust-manager.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
+Group=root
+WorkingDirectory={}
 EnvironmentFile={}
 ExecStart={}
 Restart=on-failure
-RestartSec=5
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nqrust-agent
 
-# Agent needs elevated privileges for KVM/networking
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=8192
+
+# Agent needs elevated privileges for KVM/networking and systemd scope management
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN
 
 [Install]
 WantedBy=multi-user.target
 "#,
+        config.install_dir.display(),
         env_file.display(),
         bin_path.display()
     );
@@ -137,9 +155,10 @@ fn install_ui_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
     let service_content = format!(
         r#"[Unit]
 Description=NQR-MicroVM Web UI Service
-Documentation=https://github.com/your-org/nqrust-microvm
-After=network.target nqrust-manager.service
-Wants=nqrust-manager.service
+Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
+After=network-online.target nqrust-manager.service
+Wants=network-online.target
+Requires=nqrust-manager.service
 
 [Service]
 Type=simple
@@ -149,22 +168,29 @@ WorkingDirectory={}
 EnvironmentFile={}
 ExecStart=/usr/bin/pnpm start
 Restart=on-failure
-RestartSec=5
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nqrust-ui
 
 # Security hardening
-NoNewPrivileges=yes
+NoNewPrivileges=true
+PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
+ProtectHome=true
+ReadWritePaths={}
+
+# Resource limits
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target
 "#,
         ui_dir.display(),
-        env_file.display()
+        env_file.display(),
+        ui_dir.display()
     );
 
     write_service_file("nqrust-ui.service", &service_content)?;
