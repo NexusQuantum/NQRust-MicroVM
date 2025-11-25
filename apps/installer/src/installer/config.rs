@@ -82,7 +82,8 @@ DATABASE_URL={}
 MANAGER_BIND=0.0.0.0:18080
 
 # Storage paths
-MANAGER_IMAGE_ROOT={}/images
+# NOTE: Using /srv/images (not {}/images) because functions/containers have hardcoded /srv/images paths
+MANAGER_IMAGE_ROOT=/srv/images
 MANAGER_STORAGE_ROOT={}/vms
 
 # Allow direct file paths for images (REQUIRED for functions/containers)

@@ -1,7 +1,7 @@
 //! Build and binary installation module.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use anyhow::{anyhow, Result};
@@ -509,8 +509,9 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
         format!("https://github.com/{}/releases/download/v{}", repo, version)
     };
 
-    // Image directory - use data_dir/images to match manager config
-    let image_dir = config.data_dir.join("images");
+    // Image directory - use /srv/images because functions/containers have hardcoded /srv/images paths
+    // Do NOT use data_dir/images here - manager code expects /srv/images
+    let image_dir = PathBuf::from("/srv/images");
     let image_dir_str = image_dir.display().to_string();
 
     logs.push(LogEntry::info(format!(
@@ -528,19 +529,7 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
     let _ = run_sudo("mkdir", &["-p", &functions_dir.display().to_string()]);
     let _ = run_sudo("mkdir", &["-p", &containers_dir.display().to_string()]);
 
-    // WORKAROUND: Manager code has /srv/images hardcoded for functions/containers
-    // Create this directory structure too until the manager is fixed to use MANAGER_IMAGE_ROOT
-    if image_dir_str != "/srv/images" {
-        logs.push(LogEntry::info(
-            "Creating /srv/images subdirectories (workaround for hardcoded paths)".to_string(),
-        ));
-        let _ = run_sudo("mkdir", &["-p", "/srv/images/functions"]);
-        let _ = run_sudo("mkdir", &["-p", "/srv/images/containers"]);
-        let _ = run_sudo("chown", &["-R", "nqrust:nqrust", "/srv/images"]);
-        let _ = run_sudo("chmod", &["-R", "755", "/srv/images"]);
-    }
-
-    // Set ownership and permissions for the configured image directory tree
+    // Set ownership and permissions for the image directory
     let _ = run_sudo("chown", &["-R", "nqrust:nqrust", &image_dir_str]);
     let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
 
@@ -629,36 +618,6 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
 
     // Set permissions
     let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
-
-    // WORKAROUND: Copy base images to /srv/images for hardcoded paths in functions/containers
-    if image_dir_str != "/srv/images" {
-        logs.push(LogEntry::info(
-            "Copying base images to /srv/images (workaround for hardcoded paths)".to_string(),
-        ));
-
-        // Copy kernel and runtime images that functions/containers need
-        for (filename, _, _) in BASE_IMAGES {
-            let src = format!("{}/{}", image_dir_str, filename);
-            let dst = format!("/srv/images/{}", filename);
-
-            // Skip if source doesn't exist (optional images)
-            if !Path::new(&src).exists() {
-                continue;
-            }
-
-            // Skip if destination already exists
-            if Path::new(&dst).exists() {
-                continue;
-            }
-
-            // Copy the file
-            let _ = run_sudo("cp", &[&src, &dst]);
-        }
-
-        // Ensure ownership is correct
-        let _ = run_sudo("chown", &["-R", "nqrust:nqrust", "/srv/images"]);
-        let _ = run_sudo("chmod", &["-R", "755", "/srv/images"]);
-    }
 
     logs.push(LogEntry::success("Base images download complete"));
 
