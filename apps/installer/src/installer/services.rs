@@ -68,7 +68,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths={} {} {}
+ReadWritePaths={} {} {} /srv/images
 
 [Install]
 WantedBy=multi-user.target

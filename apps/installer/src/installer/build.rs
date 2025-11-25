@@ -536,11 +536,12 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
         ));
         let _ = run_sudo("mkdir", &["-p", "/srv/images/functions"]);
         let _ = run_sudo("mkdir", &["-p", "/srv/images/containers"]);
+        let _ = run_sudo("chown", &["-R", "nqrust:nqrust", "/srv/images"]);
         let _ = run_sudo("chmod", &["-R", "755", "/srv/images"]);
     }
 
     // Set ownership and permissions for the configured image directory tree
-    let _ = run_sudo("chown", &["-R", "root:root", &image_dir_str]);
+    let _ = run_sudo("chown", &["-R", "nqrust:nqrust", &image_dir_str]);
     let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
 
     // Download each image
