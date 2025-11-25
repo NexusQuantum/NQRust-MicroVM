@@ -235,6 +235,21 @@ jobs:
           sudo sh -c 'echo "nameserver 8.8.8.8" > /mnt/alpine/etc/resolv.conf'
           sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd' || true
 
+          # Create inittab for proper serial console
+          sudo tee /mnt/alpine/etc/inittab > /dev/null <<'INITTAB'
+          ::sysinit:/bin/mount -t proc proc /proc
+          ::sysinit:/bin/mount -t sysfs sysfs /sys
+          ::sysinit:/bin/mount -t devtmpfs devtmpfs /dev
+          ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100
+          ::ctrlaltdel:/sbin/reboot
+          ::shutdown:/bin/umount -a -r
+          INITTAB
+
+          # Set default TERM for serial console
+          sudo mkdir -p /mnt/alpine/etc/profile.d
+          echo 'export TERM=vt100' | sudo tee /mnt/alpine/etc/profile.d/term.sh
+          sudo chmod +x /mnt/alpine/etc/profile.d/term.sh
+
           sudo umount /mnt/alpine
           ls -lh images/alpine-3.18-minimal.ext4
 
@@ -254,7 +269,7 @@ jobs:
           sudo mount -o loop images/busybox-1.35.ext4 /mnt/busybox
 
           # Create directory structure
-          sudo mkdir -p /mnt/busybox/{bin,sbin,etc,proc,sys,usr/bin,usr/sbin,dev,tmp,root,var/run}
+          sudo mkdir -p /mnt/busybox/{bin,sbin,etc,proc,sys,usr/bin,usr/sbin,dev,tmp,root,var/run,etc/profile.d}
 
           # Install BusyBox
           sudo cp /tmp/busybox /mnt/busybox/bin/busybox
@@ -264,12 +279,17 @@ jobs:
           # Basic init script
           sudo tee /mnt/busybox/init > /dev/null <<'INIT'
           #!/bin/sh
+          export TERM=vt100
           mount -t proc proc /proc
           mount -t sysfs sysfs /sys
           mount -t devtmpfs devtmpfs /dev
           exec /bin/sh
           INIT
           sudo chmod +x /mnt/busybox/init
+
+          # Set default TERM for serial console
+          echo 'export TERM=vt100' | sudo tee /mnt/busybox/etc/profile.d/term.sh
+          sudo chmod +x /mnt/busybox/etc/profile.d/term.sh
 
           sudo umount /mnt/busybox
           ls -lh images/busybox-1.35.ext4
@@ -298,6 +318,11 @@ jobs:
           # Enable serial console
           sudo chroot /mnt/ubuntu systemctl enable serial-getty@ttyS0.service || true
 
+          # Set default TERM for serial console
+          sudo mkdir -p /mnt/ubuntu/etc/profile.d
+          echo 'export TERM=vt100' | sudo tee /mnt/ubuntu/etc/profile.d/term.sh
+          sudo chmod +x /mnt/ubuntu/etc/profile.d/term.sh
+
           # Configure networking
           sudo tee /mnt/ubuntu/etc/netplan/01-dhcp.yaml > /dev/null <<'NETPLAN'
           network:
@@ -316,153 +341,22 @@ jobs:
 
       - name: Build Node.js function runtime
         run: |
-          # Build Node.js runtime for serverless functions (Alpine-based, matches scripts)
-          ALPINE_VERSION=3.18
-          curl -fsSL -o /tmp/alpine-node.tar.gz \
-            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
-
-          # Create rootfs directory
-          sudo mkdir -p /tmp/node-rootfs
-          sudo tar -xzf /tmp/alpine-node.tar.gz -C /tmp/node-rootfs
-
-          # Configure DNS
-          sudo cp /etc/resolv.conf /tmp/node-rootfs/etc/resolv.conf
-
-          # Install Node.js and dependencies
-          sudo chroot /tmp/node-rootfs sh -c '
-            apk update
-            apk add --no-cache nodejs npm openrc util-linux coreutils
-            rc-update add devfs boot
-            rc-update add procfs boot
-            rc-update add sysfs boot
-            rc-update add networking boot
-          '
-
-          # Install runtime server
-          sudo mkdir -p /tmp/node-rootfs/function
-          sudo cp apps/function-runtime/node/server.js /tmp/node-rootfs/usr/local/bin/runtime-server
-          sudo chmod +x /tmp/node-rootfs/usr/local/bin/runtime-server
-
-          # Create placeholder function
-          sudo tee /tmp/node-rootfs/function/code.js > /dev/null <<'FUNC'
-          async function handler(event) {
-              return { message: "Hello from NQRust Lambda!", event, timestamp: new Date().toISOString() };
-          }
-          module.exports = { handler };
-          FUNC
-
-          # Create OpenRC service for runtime server
-          sudo tee /tmp/node-rootfs/etc/init.d/runtime-server > /dev/null <<'SERVICE'
-          #!/sbin/openrc-run
-          name="runtime-server"
-          description="NQRust Lambda Runtime Server (Node.js)"
-          command="/usr/bin/node"
-          command_args="/usr/local/bin/runtime-server"
-          command_background=true
-          pidfile="/run/runtime-server.pid"
-          depend() { need net; after networking; }
-          SERVICE
-          sudo chmod +x /tmp/node-rootfs/etc/init.d/runtime-server
-          sudo chroot /tmp/node-rootfs rc-update add runtime-server default
-
-          # Configure networking
-          sudo tee /tmp/node-rootfs/etc/network/interfaces > /dev/null <<'NET'
-          auto lo
-          iface lo inet loopback
-          auto eth0
-          iface eth0 inet dhcp
-          NET
-
-          echo "lambda-node" | sudo tee /tmp/node-rootfs/etc/hostname
-          sudo sed -i 's/root:!:/root::/' /tmp/node-rootfs/etc/shadow 2>/dev/null || true
-
-          # Create ext4 image (500MB for Node.js runtime - Alpine is much smaller)
-          dd if=/dev/zero of=images/node-runtime.ext4 bs=1M count=500
-          mkfs.ext4 -F images/node-runtime.ext4
-
-          sudo mkdir -p /mnt/node
-          sudo mount -o loop images/node-runtime.ext4 /mnt/node
-          sudo cp -a /tmp/node-rootfs/* /mnt/node/
-          sudo umount /mnt/node
-
-          # Clean up to free space
-          sudo rm -rf /tmp/node-rootfs /tmp/alpine-node.tar.gz
-
+          # Use the actual build script that works locally
+          # Modify output path to use images/ directory
+          sed 's|OUTPUT_IMAGE="/srv/images/node-runtime.ext4"|OUTPUT_IMAGE="images/node-runtime.ext4"|' \
+            scripts/runtime-images/build-node-runtime.sh > /tmp/build-node.sh
+          chmod +x /tmp/build-node.sh
+          sudo /tmp/build-node.sh
           ls -lh images/node-runtime.ext4
 
       - name: Build Python function runtime
         run: |
-          # Build Python runtime for serverless functions (Alpine-based, matches scripts)
-          ALPINE_VERSION=3.18
-          curl -fsSL -o /tmp/alpine-python.tar.gz \
-            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
-
-          # Create rootfs directory
-          sudo mkdir -p /tmp/python-rootfs
-          sudo tar -xzf /tmp/alpine-python.tar.gz -C /tmp/python-rootfs
-
-          # Configure DNS
-          sudo cp /etc/resolv.conf /tmp/python-rootfs/etc/resolv.conf
-
-          # Install Python and dependencies
-          sudo chroot /tmp/python-rootfs sh -c '
-            apk update
-            apk add --no-cache python3 py3-pip openrc util-linux coreutils
-            rc-update add devfs boot
-            rc-update add procfs boot
-            rc-update add sysfs boot
-            rc-update add networking boot
-          '
-
-          # Install runtime server
-          sudo mkdir -p /tmp/python-rootfs/function
-          sudo cp apps/function-runtime/python/server.py /tmp/python-rootfs/usr/local/bin/runtime-server
-          sudo chmod +x /tmp/python-rootfs/usr/local/bin/runtime-server
-
-          # Create placeholder function
-          sudo tee /tmp/python-rootfs/function/code.py > /dev/null <<'FUNC'
-          import datetime
-          def handler(event):
-              return {"message": "Hello from NQRust Lambda!", "event": event, "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}
-          FUNC
-
-          # Create OpenRC service for runtime server
-          sudo tee /tmp/python-rootfs/etc/init.d/runtime-server > /dev/null <<'SERVICE'
-          #!/sbin/openrc-run
-          name="runtime-server"
-          description="NQRust Lambda Runtime Server (Python)"
-          command="/usr/bin/python3"
-          command_args="/usr/local/bin/runtime-server"
-          command_background=true
-          pidfile="/run/runtime-server.pid"
-          depend() { need net; after networking; }
-          SERVICE
-          sudo chmod +x /tmp/python-rootfs/etc/init.d/runtime-server
-          sudo chroot /tmp/python-rootfs rc-update add runtime-server default
-
-          # Configure networking
-          sudo tee /tmp/python-rootfs/etc/network/interfaces > /dev/null <<'NET'
-          auto lo
-          iface lo inet loopback
-          auto eth0
-          iface eth0 inet dhcp
-          NET
-
-          echo "lambda-python" | sudo tee /tmp/python-rootfs/etc/hostname
-          sudo sed -i 's/root:!:/root::/' /tmp/python-rootfs/etc/shadow 2>/dev/null || true
-
-          # Create ext4 image (500MB for Python runtime - Alpine is much smaller)
-          dd if=/dev/zero of=images/python-runtime.ext4 bs=1M count=500
-          mkfs.ext4 -F images/python-runtime.ext4
-
-          sudo mkdir -p /mnt/python
-          sudo mount -o loop images/python-runtime.ext4 /mnt/python
-          sudo cp -a /tmp/python-rootfs/* /mnt/python/
-          sudo umount /mnt/python
-
-          # Clean up to free space for container runtime build
-          sudo rm -rf /tmp/python-rootfs /tmp/alpine-python.tar.gz
-
+          # Use the actual build script that works locally
+          # Modify output path to use images/ directory
+          sed 's|OUTPUT_IMAGE="/srv/images/python-runtime.ext4"|OUTPUT_IMAGE="images/python-runtime.ext4"|' \
+            scripts/runtime-images/build-python-runtime.sh > /tmp/build-python.sh
+          chmod +x /tmp/build-python.sh
+          sudo /tmp/build-python.sh
           ls -lh images/python-runtime.ext4
 
       - name: Build container runtime (Alpine + Docker)

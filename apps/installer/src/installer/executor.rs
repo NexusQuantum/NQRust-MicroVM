@@ -458,12 +458,27 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
-    // Phase 9: Setup Sudo (skip for now, handled by services)
+    // Phase 9: Setup Sudo permissions for nqrust user
     tx.send(InstallMessage::PhaseStart(Phase::Sudo))?;
     tx.send(InstallMessage::Log(LogEntry::info(
-        "Configuring sudo permissions...",
+        "Configuring sudo permissions for nqrust user...",
     )))?;
-    tx.send(InstallMessage::PhaseComplete(Phase::Sudo, Status::Success))?;
+
+    match config::setup_sudoers() {
+        Ok(logs) => {
+            for log in logs {
+                tx.send(InstallMessage::Log(log))?;
+            }
+            tx.send(InstallMessage::PhaseComplete(Phase::Sudo, Status::Success))?;
+        }
+        Err(e) => {
+            tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                "Failed to setup sudoers: {} - guest agent installation may fail",
+                e
+            ))))?;
+            tx.send(InstallMessage::PhaseComplete(Phase::Sudo, Status::Warning))?;
+        }
+    }
 
     // Phase 10: Install and Start Services
     tx.send(InstallMessage::PhaseStart(Phase::Services))?;

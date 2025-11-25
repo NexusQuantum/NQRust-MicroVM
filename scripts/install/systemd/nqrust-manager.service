@@ -28,12 +28,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nqrust-manager
 
-# Security hardening (but allow sudo for rootfs operations)
+# Manager needs to run sudo for guest agent installation (mount rootfs)
+# Therefore we cannot use restrictive security settings like ProtectSystem=strict
+# The manager runs as unprivileged 'nqrust' user, security comes from that
 NoNewPrivileges=false
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/srv/fc /srv/images /var/log/nqrust-microvm /tmp
 
 # Resource limits
 LimitNOFILE=65536

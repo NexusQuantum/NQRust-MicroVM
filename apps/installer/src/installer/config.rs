@@ -317,18 +317,29 @@ pub fn create_system_user() -> Result<Vec<LogEntry>> {
 pub fn create_directories(config: &InstallConfig) -> Result<Vec<LogEntry>> {
     let mut logs = Vec::new();
 
+    // Core directories
     let dirs = [
         config.install_dir.clone(),
         config.install_dir.join("bin"),
         config.data_dir.clone(),
         config.data_dir.join("vms"),
-        config.data_dir.join("images"),
         config.config_dir.clone(),
         config.log_dir.clone(),
     ];
 
     for dir in &dirs {
         let _ = run_sudo("mkdir", &["-p", &dir.display().to_string()]);
+    }
+
+    // Image directories - needs to be writable by nqrust for function runtime copies
+    let image_dirs = [
+        "/srv/images",
+        "/srv/images/functions",
+        "/srv/images/containers",
+    ];
+
+    for dir in &image_dirs {
+        let _ = run_sudo("mkdir", &["-p", dir]);
     }
 
     // Set ownership for data directories
@@ -341,7 +352,94 @@ pub fn create_directories(config: &InstallConfig) -> Result<Vec<LogEntry>> {
         ],
     );
 
+    // Set ownership for image directories (needed for function runtime copies)
+    let _ = run_sudo("chown", &["-R", "nqrust:nqrust", "/srv/images"]);
+
     logs.push(LogEntry::success("Directories created"));
+
+    Ok(logs)
+}
+
+/// Setup sudoers configuration for nqrust user
+/// This allows the manager to run mount/umount commands for guest agent installation
+pub fn setup_sudoers() -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    logs.push(LogEntry::info("Setting up sudoers for nqrust user..."));
+
+    // Sudoers content - allows manager to mount/umount rootfs for guest agent installation
+    let sudoers_content = r#"# Sudoers configuration for NQRust-MicroVM
+# This file grants necessary sudo permissions to manager and agent
+
+# Manager commands (for rootfs operations - guest agent installation)
+Cmnd_Alias MANAGER_MOUNT = /bin/mount, /bin/umount, /usr/bin/mount, /usr/bin/umount
+Cmnd_Alias MANAGER_FILE_OPS = /bin/cp, /bin/mv, /bin/chmod, /bin/chown, /bin/mkdir, /bin/rmdir, /bin/ln, /bin/rm, /bin/touch, /usr/bin/touch
+Cmnd_Alias MANAGER_TEST = /bin/test, /usr/bin/test, /bin/ls, /usr/bin/ls
+Cmnd_Alias MANAGER_READ = /bin/cat, /usr/bin/cat
+Cmnd_Alias MANAGER_WRITE = /usr/bin/tee, /bin/tee, /bin/dd
+
+# Agent commands (needs more permissions for Firecracker and networking)
+Cmnd_Alias AGENT_FIRECRACKER = /usr/local/bin/firecracker, /usr/bin/firecracker
+Cmnd_Alias AGENT_NETWORK = /usr/sbin/ip, /sbin/ip, /usr/bin/brctl, /sbin/brctl
+Cmnd_Alias AGENT_SYSTEMD = /usr/bin/systemd-run, /bin/systemd-run, /usr/bin/systemctl, /bin/systemctl
+Cmnd_Alias AGENT_SCREEN = /usr/bin/screen, /bin/screen
+
+# Allow nqrust user to run manager commands without password
+nqrust ALL=(ALL) NOPASSWD: MANAGER_MOUNT, MANAGER_FILE_OPS, MANAGER_TEST, MANAGER_READ, MANAGER_WRITE
+
+# Agent runs as root in systemd service, but allow group access for manual testing
+%nqrust ALL=(ALL) NOPASSWD: AGENT_FIRECRACKER, AGENT_NETWORK, AGENT_SYSTEMD, AGENT_SCREEN
+
+# Prevent password prompt timeout
+Defaults:nqrust !authenticate
+"#;
+
+    let sudoers_path = "/etc/sudoers.d/nqrust";
+
+    // Write sudoers file
+    let cmd = format!(
+        "echo '{}' | sudo tee {} > /dev/null",
+        sudoers_content.replace('\'', "'\"'\"'"),
+        sudoers_path
+    );
+
+    match run_command("sh", &["-c", &cmd]) {
+        Ok(output) => {
+            if !output.status.success() {
+                logs.push(LogEntry::warning("Failed to write sudoers file"));
+                return Ok(logs);
+            }
+        }
+        Err(e) => {
+            logs.push(LogEntry::warning(format!(
+                "Failed to write sudoers file: {}",
+                e
+            )));
+            return Ok(logs);
+        }
+    }
+
+    // Set correct permissions (sudoers files MUST be 0440)
+    let _ = run_sudo("chmod", &["0440", sudoers_path]);
+    let _ = run_sudo("chown", &["root:root", sudoers_path]);
+
+    // Validate the sudoers file
+    match run_sudo("visudo", &["-c", "-f", sudoers_path]) {
+        Ok(output) => {
+            if output.status.success() {
+                logs.push(LogEntry::success("Sudoers configuration installed and validated"));
+            } else {
+                // Invalid sudoers file - remove it to prevent lockout
+                let _ = run_sudo("rm", &[sudoers_path]);
+                logs.push(LogEntry::warning(
+                    "Sudoers file had invalid syntax, removed for safety",
+                ));
+            }
+        }
+        Err(_) => {
+            logs.push(LogEntry::warning("Could not validate sudoers file"));
+        }
+    }
 
     Ok(logs)
 }

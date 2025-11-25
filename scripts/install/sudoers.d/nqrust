@@ -1,11 +1,12 @@
 # Sudoers configuration for NQRust-MicroVM
 # This file grants necessary sudo permissions to manager and agent
 
-# Manager commands (for rootfs operations)
+# Manager commands (for rootfs operations - guest agent installation)
 Cmnd_Alias MANAGER_MOUNT = /bin/mount, /bin/umount, /usr/bin/mount, /usr/bin/umount
-Cmnd_Alias MANAGER_FILE_OPS = /bin/cp, /bin/mv, /bin/chmod, /bin/chown, /bin/mkdir, /bin/rmdir, /bin/ln, /bin/rm
-Cmnd_Alias MANAGER_READ = /bin/cat /etc/shadow, /bin/cat /srv/fc/vms/*/storage/rootfs*
-Cmnd_Alias MANAGER_WRITE = /usr/bin/tee, /bin/dd
+Cmnd_Alias MANAGER_FILE_OPS = /bin/cp, /bin/mv, /bin/chmod, /bin/chown, /bin/mkdir, /bin/rmdir, /bin/ln, /bin/rm, /bin/touch, /usr/bin/touch
+Cmnd_Alias MANAGER_TEST = /bin/test, /usr/bin/test, /bin/ls, /usr/bin/ls
+Cmnd_Alias MANAGER_READ = /bin/cat, /usr/bin/cat
+Cmnd_Alias MANAGER_WRITE = /usr/bin/tee, /bin/tee, /bin/dd
 
 # Agent commands (needs more permissions for Firecracker and networking)
 Cmnd_Alias AGENT_FIRECRACKER = /usr/local/bin/firecracker, /usr/bin/firecracker
@@ -13,8 +14,8 @@ Cmnd_Alias AGENT_NETWORK = /usr/sbin/ip, /sbin/ip, /usr/bin/brctl, /sbin/brctl
 Cmnd_Alias AGENT_SYSTEMD = /usr/bin/systemd-run, /bin/systemd-run, /usr/bin/systemctl, /bin/systemctl
 Cmnd_Alias AGENT_SCREEN = /usr/bin/screen, /bin/screen
 
-# Allow nqrust user to run manager commands
-nqrust ALL=(ALL) NOPASSWD: MANAGER_MOUNT, MANAGER_FILE_OPS, MANAGER_READ, MANAGER_WRITE
+# Allow nqrust user to run manager commands without password
+nqrust ALL=(ALL) NOPASSWD: MANAGER_MOUNT, MANAGER_FILE_OPS, MANAGER_TEST, MANAGER_READ, MANAGER_WRITE
 
 # Agent runs as root in systemd service, but allow group access for manual testing
 %nqrust ALL=(ALL) NOPASSWD: AGENT_FIRECRACKER, AGENT_NETWORK, AGENT_SYSTEMD, AGENT_SCREEN
