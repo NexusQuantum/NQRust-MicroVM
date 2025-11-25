@@ -630,6 +630,36 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
     // Set permissions
     let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
 
+    // WORKAROUND: Copy base images to /srv/images for hardcoded paths in functions/containers
+    if image_dir_str != "/srv/images" {
+        logs.push(LogEntry::info(
+            "Copying base images to /srv/images (workaround for hardcoded paths)".to_string(),
+        ));
+
+        // Copy kernel and runtime images that functions/containers need
+        for (filename, _, _) in BASE_IMAGES {
+            let src = format!("{}/{}", image_dir_str, filename);
+            let dst = format!("/srv/images/{}", filename);
+
+            // Skip if source doesn't exist (optional images)
+            if !Path::new(&src).exists() {
+                continue;
+            }
+
+            // Skip if destination already exists
+            if Path::new(&dst).exists() {
+                continue;
+            }
+
+            // Copy the file
+            let _ = run_sudo("cp", &[&src, &dst]);
+        }
+
+        // Ensure ownership is correct
+        let _ = run_sudo("chown", &["-R", "nqrust:nqrust", "/srv/images"]);
+        let _ = run_sudo("chmod", &["-R", "755", "/srv/images"]);
+    }
+
     logs.push(LogEntry::success("Base images download complete"));
 
     Ok(logs)
