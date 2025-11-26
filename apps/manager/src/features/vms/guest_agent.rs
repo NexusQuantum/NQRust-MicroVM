@@ -8,24 +8,19 @@ use uuid::Uuid;
 // Universal service configurations for different init systems
 const SYSTEMD_SERVICE: &str = r#"[Unit]
 Description=Guest metrics agent
-After=network.target
-Wants=network.target
+After=network-online.target systemd-networkd.service
+Wants=network-online.target
+Requires=systemd-networkd.service
 
 [Service]
 Type=simple
+ExecStartPre=/bin/sleep 2
 ExecStart=/usr/local/bin/guest-agent
 Restart=always
-RestartSec=5
-User=root
-Group=root
-
-# Logging
+RestartSec=2
 StandardOutput=journal
 StandardError=journal
-
-# Security
-NoNewPrivileges=true
-PrivateTmp=true
+SyslogIdentifier=guest-agent
 
 [Install]
 WantedBy=multi-user.target

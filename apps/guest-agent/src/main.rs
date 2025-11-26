@@ -523,14 +523,11 @@ async fn main() {
     if let Some(config) = config {
         tokio::spawn(async move {
             // Wait a bit for network to be ready
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
 
-            let mut interval = tokio::time::interval(Duration::from_secs(30));
             let mut reported = false;
 
             loop {
-                interval.tick().await;
-
                 if let Some(ip) = detect_ip() {
                     match report_ip_to_manager(&config, &ip).await {
                         Ok(_) => {
@@ -545,6 +542,13 @@ async fn main() {
                     }
                 } else {
                     eprintln!("Could not detect IP address from eth0");
+                }
+
+                // Use shorter interval until first successful report, then every 30s
+                if reported {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                } else {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }
         });

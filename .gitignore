@@ -52,14 +52,13 @@ logs/**
 *.swo
 *~
 
-# Runtime build scripts
-scripts/runtime-images/build-node-runtime.sh
-scripts/runtime-images/build-python-runtime.sh
-
-# Runtime build directories
+# Runtime build directories (temporary build artifacts)
 build-node-runtime/
 build-python-runtime/
+build-bun-runtime/
 /tmp/alpine-cache/
 
 build-node-runtime/*
 build-container-runtime/*
+build-python-runtime/*
+build-bun-runtime/*

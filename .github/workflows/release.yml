@@ -341,8 +341,8 @@ jobs:
 
       - name: Build Node.js function runtime
         run: |
-          # Use the actual build script that works locally
-          # Modify output path to use images/ directory
+          # Build script is in the repo, modify output path for CI
+          cd $GITHUB_WORKSPACE
           sed 's|OUTPUT_IMAGE="/srv/images/node-runtime.ext4"|OUTPUT_IMAGE="images/node-runtime.ext4"|' \
             scripts/runtime-images/build-node-runtime.sh > /tmp/build-node.sh
           chmod +x /tmp/build-node.sh
@@ -351,13 +351,23 @@ jobs:
 
       - name: Build Python function runtime
         run: |
-          # Use the actual build script that works locally
-          # Modify output path to use images/ directory
+          # Build script is in the repo, modify output path for CI
+          cd $GITHUB_WORKSPACE
           sed 's|OUTPUT_IMAGE="/srv/images/python-runtime.ext4"|OUTPUT_IMAGE="images/python-runtime.ext4"|' \
             scripts/runtime-images/build-python-runtime.sh > /tmp/build-python.sh
           chmod +x /tmp/build-python.sh
           sudo /tmp/build-python.sh
           ls -lh images/python-runtime.ext4
+
+      - name: Build Bun function runtime
+        run: |
+          # Build script is in the repo, modify output path for CI
+          cd $GITHUB_WORKSPACE
+          sed 's|OUTPUT_IMAGE="/srv/images/bun-runtime.ext4"|OUTPUT_IMAGE="images/bun-runtime.ext4"|' \
+            scripts/runtime-images/build-bun-runtime.sh > /tmp/build-bun.sh
+          chmod +x /tmp/build-bun.sh
+          sudo /tmp/build-bun.sh
+          ls -lh images/bun-runtime.ext4
 
       - name: Build container runtime (Alpine + Docker)
         run: |
@@ -448,7 +458,7 @@ jobs:
         run: |
           # Compress larger images (>100MB) to reduce upload size
           cd images
-          for img in ubuntu-24.04-minimal.ext4 node-runtime.ext4 python-runtime.ext4 container-runtime.ext4; do
+          for img in ubuntu-24.04-minimal.ext4 node-runtime.ext4 python-runtime.ext4 bun-runtime.ext4 container-runtime.ext4; do
             if [ -f "$img" ]; then
               echo "Compressing $img..."
               gzip -9 -k "$img"
@@ -469,6 +479,7 @@ jobs:
             images/ubuntu-24.04-minimal.ext4.gz
             images/node-runtime.ext4.gz
             images/python-runtime.ext4.gz
+            images/bun-runtime.ext4.gz
             images/container-runtime.ext4.gz
           retention-days: 1
 
@@ -578,6 +589,7 @@ jobs:
           cp artifacts/base-images/ubuntu-24.04-minimal.ext4 release/
           cp artifacts/base-images/node-runtime.ext4 release/
           cp artifacts/base-images/python-runtime.ext4 release/
+          cp artifacts/base-images/bun-runtime.ext4 release/
           # Container runtime stays compressed (>2GB uncompressed exceeds GitHub limit)
           cp artifacts/base-images/container-runtime.ext4.gz release/
           ls -lh release/
@@ -710,6 +722,7 @@ jobs:
           - **Ubuntu**: [ubuntu-24.04-minimal.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/ubuntu-24.04-minimal.ext4) - Ubuntu 24.04 minimal
           - **Node.js Runtime**: [node-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/node-runtime.ext4) - For serverless functions
           - **Python Runtime**: [python-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/python-runtime.ext4) - For serverless functions
+          - **Bun Runtime**: [bun-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/bun-runtime.ext4) - For serverless functions (TypeScript/JS)
           - **Container Runtime**: [container-runtime.ext4.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/container-runtime.ext4.gz) - Docker-in-VM (~2.2GB, gzipped)
 
           ### Checksums
@@ -757,6 +770,7 @@ jobs:
             release/ubuntu-24.04-minimal.ext4
             release/node-runtime.ext4
             release/python-runtime.ext4
+            release/bun-runtime.ext4
             release/container-runtime.ext4.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

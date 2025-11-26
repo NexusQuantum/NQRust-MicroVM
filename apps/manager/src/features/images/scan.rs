@@ -51,7 +51,7 @@ const BASE_IMAGES: &[(&str, &str, &str, &str)] = &[
     // Function runtimes
     ("node-runtime.ext4", "rootfs", "node-runtime", "runtime"),
     ("python-runtime.ext4", "rootfs", "python-runtime", "runtime"),
-    ("ruby-runtime.ext4", "rootfs", "ruby-runtime", "runtime"),
+    ("bun-runtime.ext4", "rootfs", "bun-runtime", "runtime"),
     // Container runtime
     (
         "container-runtime.ext4",

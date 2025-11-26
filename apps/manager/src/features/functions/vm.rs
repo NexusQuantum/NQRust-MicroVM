@@ -111,9 +111,11 @@ fn get_runtime_image_paths(runtime: &str) -> Result<(String, String)> {
     let rootfs = match runtime {
         "node" => "/srv/images/node-runtime.ext4",
         "python" => "/srv/images/python-runtime.ext4",
-        "go" => "/srv/images/go-runtime.ext4",
-        "rust" => "/srv/images/rust-runtime.ext4",
-        _ => anyhow::bail!("Unsupported runtime: {}", runtime),
+        "bun" => "/srv/images/bun-runtime.ext4",
+        _ => anyhow::bail!(
+            "Unsupported runtime: {}. Supported: node, python, bun",
+            runtime
+        ),
     };
 
     Ok((kernel, rootfs.to_string()))
