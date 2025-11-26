@@ -119,13 +119,16 @@ export class ApiClient {
 
       if (error instanceof Error) {
         // Try to parse as FacadeError first
+        let facadeError: FacadeError | null = null
         try {
-          const facadeError = JSON.parse(error.message) as FacadeError
-          if (facadeError.request_id && facadeError.status) {
-            throw error
-          }
+          facadeError = JSON.parse(error.message) as FacadeError
         } catch {
-          // Not a facade error, wrap it
+          // Not a valid JSON, will handle below
+        }
+
+        // If it's a valid FacadeError with status code, re-throw as-is
+        if (facadeError && facadeError.status !== undefined && facadeError.status > 0) {
+          throw error
         }
 
         // Handle abort/timeout
@@ -209,7 +212,8 @@ export function parseFacadeError(error: unknown): FacadeError | null {
   if (error instanceof Error) {
     try {
       const parsed = JSON.parse(error.message) as FacadeError
-      if (parsed.request_id && typeof parsed.status === "number") {
+      // Check if it's a valid FacadeError with status code
+      if (parsed.status !== undefined && typeof parsed.status === "number") {
         return parsed
       }
     } catch {

@@ -91,6 +91,8 @@ export default function UserPage() {
         isCreating={createMutation.isPending}
         isUpdating={updateMutation.isPending}
         isDeleting={deleteMutation.isPending}
+        isCreateSuccess={createMutation.isSuccess}
+        isUpdateSuccess={updateMutation.isSuccess}
       />
     </div>
   )

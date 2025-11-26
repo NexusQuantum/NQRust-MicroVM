@@ -9,13 +9,14 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ArrowLeft, Save, Loader2 } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { useRegistryImages } from "@/lib/queries"
+import { useRegistryImages, useImage } from "@/lib/queries"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "@/lib/api/facade"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 
 export default function NewTemplatePage() {
   const router = useRouter()
@@ -33,25 +34,50 @@ export default function NewTemplatePage() {
   })
 
   const [useImageIds, setUseImageIds] = useState(true)
+  const [showCancelDialog, setShowCancelDialog] = useState(false)
 
   // Filter images by type
   const kernelImages = images?.filter(img => img.kind === "kernel") || []
   const rootfsImages = images?.filter(img => img.kind === "rootfs") || []
 
+  // Fetch image details to get host_path
+  const { data: kernelImage } = useImage(formData.kernel_image_id || "")
+  const { data: rootfsImage } = useImage(formData.rootfs_image_id || "")
+
+  // Update paths when image IDs change and we're using registry
+  useEffect(() => {
+    if (useImageIds && kernelImage?.host_path) {
+      setFormData(prev => ({ ...prev, kernel_path: kernelImage.host_path }))
+    }
+  }, [kernelImage, useImageIds])
+
+  useEffect(() => {
+    if (useImageIds && rootfsImage?.host_path) {
+      setFormData(prev => ({ ...prev, rootfs_path: rootfsImage.host_path }))
+    }
+  }, [rootfsImage, useImageIds])
+
   const createMutation = useMutation({
     mutationFn: () => {
-      // Prepare spec based on whether using image IDs or paths
+      // Prepare spec with both image IDs and paths
       const spec: any = {
         vcpu: formData.vcpu,
         mem_mib: formData.mem_mib,
       }
 
-      if (useImageIds) {
-        if (formData.kernel_image_id) spec.kernel_image_id = formData.kernel_image_id
-        if (formData.rootfs_image_id) spec.rootfs_image_id = formData.rootfs_image_id
-      } else {
-        if (formData.kernel_path) spec.kernel_path = formData.kernel_path
-        if (formData.rootfs_path) spec.rootfs_path = formData.rootfs_path
+      // Always include both image_id and path if available
+      if (formData.kernel_image_id) {
+        spec.kernel_image_id = formData.kernel_image_id
+      }
+      if (formData.kernel_path) {
+        spec.kernel_path = formData.kernel_path
+      }
+
+      if (formData.rootfs_image_id) {
+        spec.rootfs_image_id = formData.rootfs_image_id
+      }
+      if (formData.rootfs_path) {
+        spec.rootfs_path = formData.rootfs_path
       }
 
       return facadeApi.createTemplate({
@@ -98,6 +124,21 @@ export default function NewTemplatePage() {
         })
         return
       }
+
+      // Check if paths are populated (should be auto-populated from image details)
+      if (formData.kernel_image_id && !formData.kernel_path) {
+        toast.error("Loading Error", {
+          description: "Kernel image path is still loading, please wait",
+        })
+        return
+      }
+
+      if (formData.rootfs_image_id && !formData.rootfs_path) {
+        toast.error("Loading Error", {
+          description: "Rootfs image path is still loading, please wait",
+        })
+        return
+      }
     } else {
       if (!formData.kernel_path && !formData.rootfs_path) {
         toast.error("Validation Error", {
@@ -128,22 +169,18 @@ export default function NewTemplatePage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/templates">
-              <Button type="button" variant="ghost" size="icon">
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            </Link>
+            <Button type="button" variant="ghost" size="icon" onClick={() => setShowCancelDialog(true)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
             <div>
               <h1 className="text-3xl font-bold text-foreground">Create New Template</h1>
               <p className="text-sm text-muted-foreground mt-1">Save a VM configuration as a reusable template</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/templates">
-              <Button type="button" variant="outline">
-                Cancel
-              </Button>
-            </Link>
+            <Button type="button" variant="outline" onClick={() => setShowCancelDialog(true)}>
+              Cancel
+            </Button>
             <Button type="submit" disabled={createMutation.isPending}>
               {createMutation.isPending ? (
                 <>
@@ -365,6 +402,21 @@ export default function NewTemplatePage() {
           </Card>
         </div>
       </div>
+
+      {/* Cancel Confirmation Dialog */}
+      <ConfirmDialog
+        open={showCancelDialog}
+        onOpenChange={setShowCancelDialog}
+        onConfirm={() => {
+          setShowCancelDialog(false)
+          router.push("/templates")
+        }}
+        title="Cancel Template Creation"
+        description="Are you sure you want to cancel? Any unsaved changes will be lost."
+        confirmText="Yes, Cancel"
+        cancelText="Continue Editing"
+        variant="default"
+      />
     </form>
   )
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -30,6 +30,8 @@ interface UserTableProps {
   isDeleting?: boolean
   isCreating?: boolean
   isUpdating?: boolean
+  isCreateSuccess?: boolean
+  isUpdateSuccess?: boolean
 }
 
 const ITEMS_PER_PAGE = 10
@@ -41,7 +43,9 @@ export function UserTable({
   onUpdateUser,
   isDeleting = false,
   isCreating = false,
-  isUpdating = false
+  isUpdating = false,
+  isCreateSuccess = false,
+  isUpdateSuccess = false
 }: UserTableProps) {
   // ---- auth ----
   const { user: currentUser } = useAuthStore()
@@ -84,6 +88,7 @@ export function UserTable({
     open: false,
     mode: "create",
   })
+  const [wasSubmitting, setWasSubmitting] = useState(false)
 
   const handleOpenCreate = () => {
     setFormDialog({ open: true, mode: "create" })
@@ -95,16 +100,25 @@ export function UserTable({
 
   const handleCloseForm = () => {
     setFormDialog({ open: false, mode: "create" })
+    setWasSubmitting(false)
   }
 
   const handleSubmitForm = (data: any) => {
+    setWasSubmitting(true)
     if (formDialog.mode === "create") {
       onCreateUser(data)
     } else if (formDialog.user) {
       onUpdateUser(formDialog.user.id, data)
     }
-    handleCloseForm()
   }
+
+  // Close dialog only when mutation succeeds
+  useEffect(() => {
+    if (wasSubmitting && (isCreateSuccess || isUpdateSuccess)) {
+      // Mutation succeeded, close the dialog
+      handleCloseForm()
+    }
+  }, [isCreateSuccess, isUpdateSuccess, wasSubmitting])
 
   // badge helper
   const getRoleBadge = (role: string) => {

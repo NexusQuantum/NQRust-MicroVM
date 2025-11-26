@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
 import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq } from "@/lib/types"
-import { toast } from "sonner"
 import { useNotificationStore } from "@/lib/stores/notification-store"
 
 /**
@@ -127,21 +126,12 @@ export function useFunction(id: string) {
 // !DELETE
 export function useDeleteFunction() {
   const queryClient = useQueryClient()
-  
+
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteFunction(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.functions })
-      toast.success("Function deleted")
     },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message)
-        toast.error(e.error || "Delete failed", {description: e.suggestion || e.fault_message})
-      } catch {
-        toast.error('Failed to delete Function')
-      }
-    }
   })
 }
   
@@ -154,7 +144,6 @@ export function useCreateFunction() {
       facadeApi.createFunction({ name, runtime, handler, code, vcpu, memory_mb}),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.functions })
-      toast.success('Function Created')
 
       // Add notification to notification store
       const { addNotification } = useNotificationStore.getState()
@@ -167,16 +156,6 @@ export function useCreateFunction() {
         resourceId: (data as any)?.id,
       })
     },
-    onError: (error: Error) => {
-      try {
-        const errorData = JSON.parse(error.message)
-        toast.error(errorData.error, {
-          description: errorData.suggestion || errorData.fault_message,
-        })
-      } catch {
-        toast.error("Failed to create VM")
-      }
-    },
   })
 }
 
@@ -188,18 +167,7 @@ export function useUpdateFunction() {
     mutationFn: ({ fnId, data }: { fnId: string, data: UpdateFunction }) => facadeApi.updateFunction(fnId, data),
     onSuccess: (_, { fnId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.function(fnId) })
-      toast.success("Function updated")
     },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message)
-        toast.error(e.error || "Failed o update function", {
-          description: e.suggestion || e.fault_message
-        })
-      } catch {
-        toast.error("Failed to update function")
-      }
-    }
   })
 }
 
@@ -208,22 +176,6 @@ export function useTestFunction() {
   return useMutation({
     mutationFn: (params: TestFunction) =>
       facadeApi.testFunction(params),
-    onSuccess: (data: any) => {
-      toast.success("Test executed successfully", {
-        description: `Duration: ${data.duration_ms}ms`,
-      })
-      return data
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message)
-        toast.error(e.error || "Test failed", {
-          description: e.suggestion || e.fault_message,
-        })
-      } catch {
-        toast.error("Failed to execute test")
-      }
-    },
   })
 }
 
@@ -232,22 +184,6 @@ export function useInvokeFunction() {
   return useMutation({
     mutationFn: ({ fnId, payload }: { fnId: string, payload: InvokeFunction }) =>
       facadeApi.invokeFunction(fnId, payload),
-    onSuccess: (data: any) => {
-      toast.success("Function invoked successfully", {
-        description: `Duration: ${data.duration_ms}ms`,
-      })
-      return data
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message)
-        toast.error(e.error || "Invocation failed", {
-          description: e.suggestion || e.fault_message,
-        })
-      } catch {
-        toast.error("Failed to invoke function")
-      }
-    },
   })
 }
 
@@ -346,17 +282,7 @@ export function useDeleteTemplate() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.templates });
       // Toast will be shown after redirect to /templates
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete template", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete template");
-      }
-    },
+    }
   });
 }
 
@@ -369,17 +295,6 @@ export function useUpdateTemplate() {
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.template(id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.templates });
-      // Toast will be shown after redirect to /templates
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update template", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update template");
-      }
     },
   });
 }
@@ -390,21 +305,8 @@ export function useInstantiateTemplate() {
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       facadeApi.instantiateTemplate(id, { name }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vms });
-      toast.success("VM created from template", {
-        description: `VM "${data.id}" has been created successfully`,
-      });
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to instantiate template", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to instantiate template");
-      }
     },
   });
 }
@@ -420,15 +322,6 @@ export function useImportRegistryImage() {
     }) => facadeApi.importRegistryImage(params),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
-      toast.success("Image imported");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Import failed", { description: e.message });
-      } catch {
-        toast.error("Import failed");
-      }
     },
   });
 }
@@ -443,15 +336,6 @@ export function useCreateRegistryVolume() {
     }) => facadeApi.createRegistryVolume(params),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
-      toast.success("Volume created");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Create failed", { description: e.message });
-      } catch {
-        toast.error("Create failed");
-      }
     },
   });
 }
@@ -462,9 +346,7 @@ export function useDeleteRegistryItem() {
     mutationFn: (path: string) => facadeApi.deleteRegistryItem(path),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
-      toast.success("Item deleted");
     },
-    onError: () => toast.error("Delete failed"),
   });
 }
 
@@ -475,9 +357,7 @@ export function useRenameRegistryItem() {
       facadeApi.renameRegistryItem(p.path, p.new_name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
-      toast.success("Item renamed");
     },
-    onError: () => toast.error("Rename not supported in current backend"),
   });
 }
 
@@ -490,9 +370,7 @@ export function useUploadRegistryFile() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
-      toast.success("File uploaded");
     },
-    onError: () => toast.error("Upload not supported in current backend"),
   });
 }
 
@@ -524,19 +402,6 @@ export function useDownloadDockerImage() {
       // Invalidate and immediately refetch the images list
       await queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
       await queryClient.refetchQueries({ queryKey: queryKeys.registryImages });
-      toast.success("Docker image downloaded and cached", {
-        description: "The image is now available in your cached Docker images",
-      });
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Download failed", { 
-          description: e.fault_message || e.message || "Please check the logs for details" 
-        });
-      } catch {
-        toast.error("Download failed", { description: error.message || "Please check the logs for details" });
-      }
     },
   });
 }
@@ -548,10 +413,6 @@ export function useUploadImage() {
       facadeApi.uploadImage(params.file, params.kind, params.name, params.project),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
-      toast.success("Image uploaded successfully");
-    },
-    onError: (error: Error) => {
-      toast.error("Upload failed", { description: error.message });
     },
   });
 }
@@ -562,19 +423,8 @@ export function useCreateVM() {
 
   return useMutation({
     mutationFn: (config: CreateVmReq) => facadeApi.createVM(config),
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vms });
-      toast.success("VM created successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const errorData = JSON.parse(error.message);
-        toast.error(errorData.error, {
-          description: errorData.suggestion || errorData.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create VM");
-      }
     },
   });
 }
@@ -586,17 +436,6 @@ export function useInitializeVM() {
     mutationFn: (id: string) => facadeApi.initializeVM(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
-      toast.success("VM initialized successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const errorData = JSON.parse(error.message);
-        toast.error(errorData.error, {
-          description: errorData.suggestion || errorData.fault_message,
-        });
-      } catch {
-        toast.error("Failed to initialize VM");
-      }
     },
   });
 }
@@ -638,16 +477,6 @@ export function useCreateSnapshot() {
       queryClient.invalidateQueries({ queryKey: queryKeys.snapshots(vmId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
     },
-    onError: (error: Error) => {
-      try {
-        const errorData = JSON.parse(error.message);
-        toast.error(errorData.error, {
-          description: errorData.suggestion || errorData.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create snapshot");
-      }
-    },
   });
 }
 
@@ -664,24 +493,6 @@ export function useRestoreSnapshot() {
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.vms });
     },
-    onError: (error: Error) => {
-      try {
-        const errorData = JSON.parse(error.message);
-        if (errorData.status === 409) {
-          toast.error("Cannot restore snapshot", {
-            description:
-              errorData.fault_message ||
-              "VM must be stopped to restore snapshot",
-          });
-        } else {
-          toast.error(errorData.error, {
-            description: errorData.suggestion || errorData.fault_message,
-          });
-        }
-      } catch {
-        toast.error("Failed to restore snapshot");
-      }
-    },
   });
 }
 
@@ -693,17 +504,7 @@ export function useDeleteSnapshot() {
       facadeApi.deleteVMSnapshot(vmId, snapshotId),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.snapshots(vmId) });
-    },
-    onError: (error: Error) => {
-      try {
-        const errorData = JSON.parse(error.message);
-        toast.error(errorData.error, {
-          description: errorData.suggestion || errorData.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete snapshot");
-      }
-    },
+    }
   });
 }
 
@@ -726,36 +527,14 @@ export function useVmStatePatch() {
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.vms });
       switch (action) {
-        case "start":
-          toast.success("VM started");
-          break;
-        case "pause":
-          toast.success("VM paused");
-          break;
-        case "resume":
-          toast.success("VM resumed");
-          break;
-        case "stop":
-          toast.success("Shutdown signal sent");
-          break;
-        case "flush_metrics":
-          toast.success("Metrics flush requested");
-          break;
-        case "ctrl_alt_del":
-          toast.success("Ctrl+Alt+Del signal sent");
-          break;
+        case "start":          break;
+        case "pause":          break;
+        case "resume":          break;
+        case "stop":          break;
+        case "flush_metrics":          break;
+        case "ctrl_alt_del":          break;
       }
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Action failed", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Action failed");
-      }
-    },
+    }
   });
 }
 
@@ -766,19 +545,7 @@ export function useDeleteVM() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteVM(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
-      toast.success("VM deleted");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Delete failed", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete VM");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });    }
   });
 }
 
@@ -800,19 +567,7 @@ export function useCreateVMDrive() {
       facadeApi.createVMDrive(vmId, drive),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
-      toast.success("Drive created");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to create drive", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create drive");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
   });
 }
 
@@ -831,19 +586,7 @@ export function useUpdateVMDrive() {
     }) => facadeApi.updateVMDrive(vmId, driveId, drive),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
-      toast.success("Drive updated");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update drive", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update drive");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
   });
 }
 
@@ -855,19 +598,7 @@ export function useDeleteVMDrive() {
       facadeApi.deleteVMDrive(vmId, driveId),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
-      toast.success("Drive deleted");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete drive", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete drive");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
   });
 }
 
@@ -889,19 +620,7 @@ export function useCreateVMNic() {
       facadeApi.createVMNic(vmId, nic),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
-      toast.success("Network interface created");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to create NIC", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create NIC");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
   });
 }
 
@@ -920,19 +639,7 @@ export function useUpdateVMNic() {
     }) => facadeApi.updateVMNic(vmId, nicId, nic),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
-      toast.success("Network interface updated");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update NIC", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update NIC");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
   });
 }
 
@@ -944,19 +651,7 @@ export function useDeleteVMNic() {
       facadeApi.deleteVMNic(vmId, nicId),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
-      toast.success("Network interface deleted");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete NIC", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete NIC");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
   });
 }
 
@@ -986,21 +681,7 @@ export function useCreateContainer() {
     mutationFn: (params: import("@/lib/types").CreateContainerReq) =>
       facadeApi.createContainer(params),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container created", {
-        description: "Container is being provisioned...",
-      });
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to create container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1012,19 +693,7 @@ export function useUpdateContainer() {
       facadeApi.updateContainer(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container updated");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1034,19 +703,7 @@ export function useDeleteContainer() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteContainer(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container deleted");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1057,19 +714,7 @@ export function useStartContainer() {
     mutationFn: (id: string) => facadeApi.startContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container started");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to start container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to start container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1080,19 +725,7 @@ export function useStopContainer() {
     mutationFn: (id: string) => facadeApi.stopContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container stopped");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to stop container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to stop container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1103,19 +736,7 @@ export function useRestartContainer() {
     mutationFn: (id: string) => facadeApi.restartContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container restarted");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to restart container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to restart container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1126,19 +747,7 @@ export function usePauseContainer() {
     mutationFn: (id: string) => facadeApi.pauseContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container paused");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to pause container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to pause container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1149,19 +758,7 @@ export function useResumeContainer() {
     mutationFn: (id: string) => facadeApi.resumeContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
-      toast.success("Container resumed");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to resume container", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to resume container");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
   });
 }
 
@@ -1211,14 +808,6 @@ export function useDeleteHost() {
     mutationFn: (id: string) => facadeApi.deleteHost(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.hosts });
-      toast.success("Host deleted successfully");
-    },
-    onError: (error: any) => {
-      if (error?.response?.status === 400) {
-        toast.error("Cannot delete alive host. Only dead hosts (offline for more than 30 seconds) can be deleted.");
-      } else {
-        toast.error(error?.error || "Failed to delete host");
-      }
     },
   });
 }
@@ -1261,19 +850,7 @@ export function useUpdateNetwork() {
       facadeApi.updateNetwork(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.network(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.networks });
-      toast.success("Network updated successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update network", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update network");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.networks });    }
   });
 }
 
@@ -1283,19 +860,7 @@ export function useCreateNetwork() {
   return useMutation({
     mutationFn: (network: any) => facadeApi.createNetwork(network),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.networks });
-      toast.success("Network created successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to create network", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create network");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.networks });    }
   });
 }
 
@@ -1305,19 +870,7 @@ export function useDeleteNetwork() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteNetwork(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.networks });
-      toast.success("Network deleted successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete network", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete network");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.networks });    }
   });
 }
 
@@ -1348,19 +901,7 @@ export function useCreateVolume() {
   return useMutation({
     mutationFn: facadeApi.createVolume.bind(facadeApi),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
-      toast.success("Volume created successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to create volume", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create volume");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
   });
 }
 
@@ -1372,19 +913,7 @@ export function useAttachVolume() {
       facadeApi.attachVolume(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.volume(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
-      toast.success("Volume attached successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to attach volume", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to attach volume");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
   });
 }
 
@@ -1396,19 +925,7 @@ export function useDetachVolume() {
       facadeApi.detachVolume(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.volume(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
-      toast.success("Volume detached successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to detach volume", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to detach volume");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
   });
 }
 
@@ -1418,19 +935,7 @@ export function useDeleteVolume() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteVolume(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
-      toast.success("Volume deleted successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete volume", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete volume");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
   });
 }
 
@@ -1463,17 +968,6 @@ export function useCreateUser() {
       facadeApi.createUser(params),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.users });
-      toast.success("User created successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to create user", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to create user");
-      }
     },
   });
 }
@@ -1486,19 +980,7 @@ export function useUpdateUser() {
       facadeApi.updateUser(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.user(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.users });
-      toast.success("User updated successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update user", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update user");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.users });    }
   });
 }
 
@@ -1508,19 +990,7 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteUser(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.users });
-      toast.success("User deleted successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete user", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete user");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.users });    }
   });
 }
 
@@ -1543,19 +1013,7 @@ export function useUpdatePreferences() {
     mutationFn: (params: import("@/lib/types").UpdatePreferencesRequest) =>
       facadeApi.updatePreferences(params),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.preferences });
-      toast.success("Preferences updated successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update preferences", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update preferences");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.preferences });    }
   });
 }
 
@@ -1574,19 +1032,7 @@ export function useUpdateProfile() {
     mutationFn: (params: import("@/lib/types").UpdateProfileRequest) =>
       facadeApi.updateProfile(params),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.profile });
-      toast.success("Profile updated successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to update profile", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to update profile");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile });    }
   });
 }
 
@@ -1594,19 +1040,7 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: (params: import("@/lib/types").ChangePasswordRequest) =>
       facadeApi.changePassword(params),
-    onSuccess: () => {
-      toast.success("Password changed successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to change password", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to change password");
-      }
-    },
+    onSuccess: () => {    }
   });
 }
 
@@ -1616,19 +1050,7 @@ export function useUploadAvatar() {
   return useMutation({
     mutationFn: (file: File) => facadeApi.uploadAvatar(file),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.profile });
-      toast.success("Avatar uploaded successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to upload avatar", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to upload avatar");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile });    }
   });
 }
 
@@ -1638,18 +1060,6 @@ export function useDeleteAvatar() {
   return useMutation({
     mutationFn: () => facadeApi.deleteAvatar(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.profile });
-      toast.success("Avatar deleted successfully");
-    },
-    onError: (error: Error) => {
-      try {
-        const e = JSON.parse(error.message);
-        toast.error(e.error || "Failed to delete avatar", {
-          description: e.suggestion || e.fault_message,
-        });
-      } catch {
-        toast.error("Failed to delete avatar");
-      }
-    },
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile });    }
   });
 }

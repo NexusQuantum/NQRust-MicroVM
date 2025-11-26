@@ -14,6 +14,7 @@ import { useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import type { CreateFunction, UpdateFunction, Function as FnType } from "@/lib/types"
 import { useCreateFunction, useUpdateFunction, useInvokeFunction } from "@/lib/queries"
+import { useTheme } from "next-themes"
 
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
 
@@ -24,14 +25,14 @@ interface FunctionEditorProps {
   mode?: "create" | "update"
   functionId?: string
   // New
-  initialRuntime?: "node" | "python"
+  initialRuntime?: "node" | "python" | "deno" | "bun"
   initialCode?: string
   initialEvent?: string
 }
 
 const fnCreationSchema = z.object({
   name: z.string().min(1, "Function Name is required").max(50, "Name too long"),
-  runtime: z.enum(['node', 'python']),
+  runtime: z.enum(['node', 'python', 'deno', 'bun']),
   handler: z.string().min(1, "Handler Name is required").max(50, "Name too long"),
   code: z.string().min(1, "Code is required"),
   vcpu: z.number().min(1, "Minimum 1 vCPU").max(32, "Maximum 32 vCPU"),
@@ -78,20 +79,89 @@ def handler(event):
         "body": '{"result": %s}' % (a + b),
     }`;
 
+const DEFAULT_CODE_DENO = `// index.ts (Deno / TypeScript)
+interface Event {
+  key1?: number | string;
+  key2?: number | string;
+}
+
+export async function handler(event: Event) {
+  const a = Number(event?.key1);
+  const b = Number(event?.key2);
+  
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return {
+      statusCode: 400,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
+    };
+  }
+  
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ result: a + b }),
+  };
+}`;
+
+const DEFAULT_CODE_BUN = `// index.ts (Bun / TypeScript)
+interface Event {
+  key1?: number | string;
+  key2?: number | string;
+}
+
+export async function handler(event: Event) {
+  const a = Number(event?.key1);
+  const b = Number(event?.key2);
+  
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return {
+      statusCode: 400,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
+    };
+  }
+  
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ result: a + b }),
+  };
+}`;
+
 const DEFAULT_PAYLOAD = `{
   "key1": 10,
   "key2": 5
 }`
 
+function getDefaultCodeForRuntime(runtime: string): string {
+  switch (runtime) {
+    case 'python':
+      return DEFAULT_CODE_PY
+    case 'deno':
+      return DEFAULT_CODE_DENO
+    case 'bun':
+      return DEFAULT_CODE_BUN
+    default:
+      return DEFAULT_CODE_NODE
+  }
+}
+
 /* ---------------------------------------------
  * NORMALIZER #1 (BACKEND Create/Update):
  * Paksa format: const <handlerName> = async (...) => {...}
+ * For Deno/Bun, code is passed as-is (ES modules).
  * --------------------------------------------- */
+type RuntimeType = 'node' | 'python' | 'deno' | 'bun';
+
 function normalizeToConstHandlerForBackend(
-  runtime: 'node' | 'python',
+  runtime: RuntimeType,
   rawCode: string,
   handlerName: string
 ) {
+  // Deno and Bun use ES modules natively, no transformation needed
+  if (runtime === 'deno' || runtime === 'bun' || runtime === 'python') return rawCode;
+  
   if (runtime !== 'node') return rawCode;
 
   let code = rawCode;
@@ -123,12 +193,16 @@ function normalizeToConstHandlerForBackend(
  * NORMALIZER #2 (RUN TEST /api/test):
  * Pastikan selalu ada exports.handler (tanpa mengandalkan module),
  * lalu mirror ke module.exports.handler jika module tersedia.
+ * For Deno/Bun, code is passed as-is (ES modules).
  * --------------------------------------------- */
 function normalizeToModuleExportsForRunTest(
-  runtime: 'node' | 'python',
+  runtime: RuntimeType,
   rawCode: string,
   handlerName: string
 ) {
+  // Deno and Bun use ES modules natively, no transformation needed
+  if (runtime === 'deno' || runtime === 'bun' || runtime === 'python') return rawCode;
+  
   if (runtime !== 'node') return rawCode;
 
   let code = rawCode;
@@ -187,6 +261,7 @@ export function FunctionEditor({
   functionData,
   onComplete = () => { },
 }: FunctionEditorProps) {
+  const { theme } = useTheme()
   const [testEvent, setTestEvent] = useState(initialEvent ?? DEFAULT_PAYLOAD)
   const editorRef = useRef<any>(null)
   // console.log('initial Event: ', initialEvent)
@@ -216,12 +291,12 @@ export function FunctionEditor({
     mode: 'onChange',
     defaultValues: {
       name: functionData?.name ?? "my-function",
-      runtime: (initialRuntime ?? functionData?.runtime ?? "node") as "node" | "python",
+      runtime: (initialRuntime ?? functionData?.runtime ?? "node") as RuntimeType,
       handler: functionData?.handler ?? "handler",
       code:
         initialCode ??
         functionData?.code ??
-        ((initialRuntime ?? functionData?.runtime) === 'python' ? DEFAULT_CODE_PY : DEFAULT_CODE_NODE),
+        getDefaultCodeForRuntime(initialRuntime ?? functionData?.runtime ?? "node"),
       vcpu: functionData?.vcpu ?? 1,
       memory_mb: functionData?.memory_mb ?? 512,
       timeout_seconds: functionData?.timeout_seconds ?? 30
@@ -245,7 +320,7 @@ export function FunctionEditor({
       timeout_seconds: getValues('timeout_seconds') ?? 30,
 
       // ambil dari initial* jika ada, kalau tidak pakai nilai saat ini
-      runtime: (initialRuntime ?? getValues('runtime') ?? "node") as "node" | "python",
+      runtime: (initialRuntime ?? getValues('runtime') ?? "node") as RuntimeType,
       code: initialCode ?? getValues('code') ?? DEFAULT_CODE_NODE,
     })
 
@@ -256,11 +331,20 @@ export function FunctionEditor({
   useEffect(() => {
     if (isUpdate) return
     if (initialCode != null) return
-    if (runtime === 'python') setValue('code', DEFAULT_CODE_PY)
-    else setValue('code', DEFAULT_CODE_NODE)
+    setValue('code', getDefaultCodeForRuntime(runtime))
   }, [runtime, setValue, isUpdate, initialCode])
 
-  const getLanguage = () => (runtime === 'python' ? "python" : "javascript")
+  const getLanguage = () => {
+    switch (runtime) {
+      case 'python':
+        return "python"
+      case 'deno':
+      case 'bun':
+        return "typescript"
+      default:
+        return "javascript"
+    }
+  }
 
   const createFunction = useCreateFunction()
   const updateFunction = useUpdateFunction()
@@ -428,7 +512,7 @@ export function FunctionEditor({
                           setTimeout(() => editorRef.current?.getAction('editor.action.formatDocument')?.run(), 100)
                         }
                       }}
-                      theme="light"
+                      theme={theme === "dark" ? "vs-dark" : "light"}
                       options={{
                         minimap: { enabled: false },
                         fontSize: 14,
@@ -535,6 +619,8 @@ export function FunctionEditor({
                       <SelectContent>
                         <SelectItem value="node">Node.js</SelectItem>
                         <SelectItem value="python">Python</SelectItem>
+                        <SelectItem value="deno">Deno (TypeScript)</SelectItem>
+                        <SelectItem value="bun">Bun (TypeScript)</SelectItem>
                       </SelectContent>
                     </Select>
                   )}
@@ -615,7 +701,7 @@ export function FunctionEditor({
                   language="json"
                   value={testEvent}
                   onChange={(value) => setTestEvent(value || "")}
-                  theme="light"
+                  theme={theme === "dark" ? "vs-dark" : "light"}
                   options={{
                     minimap: { enabled: false },
                     fontSize: 12,

@@ -9,27 +9,145 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ReusableTabs, TabItem } from "@/components/dashboard/tabs-new"
 import { StatusBadge } from "@/components/shared/status-badge"
-import { Server, Zap, Container, Play, Trash2, Search, Square, Pause } from "lucide-react"
+import { Server, Zap, Container, Play, Trash2, Search, Square, Pause, FileText, Check, AlertTriangle, Loader2, Clipboard } from "lucide-react"
 import type { UnifiedResource } from "@/lib/api/dashboard"
-import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
-import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { useToast } from "@/hooks/use-toast"
+import { useVmStatePatch, useDeleteVM, useInvokeFunction } from "@/lib/queries"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
+import { useTheme } from "next-themes"
+import dynamic from "next/dynamic"
+import { toast } from "sonner"
+
+const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
 
 interface ResourceTableProps {
   resources: UnifiedResource[]
 }
 
+const DEFAULT_PAYLOAD = `{
+  "key1": 10,
+  "key2": 5
+}`
+
 export function ResourceTable({ resources }: ResourceTableProps) {
   const dateFormat = useDateFormat()
-  const { toast } = useToast()
   const { user } = useAuthStore()
+  const { theme } = useTheme()
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>("all")
   const [stateFilter, setStateFilter] = useState<string>("all")
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
+
+  // ---- invoke function dialog ----
+  const invokeMutation = useInvokeFunction()
+  const [perFunctionPayload, setPerFunctionPayload] = useState<Record<string, string>>({})
+  const [showInvokeDialog, setShowInvokeDialog] = useState<{ open: boolean; fnId: string; fnName: string }>({
+    open: false,
+    fnId: "",
+    fnName: "",
+  })
+  const [payloadText, setPayloadText] = useState(DEFAULT_PAYLOAD)
+  const [jsonError, setJsonError] = useState<string>("")
+  const [invokeOutput, setInvokeOutput] = useState<string>("")
+
+  // Function invoke handlers
+  const openInvokeDialog = ({ id, name }: { id: string; name: string }) => {
+    const cached = perFunctionPayload[id] ?? DEFAULT_PAYLOAD
+    setPayloadText(cached)
+    setJsonError("")
+    setInvokeOutput("")
+    setShowInvokeDialog({ open: true, fnId: id, fnName: name })
+  }
+
+  const closeInvokeDialog = () => setShowInvokeDialog((s) => ({ ...s, open: false }))
+
+  const onPayloadChange = (value?: string) => {
+    const v = value ?? ""
+    setPayloadText(v)
+    try {
+      JSON.parse(v || "{}")
+      setJsonError("")
+    } catch (e: any) {
+      setJsonError(e?.message || "Invalid JSON")
+    }
+  }
+
+  const formatPayload = () => {
+    try {
+      const obj = JSON.parse(payloadText || "{}")
+      const pretty = JSON.stringify(obj, null, 2)
+      setPayloadText(pretty)
+      setJsonError("")
+    } catch (e: any) {
+      setJsonError(e?.message || "Invalid JSON")
+    }
+  }
+
+  const handleCopyOutput = async () => {
+    try {
+      await navigator.clipboard.writeText(invokeOutput)
+      toast.success("Copied", {
+        description: "Response copied to clipboard.",
+      })
+    } catch {
+      toast.error("Copy failed", {
+        description: "Could not copy to clipboard.",
+      })
+    }
+  }
+
+  const onInvokeClick = async () => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(payloadText || "{}")
+      setJsonError("")
+    } catch (e: any) {
+      setJsonError(e?.message || "Invalid JSON")
+      return
+    }
+
+    setPerFunctionPayload((prev) => ({ ...prev, [showInvokeDialog.fnId]: payloadText }))
+
+    try {
+      const res = await invokeMutation.mutateAsync({
+        fnId: showInvokeDialog.fnId,
+        payload: { event: parsed as any },
+      })
+
+      const printable = JSON.stringify((res as any)?.response ?? res, null, 2)
+      setInvokeOutput(printable)
+
+      toast.success("Invoke Succeeded", {
+        description: `Function "${showInvokeDialog.fnName}" invoked successfully.`,
+      })
+    } catch (error: any) {
+      const errPayload = {
+        error: error?.message ?? "Unknown error",
+        data: error,
+      }
+      setInvokeOutput(JSON.stringify(errPayload, null, 2))
+
+      toast.error("Invoke Failed", {
+        description: error?.message ?? "Unknown error",
+      })
+    }
+  }
 
   // Hitung jumlah resource per tipe
   const resourceCounts = useMemo(() => {
@@ -125,20 +243,14 @@ export function ResourceTable({ resources }: ResourceTableProps) {
     if (deleteDialog.vmId && deleteDialog.vmName) {
       deleteMutation.mutate(deleteDialog.vmId, {
         onSuccess: () => {
-          toast({
-            title: "Resource Deleted",
+          toast.success("Resource Deleted", {
             description: `${deleteDialog.vmName} has been deleted`,
-            variant: "error",
-            duration: 2000,
           })
           setDeleteDialog({ open: false, vmId: "", vmName: "" })
         },
         onError: (error) => {
-          toast({
-            title: "Delete Failed",
+          toast.error("Delete Failed", {
             description: `Failed to delete ${deleteDialog.vmName}: ${error.message}`,
-            variant: "error",
-            duration: 2000,
           })
         }
       })
@@ -172,6 +284,8 @@ export function ResourceTable({ resources }: ResourceTableProps) {
       icon: <Container className="h-4 w-4" />,
     },
   ], [resourceCounts])
+
+  // console.log('Resource: ', resources)
 
   return (
     <div className="space-y-4">
@@ -276,8 +390,28 @@ export function ResourceTable({ resources }: ResourceTableProps) {
                       !canDeleteResource(user, (resource as any).created_by_user_id) ? (
                       <span className="text-muted-foreground text-sm">Not permitted</span>
                     ) : (
-                      <div className="flex justify-end gap-2">
-                        {canModifyResource(user, (resource as any).created_by_user_id) && (
+                      <div className="flex justify-end gap-1">
+                        {/* Function-specific actions */}
+                        {resource.type === "function" && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Invoke"
+                              onClick={() => openInvokeDialog({ id: resource.id, name: resource.name || 'Unknown' })}
+                            >
+                              <Play className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" title="Logs" asChild>
+                              <Link href={`/functions/${resource.id}?tab=logs`}>
+                                <FileText className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </>
+                        )}
+
+                        {/* VM-specific actions */}
+                        {resource.type === "vm" && canModifyResource(user, (resource as any).created_by_user_id) && (
                           <>
                             {resource.state === "stopped" && (
                               <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "start")}>
@@ -285,14 +419,14 @@ export function ResourceTable({ resources }: ResourceTableProps) {
                               </Button>
                             )}
                             {resource.state === "running" && (
-                              <div className="flex flex-row-reverse gap-2">
-                                <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "stop")}>
-                                  <Square className="h-4 w-4" />
-                                </Button>
+                              <>
                                 <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "pause")}>
                                   <Pause className="h-4 w-4" />
                                 </Button>
-                              </div>
+                                <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "stop")}>
+                                  <Square className="h-4 w-4" />
+                                </Button>
+                              </>
                             )}
                             {resource.state === "paused" && (
                               <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "resume")}>
@@ -301,10 +435,29 @@ export function ResourceTable({ resources }: ResourceTableProps) {
                             )}
                           </>
                         )}
+
+                        {/* Delete action for all types */}
                         {canDeleteResource(user, (resource as any).created_by_user_id) && (
-                          <Button variant="ghost" size="icon" onClick={() => setDeleteDialog({ open: true, vmId: resource.id, vmName: resource.name || 'Unknown' })}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <>
+                            {resource.type === "vm" && resource.state === "running" ? (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="icon" disabled>
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Cannot delete running VM. Stop the VM first.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            ) : (
+                              <Button variant="ghost" size="icon" onClick={() => setDeleteDialog({ open: true, vmId: resource.id, vmName: resource.name || 'Unknown' })}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
@@ -403,6 +556,121 @@ export function ResourceTable({ resources }: ResourceTableProps) {
         onConfirm={() => handleDelete()}
         variant="destructive"
       />
+
+      {/* Invoke Function Dialog */}
+      <Dialog open={showInvokeDialog.open} onOpenChange={(open) => setShowInvokeDialog({ ...showInvokeDialog, open })}>
+        <DialogContent className="space-y-3 w-[min(92vw,900px)] sm:max-w-[900px] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Invoke Function</DialogTitle>
+            <DialogDescription>
+              {showInvokeDialog.fnName ? (
+                <span>
+                  Target: <span className="font-medium">{showInvokeDialog.fnName}</span>
+                </span>
+              ) : (
+                "Provide JSON payload to invoke this function."
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Editor */}
+          <div className="border rounded-lg overflow-hidden w-full max-w-full min-w-0">
+            <Editor
+              className="!w-full"
+              height="180px"
+              language="json"
+              value={payloadText}
+              onChange={onPayloadChange}
+              theme={theme === "dark" ? "vs-dark" : "light"}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 12,
+                lineNumbers: "on",
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                wordWrap: "on",
+                wordWrapColumn: 100,
+                wrappingIndent: "same",
+                scrollBeyondLastColumn: 0,
+              }}
+            />
+          </div>
+
+          {/* JSON status */}
+          {jsonError ? (
+            <div className="flex items-start gap-2 text-red-600 text-xs min-w-0">
+              <AlertTriangle className="h-4 w-4 mt-0.5" />
+              <span className="break-words">{jsonError}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-emerald-600 text-xs min-w-0">
+              <Check className="h-4 w-4" />
+              <span>JSON valid</span>
+            </div>
+          )}
+
+          {/* Response panel */}
+          <div className="space-y-2 min-w-0">
+            <div className="flex items-center justify-between min-w-0">
+              <span className="text-sm font-medium">Response</span>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyOutput}
+                  disabled={!invokeOutput}
+                  title="Copy response"
+                >
+                  <Clipboard className="mr-2 h-4 w-4" />
+                  Copy
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setInvokeOutput("")}
+                  disabled={!invokeOutput}
+                  title="Clear response"
+                >
+                  Clear
+                </Button>
+              </div>
+            </div>
+
+            <div className="border rounded-lg bg-muted/30 max-h-56 overflow-auto w-full max-w-full min-w-0">
+              <pre className="p-3 text-xs leading-relaxed whitespace-pre-wrap break-words break-all overflow-x-hidden">
+                {invokeOutput ? invokeOutput : "// Response akan ditampilkan di sini setelah Invoke."}
+              </pre>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-2 flex-wrap">
+            <Button type="button" variant="outline" onClick={formatPayload} disabled={invokeMutation.isPending}>
+              Format JSON
+            </Button>
+            <Button type="button" variant="outline" onClick={closeInvokeDialog} disabled={invokeMutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={onInvokeClick}
+              disabled={!!jsonError || !showInvokeDialog.fnId || invokeMutation.isPending}
+            >
+              {invokeMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Invoking...
+                </>
+              ) : (
+                <>
+                  <Play className="mr-2 h-4 w-4" />
+                  Invoke
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

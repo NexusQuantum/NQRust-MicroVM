@@ -12,12 +12,13 @@ import Link from "next/link"
 import { z } from "zod"
 import { useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
+import { useTheme } from "next-themes"
 
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
 
 /** --- Playground hanya butuh runtime & code --- */
 const playgroundSchema = z.object({
-  runtime: z.enum(["node", "python"]),
+  runtime: z.enum(["node", "python", "deno", "bun"]),
   code: z.string().min(1, "Code is required"),
 })
 type PlaygroundForm = z.infer<typeof playgroundSchema>
@@ -59,6 +60,58 @@ def handler(event):
         "body": '{"result": %s}' % (a + b),
     }`;
 
+/** --- Default code (Deno/TypeScript) --- */
+const DEFAULT_CODE_DENO = `// index.ts (Deno / TypeScript)
+interface Event {
+  key1?: number | string;
+  key2?: number | string;
+}
+
+export async function handler(event: Event) {
+  const a = Number(event?.key1);
+  const b = Number(event?.key2);
+  
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return {
+      statusCode: 400,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
+    };
+  }
+  
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ result: a + b }),
+  };
+}`;
+
+/** --- Default code (Bun/TypeScript) --- */
+const DEFAULT_CODE_BUN = `// index.ts (Bun / TypeScript)
+interface Event {
+  key1?: number | string;
+  key2?: number | string;
+}
+
+export async function handler(event: Event) {
+  const a = Number(event?.key1);
+  const b = Number(event?.key2);
+  
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return {
+      statusCode: 400,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
+    };
+  }
+  
+  return {
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ result: a + b }),
+  };
+}`;
+
 /** --- Default payload --- */
 const DEFAULT_PAYLOAD = `{
   "key1": 10,
@@ -69,12 +122,19 @@ const DEFAULT_PAYLOAD = `{
  * NORMALIZER untuk RUN TEST:
  * Pastikan ada exports.handler (tanpa mengandalkan module),
  * lalu mirror ke module.exports.handler jika module tersedia.
+ * For Deno/Bun (TypeScript), code is passed as-is since they use ES modules.
  * --------------------------------------------- */
+type RuntimeType = "node" | "python" | "deno" | "bun";
+
 function normalizeToModuleExportsForRunTest(
-  runtime: "node" | "python",
+  runtime: RuntimeType,
   rawCode: string,
   handlerName: string = "handler",
 ) {
+  // Deno and Bun use ES modules natively, no transformation needed
+  if (runtime === "deno" || runtime === "bun" || runtime === "python") return rawCode;
+  
+  // Only Node.js needs CommonJS transformation
   if (runtime !== "node") return rawCode;
 
   let code = rawCode;
@@ -124,6 +184,7 @@ try {
 
 export default function FunctionPlayground() {
   const router = useRouter()
+  const { theme } = useTheme()
   const {
     watch,
     control,
@@ -145,10 +206,32 @@ export default function FunctionPlayground() {
 
   // Ganti template code saat runtime berubah
   useEffect(() => {
-    setValue("code", runtime === "python" ? DEFAULT_CODE_PY : DEFAULT_CODE_NODE)
+    switch (runtime) {
+      case "python":
+        setValue("code", DEFAULT_CODE_PY)
+        break
+      case "deno":
+        setValue("code", DEFAULT_CODE_DENO)
+        break
+      case "bun":
+        setValue("code", DEFAULT_CODE_BUN)
+        break
+      default:
+        setValue("code", DEFAULT_CODE_NODE)
+    }
   }, [runtime, setValue])
 
-  const getLanguage = () => (runtime === "python" ? "python" : "javascript")
+  const getLanguage = () => {
+    switch (runtime) {
+      case "python":
+        return "python"
+      case "deno":
+      case "bun":
+        return "typescript"
+      default:
+        return "javascript"
+    }
+  }
 
   const handleGoCreate = () => {
     const currentRuntime = watch("runtime")
@@ -183,11 +266,12 @@ export default function FunctionPlayground() {
     }
 
     try {
-      const currentRuntime = watch("runtime") as "node" | "python"
+      const currentRuntime = watch("runtime") as RuntimeType
       const currentCode = watch("code") as string
       const handlerName = "handler" // playground fix: hanya pakai 'handler'
 
       // Normalisasi code Node ke exports.handler (CommonJS friendly)
+      // Deno/Bun use ES modules, no transformation needed
       const codeForTest = normalizeToModuleExportsForRunTest(
         currentRuntime,
         currentCode,
@@ -265,6 +349,8 @@ export default function FunctionPlayground() {
                         <SelectContent>
                           <SelectItem value="node">Node.js</SelectItem>
                           <SelectItem value="python">Python</SelectItem>
+                          <SelectItem value="deno">Deno (TypeScript)</SelectItem>
+                          <SelectItem value="bun">Bun (TypeScript)</SelectItem>
                         </SelectContent>
                       </Select>
                     )}
@@ -288,7 +374,7 @@ export default function FunctionPlayground() {
                           setTimeout(() => editorRef.current?.getAction("editor.action.formatDocument")?.run(), 100)
                         }
                       }}
-                      theme="light"
+                      theme={theme === "dark" ? "vs-dark" : "light"}
                       options={{
                         minimap: { enabled: false },
                         fontSize: 14,
@@ -380,7 +466,7 @@ export default function FunctionPlayground() {
                   language="json"
                   value={testEvent}
                   onChange={(value) => setTestEvent(value || "")}
-                  theme="light"
+                  theme={theme === "dark" ? "vs-dark" : "light"}
                   options={{
                     minimap: { enabled: false },
                     fontSize: 14,

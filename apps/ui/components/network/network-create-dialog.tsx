@@ -145,7 +145,7 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
       onOpenChange(open)
       if (!open) resetForm()
     }}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="min-w-2xl max-w-lg">
         <DialogHeader>
           <DialogTitle>Create Network</DialogTitle>
           <DialogDescription>

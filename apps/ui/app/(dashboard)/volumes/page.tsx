@@ -2,13 +2,13 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Loader2, HardDrive } from "lucide-react"
+import { Loader2, HardDrive, RotateCw } from "lucide-react"
 import { useVolumes } from "@/lib/queries"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { VolumeTable } from "@/components/volume/volume-table"
 
 export default function VolumesPage() {
-  const { data: volumes = [], isLoading, error, refetch } = useVolumes()
+  const { data: volumes = [], isLoading, error, refetch, isFetching } = useVolumes()
 
   return (
     <div className="space-y-6">
@@ -28,11 +28,28 @@ export default function VolumesPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex items-center justify-between">
           <CardTitle>All Volumes</CardTitle>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              title="Refresh volume list"
+            >
+              {isFetching ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Refreshing...
+                </>
+              ) : (
+                <>
+                  <RotateCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </>
+              )}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import {
@@ -20,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { useTemplate, useDeleteTemplate, useUpdateTemplate, useInstantiateTemplate, useImage } from "@/lib/queries"
+import { useTemplate, useDeleteTemplate, useUpdateTemplate, useInstantiateTemplate, useImage, useRegistryImages } from "@/lib/queries"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
 
 // Bentuk form yang disederhanakan (flatten) dari backend
@@ -32,6 +33,8 @@ type TemplateForm = {
   mem_mib: number
   kernel_image_id: string
   rootfs_image_id: string
+  kernel_path: string
+  rootfs_path: string
   created_at?: string
   updated_at?: string
 }
@@ -42,6 +45,8 @@ export default function TemplateDetailPage() {
   const { toast } = useToast()
 
   const { data: template, isLoading, error } = useTemplate(id)
+  const { data: images } = useRegistryImages()
+  console.log("Template detail data:", template)
 
   // Fetch kernel and rootfs image details
   const { data: kernelImage, isLoading: isLoadingKernelImage } = useImage(
@@ -51,12 +56,15 @@ export default function TemplateDetailPage() {
     template?.spec.rootfs_image_id || ""
   )
 
+  // Filter images by type
+  const kernelImages = images?.filter(img => img.kind === "kernel") || []
+  const rootfsImages = images?.filter(img => img.kind === "rootfs") || []
+
   const deleteTemplate = useDeleteTemplate()
   const updateTemplate = useUpdateTemplate()
   const instantiateTemplate = useInstantiateTemplate()
 
   const [formData, setFormData] = useState<TemplateForm | null>(null)
-  const [isEditing, setIsEditing] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showDeployDialog, setShowDeployDialog] = useState(false)
   const [vmName, setVmName] = useState("")
@@ -72,16 +80,32 @@ export default function TemplateDetailPage() {
       mem_mib: Number(template.spec?.mem_mib ?? 0),
       kernel_image_id: template.spec?.kernel_image_id ?? "",
       rootfs_image_id: template.spec?.rootfs_image_id ?? "",
+      kernel_path: template.spec?.kernel_path ?? "",
+      rootfs_path: template.spec?.rootfs_path ?? "",
       created_at: template.created_at,
       updated_at: template.updated_at,
     })
   }, [template])
 
+  // Auto-fetch and update paths when image IDs change
+  useEffect(() => {
+    if (kernelImage?.host_path && formData?.kernel_image_id) {
+      setFormData(prev => prev ? { ...prev, kernel_path: kernelImage.host_path } : prev)
+    }
+  }, [kernelImage, formData?.kernel_image_id])
+
+  useEffect(() => {
+    if (rootfsImage?.host_path && formData?.rootfs_image_id) {
+      setFormData(prev => prev ? { ...prev, rootfs_path: rootfsImage.host_path } : prev)
+    }
+  }, [rootfsImage, formData?.rootfs_image_id])
+
   const dateFormat = useDateFormat()
-  
+
   const createdText = useMemo(() => {
     return template?.created_at ? dateFormat.formatDateTime(template.created_at) : "-"
   }, [template?.created_at, dateFormat])
+
 
   const updatedText = useMemo(() => {
     return template?.updated_at ? dateFormat.formatDateTime(template.updated_at) : "-"
@@ -90,16 +114,33 @@ export default function TemplateDetailPage() {
   const handleSave = async () => {
     if (!formData) return
 
+    // Prepare spec with both image IDs and paths
+    const spec: any = {
+      vcpu: formData.vcpu,
+      mem_mib: formData.mem_mib,
+    }
+
+    // Include image IDs and paths if available
+    if (formData.kernel_image_id) {
+      spec.kernel_image_id = formData.kernel_image_id
+    }
+    if (formData.kernel_path) {
+      spec.kernel_path = formData.kernel_path
+    }
+    if (formData.rootfs_image_id) {
+      spec.rootfs_image_id = formData.rootfs_image_id
+    }
+    if (formData.rootfs_path) {
+      spec.rootfs_path = formData.rootfs_path
+    }
+
     try {
       await updateTemplate.mutateAsync({
         id,
         data: {
           name: formData.name,
           description: formData.description,
-          spec: {
-            vcpu: formData.vcpu,
-            mem_mib: formData.mem_mib,
-          },
+          spec,
         },
       })
       router.push("/templates?action=updated")
@@ -213,26 +254,15 @@ export default function TemplateDetailPage() {
             <Rocket className="mr-2 h-4 w-4" />
             Deploy VM
           </Button>
-          {isEditing ? (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setIsEditing(false)} disabled={updateTemplate.isPending}>
-                Cancel
-              </Button>
-              <Button variant="default" size="sm" onClick={handleSave} disabled={updateTemplate.isPending}>
-                <Save className="mr-2 h-4 w-4" />
-                {updateTemplate.isPending ? "Saving..." : "Save Changes"}
-              </Button>
-            </>
-          ) : (
-            <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-              Edit
-            </Button>
-          )}
+          <Button variant="outline" size="sm" onClick={handleSave} disabled={updateTemplate.isPending}>
+            <Save className="mr-2 h-4 w-4" />
+            {updateTemplate.isPending ? "Saving..." : "Save Changes"}
+          </Button>
           <Button
             variant="destructive"
             size="sm"
             onClick={() => setShowDeleteDialog(true)}
-            disabled={deleteTemplate.isPending || isEditing}
+            disabled={deleteTemplate.isPending}
           >
             <Trash2 className="mr-2 h-4 w-4" />
             {deleteTemplate.isPending ? "Deleting..." : "Delete"}
@@ -254,10 +284,9 @@ export default function TemplateDetailPage() {
                 id="name"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                disabled={!isEditing}
               />
             </div>
-            <div className="space-y-2">
+            {/* <div className="space-y-2">
               <Label htmlFor="description">Description</Label>
               <Textarea
                 id="description"
@@ -266,7 +295,7 @@ export default function TemplateDetailPage() {
                 rows={4}
                 disabled={!isEditing}
               />
-            </div>
+            </div> */}
           </CardContent>
         </Card>
 
@@ -282,14 +311,16 @@ export default function TemplateDetailPage() {
                 <Input
                   id="vcpu"
                   type="number"
-                  value={Number.isFinite(formData.vcpu) ? formData.vcpu : 0}
-                  onChange={(e) =>
+                  min="1"
+                  max="32"
+                  value={Number.isFinite(formData.vcpu) ? formData.vcpu : 1}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10)
                     setFormData({
                       ...formData,
-                      vcpu: Number.isNaN(parseInt(e.target.value)) ? 0 : parseInt(e.target.value, 10),
+                      vcpu: Number.isNaN(val) ? 1 : Math.max(1, Math.min(32, val)),
                     })
-                  }
-                  disabled={!isEditing}
+                  }}
                 />
               </div>
               <div className="space-y-2">
@@ -298,15 +329,16 @@ export default function TemplateDetailPage() {
                   id="mem_mib"
                   type="number"
                   min="128"
+                  max="32768"
                   step="128"
-                  value={Number.isFinite(formData.mem_mib) ? formData.mem_mib : 0}
-                  onChange={(e) =>
+                  value={Number.isFinite(formData.mem_mib) ? formData.mem_mib : 128}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10)
                     setFormData({
                       ...formData,
-                      mem_mib: Number.isNaN(parseInt(e.target.value)) ? 0 : parseInt(e.target.value, 10),
+                      mem_mib: Number.isNaN(val) ? 128 : Math.max(128, Math.min(32768, val)),
                     })
-                  }
-                  disabled={!isEditing}
+                  }}
                 />
               </div>
             </div>
@@ -332,47 +364,69 @@ export default function TemplateDetailPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="kernel_image_id">Kernel Image</Label>
-              <div className="space-y-1">
-                {isLoadingKernelImage ? (
-                  <div className="text-sm text-muted-foreground">Loading image info...</div>
-                ) : kernelImage ? (
-                  <div className="text-sm text-muted-foreground mb-1">
-                    <span className="font-medium text-foreground">{kernelImage.name}</span>
-                    {kernelImage.project && <span className="ml-2 text-xs">({kernelImage.project})</span>}
-                  </div>
-                ) : formData.kernel_image_id ? (
-                  <div className="text-sm text-muted-foreground mb-1">Image not found</div>
-                ) : null}
-                <Input
-                  id="kernel_image_id"
-                  value={formData.kernel_image_id}
-                  onChange={(e) => setFormData({ ...formData, kernel_image_id: e.target.value })}
-                  disabled={true}
-                  placeholder="Kernel Image ID"
-                />
-              </div>
+              <Select
+                value={formData.kernel_image_id}
+                onValueChange={(value) => setFormData({ ...formData, kernel_image_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={kernelImages.length > 0 ? "Select kernel image" : "No kernel images in registry"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {kernelImages.map((img) => (
+                    <SelectItem key={img.id} value={img.id}>
+                      {img.name} {img.project && `(${img.project})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {kernelImage && (
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">{kernelImage.name}</span>
+                  {kernelImage.project && <span className="ml-2">({kernelImage.project})</span>}
+                </div>
+              )}
+              {kernelImages.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No kernel images found. Upload one in the{" "}
+                  <Link href="/registry" className="underline">
+                    registry
+                  </Link>
+                  .
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="rootfs_image_id">RootFS Image</Label>
-              <div className="space-y-1">
-                {isLoadingRootfsImage ? (
-                  <div className="text-sm text-muted-foreground">Loading image info...</div>
-                ) : rootfsImage ? (
-                  <div className="text-sm text-muted-foreground mb-1">
-                    <span className="font-medium text-foreground">{rootfsImage.name}</span>
-                    {rootfsImage.project && <span className="ml-2 text-xs">({rootfsImage.project})</span>}
-                  </div>
-                ) : formData.rootfs_image_id ? (
-                  <div className="text-sm text-muted-foreground mb-1">Image not found</div>
-                ) : null}
-                <Input
-                  id="rootfs_image_id"
-                  value={formData.rootfs_image_id}
-                  onChange={(e) => setFormData({ ...formData, rootfs_image_id: e.target.value })}
-                  disabled={true}
-                  placeholder="RootFS Image ID"
-                />
-              </div>
+              <Select
+                value={formData.rootfs_image_id}
+                onValueChange={(value) => setFormData({ ...formData, rootfs_image_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={rootfsImages.length > 0 ? "Select rootfs image" : "No rootfs images in registry"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {rootfsImages.map((img) => (
+                    <SelectItem key={img.id} value={img.id}>
+                      {img.name} {img.project && `(${img.project})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {rootfsImage && (
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">{rootfsImage.name}</span>
+                  {rootfsImage.project && <span className="ml-2">({rootfsImage.project})</span>}
+                </div>
+              )}
+              {rootfsImages.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No rootfs images found. Upload one in the{" "}
+                  <Link href="/registry" className="underline">
+                    registry
+                  </Link>
+                  .
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>

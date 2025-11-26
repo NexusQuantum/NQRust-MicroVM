@@ -5,7 +5,7 @@ import Link from "next/link"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Play, Edit, Trash2, Search, Server, Cpu, HardDrive } from "lucide-react"
+import { Play, Trash2, Search, Server, Cpu, HardDrive } from "lucide-react"
 import type { Template } from "@/lib/types"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -165,12 +165,14 @@ export function TemplateList({ templates }: TemplateListProps) {
                 filteredTemplates.map((template) => (
                   <TableRow key={template.id}>
                     <TableCell>
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500/10 to-orange-600/10">
-                          <Server className="h-5 w-5 text-orange-600 dark:text-orange-600" />
+                      <Link href={`/templates/${template.id}`} className="block hover:opacity-80 transition-opacity">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500/10 to-orange-600/10">
+                            <Server className="h-5 w-5 text-orange-600 dark:text-orange-600" />
+                          </div>
+                          <span className="font-medium hover:underline">{template.name}</span>
                         </div>
-                        <span className="font-medium">{template.name}</span>
-                      </div>
+                      </Link>
                     </TableCell>
                     <TableCell className="text-sm">
                       <div className="flex items-center gap-1">
@@ -196,16 +198,6 @@ export function TemplateList({ templates }: TemplateListProps) {
                         >
                           <Play className="mr-2 h-4 w-4" />
                           Deploy
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Edit"
-                          asChild
-                        >
-                          <Link href={`/templates/${template.id}`}>
-                            <Edit className="h-4 w-4" />
-                          </Link>
                         </Button>
                         <Button
                           variant="ghost"

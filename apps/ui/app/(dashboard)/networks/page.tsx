@@ -3,14 +3,14 @@
 import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Loader2, Network, Plus } from "lucide-react"
+import { Loader2, Network, Plus, RotateCw } from "lucide-react"
 import { useNetworks } from "@/lib/queries"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { NetworkTable } from "@/components/network/network-table"
 import { NetworkCreateDialog } from "@/components/network/network-create-dialog"
 
 export default function NetworksPage() {
-  const { data: networks = [], isLoading, error, refetch } = useNetworks()
+  const { data: networks = [], isLoading, error, refetch, isFetching } = useNetworks()
   const [showCreateDialog, setShowCreateDialog] = useState(false)
 
   return (
@@ -22,6 +22,10 @@ export default function NetworksPage() {
             <p className="mt-2 text-muted-foreground">
               Manage virtual networks for VM isolation. Create bridge networks or VLAN-based networks for advanced segmentation.
             </p>
+            <Button onClick={() => setShowCreateDialog(true)} className="mt-4">
+              <Plus className="mr-2 h-4 w-4" />
+              Create Network
+            </Button>
           </div>
           <div className="hidden lg:flex items-center justify-center h-32 w-32 rounded-full bg-gradient-to-br from-teal-500/20 to-teal-600/20 dark:from-teal-700/30 dark:to-teal-800/20">
             <Network className="h-16 w-16 text-teal-600 dark:text-teal-400" />
@@ -31,15 +35,26 @@ export default function NetworksPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex items-center justify-between">
           <CardTitle>All Networks</CardTitle>
-          <div className="flex gap-2">
-            <Button onClick={() => setShowCreateDialog(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Network
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              Refresh
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              title="Refresh network list"
+            >
+              {isFetching ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Refreshing...
+                </>
+              ) : (
+                <>
+                  <RotateCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </>
+              )}
             </Button>
           </div>
         </CardHeader>

@@ -117,7 +117,9 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
   useEffect(() => {
     (async () => {
       try {
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "/api/proxy/v1"
+        // Use same hostname but manager port for API calls
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ||
+          `${window.location.protocol}//${window.location.hostname}:18080/v1`
 
         // Get all images and filter by kind
         const allImagesRes = await fetch(`${baseUrl}/images`)

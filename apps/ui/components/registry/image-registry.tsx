@@ -43,17 +43,74 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
   })
 
   const handleCopyPath = (path: string) => {
-    navigator.clipboard.writeText(path)
-    toast.success("Path copied to clipboard")
+    // Use modern clipboard API with fallback
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard
+        .writeText(path)
+        .then(() => {
+          toast.success("Path copied to clipboard", {
+            description: path,
+          })
+        })
+        .catch(() => {
+          // Fallback to old method
+          copyToClipboardFallback(path)
+        })
+    } else {
+      copyToClipboardFallback(path)
+    }
+  }
+
+  const copyToClipboardFallback = (text: string) => {
+    const textArea = document.createElement("textarea")
+    textArea.value = text
+    textArea.style.position = "fixed"
+    textArea.style.left = "-999999px"
+    textArea.style.top = "-999999px"
+    document.body.appendChild(textArea)
+    textArea.focus()
+    textArea.select()
+
+    try {
+      const successful = document.execCommand("copy")
+      if (successful) {
+        toast.success("Path copied to clipboard", {
+          description: text,
+        })
+      } else {
+        toast.error("Failed to copy path", {
+          description: "Please copy manually",
+        })
+      }
+    } catch (err) {
+      toast.error("Failed to copy path", {
+        description: "Please copy manually",
+      })
+    }
+
+    document.body.removeChild(textArea)
   }
 
   const handleDownload = (image: Image) => {
     // For Docker images (tarballs), we could implement a download endpoint
     // For now, copy the path which can be used for manual operations
-    handleCopyPath(image.host_path)
-    toast.info("Image path copied", {
-      description: "Use this path to access the image file on the server",
-    })
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard
+        .writeText(image.host_path)
+        .then(() => {
+          toast.info("Image path copied", {
+            description: "Use this path to access the image file on the server",
+          })
+        })
+        .catch(() => {
+          toast.error("Failed to copy path")
+        })
+    } else {
+      copyToClipboardFallback(image.host_path)
+      toast.info("Image path copied", {
+        description: "Use this path to access the image file on the server",
+      })
+    }
   }
 
   const handleDeleteClick = (image: Image) => {

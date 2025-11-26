@@ -32,6 +32,7 @@ import { useDeleteFunction, useInvokeFunction } from "@/lib/queries"
 import { useToast } from "@/hooks/use-toast"
 import dynamic from "next/dynamic"
 import { useAuthStore, canDeleteResource } from "@/lib/auth/store"
+import { useTheme } from "next-themes"
 
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
 
@@ -48,6 +49,7 @@ const DEFAULT_PAYLOAD = `{
 export function FunctionTable({ functions }: FunctionTableProps) {
   const dateFormat = useDateFormat()
   const { user } = useAuthStore()
+  const { theme } = useTheme()
 
   // ---- filters/pagination ----
   const [searchQuery, setSearchQuery] = useState("")
@@ -249,6 +251,8 @@ export function FunctionTable({ functions }: FunctionTableProps) {
             <SelectItem value="all">All Runtimes</SelectItem>
             <SelectItem value="node">Node.js</SelectItem>
             <SelectItem value="python">Python</SelectItem>
+            <SelectItem value="deno">Deno</SelectItem>
+            <SelectItem value="bun">Bun</SelectItem>
           </SelectContent>
         </Select>
         <Select
@@ -433,7 +437,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
               language="json"
               value={payloadText}
               onChange={onPayloadChange}
-              theme="light"
+              theme={theme === "dark" ? "vs-dark" : "light"}
               options={{
                 minimap: { enabled: false },
                 fontSize: 12,

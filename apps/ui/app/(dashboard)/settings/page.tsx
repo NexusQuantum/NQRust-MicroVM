@@ -23,7 +23,9 @@ import {
   Database,
   User,
   Lock,
-  Trash2
+  Trash2,
+  Eye,
+  EyeOff
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import {
@@ -39,7 +41,7 @@ import {
   useUploadAvatar,
   useDeleteAvatar
 } from "@/lib/queries"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { toast } from "sonner"
 import { AvatarUpload } from "@/components/user"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
@@ -51,7 +53,7 @@ export default function SettingsPage() {
 
   // Fetch real data
   const { data: hosts } = useHosts()
-  const { data: vms } = useVMs(true) // Include all VMs
+  const { data: vms } = useVMs(false) // Only user-facing VMs (exclude internal VMs for functions/containers)
   const { data: containers } = useContainers()
   const { data: functions } = useFunctions()
 
@@ -65,8 +67,8 @@ export default function SettingsPage() {
   const deleteAvatarMutation = useDeleteAvatar()
 
   // Local state for form inputs (synced with backend)
-  const [localTimezone, setLocalTimezone] = useState("")
-  const [localDateFormat, setLocalDateFormat] = useState("")
+  const [localTimezone, setLocalTimezone] = useState("UTC")
+  const [localDateFormat, setLocalDateFormat] = useState("iso")
   const [localNotifications, setLocalNotifications] = useState({
     email: true,
     browser: true,
@@ -85,6 +87,63 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+
+  // Password visibility state
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+
+  // Local date formatter based on local state (for preview)
+  const formatDateWithLocalFormat = useMemo(() => {
+    return (date: Date | string) => {
+      const d = typeof date === 'string' ? new Date(date) : date
+      if (isNaN(d.getTime())) return 'Invalid Date'
+
+      const format = localDateFormat || "iso"
+
+      try {
+        switch (format) {
+          case 'us':
+            // US format: MM/DD/YYYY
+            return d.toLocaleDateString('en-US', {
+              month: '2-digit',
+              day: '2-digit',
+              year: 'numeric'
+            })
+          case 'eu':
+            // EU format: DD/MM/YYYY
+            return d.toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric'
+            })
+          case 'iso':
+          default:
+            // ISO format: YYYY-MM-DD
+            return d.toISOString().split('T')[0]
+        }
+      } catch {
+        return d.toISOString().split('T')[0]
+      }
+    }
+  }, [localDateFormat])
+
+  const formatDateTimeWithLocalFormat = useMemo(() => {
+    return (date: Date | string) => {
+      const d = typeof date === 'string' ? new Date(date) : date
+      if (isNaN(d.getTime())) return 'Invalid Date'
+
+      const dateStr = formatDateWithLocalFormat(d)
+      const timeStr = d.toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+
+      return `${dateStr} ${timeStr}`
+    }
+  }, [formatDateWithLocalFormat])
 
   // Sync preferences from backend to local state
   useEffect(() => {
@@ -277,14 +336,14 @@ export default function SettingsPage() {
                   <div className="space-y-2">
                     <Label>Account Created</Label>
                     <p className="text-sm text-muted-foreground">
-                      {profile?.created_at ? dateFormat.formatDate(profile.created_at) : "N/A"}
+                      {profile?.created_at ? formatDateWithLocalFormat(profile.created_at) : "N/A"}
                     </p>
                   </div>
 
                   <div className="space-y-2">
                     <Label>Last Login</Label>
                     <p className="text-sm text-muted-foreground">
-                      {profile?.last_login_at ? dateFormat.formatDateTime(profile.last_login_at) : "Never"}
+                      {profile?.last_login_at ? formatDateTimeWithLocalFormat(profile.last_login_at) : "Never"}
                     </p>
                   </div>
 
@@ -326,35 +385,83 @@ export default function SettingsPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="current-password">Current Password</Label>
-                <Input
-                  id="current-password"
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  placeholder="Enter current password"
-                />
+                <div className="relative">
+                  <Input
+                    id="current-password"
+                    type={showCurrentPassword ? "text" : "password"}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                  >
+                    {showCurrentPassword ? (
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="new-password">New Password</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Enter new password (min 8 characters)"
-                />
+                <div className="relative">
+                  <Input
+                    id="new-password"
+                    type={showNewPassword ? "text" : "password"}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Enter new password (min 8 characters)"
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                  >
+                    {showNewPassword ? (
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="confirm-password">Confirm New Password</Label>
-                <Input
-                  id="confirm-password"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm new password"
-                />
+                <div className="relative">
+                  <Input
+                    id="confirm-password"
+                    type={showConfirmPassword ? "text" : "password"}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  >
+                    {showConfirmPassword ? (
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                </div>
               </div>
 
               <Button
@@ -592,7 +699,7 @@ export default function SettingsPage() {
                   </Label>
                   <Select
                     value={localVmDefaults.vcpu.toString()}
-                    onValueChange={(val) => setLocalVmDefaults({...localVmDefaults, vcpu: parseInt(val)})}
+                    onValueChange={(val) => setLocalVmDefaults({ ...localVmDefaults, vcpu: parseInt(val) })}
                     disabled={isLoading}
                   >
                     <SelectTrigger id="default-vcpu">
@@ -616,7 +723,7 @@ export default function SettingsPage() {
                   </Label>
                   <Select
                     value={localVmDefaults.mem_mib.toString()}
-                    onValueChange={(val) => setLocalVmDefaults({...localVmDefaults, mem_mib: parseInt(val)})}
+                    onValueChange={(val) => setLocalVmDefaults({ ...localVmDefaults, mem_mib: parseInt(val) })}
                     disabled={isLoading}
                   >
                     <SelectTrigger id="default-memory">
@@ -642,7 +749,7 @@ export default function SettingsPage() {
                 </Label>
                 <Select
                   value={localVmDefaults.disk_gb.toString()}
-                  onValueChange={(val) => setLocalVmDefaults({...localVmDefaults, disk_gb: parseInt(val)})}
+                  onValueChange={(val) => setLocalVmDefaults({ ...localVmDefaults, disk_gb: parseInt(val) })}
                   disabled={isLoading}
                 >
                   <SelectTrigger id="default-disk">

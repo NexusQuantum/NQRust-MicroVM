@@ -7,6 +7,17 @@ import {
 } from '@/lib/utils/format'
 
 /**
+ * Get browser's local timezone
+ */
+function getBrowserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    return 'UTC'
+  }
+}
+
+/**
  * Hook to format dates and times according to user preferences
  * Provides formatting functions that automatically use the user's timezone and date format preferences
  */
@@ -14,7 +25,8 @@ export function useDateFormat() {
   const { data: preferencesData } = usePreferences()
   const preferences = preferencesData?.preferences
 
-  const timezone = preferences?.timezone || 'UTC'
+  // Use browser's local timezone as default instead of UTC
+  const timezone = preferences?.timezone || getBrowserTimezone()
   const dateFormat = preferences?.date_format || 'iso'
 
   const formatters = useMemo(() => {

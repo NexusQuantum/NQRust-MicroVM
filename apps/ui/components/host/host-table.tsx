@@ -47,6 +47,8 @@ export function HostTable({ hosts }: HostTableProps) {
     return matchesSearch && matchesStatus
   })
 
+  console.log("Host: ", hosts)
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">

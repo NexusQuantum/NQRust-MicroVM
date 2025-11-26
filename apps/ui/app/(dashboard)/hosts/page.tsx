@@ -2,13 +2,13 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Loader2, Server } from "lucide-react"
+import { Loader2, Server, RotateCw } from "lucide-react"
 import { useHosts } from "@/lib/queries"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { HostTable } from "@/components/host/host-table"
 
 export default function HostsPage() {
-  const { data: hosts = [], isLoading, error, refetch } = useHosts()
+  const { data: hosts = [], isLoading, error, refetch, isFetching } = useHosts()
 
   return (
     <div className="space-y-6">
@@ -30,8 +30,23 @@ export default function HostsPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>All Hosts</CardTitle>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Refresh
+          <Button
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            title="Refresh host list"
+          >
+            {isFetching ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <RotateCw className="mr-2 h-4 w-4" />
+                Refresh
+              </>
+            )}
           </Button>
         </CardHeader>
         <CardContent>

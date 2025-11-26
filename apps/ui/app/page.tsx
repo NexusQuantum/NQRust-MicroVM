@@ -9,19 +9,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { useToast } from "@/hooks/use-toast"
 import { authApi } from "@/lib/api/auth"
 import { useAuthStore } from "@/lib/auth/store"
 import { parseFacadeError } from "@/lib/api"
+import { Eye, EyeOff } from "lucide-react"
+import { toast } from "sonner"
 
 export default function LandingPage() {
   const router = useRouter()
-  const { toast } = useToast()
   const { isAuthenticated, setAuth } = useAuthStore()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
+  const [showPassword, setShowPassword] = useState(false)
 
   // Check authentication status on mount
   useEffect(() => {
@@ -40,11 +41,8 @@ export default function LandingPage() {
     e.preventDefault()
 
     if (!username || !password) {
-      toast({
-        title: "Validation Error",
+      toast.error("Validation Error", {
         description: "Please enter both username and password",
-        variant: "error",
-        duration: 2000,
       })
       return
     }
@@ -55,20 +53,32 @@ export default function LandingPage() {
       const response = await authApi.login({ username, password })
       setAuth(response.token, response.user)
       router.push("/dashboard")
-      toast({
-        title: "Login Successful",
+      toast.success("Login Successful", {
         description: `Welcome back, ${response.user.username}!`,
-        variant: "success",
-        duration: 2000,
       })
     } catch (error) {
       const facadeError = parseFacadeError(error)
-      toast({
-        title: "Login Failed",
-        description: facadeError?.error || "Invalid username or password",
-        variant: "error",
-        duration: 2000,
-      })
+
+      // Handle specific error cases
+      if (facadeError) {
+        // Check for authentication errors (401)
+        if (facadeError.status === 401) {
+          toast.error("Invalid Credentials", {
+            description: "The username or password you entered is incorrect. Please try again.",
+          })
+        }
+        // Check for other specific errors
+        else {
+          toast.error(facadeError.error || "Login Failed", {
+            description: facadeError.suggestion || facadeError.fault_message || "Please check your credentials and try again",
+          })
+        }
+      } else {
+        // Generic error for network issues or unexpected errors
+        toast.error("Login Failed", {
+          description: "Unable to connect to the server. Please check your connection and try again.",
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -149,16 +159,32 @@ export default function LandingPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
-                  <Input
-                    autoComplete="off"
-                    id="password"
-                    type="password"
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    disabled={isLoading}
-                    className="h-11"
-                  />
+                  <div className="relative">
+                    <Input
+                      autoComplete="off"
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Enter your password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={isLoading}
+                      className="h-11 pr-10"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                      onClick={() => setShowPassword(!showPassword)}
+                      disabled={isLoading}
+                    >
+                      {showPassword ? (
+                        <Eye className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <EyeOff className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
 
                 <Button
