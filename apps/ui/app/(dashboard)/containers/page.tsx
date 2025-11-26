@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus, Loader2 } from "lucide-react"
+import { Plus, Loader2, RotateCw } from "lucide-react"
 import Link from "next/link"
 import { ContainerTable } from "@/components/container/container-table"
 import { useContainers } from "@/lib/queries"
@@ -52,7 +52,7 @@ const ContainerFlowDiagram = () => (
 )
 
 export default function ContainersPage() {
-  const { data: containers = [], isLoading, error, refetch } = useContainers()
+  const { data: containers = [], isLoading, error, refetch, isFetching } = useContainers()
 
   return (
     <div className="space-y-6">
@@ -80,8 +80,23 @@ export default function ContainersPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>All Containers</CardTitle>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Refresh
+          <Button
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            title="Refresh container list"
+          >
+            {isFetching ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <RotateCw className="mr-2 h-4 w-4" />
+                Refresh
+              </>
+            )}
           </Button>
         </CardHeader>
         <CardContent>

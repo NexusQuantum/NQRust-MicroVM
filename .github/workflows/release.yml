@@ -170,10 +170,11 @@ jobs:
 
   build-images:
     name: Build Base Images
-    needs: ci-gate
+    needs: [ci-gate, build-binaries]
     runs-on: self-hosted
     # This job builds VM images (kernels, rootfs, runtimes)
     # Requires: KVM access, ~10GB disk space, internet for downloads
+    # Now depends on build-binaries so guest-agent binary is available
 
     steps:
       - name: Checkout code
@@ -207,6 +208,21 @@ jobs:
 
       - name: Create images directory
         run: mkdir -p images/
+
+      - name: Download guest-agent from build-binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-x86_64-unknown-linux-gnu
+          path: /tmp/binaries/
+
+      - name: Setup guest-agent for image builds
+        run: |
+          # Copy guest-agent to expected location for build scripts
+          mkdir -p target/x86_64-unknown-linux-musl/release/
+          cp /tmp/binaries/nqrust-guest-agent-x86_64-linux-musl target/x86_64-unknown-linux-musl/release/guest-agent
+          chmod +x target/x86_64-unknown-linux-musl/release/guest-agent
+          echo "Guest-agent ready for image builds:"
+          ls -la target/x86_64-unknown-linux-musl/release/guest-agent
 
       - name: Download Firecracker kernel
         run: |

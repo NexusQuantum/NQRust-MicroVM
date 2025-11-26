@@ -102,11 +102,15 @@ export default function TemplatesPage() {
     const action = searchParams.get("action")
 
     if (action === "updated") {
-      toast.success("Template updated successfully")
+      toast.success("Template Updated", {
+        description: "Template has been updated successfully",
+      })
       // Remove query param
       router.replace("/templates")
     } else if (action === "deleted") {
-      toast.success("Template deleted successfully")
+      toast.success("Template Deleted", {
+        description: "Template has been deleted successfully",
+      })
       // Remove query param
       router.replace("/templates")
     }

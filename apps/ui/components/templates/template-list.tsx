@@ -87,9 +87,21 @@ export function TemplateList({ templates }: TemplateListProps) {
   })
 
   const handleDelete = () => {
-    if (deleteDialog.templateId) {
-      deleteMutation.mutate(deleteDialog.templateId)
-      setDeleteDialog({ open: false, templateId: "", templateName: "" })
+    if (deleteDialog.templateId && deleteDialog.templateName) {
+      deleteMutation.mutate(deleteDialog.templateId, {
+        onSuccess: () => {
+          toast.success("Template Deleted", {
+            description: `${deleteDialog.templateName} has been deleted successfully`,
+          })
+          setDeleteDialog({ open: false, templateId: "", templateName: "" })
+        },
+        onError: (error: Error) => {
+          toast.error("Delete Failed", {
+            description: `Failed to delete ${deleteDialog.templateName}: ${error.message}`,
+          })
+          setDeleteDialog({ open: false, templateId: "", templateName: "" })
+        },
+      })
     }
   }
 

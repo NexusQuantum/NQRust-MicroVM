@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
-import { Save, Play, Loader2, Import } from "lucide-react"
+import { Save, Play, Loader2, Import, ArrowLeft } from "lucide-react"
 import dynamic from "next/dynamic"
+import { useRouter } from "next/navigation"
 import { z } from "zod"
 import { useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -161,7 +162,7 @@ function normalizeToConstHandlerForBackend(
 ) {
   // Deno and Bun use ES modules natively, no transformation needed
   if (runtime === 'deno' || runtime === 'bun' || runtime === 'python') return rawCode;
-  
+
   if (runtime !== 'node') return rawCode;
 
   let code = rawCode;
@@ -202,7 +203,7 @@ function normalizeToModuleExportsForRunTest(
 ) {
   // Deno and Bun use ES modules natively, no transformation needed
   if (runtime === 'deno' || runtime === 'bun' || runtime === 'python') return rawCode;
-  
+
   if (runtime !== 'node') return rawCode;
 
   let code = rawCode;
@@ -262,6 +263,7 @@ export function FunctionEditor({
   onComplete = () => { },
 }: FunctionEditorProps) {
   const { theme } = useTheme()
+  const router = useRouter()
   const [testEvent, setTestEvent] = useState(initialEvent ?? DEFAULT_PAYLOAD)
   const editorRef = useRef<any>(null)
   // console.log('initial Event: ', initialEvent)
@@ -466,27 +468,35 @@ export function FunctionEditor({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-end">
-        <div className="flex gap-2 items-center">
-          <Button type="submit" variant="outline" onClick={handleInvoke} disabled={invokeMutation.isPending || !isUpdate}>
-            {invokeMutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Invoking...
-              </>
-            ) : (
-              <>
-                <Import className="mr-2 h-4 w-4" />
-                Invoke
-              </>
-            )}
-          </Button>
-          <form onSubmit={handleSubmit(onSubmit)}>
-            <Button type="submit" disabled={isSubmitting}>
-              {!isSubmitting ?
-                <Save className="mr-2 h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
-              {isUpdate ? "Update" : "Create"}
+        <div className="flex gap-2 items-center justify-between w-full">
+          <div className="flex gap-2 items-center">
+            <Button variant="ghost" size="icon" onClick={() => router.push("/functions")}>
+              <ArrowLeft className="h-4 w-4" />
             </Button>
-          </form>
+            <p className="text-lg font-semibold">Create Function</p>
+          </div>
+          <div className="flex gap-4 items-center">
+            <Button type="submit" variant="outline" onClick={handleInvoke} disabled={invokeMutation.isPending || !isUpdate}>
+              {invokeMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Invoking...
+                </>
+              ) : (
+                <>
+                  <Import className="mr-2 h-4 w-4" />
+                  Invoke
+                </>
+              )}
+            </Button>
+            <form onSubmit={handleSubmit(onSubmit)}>
+              <Button type="submit" disabled={isSubmitting}>
+                {!isSubmitting ?
+                  <Save className="mr-2 h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+                {isUpdate ? "Update" : "Create"}
+              </Button>
+            </form>
+          </div>
         </div>
       </div>
 

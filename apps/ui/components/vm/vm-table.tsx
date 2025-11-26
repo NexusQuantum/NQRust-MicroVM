@@ -68,9 +68,26 @@ export function VMTable({ vms }: VMTableProps) {
   const vmStatePatch = useVmStatePatch()
   const deleteMutation = useDeleteVM()
   const handleAction = (name: string, id: string, action: "start" | "stop" | "resume" | "ctrl_alt_del" | "pause") => {
-    vmStatePatch.mutate({ id, action })
-    toast.success(`VM ${action}`, {
-      description: `${name} has been ${action.toLowerCase()}`,
+    vmStatePatch.mutate({ id, action }, {
+      onSuccess: () => {
+        const actionMessages = {
+          start: { title: "VM Started", description: `${name} has been started successfully` },
+          stop: { title: "VM Stopped", description: `${name} has been stopped successfully` },
+          pause: { title: "VM Paused", description: `${name} has been paused successfully` },
+          resume: { title: "VM Resumed", description: `${name} has been resumed successfully` },
+          ctrl_alt_del: { title: "Signal Sent", description: `Ctrl+Alt+Del signal sent to ${name}` },
+        }
+
+        const message = actionMessages[action]
+        toast.success(message.title, {
+          description: message.description,
+        })
+      },
+      onError: (error) => {
+        toast.error("Action Failed", {
+          description: `Failed to ${action} ${name}: ${error.message}`,
+        })
+      }
     })
   }
 

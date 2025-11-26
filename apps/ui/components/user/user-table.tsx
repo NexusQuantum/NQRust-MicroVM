@@ -303,6 +303,7 @@ export function UserTable({
         onOpenChange={handleCloseForm}
         mode={formDialog.mode}
         user={formDialog.user}
+        existingUsers={users}
         onSubmit={handleSubmitForm}
         isLoading={formDialog.mode === "create" ? isCreating : isUpdating}
       />

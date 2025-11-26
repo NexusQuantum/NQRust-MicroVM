@@ -187,15 +187,21 @@ export default function SettingsPage() {
 
   const handleChangePassword = () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
-      toast.error("Please fill in all password fields")
+      toast.error("Validation Error", {
+        description: "Please fill in all password fields",
+      })
       return
     }
     if (newPassword !== confirmPassword) {
-      toast.error("New passwords do not match")
+      toast.error("Validation Error", {
+        description: "New passwords do not match",
+      })
       return
     }
     if (newPassword.length < 8) {
-      toast.error("Password must be at least 8 characters")
+      toast.error("Validation Error", {
+        description: "Password must be at least 8 characters",
+      })
       return
     }
 

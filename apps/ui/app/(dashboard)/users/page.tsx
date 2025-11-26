@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle, Users, Shield } from "lucide-react"
 import type { CreateUserRequest, UpdateUserRequest } from "@/lib/types"
+import { toast } from "sonner"
 
 export default function UserPage() {
   const { data: users, isLoading, error } = useUsers()
@@ -14,15 +15,63 @@ export default function UserPage() {
   const deleteMutation = useDeleteUser()
 
   const handleCreateUser = (data: CreateUserRequest) => {
-    createMutation.mutate(data)
+    createMutation.mutate(data, {
+      onSuccess: () => {
+        toast.success("User Created", {
+          description: `User ${data.username} has been created successfully`,
+        })
+      },
+      onError: (error: Error) => {
+        // Check if error is from duplicate username
+        const errorMessage = error.message.toLowerCase()
+        if (errorMessage.includes("duplicate") || errorMessage.includes("already exists") || errorMessage.includes("unique")) {
+          toast.error("Username Already Exists", {
+            description: `Username "${data.username}" is already taken. Please choose a different username.`,
+          })
+        } else {
+          toast.error("Create Failed", {
+            description: `Failed to create user: ${error.message}`,
+          })
+        }
+      },
+    })
   }
 
   const handleUpdateUser = (id: string, data: UpdateUserRequest) => {
-    updateMutation.mutate({ id, params: data })
+    updateMutation.mutate({ id, params: data }, {
+      onSuccess: () => {
+        toast.success("User Updated", {
+          description: "User has been updated successfully",
+        })
+      },
+      onError: (error: Error) => {
+        const errorMessage = error.message.toLowerCase()
+        if (errorMessage.includes("duplicate") || errorMessage.includes("already exists") || errorMessage.includes("unique")) {
+          toast.error("Username Already Exists", {
+            description: `Username "${data.username}" is already taken. Please choose a different username.`,
+          })
+        } else {
+          toast.error("Update Failed", {
+            description: `Failed to update user: ${error.message}`,
+          })
+        }
+      },
+    })
   }
 
   const handleDeleteUser = (id: string) => {
-    deleteMutation.mutate(id)
+    deleteMutation.mutate(id, {
+      onSuccess: () => {
+        toast.success("User Deleted", {
+          description: "User has been deleted successfully",
+        })
+      },
+      onError: (error: Error) => {
+        toast.error("Delete Failed", {
+          description: `Failed to delete user: ${error.message}`,
+        })
+      },
+    })
   }
 
   if (isLoading) {

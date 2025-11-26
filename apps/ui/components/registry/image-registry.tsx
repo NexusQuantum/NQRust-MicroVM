@@ -103,7 +103,9 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
           })
         })
         .catch(() => {
-          toast.error("Failed to copy path")
+          toast.error("Copy Failed", {
+            description: "Failed to copy path to clipboard",
+          })
         })
     } else {
       copyToClipboardFallback(image.host_path)
@@ -123,8 +125,16 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
 
     deleteImage.mutate(imageToDelete.id, {
       onSuccess: () => {
+        toast.success("Image Deleted", {
+          description: `${imageToDelete.name} has been deleted successfully`,
+        })
         setDeleteDialogOpen(false)
         setImageToDelete(null)
+      },
+      onError: (error: Error) => {
+        toast.error("Delete Failed", {
+          description: `Failed to delete ${imageToDelete.name}: ${error.message}`,
+        })
       },
     })
   }

@@ -21,6 +21,7 @@ interface UserFormDialogProps {
   onOpenChange: (open: boolean) => void
   mode: "create" | "edit"
   user?: User
+  existingUsers?: User[]
   onSubmit: (data: CreateUserRequest | UpdateUserRequest) => void
   isLoading?: boolean
 }
@@ -30,6 +31,7 @@ export function UserFormDialog({
   onOpenChange,
   mode,
   user,
+  existingUsers = [],
   onSubmit,
   isLoading = false,
 }: UserFormDialogProps) {
@@ -66,6 +68,17 @@ export function UserFormDialog({
 
     if (!formData.username.trim()) {
       newErrors.username = "Username is required"
+    } else {
+      // Check for duplicate username
+      const isDuplicate = existingUsers.some(
+        (existingUser) =>
+          existingUser.username.toLowerCase() === formData.username.toLowerCase() &&
+          (mode === "create" || existingUser.id !== user?.id)
+      )
+
+      if (isDuplicate) {
+        newErrors.username = "Username already exists. Please choose a different username."
+      }
     }
 
     if (mode === "create" && !formData.password) {

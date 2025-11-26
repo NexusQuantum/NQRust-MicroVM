@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Search, Link as LinkIcon, Settings } from "lucide-react"
+import { Search, Link as LinkIcon, Settings, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react"
 import type { Volume } from "@/lib/types"
 import { formatDistanceToNow } from "date-fns"
 
@@ -47,6 +47,8 @@ function getStatusColor(status: string) {
 export function VolumeTable({ volumes }: VolumeTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
 
   const filteredVolumes = volumes.filter((volume) => {
     const matchesSearch =
@@ -56,6 +58,28 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
     return matchesSearch && matchesStatus
   })
 
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredVolumes.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedVolumes = filteredVolumes.slice(startIndex, endIndex)
+
+  // Reset to page 1 when filters change
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value)
+    setCurrentPage(1)
+  }
+
+  const handleStatusChange = (value: string) => {
+    setStatusFilter(value)
+    setCurrentPage(1)
+  }
+
+  const handleItemsPerPageChange = (value: string) => {
+    setItemsPerPage(Number(value))
+    setCurrentPage(1)
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
@@ -64,11 +88,11 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
           <Input
             placeholder="Search volumes..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-9"
           />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter} onValueChange={handleStatusChange}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -78,6 +102,18 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
             <SelectItem value="attached">Attached</SelectItem>
             <SelectItem value="creating">Creating</SelectItem>
             <SelectItem value="error">Error</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
+          <SelectTrigger className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="5">5 per page</SelectItem>
+            <SelectItem value="10">10 per page</SelectItem>
+            <SelectItem value="20">20 per page</SelectItem>
+            <SelectItem value="50">50 per page</SelectItem>
+            <SelectItem value="100">100 per page</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -104,7 +140,7 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredVolumes.map((volume) => (
+              paginatedVolumes.map((volume) => (
                 <TableRow key={volume.id}>
                   <TableCell className="font-medium">{volume.name}</TableCell>
                   <TableCell className="text-sm">{formatBytes(volume.size_bytes)}</TableCell>
@@ -163,6 +199,85 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
           </TableBody>
         </Table>
       </div>
+
+      {/* Pagination */}
+      {filteredVolumes.length > 0 && (
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            Showing {startIndex + 1} to {Math.min(endIndex, filteredVolumes.length)} of {filteredVolumes.length} volumes
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+              title="First page"
+            >
+              <ChevronsLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Previous
+            </Button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter((page) => {
+                  // Show first page, last page, current page, and pages around current
+                  return (
+                    page === 1 ||
+                    page === totalPages ||
+                    (page >= currentPage - 1 && page <= currentPage + 1)
+                  )
+                })
+                .map((page, index, array) => {
+                  // Add ellipsis if there's a gap
+                  const prevPage = array[index - 1]
+                  const showEllipsis = prevPage && page - prevPage > 1
+
+                  return (
+                    <div key={page} className="flex items-center gap-1">
+                      {showEllipsis && (
+                        <span className="px-2 text-muted-foreground">...</span>
+                      )}
+                      <Button
+                        variant={currentPage === page ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setCurrentPage(page)}
+                        className="min-w-[2.5rem]"
+                      >
+                        {page}
+                      </Button>
+                    </div>
+                  )
+                })}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+              title="Last page"
+            >
+              <ChevronsRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

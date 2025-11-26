@@ -235,8 +235,29 @@ export function ResourceTable({ resources }: ResourceTableProps) {
 
   const vmStatePatch = useVmStatePatch()
   const deleteMutation = useDeleteVM()
-  const handleAction = (id: string, action: "start" | "stop" | "resume" | "ctrl_alt_del" | "pause") => {
-    vmStatePatch.mutate({ id, action })
+  const handleAction = (id: string, action: "start" | "stop" | "resume" | "ctrl_alt_del" | "pause", name?: string) => {
+    vmStatePatch.mutate({ id, action }, {
+      onSuccess: () => {
+        const vmName = name || 'VM'
+        const actionMessages = {
+          start: { title: "VM Started", description: `${vmName} has been started successfully` },
+          stop: { title: "VM Stopped", description: `${vmName} has been stopped successfully` },
+          pause: { title: "VM Paused", description: `${vmName} has been paused successfully` },
+          resume: { title: "VM Resumed", description: `${vmName} has been resumed successfully` },
+          ctrl_alt_del: { title: "Signal Sent", description: `Ctrl+Alt+Del signal sent to ${vmName}` },
+        }
+
+        const message = actionMessages[action]
+        toast.success(message.title, {
+          description: message.description,
+        })
+      },
+      onError: (error) => {
+        toast.error("Action Failed", {
+          description: `Failed to ${action} VM: ${error.message}`,
+        })
+      }
+    })
   }
 
   const handleDelete = () => {
@@ -414,22 +435,22 @@ export function ResourceTable({ resources }: ResourceTableProps) {
                         {resource.type === "vm" && canModifyResource(user, (resource as any).created_by_user_id) && (
                           <>
                             {resource.state === "stopped" && (
-                              <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "start")}>
+                              <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "start", resource.name)}>
                                 <Play className="h-4 w-4 " />
                               </Button>
                             )}
                             {resource.state === "running" && (
                               <>
-                                <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "pause")}>
+                                <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "pause", resource.name)}>
                                   <Pause className="h-4 w-4" />
                                 </Button>
-                                <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "stop")}>
+                                <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "stop", resource.name)}>
                                   <Square className="h-4 w-4" />
                                 </Button>
                               </>
                             )}
                             {resource.state === "paused" && (
-                              <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "resume")}>
+                              <Button variant="ghost" size="icon" onClick={() => handleAction(resource.id, "resume", resource.name)}>
                                 <Play className="h-4 w-4" />
                               </Button>
                             )}
