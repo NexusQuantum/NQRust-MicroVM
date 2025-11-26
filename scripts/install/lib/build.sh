@@ -104,7 +104,7 @@ download_binaries() {
     # Download manager
     log_info "Downloading manager..."
     download_file \
-        "${download_url}/nqrust-manager-x86_64-linux" \
+        "${download_url}/nqrust-manager-x86_64-unknown-linux-gnu" \
         "/tmp/manager" \
         "Downloading manager binary"
     chmod +x /tmp/manager
@@ -112,7 +112,7 @@ download_binaries() {
     # Download agent
     log_info "Downloading agent..."
     download_file \
-        "${download_url}/nqrust-agent-x86_64-linux" \
+        "${download_url}/nqrust-agent-x86_64-unknown-linux-gnu" \
         "/tmp/agent" \
         "Downloading agent binary"
     chmod +x /tmp/agent
@@ -130,7 +130,65 @@ download_binaries() {
         download_ui "$download_url"
     fi
 
+    # Download base images
+    download_base_images "$download_url"
+
     log_success "Binaries downloaded"
+}
+
+# Download base images (kernel, rootfs, runtimes)
+download_base_images() {
+    local download_url=$1
+
+    log_info "Downloading base images..."
+
+    local image_dir="${IMAGE_DIR:-/srv/images}"
+    sudo mkdir -p "$image_dir"
+
+    # Kernel (required)
+    log_info "Downloading Firecracker kernel..."
+    download_file \
+        "${download_url}/vmlinux-5.10.fc.bin" \
+        "$image_dir/vmlinux-5.10.fc.bin" \
+        "Downloading kernel"
+
+    # Function runtimes
+    log_info "Downloading Node.js runtime..."
+    download_file \
+        "${download_url}/node-runtime.ext4" \
+        "$image_dir/node-runtime.ext4" \
+        "Downloading Node.js runtime"
+
+    log_info "Downloading Python runtime..."
+    download_file \
+        "${download_url}/python-runtime.ext4" \
+        "$image_dir/python-runtime.ext4" \
+        "Downloading Python runtime"
+
+    log_info "Downloading Bun runtime..."
+    download_file \
+        "${download_url}/bun-runtime.ext4" \
+        "$image_dir/bun-runtime.ext4" \
+        "Downloading Bun runtime"
+
+    # Base images (optional but useful)
+    log_info "Downloading Alpine rootfs..."
+    download_file \
+        "${download_url}/alpine-3.18-minimal.ext4" \
+        "$image_dir/alpine-3.18-minimal.ext4" \
+        "Downloading Alpine rootfs"
+
+    log_info "Downloading Ubuntu rootfs..."
+    download_file \
+        "${download_url}/ubuntu-24.04-minimal.ext4" \
+        "$image_dir/ubuntu-24.04-minimal.ext4" \
+        "Downloading Ubuntu rootfs"
+
+    # Set permissions
+    sudo chown -R nqrust:nqrust "$image_dir" 2>/dev/null || true
+    sudo chmod -R 755 "$image_dir"
+
+    log_success "Base images downloaded"
 }
 
 # Download UI
