@@ -131,8 +131,7 @@ export async function handler(event: Event) {
 }`;
 
 const DEFAULT_PAYLOAD = `{
-  "key1": 10,
-  "key2": 5
+  // Test event payload
 }`
 
 function getDefaultCodeForRuntime(runtime: string): string {

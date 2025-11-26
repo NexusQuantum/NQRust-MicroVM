@@ -29,7 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useDeleteFunction, useInvokeFunction } from "@/lib/queries"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import dynamic from "next/dynamic"
 import { useAuthStore, canDeleteResource } from "@/lib/auth/store"
 import { useTheme } from "next-themes"
@@ -42,8 +42,7 @@ interface FunctionTableProps {
 
 const ITEMS_PER_PAGE = 10
 const DEFAULT_PAYLOAD = `{
-  "key1": 10,
-  "key2": 5
+// Test event payload
 }`
 
 export function FunctionTable({ functions }: FunctionTableProps) {
@@ -77,7 +76,6 @@ export function FunctionTable({ functions }: FunctionTableProps) {
   const paginatedFunctions = filteredFunctions.slice(startIndex, startIndex + ITEMS_PER_PAGE)
 
   // ---- delete ----
-  const { toast } = useToast()
   const deleteMutation = useDeleteFunction()
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; fnId: string; fnName: string }>({
     open: false,
@@ -88,20 +86,14 @@ export function FunctionTable({ functions }: FunctionTableProps) {
     if (deleteDialog.fnId && deleteDialog.fnName) {
       deleteMutation.mutate(deleteDialog.fnId, {
         onSuccess: () => {
-          toast({
-            title: "Function Deleted",
-            description: `${deleteDialog.fnName} has been deleted`,
-            variant: "error",
-            duration: 2000,
+          toast.success("Function Deleted", {
+            description: `${deleteDialog.fnName} has been deleted successfully`,
           })
           setDeleteDialog({ open: false, fnId: "", fnName: "" })
         },
         onError: (error: any) => {
-          toast({
-            title: "Delete Failed",
+          toast.error("Delete Failed", {
             description: `Failed to delete ${deleteDialog.fnName}: ${error?.message ?? "Unknown error"}`,
-            variant: "error",
-            duration: 2000,
           })
         },
       })
@@ -159,18 +151,12 @@ export function FunctionTable({ functions }: FunctionTableProps) {
   const handleCopyOutput = async () => {
     try {
       await navigator.clipboard.writeText(invokeOutput)
-      toast({
-        title: "Copied",
-        description: "Response copied to clipboard.",
-        variant: "success",
-        duration: 2000,
+      toast.success("Copied", {
+        description: "Response copied to clipboard",
       })
     } catch {
-      toast({
-        title: "Copy failed",
-        description: "Could not copy to clipboard.",
-        variant: "error",
-        duration: 2000,
+      toast.error("Copy Failed", {
+        description: "Could not copy to clipboard",
       })
     }
   }
@@ -200,10 +186,8 @@ export function FunctionTable({ functions }: FunctionTableProps) {
       const printable = JSON.stringify((res as any)?.response ?? res, null, 2)
       setInvokeOutput(printable)
 
-      toast({
-        title: "Invoke Succeeded",
-        description: `Function "${showDialog.fnName}" invoked successfully.`,
-        variant: "success",
+      toast.success("Invoke Succeeded", {
+        description: `Function "${showDialog.fnName}" invoked successfully`,
       })
       // closeInvokeDialog() // kalau mau menutup otomatis
     } catch (error: any) {
@@ -213,10 +197,8 @@ export function FunctionTable({ functions }: FunctionTableProps) {
       }
       setInvokeOutput(JSON.stringify(errPayload, null, 2))
 
-      toast({
-        title: "Invoke Failed",
+      toast.error("Invoke Failed", {
         description: error?.message ?? "Unknown error",
-        variant: "error",
       })
     }
   }
@@ -421,7 +403,9 @@ export function FunctionTable({ functions }: FunctionTableProps) {
             <DialogDescription>
               {showDialog.fnName ? (
                 <span>
-                  Target: <span className="font-medium">{showDialog.fnName}</span>
+                  Target: <Link href={`/functions/${showDialog.fnId}?tab=details`}>
+                    <span className="font-medium hover:underline text-primary">{showDialog.fnName}</span>
+                  </Link>
                 </span>
               ) : (
                 "Provide JSON payload to invoke this function."
