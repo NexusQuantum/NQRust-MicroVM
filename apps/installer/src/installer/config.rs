@@ -427,7 +427,9 @@ Defaults:nqrust !authenticate
     match run_sudo("visudo", &["-c", "-f", sudoers_path]) {
         Ok(output) => {
             if output.status.success() {
-                logs.push(LogEntry::success("Sudoers configuration installed and validated"));
+                logs.push(LogEntry::success(
+                    "Sudoers configuration installed and validated",
+                ));
             } else {
                 // Invalid sudoers file - remove it to prevent lockout
                 let _ = run_sudo("rm", &[sudoers_path]);
