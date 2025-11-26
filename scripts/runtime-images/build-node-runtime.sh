@@ -10,7 +10,11 @@ ALPINE_VERSION="3.18"
 ALPINE_RELEASE="3.18.4"
 WORK_DIR="$(pwd)/build-node-runtime"
 IMAGE_SIZE="1G"
-OUTPUT_IMAGE="/srv/images/node-runtime.ext4"
+# Convert to absolute path in case it's relative (for CI)
+OUTPUT_IMAGE="${OUTPUT_IMAGE:-/srv/images/node-runtime.ext4}"
+if [[ "$OUTPUT_IMAGE" != /* ]]; then
+    OUTPUT_IMAGE="$(pwd)/$OUTPUT_IMAGE"
+fi
 CACHE_DIR="/tmp/alpine-cache"
 
 # Colors

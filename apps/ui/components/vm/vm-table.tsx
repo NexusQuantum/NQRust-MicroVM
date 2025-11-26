@@ -18,11 +18,17 @@ import {
 } from "@/components/ui/pagination"
 import { Play, Square, Pause, Trash2, Search } from "lucide-react"
 import { formatPercentage } from "@/lib/utils/format"
-import { useToast } from "@/hooks/use-toast"
 import type { Vm } from "@/lib/types"
 import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { toast } from "sonner"
 
 interface VMTableProps {
   vms: Vm[]
@@ -39,7 +45,6 @@ export function VMTable({ vms }: VMTableProps) {
     vmId: "",
     vmName: "",
   })
-  const { toast } = useToast()
   const { user } = useAuthStore()
   const dateFormat = useDateFormat()
 
@@ -64,11 +69,8 @@ export function VMTable({ vms }: VMTableProps) {
   const deleteMutation = useDeleteVM()
   const handleAction = (name: string, id: string, action: "start" | "stop" | "resume" | "ctrl_alt_del" | "pause") => {
     vmStatePatch.mutate({ id, action })
-    toast({
-      title: `VM ${action}`,
+    toast.success(`VM ${action}`, {
       description: `${name} has been ${action.toLowerCase()}`,
-      variant: "success",
-      duration: 2000,
     })
   }
 
@@ -76,20 +78,14 @@ export function VMTable({ vms }: VMTableProps) {
     if (deleteDialog.vmId && deleteDialog.vmName) {
       deleteMutation.mutate(deleteDialog.vmId, {
         onSuccess: () => {
-          toast({
-            title: "VM Deleted",
+          toast.success("VM Deleted", {
             description: `${deleteDialog.vmName} has been deleted`,
-            variant: "error",
-            duration: 2000,
           })
           setDeleteDialog({ open: false, vmId: "", vmName: "" })
         },
         onError: (error) => {
-          toast({
-            title: "Delete Failed",
+          toast.error("Delete Failed", {
             description: `Failed to delete ${deleteDialog.vmName}: ${error.message}`,
-            variant: "error",
-            duration: 2000,
           })
         }
       })
@@ -244,14 +240,31 @@ export function VMTable({ vms }: VMTableProps) {
                         </>
                       )}
                       {canDeleteResource(user, (vm as any).created_by_user_id) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Delete"
-                          onClick={() => setDeleteDialog({ open: true, vmId: vm.id, vmName })}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <>
+                          {vm.state === "running" ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button variant="ghost" size="icon" disabled>
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Cannot delete running VM. Stop the VM first.</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Delete"
+                              onClick={() => setDeleteDialog({ open: true, vmId: vm.id, vmName })}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   </TableCell>

@@ -341,32 +341,23 @@ jobs:
 
       - name: Build Node.js function runtime
         run: |
-          # Build script is in the repo, modify output path for CI
           cd $GITHUB_WORKSPACE
-          sed 's|OUTPUT_IMAGE="/srv/images/node-runtime.ext4"|OUTPUT_IMAGE="images/node-runtime.ext4"|' \
-            scripts/runtime-images/build-node-runtime.sh > /tmp/build-node.sh
-          chmod +x /tmp/build-node.sh
-          sudo /tmp/build-node.sh
+          # Script auto-converts relative OUTPUT_IMAGE to absolute path
+          sudo OUTPUT_IMAGE="images/node-runtime.ext4" bash scripts/runtime-images/build-node-runtime.sh
           ls -lh images/node-runtime.ext4
 
       - name: Build Python function runtime
         run: |
-          # Build script is in the repo, modify output path for CI
           cd $GITHUB_WORKSPACE
-          sed 's|OUTPUT_IMAGE="/srv/images/python-runtime.ext4"|OUTPUT_IMAGE="images/python-runtime.ext4"|' \
-            scripts/runtime-images/build-python-runtime.sh > /tmp/build-python.sh
-          chmod +x /tmp/build-python.sh
-          sudo /tmp/build-python.sh
+          # Script auto-converts relative OUTPUT_IMAGE to absolute path
+          sudo OUTPUT_IMAGE="images/python-runtime.ext4" bash scripts/runtime-images/build-python-runtime.sh
           ls -lh images/python-runtime.ext4
 
       - name: Build Bun function runtime
         run: |
-          # Build script is in the repo, modify output path for CI
           cd $GITHUB_WORKSPACE
-          sed 's|OUTPUT_IMAGE="/srv/images/bun-runtime.ext4"|OUTPUT_IMAGE="images/bun-runtime.ext4"|' \
-            scripts/runtime-images/build-bun-runtime.sh > /tmp/build-bun.sh
-          chmod +x /tmp/build-bun.sh
-          sudo /tmp/build-bun.sh
+          # Script auto-converts relative OUTPUT_IMAGE to absolute path
+          sudo OUTPUT_IMAGE="images/bun-runtime.ext4" bash scripts/runtime-images/build-bun-runtime.sh
           ls -lh images/bun-runtime.ext4
 
       - name: Build container runtime (Alpine + Docker)
