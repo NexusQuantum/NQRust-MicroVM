@@ -119,16 +119,28 @@ apk add --no-cache \
     npm \
     openrc \
     util-linux \
-    coreutils
+    coreutils \
+    openssh \
+    curl
 
 # Configure OpenRC
 rc-update add devfs boot
 rc-update add procfs boot
 rc-update add sysfs boot
 rc-update add networking boot
+rc-update add sshd default
+
+# Configure SSH for debugging
+mkdir -p /etc/ssh
+ssh-keygen -A  # Generate host keys
+sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sed -i 's/#PermitEmptyPasswords.*/PermitEmptyPasswords yes/' /etc/ssh/sshd_config
+echo "root:" | chpasswd  # Empty password for debugging
 
 echo "Node.js version: $(node --version)"
 echo "npm version: $(npm --version)"
+echo "SSH enabled for debugging"
 SETUP_SCRIPT
 
 chmod +x rootfs/tmp/setup.sh
