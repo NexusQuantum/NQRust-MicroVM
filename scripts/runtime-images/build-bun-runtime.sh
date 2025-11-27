@@ -201,17 +201,6 @@ export async function handler(event: Event): Promise<Response> {
 }
 EOF
 
-# Create wrapper script for runtime server (to set environment properly)
-print_step "Creating runtime server wrapper..."
-cat > rootfs/usr/local/bin/start-runtime-server << 'EOF'
-#!/bin/sh
-export FUNCTION_HANDLER="${FUNCTION_HANDLER:-handler}"
-export PORT="${PORT:-3000}"
-export FUNCTION_CODE_PATH="${FUNCTION_CODE_PATH:-/function/code.ts}"
-exec /usr/local/bin/bun run /usr/local/bin/runtime-server.ts
-EOF
-chmod +x rootfs/usr/local/bin/start-runtime-server
-
 # Create OpenRC service for runtime server
 print_step "Creating runtime server service..."
 cat > rootfs/etc/init.d/runtime-server << 'EOF'
@@ -220,7 +209,8 @@ cat > rootfs/etc/init.d/runtime-server << 'EOF'
 name="runtime-server"
 description="NQRust Lambda Runtime Server (Bun)"
 
-command="/usr/local/bin/start-runtime-server"
+command="/usr/local/bin/bun"
+command_args="run /usr/local/bin/runtime-server.ts"
 command_background=true
 pidfile="/run/runtime-server.pid"
 output_log="/var/log/runtime-server.log"
@@ -229,6 +219,11 @@ error_log="/var/log/runtime-server.err"
 depend() {
     need net
     after networking
+}
+
+start_pre() {
+    export FUNCTION_HANDLER="${FUNCTION_HANDLER:-handler}"
+    export PORT="${PORT:-3000}"
 }
 EOF
 
