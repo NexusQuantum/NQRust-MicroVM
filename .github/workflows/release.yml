@@ -182,9 +182,13 @@ jobs:
 
       - name: Clean up and check disk space
         run: |
-          # Clean up from any previous runs
+          # Clean up from any previous runs - INCLUDING alpine cache to ensure fresh builds
           sudo rm -rf /tmp/ubuntu-rootfs /tmp/node-rootfs /tmp/python-rootfs /tmp/alpine-*.tar.gz 2>/dev/null || true
           sudo rm -rf /mnt/alpine /mnt/busybox /mnt/ubuntu /mnt/node /mnt/python /mnt/container 2>/dev/null || true
+          sudo rm -rf /tmp/alpine-cache 2>/dev/null || true
+          # Clean up any old build directories from runtime scripts
+          sudo rm -rf /tmp/build-node-runtime /tmp/build-python-runtime /tmp/build-bun-runtime 2>/dev/null || true
+          sudo rm -rf "$(pwd)/build-node-runtime" "$(pwd)/build-python-runtime" "$(pwd)/build-bun-runtime" 2>/dev/null || true
           # Show available disk space
           echo "=== Disk space ==="
           df -h /tmp
