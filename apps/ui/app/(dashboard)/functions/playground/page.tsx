@@ -18,29 +18,31 @@ const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
 
 /** --- Playground hanya butuh runtime & code --- */
 const playgroundSchema = z.object({
-  runtime: z.enum(["node", "python", "deno", "bun"]),
+  runtime: z.enum(["python", "javascript", "typescript"]),
   code: z.string().min(1, "Code is required"),
 })
 type PlaygroundForm = z.infer<typeof playgroundSchema>
 
-/** --- Default code (Node = CommonJS) --- */
-const DEFAULT_CODE_NODE = `// index.js (Node.js 20.x / CommonJS)
-module.exports.handler = async (event) => {
-  const a = Number(event?.key1);  
+/** --- Default code (JavaScript) --- */
+const DEFAULT_CODE_JS = `// index.js (JavaScript)
+export async function handler(event) {
+  const a = Number(event?.key1);
   const b = Number(event?.key2);
+  
   if (!Number.isFinite(a) || !Number.isFinite(b)) {
     return {
       statusCode: 400,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ error: 'key1 and key2 must be numbers' })
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
     };
   }
+  
   return {
     statusCode: 200,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ result: a + b })
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ result: a + b }),
   };
-};`;
+}`;
 
 const DEFAULT_CODE_PY = `# index.py  (Python 3.11)
 def handler(event):
@@ -60,34 +62,8 @@ def handler(event):
         "body": '{"result": %s}' % (a + b),
     }`;
 
-/** --- Default code (Deno/TypeScript) --- */
-const DEFAULT_CODE_DENO = `// index.ts (Deno / TypeScript)
-interface Event {
-  key1?: number | string;
-  key2?: number | string;
-}
-
-export async function handler(event: Event) {
-  const a = Number(event?.key1);
-  const b = Number(event?.key2);
-  
-  if (!Number.isFinite(a) || !Number.isFinite(b)) {
-    return {
-      statusCode: 400,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
-    };
-  }
-  
-  return {
-    statusCode: 200,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ result: a + b }),
-  };
-}`;
-
-/** --- Default code (Bun/TypeScript) --- */
-const DEFAULT_CODE_BUN = `// index.ts (Bun / TypeScript)
+/** --- Default code (TypeScript) --- */
+const DEFAULT_CODE_TS = `// index.ts (TypeScript)
 interface Event {
   key1?: number | string;
   key2?: number | string;
@@ -120,66 +96,18 @@ const DEFAULT_PAYLOAD = `{
 
 /** ---------------------------------------------
  * NORMALIZER untuk RUN TEST:
- * Pastikan ada exports.handler (tanpa mengandalkan module),
- * lalu mirror ke module.exports.handler jika module tersedia.
- * For Deno/Bun (TypeScript), code is passed as-is since they use ES modules.
+ * For JavaScript/TypeScript (Bun), code is passed as-is since they use ES modules.
  * --------------------------------------------- */
-type RuntimeType = "node" | "python" | "deno" | "bun";
+type RuntimeType = "python" | "javascript" | "typescript";
 
 function normalizeToModuleExportsForRunTest(
   runtime: RuntimeType,
   rawCode: string,
   handlerName: string = "handler",
 ) {
-  // Deno and Bun use ES modules natively, no transformation needed
-  if (runtime === "deno" || runtime === "bun" || runtime === "python") return rawCode;
-  
-  // Only Node.js needs CommonJS transformation
-  if (runtime !== "node") return rawCode;
-
-  let code = rawCode;
-
-  // 1) module.exports.handler = ... → exports.handler = ...
-  code = code.replace(/module\.exports\.handler\s*=\s*/g, "exports.handler = ");
-
-  // 2) module.exports = { handler: ... } → exports.handler = ...
-  if (/module\.exports\s*=\s*{[\s\S]*?handler\s*:/m.test(code)) {
-    code = code
-      .replace(/module\.exports\s*=\s*{[\s\S]*?handler\s*:\s*/m, "exports.handler = ")
-      .replace(/}\s*;?\s*$/, "");
-  }
-
-  // 3) Kalau belum ada exports.handler, coba deteksi deklarasi handler lalu ekspor
-  const hasExportsHandler = /exports\.handler\s*=/.test(code);
-  const hasNamedHandlerDecl =
-    new RegExp(`\\b(const|let|var)\\s+${handlerName}\\s*=`).test(code) ||
-    new RegExp(`\\b(async\\s+)?function\\s+${handlerName}\\s*\\(`).test(code);
-  const hasDefaultHandlerDecl =
-    /\b(const|let|var)\s+handler\s*=/.test(code) ||
-    /\b(async\s+)?function\s+handler\s*\(/.test(code);
-
-  if (!hasExportsHandler) {
-    if (hasNamedHandlerDecl) {
-      code += `\n\n// Auto-export for test runner (named)\nexports.handler = ${handlerName};`;
-    } else if (hasDefaultHandlerDecl) {
-      code += `\n\n// Auto-export for test runner (default)\nexports.handler = handler;`;
-    } else {
-      code += `\n\n// Auto-export for test runner (fallback)\nexports.handler = async function(){ throw new Error("Handler '${handlerName}' is not defined."); };`;
-    }
-  }
-
-  // 4) Mirror aman ke module.exports.handler jika module tersedia
-  code += `
-
-/* Guarded mirror to module.exports.handler when module exists */
-try {
-  if (typeof module !== "undefined" && module && module.exports && !module.exports.handler && typeof exports !== "undefined" && exports && exports.handler) {
-    module.exports.handler = exports.handler;
-  }
-} catch {}
-`;
-
-  return code.trim();
+  // JavaScript and TypeScript use ES modules natively via Bun, no transformation needed
+  // Python also passed as-is
+  return rawCode;
 }
 
 export default function FunctionPlayground() {
@@ -193,7 +121,7 @@ export default function FunctionPlayground() {
   } = useForm<PlaygroundForm>({
     resolver: zodResolver(playgroundSchema) as any,
     mode: "onChange",
-    defaultValues: { runtime: "node", code: DEFAULT_CODE_NODE },
+    defaultValues: { runtime: "typescript", code: DEFAULT_CODE_TS },
   })
 
   const runtime = watch("runtime")
@@ -210,14 +138,12 @@ export default function FunctionPlayground() {
       case "python":
         setValue("code", DEFAULT_CODE_PY)
         break
-      case "deno":
-        setValue("code", DEFAULT_CODE_DENO)
+      case "javascript":
+        setValue("code", DEFAULT_CODE_JS)
         break
-      case "bun":
-        setValue("code", DEFAULT_CODE_BUN)
+      case "typescript":
+        setValue("code", DEFAULT_CODE_TS)
         break
-      default:
-        setValue("code", DEFAULT_CODE_NODE)
     }
   }, [runtime, setValue])
 
@@ -225,8 +151,7 @@ export default function FunctionPlayground() {
     switch (runtime) {
       case "python":
         return "python"
-      case "deno":
-      case "bun":
+      case "typescript":
         return "typescript"
       default:
         return "javascript"
@@ -336,7 +261,7 @@ export default function FunctionPlayground() {
                 <CardTitle>Code Editor</CardTitle>
                 <div className="space-y-2 flex flex-row items-center justify-center gap-3">
                   <Label htmlFor="runtime" className="my-auto font-semibold">
-                    Runtime
+                    Language
                   </Label>
                   <Controller
                     name="runtime"
@@ -347,10 +272,9 @@ export default function FunctionPlayground() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="node">Node.js</SelectItem>
                           <SelectItem value="python">Python</SelectItem>
-                          <SelectItem value="deno">Deno (TypeScript)</SelectItem>
-                          <SelectItem value="bun">Bun (TypeScript)</SelectItem>
+                          <SelectItem value="javascript">JavaScript (Bun)</SelectItem>
+                          <SelectItem value="typescript">TypeScript (Bun)</SelectItem>
                         </SelectContent>
                       </Select>
                     )}

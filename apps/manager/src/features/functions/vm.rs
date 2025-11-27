@@ -109,11 +109,10 @@ fn get_runtime_image_paths(runtime: &str) -> Result<(String, String)> {
     let kernel = "/srv/images/vmlinux-5.10.fc.bin".to_string();
 
     let rootfs = match runtime {
-        "node" => "/srv/images/node-runtime.ext4",
         "python" => "/srv/images/python-runtime.ext4",
-        "bun" => "/srv/images/bun-runtime.ext4",
+        "javascript" | "typescript" => "/srv/images/bun-runtime.ext4",
         _ => anyhow::bail!(
-            "Unsupported runtime: {}. Supported: node, python, bun",
+            "Unsupported runtime: {}. Supported: python, javascript, typescript",
             runtime
         ),
     };
@@ -163,8 +162,9 @@ pub async fn inject_function_code(
 
     // Write function code
     let file_extension = match runtime {
-        "node" => "js",
         "python" => "py",
+        "javascript" => "js",
+        "typescript" => "ts",
         _ => {
             cleanup();
             anyhow::bail!("Unsupported runtime: {}", runtime);
@@ -173,12 +173,8 @@ pub async fn inject_function_code(
 
     let code_path = format!("{}/function/code.{}", mount_point, file_extension);
 
-    // For Node.js, we need to export the handler
-    let code_content = if runtime == "node" {
-        format!("{}\n\nmodule.exports = {{ {} }};", code, handler)
-    } else {
-        code.to_string()
-    };
+    // For Bun/JavaScript/TypeScript, we use ES modules natively
+    let code_content = code.to_string();
 
     if let Err(e) = fs::write(&code_path, code_content) {
         cleanup();

@@ -8,10 +8,10 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const ENGINE_TAG = "invoke-v7-node-cjs";
+const ENGINE_TAG = "invoke-v8-bun-esm";
 
 type InvokeBody = {
-  runtime: "node" | "python";
+  runtime: "python" | "javascript" | "typescript";
   code: string;
   event: unknown;
   handler?: string; // ← NEW: nama handler kustom (default: 'handler')
@@ -37,9 +37,9 @@ export async function POST(req: NextRequest) {
   }
 
   const { runtime, code, event, handler } = payload || {};
-  if (!runtime || (runtime !== "node" && runtime !== "python")) {
+  if (!runtime || (runtime !== "python" && runtime !== "javascript" && runtime !== "typescript")) {
     return NextResponse.json(
-      { ok: false, error: "Missing or invalid runtime (node|python)", engineTag: ENGINE_TAG },
+      { ok: false, error: "Missing or invalid runtime (python|javascript|typescript)", engineTag: ENGINE_TAG },
       { status: 400 }
     );
   }
@@ -51,9 +51,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    if (runtime === "node") {
-      const result = await executeNode_CommonJS(code, event, handler ?? "handler", INVOKE_TIMEOUT_MS);
-      return NextResponse.json({ ok: true, engineTag: ENGINE_TAG, strategy: "node-cjs", ...result });
+    if (runtime === "javascript" || runtime === "typescript") {
+      const result = await executeBun_ESM(code, event, handler ?? "handler", INVOKE_TIMEOUT_MS, runtime);
+      return NextResponse.json({ ok: true, engineTag: ENGINE_TAG, strategy: "bun-esm", ...result });
     } else {
       const result = await executePython_TmpFiles(code, event, handler ?? "handler", INVOKE_TIMEOUT_MS);
       return NextResponse.json({ ok: true, engineTag: ENGINE_TAG, strategy: "python-tmp", ...result });
@@ -66,21 +66,24 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** ===================== Node (CommonJS) via child process ===================== */
-async function executeNode_CommonJS(code: string, event: unknown, handlerName: string, timeoutMs: number) {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "invk-node-cjs-"));
-  const userFile = path.join(tmpDir, "index.cjs");
-  const runnerFile = path.join(tmpDir, "runner.cjs");
+/** ===================== Bun (ES Modules) via child process ===================== */
+async function executeBun_ESM(code: string, event: unknown, handlerName: string, timeoutMs: number, runtime: "javascript" | "typescript") {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "invk-bun-esm-"));
+  const ext = runtime === "typescript" ? "ts" : "js";
+  const userFile = path.join(tmpDir, `index.${ext}`);
+  const runnerFile = path.join(tmpDir, "runner.js");
   const eventFile = path.join(tmpDir, "event.json");
 
   await fs.writeFile(userFile, code, "utf8");
   await fs.writeFile(eventFile, JSON.stringify(event ?? {}, null, 2), "utf8");
 
   const runnerSrc = `
-// runner.cjs (CommonJS)
-const fs = require("node:fs");
-const path = require("node:path");
+// runner.js (ES Modules for Bun)
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const RESULT_START = "___RESULT_START___";
 const RESULT_END   = "___RESULT_END___";
 
@@ -98,7 +101,7 @@ const original = { ...console };
 });
 
 function readJSON(p) {
-  try { return JSON.parse(fs.readFileSync(p, "utf8") || "{}"); } catch { return {}; }
+  try { return JSON.parse(readFileSync(p, "utf8") || "{}"); } catch { return {}; }
 }
 
 function emit(obj) {
@@ -120,16 +123,15 @@ function normalize(r) {
   return { statusCode, headers, body };
 }
 
-(function main(){
-  const base = __dirname;
-  const event = readJSON(path.join(base, "event.json"));
+async function main() {
+  const event = readJSON(join(__dirname, "event.json"));
   let mod;
 
   try {
-    mod = require(path.join(base, "index.cjs"));
+    mod = await import(join(__dirname, "index.${ext}"));
   } catch (e) {
     emit({ statusCode:500, headers:{"content-type":"application/json"},
-           body: JSON.stringify({ error: "Failed to require user module: " + (e && e.message ? e.message : String(e)) }) });
+           body: JSON.stringify({ error: "Failed to import user module: " + (e && e.message ? e.message : String(e)) }) });
     return;
   }
 
@@ -139,16 +141,20 @@ function normalize(r) {
 
   if (typeof fn !== "function") {
     emit({ statusCode:500, headers:{"content-type":"application/json"},
-           body: JSON.stringify({ error: "Missing CommonJS export: module.exports['" + handlerName + "']" }) });
+           body: JSON.stringify({ error: "Missing ES module export: export function " + handlerName + "()" }) });
     return;
   }
 
-  Promise.resolve()
-    .then(() => fn(event))
-    .then((resp) => emit(normalize(resp)))
-    .catch((e) => emit({ statusCode:500, headers:{"content-type":"application/json"},
-                         body: JSON.stringify({ error: e && e.message ? e.message : String(e) }) }));
-})();
+  try {
+    const resp = await fn(event);
+    emit(normalize(resp));
+  } catch (e) {
+    emit({ statusCode:500, headers:{"content-type":"application/json"},
+           body: JSON.stringify({ error: e && e.message ? e.message : String(e) }) });
+  }
+}
+
+main();
 `;
   await fs.writeFile(runnerFile, runnerSrc, "utf8");
 
@@ -156,7 +162,24 @@ function normalize(r) {
   let capturedJson = "";
 
   try {
-    const child = spawn(process.execPath, [runnerFile], {
+    // Try bun first, fall back to node
+    const bunCmd = process.env.BUN_BIN || "bun";
+    const nodeCmd = process.execPath;
+    
+    let cmd = bunCmd;
+    let args = ["run", runnerFile];
+    
+    // Check if bun is available, otherwise use node
+    try {
+      const { execSync } = await import("node:child_process");
+      execSync("which bun", { stdio: "ignore" });
+    } catch {
+      // Bun not found, use node
+      cmd = nodeCmd;
+      args = [runnerFile];
+    }
+
+    const child = spawn(cmd, args, {
       cwd: tmpDir,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, NODE_NO_WARNINGS: "1", HANDLER_NAME: handlerName },
@@ -166,14 +189,14 @@ function normalize(r) {
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      for (const line of chunk.split(/\r?\n/)) {
+      for (const line of chunk.split(/\\r?\\n/)) {
         if (line === "___RESULT_START___") {
           inResult = true;
           capturedJson = "";
         } else if (line === "___RESULT_END___") {
           inResult = false;
         } else if (inResult) {
-          capturedJson += line + "\n";
+          capturedJson += line + "\\n";
         } else if (line.trim()) {
           logs.push(line.trim());
         }
@@ -182,7 +205,7 @@ function normalize(r) {
 
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      for (const line of String(chunk).split(/\r?\n/)) {
+      for (const line of String(chunk).split(/\\r?\\n/)) {
         if (line.trim()) logs.push(line.trim());
       }
     });
@@ -193,11 +216,11 @@ function normalize(r) {
         child.on("close", resolve as any);
       }),
       timeoutMs,
-      "Node execution timed out"
+      "Bun/Node execution timed out"
     );
 
     if (exitCode !== 0) {
-      logs.push(`node exited with code ${exitCode}`);
+      logs.push(`runner exited with code ${exitCode}`);
     }
 
     let response: LambdaResponse;
@@ -207,7 +230,7 @@ function normalize(r) {
       response = {
         statusCode: 500,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "Invalid JSON from node runner" }),
+        body: JSON.stringify({ error: "Invalid JSON from runner" }),
       };
     }
 

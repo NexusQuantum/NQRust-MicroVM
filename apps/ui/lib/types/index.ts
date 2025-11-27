@@ -400,7 +400,7 @@ export interface Function {
   state: "creating" | "booting" | "deploying" | "error" |"ready";
   id: string;
   name: string;
-  runtime: "node" | "python" ;
+  runtime: "python" | "javascript" | "typescript";
   handler: string;
   timeout_seconds: number;
   code: string;
@@ -451,7 +451,7 @@ export interface InvokeFunction {
 
 export interface CreateFunction {
   "name": string,
-  "runtime": "node" | "python";
+  "runtime": "python" | "javascript" | "typescript";
   "handler": string,
   "code": string,
   "vcpu": number,

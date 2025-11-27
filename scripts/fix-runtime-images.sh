@@ -99,16 +99,16 @@ depend() {
 start_pre() {
     export FUNCTION_HANDLER="${FUNCTION_HANDLER:-handler}"
     export PORT="${PORT:-3000}"
-    
+
     # Determine runtime type based on what's installed
-    if [ -x /usr/bin/node ]; then
-        command="/usr/bin/node"
+    if [ -x /usr/bin/bun ]; then
+        command="/usr/bin/bun"
         command_args="/usr/local/bin/runtime-server"
     elif [ -x /usr/bin/python3 ]; then
         command="/usr/bin/python3"
         command_args="/usr/local/bin/runtime-server"
     else
-        eerror "No runtime (node/python) found"
+        eerror "No runtime (bun/python) found"
         return 1
     fi
 }
@@ -222,7 +222,7 @@ print_step "Fixing images in $IMAGES_DIR"
 echo ""
 
 # Fix function runtime images (these have OpenRC)
-fix_runtime_image "$IMAGES_DIR/node-runtime.ext4"
+fix_runtime_image "$IMAGES_DIR/bun-runtime.ext4"
 fix_runtime_image "$IMAGES_DIR/python-runtime.ext4"
 
 # Fix base images

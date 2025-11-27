@@ -152,13 +152,7 @@ download_base_images() {
         "$image_dir/vmlinux-5.10.fc.bin" \
         "Downloading kernel"
 
-    # Function runtimes
-    log_info "Downloading Node.js runtime..."
-    download_file \
-        "${download_url}/node-runtime.ext4" \
-        "$image_dir/node-runtime.ext4" \
-        "Downloading Node.js runtime"
-
+    # Function runtimes (JavaScript/TypeScript use bun, Python uses python)
     log_info "Downloading Python runtime..."
     download_file \
         "${download_url}/python-runtime.ext4" \
@@ -169,7 +163,7 @@ download_base_images() {
     download_file \
         "${download_url}/bun-runtime.ext4" \
         "$image_dir/bun-runtime.ext4" \
-        "Downloading Bun runtime"
+        "Downloading Bun runtime (JavaScript/TypeScript)"
 
     # Base images (optional but useful)
     log_info "Downloading Alpine rootfs..."

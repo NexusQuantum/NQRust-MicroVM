@@ -164,7 +164,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
   // Tombol Invoke — memanggil API via useInvokeFunction
   const onInvokeClick = async () => {
     // validasi terakhir
-    let parsed: unknown
+    let parsed: any
     try {
       parsed = JSON.parse(payloadText || "{}")
       setJsonError("")
@@ -227,14 +227,13 @@ export function FunctionTable({ functions }: FunctionTableProps) {
           }}
         >
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="Runtime" />
+            <SelectValue placeholder="Language" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Runtimes</SelectItem>
-            <SelectItem value="node">Node.js</SelectItem>
+            <SelectItem value="all">All Languages</SelectItem>
             <SelectItem value="python">Python</SelectItem>
-            <SelectItem value="deno">Deno</SelectItem>
-            <SelectItem value="bun">Bun</SelectItem>
+            <SelectItem value="javascript">JavaScript (Bun)</SelectItem>
+            <SelectItem value="typescript">TypeScript (Bun)</SelectItem>
           </SelectContent>
         </Select>
         <Select
@@ -263,7 +262,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Runtime</TableHead>
+              <TableHead>Language</TableHead>
               <TableHead>State</TableHead>
               <TableHead>Last Invoked</TableHead>
               <TableHead>24h Invocations</TableHead>

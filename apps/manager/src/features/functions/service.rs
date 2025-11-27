@@ -434,9 +434,9 @@ fn invocation_row_to_type(row: FunctionInvocationRow) -> FunctionInvocation {
 
 fn validate_runtime(runtime: &str) -> Result<()> {
     match runtime {
-        "node" | "python" | "bun" => Ok(()),
+        "python" | "javascript" | "typescript" => Ok(()),
         _ => anyhow::bail!(
-            "Unsupported runtime: {}. Supported: node, python, bun",
+            "Unsupported runtime: {}. Supported: python, javascript, typescript",
             runtime
         ),
     }

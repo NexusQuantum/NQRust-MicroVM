@@ -487,10 +487,13 @@ pub const BASE_IMAGES: &[(&str, &str, bool)] = &[
     ),
     ("busybox-1.35.ext4", "BusyBox 1.35", false),
     ("ubuntu-24.04-minimal.ext4", "Ubuntu 24.04 minimal", false),
-    // Function runtimes
-    ("node-runtime.ext4", "Node.js function runtime", false),
+    // Function runtimes (JavaScript/TypeScript use bun, Python uses python)
     ("python-runtime.ext4", "Python function runtime", false),
-    ("bun-runtime.ext4", "Bun function runtime", false),
+    (
+        "bun-runtime.ext4",
+        "JavaScript/TypeScript function runtime",
+        false,
+    ),
     // Container runtime (optional, large - compressed due to GitHub 2GB limit)
     (
         "container-runtime.ext4",

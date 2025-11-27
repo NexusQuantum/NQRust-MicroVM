@@ -5,7 +5,7 @@ import { useEffect, useState } from "react"
 import { useToast } from "@/components/ui/use-toast"
 import { FunctionEditor } from "@/components/function/function-editor"
 
-type Draft = { runtime?: "node" | "python" | "deno" | "bun"; code?: string; event?: string }
+type Draft = { runtime?: "python" | "javascript" | "typescript"; code?: string; event?: string }
 
 export default function NewFunctionPage() {
   const router = useRouter()

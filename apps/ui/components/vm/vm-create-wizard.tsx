@@ -142,9 +142,8 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         // These runtime images are only for containers and functions, not classic VMs
         const runtimeImageNames = [
           'container-runtime',
-          'node-runtime',
-          'nodejs-runtime',
           'python-runtime',
+          'bun-runtime',
           'go-runtime',
           'rust-runtime',
           'ruby-runtime'

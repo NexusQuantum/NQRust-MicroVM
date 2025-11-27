@@ -8,7 +8,7 @@ import { useNotificationStore } from "@/lib/stores/notification-store"
  * These images are only used internally by the system to create functions and containers.
  *
  * Excludes:
- * - Runtime images: container-runtime, node-runtime, python-runtime
+ * - Runtime images: container-runtime, bun-runtime, python-runtime
  * - Per-function/container rootfs copies in /functions/ or /containers/ directories
  * - Images with runtime-related names
  */
@@ -23,13 +23,13 @@ function filterInternalImages(images: Image[]): Image[] {
     }
 
     // Exclude system runtime images by project tag
-    if (img.project && ['container-runtime', 'node-runtime', 'python-runtime', 'internal'].includes(img.project)) {
+    if (img.project && ['container-runtime', 'bun-runtime', 'python-runtime', 'internal'].includes(img.project)) {
       console.log('🔒 Filtering out runtime by project:', img.name, img.project)
       return false
     }
 
     // Exclude system runtime images by name pattern (fallback if project not set)
-    // Matches: container-runtime, node-runtime, python-runtime, alpine-docker, etc.
+    // Matches: container-runtime, bun-runtime, python-runtime, alpine-docker, etc.
     const runtimeNamePatterns = [
       /runtime/i,           // Matches anything with "runtime"
       /alpine-docker/i,     // Alpine Docker base

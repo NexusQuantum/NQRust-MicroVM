@@ -26,14 +26,14 @@ interface FunctionEditorProps {
   mode?: "create" | "update"
   functionId?: string
   // New
-  initialRuntime?: "node" | "python" | "deno" | "bun"
+  initialRuntime?: "python" | "javascript" | "typescript"
   initialCode?: string
   initialEvent?: string
 }
 
 const fnCreationSchema = z.object({
   name: z.string().min(1, "Function Name is required").max(50, "Name too long"),
-  runtime: z.enum(['node', 'python', 'deno', 'bun']),
+  runtime: z.enum(['python', 'javascript', 'typescript']),
   handler: z.string().min(1, "Handler Name is required").max(50, "Name too long"),
   code: z.string().min(1, "Code is required"),
   vcpu: z.number().min(1, "Minimum 1 vCPU").max(32, "Maximum 32 vCPU"),
@@ -42,25 +42,6 @@ const fnCreationSchema = z.object({
 })
 
 type FnCreationForm = z.infer<typeof fnCreationSchema>
-
-// Default code (biarkan module.exports.handler agar familiar di UI)
-const DEFAULT_CODE_NODE = `// index.js (Node.js 20.x / CommonJS)
-module.exports.handler = async (event) => {
-  const a = Number(event?.key1);  
-  const b = Number(event?.key2);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) {
-    return {
-      statusCode: 400,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ error: 'key1 and key2 must be numbers' })
-    };
-  }
-  return {
-    statusCode: 200,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ result: a + b })
-  };
-};`;
 
 const DEFAULT_CODE_PY = `# index.py  (Python 3.11)
 def handler(event):
@@ -80,13 +61,8 @@ def handler(event):
         "body": '{"result": %s}' % (a + b),
     }`;
 
-const DEFAULT_CODE_DENO = `// index.ts (Deno / TypeScript)
-interface Event {
-  key1?: number | string;
-  key2?: number | string;
-}
-
-export async function handler(event: Event) {
+const DEFAULT_CODE_JS = `// index.js (JavaScript)
+export async function handler(event) {
   const a = Number(event?.key1);
   const b = Number(event?.key2);
   
@@ -105,7 +81,7 @@ export async function handler(event: Event) {
   };
 }`;
 
-const DEFAULT_CODE_BUN = `// index.ts (Bun / TypeScript)
+const DEFAULT_CODE_TS = `// index.ts (TypeScript)
 interface Event {
   key1?: number | string;
   key2?: number | string;
@@ -138,118 +114,43 @@ function getDefaultCodeForRuntime(runtime: string): string {
   switch (runtime) {
     case 'python':
       return DEFAULT_CODE_PY
-    case 'deno':
-      return DEFAULT_CODE_DENO
-    case 'bun':
-      return DEFAULT_CODE_BUN
+    case 'javascript':
+      return DEFAULT_CODE_JS
+    case 'typescript':
+      return DEFAULT_CODE_TS
     default:
-      return DEFAULT_CODE_NODE
+      return DEFAULT_CODE_TS
   }
 }
 
 /* ---------------------------------------------
  * NORMALIZER #1 (BACKEND Create/Update):
- * Paksa format: const <handlerName> = async (...) => {...}
- * For Deno/Bun, code is passed as-is (ES modules).
+ * For JavaScript/TypeScript (Bun), code is passed as-is (ES modules).
  * --------------------------------------------- */
-type RuntimeType = 'node' | 'python' | 'deno' | 'bun';
+type RuntimeType = 'python' | 'javascript' | 'typescript';
 
 function normalizeToConstHandlerForBackend(
   runtime: RuntimeType,
   rawCode: string,
   handlerName: string
 ) {
-  // Deno and Bun use ES modules natively, no transformation needed
-  if (runtime === 'deno' || runtime === 'bun' || runtime === 'python') return rawCode;
-
-  if (runtime !== 'node') return rawCode;
-
-  let code = rawCode;
-
-  // module.exports.handler = <func>  →  const <handler> =
-  code = code.replace(/module\.exports\.handler\s*=\s*/g, `const ${handlerName} = `);
-
-  // exports.handler = <func> → const <handler> =
-  code = code.replace(/exports\.handler\s*=\s*/g, `const ${handlerName} = `);
-
-  // module.exports = { handler: <func> }  → ambil value after handler:
-  if (/module\.exports\s*=\s*{[\s\S]*?handler\s*:/m.test(code)) {
-    code = code.replace(
-      /module\.exports\s*=\s*{[\s\S]*?handler\s*:\s*/m,
-      `const ${handlerName} = `
-    );
-    // copot "}" terakhir
-    code = code.replace(/}\s*;?\s*$/, "");
-  }
-
-  // Bersihkan sisa ekspor lain
-  code = code.replace(/module\.exports\s*=\s*[^\n;]+;?/g, "");
-  code = code.replace(/exports\.[a-zA-Z0-9_$]+\s*=\s*[^\n;]+;?/g, "");
-
-  return code.trim();
+  // JavaScript and TypeScript use ES modules natively via Bun, no transformation needed
+  // Python also passed as-is
+  return rawCode;
 }
 
 /* ---------------------------------------------
  * NORMALIZER #2 (RUN TEST /api/test):
- * Pastikan selalu ada exports.handler (tanpa mengandalkan module),
- * lalu mirror ke module.exports.handler jika module tersedia.
- * For Deno/Bun, code is passed as-is (ES modules).
+ * For JavaScript/TypeScript (Bun), code is passed as-is (ES modules).
  * --------------------------------------------- */
 function normalizeToModuleExportsForRunTest(
   runtime: RuntimeType,
   rawCode: string,
   handlerName: string
 ) {
-  // Deno and Bun use ES modules natively, no transformation needed
-  if (runtime === 'deno' || runtime === 'bun' || runtime === 'python') return rawCode;
-
-  if (runtime !== 'node') return rawCode;
-
-  let code = rawCode;
-
-  // 1) module.exports.handler = ... → exports.handler = ...
-  code = code.replace(/module\.exports\.handler\s*=\s*/g, "exports.handler = ");
-
-  // 2) module.exports = { handler: ... } → exports.handler = ...
-  if (/module\.exports\s*=\s*{[\s\S]*?handler\s*:/m.test(code)) {
-    code = code
-      .replace(/module\.exports\s*=\s*{[\s\S]*?handler\s*:\s*/m, "exports.handler = ")
-      .replace(/}\s*;?\s*$/, "");
-  }
-
-  // 3) Biarkan exports.handler = ... kalau sudah ada.
-
-  // 4) Jika belum ada ekspor, tapi ada deklarasi handlerName/handler → ekspor
-  const hasExportsHandler = /exports\.handler\s*=/.test(code);
-  const hasNamedHandlerDecl =
-    new RegExp(`\\b(const|let|var)\\s+${handlerName}\\s*=`).test(code) ||
-    new RegExp(`\\b(async\\s+)?function\\s+${handlerName}\\s*\\(`).test(code);
-  const hasDefaultHandlerDecl =
-    /\b(const|let|var)\s+handler\s*=/.test(code) ||
-    /\b(async\s+)?function\s+handler\s*\(/.test(code);
-
-  if (!hasExportsHandler) {
-    if (hasNamedHandlerDecl) {
-      code += `\n\n// Auto-export for test runner (named)\nexports.handler = ${handlerName};`;
-    } else if (hasDefaultHandlerDecl) {
-      code += `\n\n// Auto-export for test runner (default)\nexports.handler = handler;`;
-    } else {
-      code += `\n\n// Auto-export for test runner (fallback)\nexports.handler = async function(){ throw new Error("Handler '${handlerName}' is not defined."); };`;
-    }
-  }
-
-  // 5) Mirror aman ke module.exports.handler jika module tersedia
-  code += `
-
-/* Guarded mirror to module.exports.handler when module exists */
-try {
-  if (typeof module !== "undefined" && module && module.exports && !module.exports.handler && typeof exports !== "undefined" && exports && exports.handler) {
-    module.exports.handler = exports.handler;
-  }
-} catch {}
-`;
-
-  return code.trim();
+  // JavaScript and TypeScript use ES modules natively via Bun, no transformation needed
+  // Python also passed as-is
+  return rawCode;
 }
 
 export function FunctionEditor({
@@ -292,12 +193,12 @@ export function FunctionEditor({
     mode: 'onChange',
     defaultValues: {
       name: functionData?.name ?? "my-function",
-      runtime: (initialRuntime ?? functionData?.runtime ?? "node") as RuntimeType,
+      runtime: (initialRuntime ?? functionData?.runtime ?? "typescript") as RuntimeType,
       handler: functionData?.handler ?? "handler",
       code:
         initialCode ??
         functionData?.code ??
-        getDefaultCodeForRuntime(initialRuntime ?? functionData?.runtime ?? "node"),
+        getDefaultCodeForRuntime(initialRuntime ?? functionData?.runtime ?? "typescript"),
       vcpu: functionData?.vcpu ?? 1,
       memory_mb: functionData?.memory_mb ?? 512,
       timeout_seconds: functionData?.timeout_seconds ?? 30
@@ -321,8 +222,8 @@ export function FunctionEditor({
       timeout_seconds: getValues('timeout_seconds') ?? 30,
 
       // ambil dari initial* jika ada, kalau tidak pakai nilai saat ini
-      runtime: (initialRuntime ?? getValues('runtime') ?? "node") as RuntimeType,
-      code: initialCode ?? getValues('code') ?? DEFAULT_CODE_NODE,
+      runtime: (initialRuntime ?? getValues('runtime') ?? "typescript") as RuntimeType,
+      code: initialCode ?? getValues('code') ?? DEFAULT_CODE_TS,
     })
 
     // set event editor juga
@@ -339,9 +240,10 @@ export function FunctionEditor({
     switch (runtime) {
       case 'python':
         return "python"
-      case 'deno':
-      case 'bun':
+      case 'typescript':
         return "typescript"
+      case 'javascript':
+        return "javascript"
       default:
         return "javascript"
     }
@@ -355,8 +257,8 @@ export function FunctionEditor({
   const onSubmit = async (data: FnCreationForm) => {
     try {
       const codeForBackend =
-        data.runtime === 'node'
-          ? normalizeToConstHandlerForBackend('node', data.code, data.handler)
+        (data.runtime === 'javascript' || data.runtime === 'typescript')
+          ? normalizeToConstHandlerForBackend(data.runtime, data.code, data.handler)
           : data.code
 
       if (isUpdate) {
@@ -425,13 +327,13 @@ export function FunctionEditor({
     }
 
     try {
-      const currentRuntime = watch('runtime');           // 'node' | 'python'
+      const currentRuntime = watch('runtime');           // RuntimeType
       const currentCode = watch('code');
       const currentHandler = watch('handler') || 'handler';
 
       // Khusus RUN TEST: normalisasi ke exports.handler (+ shim aman)
       const codeForTest = normalizeToModuleExportsForRunTest(
-        currentRuntime as 'node' | 'python',
+        currentRuntime as RuntimeType,
         currentCode,
         currentHandler
       );
@@ -533,8 +435,42 @@ export function FunctionEditor({
                         formatOnPaste: true,
                         formatOnType: true,
                       }}
-                      onMount={(editor) => {
+                      onMount={(editor, monaco) => {
                         editorRef.current = editor
+
+                        // Configure TypeScript compiler options
+                        monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+                          target: monaco.languages.typescript.ScriptTarget.ES2020,
+                          allowNonTsExtensions: true,
+                          moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+                          module: monaco.languages.typescript.ModuleKind.ESNext,
+                          noEmit: true,
+                          esModuleInterop: true,
+                          allowJs: true,
+                          typeRoots: ["node_modules/@types"],
+                        })
+
+                        // Configure JavaScript compiler options
+                        monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+                          target: monaco.languages.typescript.ScriptTarget.ES2020,
+                          allowNonTsExtensions: true,
+                          moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+                          module: monaco.languages.typescript.ModuleKind.ESNext,
+                          noEmit: true,
+                          allowJs: true,
+                        })
+
+                        // Disable validation for certain errors
+                        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: false,
+                          noSyntaxValidation: false,
+                        })
+
+                        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: false,
+                          noSyntaxValidation: false,
+                        })
+
                         setTimeout(() => editor.getAction('editor.action.formatDocument')?.run(), 100)
                       }}
                     />
@@ -616,7 +552,7 @@ export function FunctionEditor({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="runtime">Runtime</Label>
+                <Label htmlFor="runtime">Language</Label>
                 <Controller
                   name='runtime'
                   control={control}
@@ -626,10 +562,9 @@ export function FunctionEditor({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="node">Node.js</SelectItem>
                         <SelectItem value="python">Python</SelectItem>
-                        <SelectItem value="deno">Deno (TypeScript)</SelectItem>
-                        <SelectItem value="bun">Bun (TypeScript)</SelectItem>
+                        <SelectItem value="javascript">JavaScript</SelectItem>
+                        <SelectItem value="typescript">TypeScript</SelectItem>
                       </SelectContent>
                     </Select>
                   )}
