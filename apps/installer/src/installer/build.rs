@@ -490,6 +490,7 @@ pub const BASE_IMAGES: &[(&str, &str, bool)] = &[
     // Function runtimes
     ("node-runtime.ext4", "Node.js function runtime", false),
     ("python-runtime.ext4", "Python function runtime", false),
+    ("bun-runtime.ext4", "Bun function runtime", false),
     // Container runtime (optional, large - compressed due to GitHub 2GB limit)
     (
         "container-runtime.ext4",

@@ -189,6 +189,8 @@ jobs:
           # Clean up any old build directories from runtime scripts
           sudo rm -rf /tmp/build-node-runtime /tmp/build-python-runtime /tmp/build-bun-runtime 2>/dev/null || true
           sudo rm -rf "$(pwd)/build-node-runtime" "$(pwd)/build-python-runtime" "$(pwd)/build-bun-runtime" 2>/dev/null || true
+          # IMPORTANT: Remove any cached runtime images from previous builds on self-hosted runner
+          sudo rm -f /srv/images/node-runtime.ext4 /srv/images/python-runtime.ext4 /srv/images/bun-runtime.ext4 2>/dev/null || true
           # Show available disk space
           echo "=== Disk space ==="
           df -h /tmp
@@ -211,7 +213,10 @@ jobs:
             libssl-dev
 
       - name: Create images directory
-        run: mkdir -p images/
+        run: |
+          # Remove any existing images to force fresh builds
+          rm -rf images/
+          mkdir -p images/
 
       - name: Download guest-agent from build-binaries
         uses: actions/download-artifact@v4
