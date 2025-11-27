@@ -59,13 +59,15 @@ pub async fn proxy_console_screen(
     // Spawn screen -x to attach to the session
     // We use 'script' to allocate a PTY because screen requires a terminal
     // script -qfc "command" /dev/null runs command with a PTY and outputs to stdout
+    // Set TERM=xterm-256color to ensure proper terminal emulation
     let mut child = Command::new("sudo")
         .args([
             "script",
             "-qfc",
-            &format!("screen -x {}", screen_name),
+            &format!("TERM=xterm-256color screen -x {}", screen_name),
             "/dev/null",
         ])
+        .env("TERM", "xterm-256color")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())

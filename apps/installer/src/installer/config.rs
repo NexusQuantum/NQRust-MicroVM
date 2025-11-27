@@ -284,11 +284,35 @@ pub fn create_system_user() -> Result<Vec<LogEntry>> {
     if let Ok(out) = output {
         if out.status.success() {
             logs.push(LogEntry::info("User 'nqrust' already exists"));
+            
+            // Still add to groups in case they were created after user
+            let _ = run_sudo("usermod", &["-aG", "kvm", "nqrust"]);
+            
+            // Add to docker group if it exists (for container feature)
+            if run_command("getent", &["group", "docker"]).map(|o| o.status.success()).unwrap_or(false) {
+                let _ = run_sudo("usermod", &["-aG", "docker", "nqrust"]);
+                logs.push(LogEntry::info("Added nqrust to docker group"));
+            }
+            
             return Ok(logs);
         }
     }
 
-    // Create user
+    // Determine groups to add user to
+    let mut groups = vec!["kvm"];
+    
+    // Check if docker group exists
+    let docker_group_exists = run_command("getent", &["group", "docker"])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    
+    if docker_group_exists {
+        groups.push("docker");
+    }
+    
+    let groups_str = groups.join(",");
+
+    // Create user with groups
     let output = run_sudo(
         "useradd",
         &[
@@ -297,13 +321,16 @@ pub fn create_system_user() -> Result<Vec<LogEntry>> {
             "--shell",
             "/usr/sbin/nologin",
             "--groups",
-            "kvm",
+            &groups_str,
             "nqrust",
         ],
     )?;
 
     if output.status.success() {
-        logs.push(LogEntry::success("System user 'nqrust' created"));
+        logs.push(LogEntry::success(&format!(
+            "System user 'nqrust' created with groups: {}",
+            groups_str
+        )));
     } else {
         logs.push(LogEntry::warning(
             "Failed to create user, may already exist",

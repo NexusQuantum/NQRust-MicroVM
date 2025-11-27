@@ -56,6 +56,8 @@ Requires=postgresql.service
 Type=simple
 User=nqrust
 Group=nqrust
+# Add docker group for container feature (pull/manage Docker images)
+SupplementaryGroups=docker
 WorkingDirectory={}
 EnvironmentFile={}
 ExecStart={}
@@ -110,6 +112,8 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory={}
+# Set TERM for screen/terminal operations (fixes 'Cannot find terminfo entry for unknown')
+Environment=TERM=xterm-256color
 EnvironmentFile={}
 ExecStart={}
 Restart=on-failure

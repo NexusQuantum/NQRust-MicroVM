@@ -16,6 +16,12 @@ create_system_user() {
     # Add to kvm group
     sudo usermod -a -G kvm nqrust
 
+    # Add to docker group if docker is installed (for container feature)
+    if getent group docker >/dev/null 2>&1; then
+        sudo usermod -a -G docker nqrust
+        log_info "Added nqrust to docker group"
+    fi
+
     log_success "System user configured"
 }
 

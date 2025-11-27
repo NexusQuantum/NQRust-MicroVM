@@ -11,6 +11,9 @@ User=root
 Group=root
 WorkingDirectory=/opt/nqrust-microvm
 
+# Set TERM for screen/terminal operations
+Environment=TERM=xterm-256color
+
 # Load environment from file
 EnvironmentFile=/etc/nqrust-microvm/agent.env
 

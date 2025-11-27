@@ -9,6 +9,8 @@ Requires=postgresql.service
 Type=simple
 User=nqrust
 Group=nqrust
+# Add docker group for container feature (pull/manage Docker images)
+SupplementaryGroups=docker
 WorkingDirectory=/opt/nqrust-microvm
 
 # Load environment from file
