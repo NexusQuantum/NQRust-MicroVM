@@ -48,7 +48,7 @@ const BASE_IMAGES: &[(&str, &str, &str, &str)] = &[
         "ubuntu-22.04-minimal",
         "ubuntu",
     ),
-    // Function runtimes (JavaScript/TypeScript use bun, Python uses python)
+    // Function (JavaScript/TypeScript use bun, Python uses python)
     ("python-runtime.ext4", "rootfs", "python-runtime", "runtime"),
     ("bun-runtime.ext4", "rootfs", "bun-runtime", "runtime"),
     // Container runtime
