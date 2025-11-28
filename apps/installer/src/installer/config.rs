@@ -330,7 +330,7 @@ pub fn create_system_user() -> Result<Vec<LogEntry>> {
     )?;
 
     if output.status.success() {
-        logs.push(LogEntry::success(&format!(
+        logs.push(LogEntry::success(format!(
             "System user 'nqrust' created with groups: {}",
             groups_str
         )));
