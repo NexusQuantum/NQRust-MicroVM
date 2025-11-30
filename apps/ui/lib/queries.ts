@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
 import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq } from "@/lib/types"
 import { useNotificationStore } from "@/lib/stores/notification-store"
+import { toast } from "sonner"
 
 /**
  * Filter out internal system images that should never be shown to users.
@@ -1002,7 +1003,8 @@ export function usePreferences() {
   return useQuery({
     queryKey: queryKeys.preferences,
     queryFn: () => facadeApi.getPreferences(),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 0, // Always fetch fresh data for immediate updates
+    refetchOnWindowFocus: true, // Refetch when window regains focus
   });
 }
 
@@ -1012,8 +1014,19 @@ export function useUpdatePreferences() {
   return useMutation({
     mutationFn: (params: import("@/lib/types").UpdatePreferencesRequest) =>
       facadeApi.updatePreferences(params),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.preferences });    }
+    onSuccess: async () => {
+      // Invalidate and refetch preferences immediately
+      await queryClient.invalidateQueries({ queryKey: queryKeys.preferences });
+      await queryClient.refetchQueries({ queryKey: queryKeys.preferences });
+      toast.success("Preferences Saved", {
+        description: "Your preferences have been updated successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast.error("Update Failed", {
+        description: `Failed to update preferences: ${error.message}`,
+      });
+    },
   });
 }
 

@@ -248,7 +248,7 @@ export function ImageRegistry({ images }: ImageRegistryProps) {
                     </TableCell>
                     <TableCell className="text-sm">—</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {dateFormat.formatRelative(image.created_at)}
+                      {dateFormat.formatDate(image.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">

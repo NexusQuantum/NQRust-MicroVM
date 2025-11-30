@@ -199,7 +199,7 @@ export function TemplateList({ templates }: TemplateListProps) {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {dateFormat.formatRelative(template.created_at)}
+                      {dateFormat.formatDate(template.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">

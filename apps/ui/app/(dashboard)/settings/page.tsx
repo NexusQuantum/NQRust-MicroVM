@@ -45,9 +45,11 @@ import { useState, useEffect, useMemo } from "react"
 import { toast } from "sonner"
 import { AvatarUpload } from "@/components/user"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
+import { useAuthStore } from "@/lib/auth/store"
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
+  const { user: authUser } = useAuthStore() // Get current user from auth store
   const [mounted, setMounted] = useState(false)
   const dateFormat = useDateFormat()
 
@@ -157,12 +159,12 @@ export default function SettingsPage() {
     }
   }, [preferences])
 
-  // Sync profile from backend to local state
+  // Sync username from auth store (always up-to-date)
   useEffect(() => {
-    if (profile) {
-      setNewUsername(profile.username)
+    if (authUser) {
+      setNewUsername(authUser.username)
     }
-  }, [profile])
+  }, [authUser])
 
   useEffect(() => {
     setMounted(true)
@@ -180,8 +182,19 @@ export default function SettingsPage() {
   }
 
   const handleUpdateProfile = () => {
-    if (newUsername !== profile?.username) {
-      updateProfileMutation.mutate({ username: newUsername })
+    if (newUsername !== authUser?.username) {
+      updateProfileMutation.mutate({ username: newUsername }, {
+        onSuccess: () => {
+          toast.success("Profile Updated", {
+            description: "Your profile has been updated successfully",
+          })
+        },
+        onError: (error: Error) => {
+          toast.error("Update Failed", {
+            description: error.message || "Failed to update profile",
+          })
+        }
+      })
     }
   }
 
@@ -213,17 +226,47 @@ export default function SettingsPage() {
         setCurrentPassword("")
         setNewPassword("")
         setConfirmPassword("")
+        toast.success("Password Changed", {
+          description: "Your password has been changed successfully",
+        })
+      },
+      onError: (error: Error) => {
+        toast.error("Change Password Failed", {
+          description: "Failed to change password. Please check your current password.",
+        })
       }
     })
   }
 
   const handleAvatarUpload = (file: File) => {
-    uploadAvatarMutation.mutate(file)
+    uploadAvatarMutation.mutate(file, {
+      onSuccess: () => {
+        toast.success("Avatar Uploaded", {
+          description: "Your avatar has been uploaded successfully",
+        })
+      },
+      onError: (error: Error) => {
+        toast.error("Upload Failed", {
+          description: error.message || "Failed to upload avatar",
+        })
+      }
+    })
   }
 
   const handleDeleteAvatar = () => {
     if (confirm("Are you sure you want to delete your avatar?")) {
-      deleteAvatarMutation.mutate()
+      deleteAvatarMutation.mutate(undefined, {
+        onSuccess: () => {
+          toast.success("Avatar Deleted", {
+            description: "Your avatar has been deleted successfully",
+          })
+        },
+        onError: (error: Error) => {
+          toast.error("Delete Failed", {
+            description: error.message || "Failed to delete avatar",
+          })
+        }
+      })
     }
   }
 
@@ -314,7 +357,7 @@ export default function SettingsPage() {
                 <AvatarUpload
                   onUpload={handleAvatarUpload}
                   currentAvatarPath={profile?.avatar_path}
-                  username={profile?.username}
+                  username={authUser?.username}
                   isUploading={uploadAvatarMutation.isPending}
                 />
 
@@ -326,7 +369,7 @@ export default function SettingsPage() {
                       value={newUsername}
                       onChange={(e) => setNewUsername(e.target.value)}
                       placeholder="Enter username"
-                      disabled={isLoading}
+                      disabled
                     />
                   </div>
 
@@ -334,7 +377,7 @@ export default function SettingsPage() {
                     <Label>Role</Label>
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="capitalize">
-                        {profile?.role || "user"}
+                        {authUser?.role || "user"}
                       </Badge>
                     </div>
                   </div>
@@ -356,7 +399,7 @@ export default function SettingsPage() {
                   <div className="flex gap-2">
                     <Button
                       onClick={handleUpdateProfile}
-                      disabled={isLoading || newUsername === profile?.username || updateProfileMutation.isPending}
+                      disabled={isLoading || newUsername === authUser?.username || updateProfileMutation.isPending}
                     >
                       Update Profile
                     </Button>

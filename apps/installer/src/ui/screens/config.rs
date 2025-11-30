@@ -21,6 +21,7 @@ const CONFIG_FIELDS: &[(&str, &str)] = &[
     ("Database Name", "nqrust"),
     ("Database User", "nqrust"),
     ("Install Docker", "Yes/No (for DockerHub features)"),
+    ("Container Runtime", "Yes/No (Docker-in-VM support)"),
 ];
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
@@ -187,6 +188,13 @@ fn get_field_value(app: &App, field: usize) -> String {
         8 => app.config.db_user.clone(),
         9 => {
             if app.config.with_docker {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            }
+        }
+        10 => {
+            if app.config.with_container_runtime {
                 "Yes".to_string()
             } else {
                 "No".to_string()

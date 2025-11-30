@@ -153,8 +153,8 @@ impl Default for InstallConfig {
             db_user: "nqrust".to_string(),
             db_password: String::new(), // Will be generated
             with_ui: true,
-            with_container_runtime: false,
-            with_docker: true, // Enable by default for DockerHub image pulling
+            with_container_runtime: true, // Enable by default for container features
+            with_docker: true,            // Enable by default for DockerHub image pulling
             non_interactive: false,
         }
     }

@@ -382,7 +382,7 @@ fn handle_config_input(app: &mut App, key: KeyCode) {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if app.config_field < 9 {
+                if app.config_field < 10 {
                     // CONFIG_FIELDS.len() - 1
                     app.config_field += 1;
                 }
@@ -510,6 +510,13 @@ fn get_current_field_value(app: &App) -> String {
                 "No".to_string()
             }
         }
+        10 => {
+            if app.config.with_container_runtime {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            }
+        }
         _ => String::new(),
     }
 }
@@ -540,6 +547,12 @@ fn apply_config_field(app: &mut App) {
             // Toggle Docker installation (yes/no/y/n)
             let lower = value.to_lowercase();
             app.config.with_docker =
+                lower == "yes" || lower == "y" || lower == "true" || lower == "1";
+        }
+        10 => {
+            // Toggle container runtime installation (yes/no/y/n)
+            let lower = value.to_lowercase();
+            app.config.with_container_runtime =
                 lower == "yes" || lower == "y" || lower == "true" || lower == "1";
         }
         _ => {}

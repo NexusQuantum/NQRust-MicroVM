@@ -219,7 +219,7 @@ export function UserTable({
                   {/* <TableCell>{user.email}</TableCell> */}
                   <TableCell>{getRoleBadge(user.role)}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {dateFormat.formatRelative(user.created_at)}
+                    {dateFormat.formatDate(user.created_at)}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {user.last_login_at ? dateFormat.formatRelative(user.last_login_at) : "Never"}

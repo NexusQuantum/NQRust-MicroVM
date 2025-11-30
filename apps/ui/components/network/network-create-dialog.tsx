@@ -145,15 +145,15 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
       onOpenChange(open)
       if (!open) resetForm()
     }}>
-      <DialogContent className="min-w-2xl max-w-lg">
-        <DialogHeader>
+      <DialogContent className="min-w-2xl max-w-lg max-h-[90vh] flex flex-col">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle>Create Network</DialogTitle>
           <DialogDescription>
             Create a new network for VM connectivity. Networks can be simple bridges or VLAN-isolated segments.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        <div className="space-y-4 py-4 overflow-y-auto flex-1 min-h-0">
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
@@ -328,7 +328,7 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-shrink-0">
           <Button
             variant="outline"
             onClick={() => {

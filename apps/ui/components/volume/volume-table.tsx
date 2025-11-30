@@ -44,6 +44,21 @@ function getStatusColor(status: string) {
   }
 }
 
+// Get actual status based on volume attachment state
+function getActualStatus(volume: Volume): string {
+  // If volume is attached to a VM, status should be "attached"
+  if (volume.attached_to_vm_id) {
+    return "attached"
+  }
+  // If volume has no VM attachment, check the stored status
+  // but override "attached" to "available" if not actually attached
+  if (volume.status === "attached") {
+    return "available"
+  }
+  // Return the original status for other cases (creating, error, etc)
+  return volume.status
+}
+
 export function VolumeTable({ volumes }: VolumeTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -54,7 +69,9 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
     const matchesSearch =
       volume.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (volume.attached_to_vm_name && volume.attached_to_vm_name.toLowerCase().includes(searchQuery.toLowerCase()))
-    const matchesStatus = statusFilter === "all" || volume.status === statusFilter
+    // Use actualStatus for filtering to match the displayed status
+    const actualStatus = getActualStatus(volume)
+    const matchesStatus = statusFilter === "all" || actualStatus === statusFilter
     return matchesSearch && matchesStatus
   })
 
@@ -140,61 +157,64 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
                 </TableCell>
               </TableRow>
             ) : (
-              paginatedVolumes.map((volume) => (
-                <TableRow key={volume.id}>
-                  <TableCell className="font-medium">{volume.name}</TableCell>
-                  <TableCell className="text-sm">{formatBytes(volume.size_bytes)}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{volume.type.toUpperCase()}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={getStatusColor(volume.status)}>
-                      {volume.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {volume.host_name || volume.host_id.slice(0, 8)}
-                  </TableCell>
-                  <TableCell>
-                    {volume.attached_to_vm_id ? (
-                      <div className="flex flex-col gap-0.5">
-                        <Link
-                          href={`/vms/${volume.attached_to_vm_id}`}
-                          className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
+              paginatedVolumes.map((volume) => {
+                const actualStatus = getActualStatus(volume)
+                return (
+                  <TableRow key={volume.id}>
+                    <TableCell className="font-medium">{volume.name}</TableCell>
+                    <TableCell className="text-sm">{formatBytes(volume.size_bytes)}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{volume.type.toUpperCase()}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={getStatusColor(actualStatus)}>
+                        {actualStatus}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {volume.host_name || volume.host_id.slice(0, 8)}
+                    </TableCell>
+                    <TableCell>
+                      {volume.attached_to_vm_id ? (
+                        <div className="flex flex-col gap-0.5">
+                          <Link
+                            href={`/vms/${volume.attached_to_vm_id}`}
+                            className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                          >
+                            <LinkIcon className="h-3 w-3" />
+                            {volume.attached_to_vm_name || "Unknown VM"}
+                          </Link>
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {volume.attached_to_vm_id.slice(0, 8)}...
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">Not attached</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {formatDistanceToNow(new Date(volume.created_at), { addSuffix: true })}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {actualStatus === "attached" && volume.attached_to_vm_id ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Manage in VM Storage"
+                          asChild
                         >
-                          <LinkIcon className="h-3 w-3" />
-                          {volume.attached_to_vm_name || "Unknown VM"}
-                        </Link>
-                        <span className="text-xs text-muted-foreground font-mono">
-                          {volume.attached_to_vm_id.slice(0, 8)}...
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground text-sm">Not attached</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {formatDistanceToNow(new Date(volume.created_at), { addSuffix: true })}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {volume.status === "attached" && volume.attached_to_vm_id ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        title="Manage in VM Storage"
-                        asChild
-                      >
-                        <Link href={`/vms/${volume.attached_to_vm_id}?tab=storage`}>
-                          <Settings className="h-4 w-4 mr-2" />
-                          Manage Storage
-                        </Link>
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
+                          <Link href={`/vms/${volume.attached_to_vm_id}?tab=storage`}>
+                            <Settings className="h-4 w-4 mr-2" />
+                            Manage Storage
+                          </Link>
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>
