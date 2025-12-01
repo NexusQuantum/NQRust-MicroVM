@@ -260,33 +260,33 @@ jobs:
           sudo sh -c 'echo "nameserver 8.8.8.8" > /mnt/alpine/etc/resolv.conf'
           sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd' || true
 
-          # Create inittab for BusyBox init (NO leading whitespace - critical!)
-          cat <<'INITTAB' | sudo tee /mnt/alpine/etc/inittab > /dev/null
-::sysinit:/bin/mount -t proc proc /proc
-::sysinit:/bin/mount -t sysfs sysfs /sys
-::sysinit:/bin/mount -o remount,rw /
-::sysinit:/bin/mkdir -p /dev/pts /dev/shm
-::sysinit:/bin/mount -t devpts devpts /dev/pts
-::sysinit:/sbin/ifconfig lo 127.0.0.1 up
-::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &
-::sysinit:/bin/hostname alpine-vm
-ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100
-::ctrlaltdel:/sbin/reboot
-::shutdown:/bin/umount -a -r
-INITTAB
+          # Create inittab for BusyBox init
+          printf '%s\n' \
+            '::sysinit:/bin/mount -t proc proc /proc' \
+            '::sysinit:/bin/mount -t sysfs sysfs /sys' \
+            '::sysinit:/bin/mount -o remount,rw /' \
+            '::sysinit:/bin/mkdir -p /dev/pts /dev/shm' \
+            '::sysinit:/bin/mount -t devpts devpts /dev/pts' \
+            '::sysinit:/sbin/ifconfig lo 127.0.0.1 up' \
+            '::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &' \
+            '::sysinit:/bin/hostname alpine-vm' \
+            'ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100' \
+            '::ctrlaltdel:/sbin/reboot' \
+            '::shutdown:/bin/umount -a -r' \
+            | sudo tee /mnt/alpine/etc/inittab > /dev/null
 
           # Create udhcpc script for DHCP
           sudo mkdir -p /mnt/alpine/usr/share/udhcpc
-          cat <<'UDHCPC' | sudo tee /mnt/alpine/usr/share/udhcpc/default.script > /dev/null
-#!/bin/sh
-case "$1" in
-    bound|renew)
-        [ -n "$ip" ] && ifconfig $interface $ip netmask ${subnet:-255.255.255.0}
-        [ -n "$router" ] && route add default gw $router
-        [ -n "$dns" ] && echo "nameserver $dns" > /etc/resolv.conf
-        ;;
-esac
-UDHCPC
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '    bound|renew)' \
+            '        [ -n "$ip" ] && ifconfig $interface $ip netmask ${subnet:-255.255.255.0}' \
+            '        [ -n "$router" ] && route add default gw $router' \
+            '        [ -n "$dns" ] && echo "nameserver $dns" > /etc/resolv.conf' \
+            '        ;;' \
+            'esac' \
+            | sudo tee /mnt/alpine/usr/share/udhcpc/default.script > /dev/null
           sudo chmod +x /mnt/alpine/usr/share/udhcpc/default.script
 
           # Set default TERM for serial console
@@ -320,32 +320,32 @@ UDHCPC
           sudo chmod +x /mnt/busybox/bin/busybox
           sudo chroot /mnt/busybox /bin/busybox --install -s
 
-          # Create /etc/inittab for BusyBox init (this is what the kernel calls /sbin/init which reads)
-          cat <<'INITTAB' | sudo tee /mnt/busybox/etc/inittab > /dev/null
-::sysinit:/bin/mount -t proc proc /proc
-::sysinit:/bin/mount -t sysfs sysfs /sys
-::sysinit:/bin/mount -o remount,rw /
-::sysinit:/bin/mkdir -p /dev/pts /dev/shm
-::sysinit:/bin/mount -t devpts devpts /dev/pts
-::sysinit:/sbin/ifconfig lo 127.0.0.1 up
-::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &
-::sysinit:/bin/hostname busybox-vm
-ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100
-::ctrlaltdel:/sbin/reboot
-::shutdown:/bin/umount -a -r
-INITTAB
+          # Create /etc/inittab for BusyBox init
+          printf '%s\n' \
+            '::sysinit:/bin/mount -t proc proc /proc' \
+            '::sysinit:/bin/mount -t sysfs sysfs /sys' \
+            '::sysinit:/bin/mount -o remount,rw /' \
+            '::sysinit:/bin/mkdir -p /dev/pts /dev/shm' \
+            '::sysinit:/bin/mount -t devpts devpts /dev/pts' \
+            '::sysinit:/sbin/ifconfig lo 127.0.0.1 up' \
+            '::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &' \
+            '::sysinit:/bin/hostname busybox-vm' \
+            'ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100' \
+            '::ctrlaltdel:/sbin/reboot' \
+            '::shutdown:/bin/umount -a -r' \
+            | sudo tee /mnt/busybox/etc/inittab > /dev/null
 
           # Create udhcpc script for DHCP
-          cat <<'UDHCPC' | sudo tee /mnt/busybox/usr/share/udhcpc/default.script > /dev/null
-#!/bin/sh
-case "$1" in
-    bound|renew)
-        [ -n "$ip" ] && ifconfig $interface $ip netmask ${subnet:-255.255.255.0}
-        [ -n "$router" ] && route add default gw $router
-        [ -n "$dns" ] && echo "nameserver $dns" > /etc/resolv.conf
-        ;;
-esac
-UDHCPC
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '    bound|renew)' \
+            '        [ -n "$ip" ] && ifconfig $interface $ip netmask ${subnet:-255.255.255.0}' \
+            '        [ -n "$router" ] && route add default gw $router' \
+            '        [ -n "$dns" ] && echo "nameserver $dns" > /etc/resolv.conf' \
+            '        ;;' \
+            'esac' \
+            | sudo tee /mnt/busybox/usr/share/udhcpc/default.script > /dev/null
           sudo chmod +x /mnt/busybox/usr/share/udhcpc/default.script
 
           # Set default TERM for serial console
@@ -473,104 +473,96 @@ UDHCPC
           '
 
           # Create proper /etc/inittab for BusyBox init with OpenRC (matching working dev image)
-          cat <<'INITTAB' | sudo tee /mnt/container/etc/inittab > /dev/null
-# /etc/inittab
+          printf '%s\n' \
+            '# /etc/inittab' \
+            '' \
+            '::sysinit:/sbin/openrc sysinit' \
+            '::sysinit:/sbin/openrc boot' \
+            '::wait:/sbin/openrc default' \
+            '' \
+            '# Set up a couple of gettys' \
+            'tty1::respawn:/sbin/getty 38400 tty1' \
+            'tty2::respawn:/sbin/getty 38400 tty2' \
+            'tty3::respawn:/sbin/getty 38400 tty3' \
+            'tty4::respawn:/sbin/getty 38400 tty4' \
+            'tty5::respawn:/sbin/getty 38400 tty5' \
+            'tty6::respawn:/sbin/getty 38400 tty6' \
+            '' \
+            '# Put a getty on the serial port' \
+            '#ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' \
+            '' \
+            '# Stuff to do for the 3-finger salute' \
+            '::ctrlaltdel:/sbin/reboot' \
+            '' \
+            '# Stuff to do before rebooting' \
+            '::shutdown:/sbin/openrc shutdown' \
+            | sudo tee /mnt/container/etc/inittab > /dev/null
 
-::sysinit:/sbin/openrc sysinit
-::sysinit:/sbin/openrc boot
-::wait:/sbin/openrc default
-
-# Set up a couple of getty's
-tty1::respawn:/sbin/getty 38400 tty1
-tty2::respawn:/sbin/getty 38400 tty2
-tty3::respawn:/sbin/getty 38400 tty3
-tty4::respawn:/sbin/getty 38400 tty4
-tty5::respawn:/sbin/getty 38400 tty5
-tty6::respawn:/sbin/getty 38400 tty6
-
-# Put a getty on the serial port
-#ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100
-
-# Stuff to do for the 3-finger salute
-::ctrlaltdel:/sbin/reboot
-
-# Stuff to do before rebooting
-::shutdown:/sbin/openrc shutdown
-INITTAB
-
-          # Configure Docker daemon for OpenRC - NO leading whitespace!
+          # Configure Docker daemon for OpenRC
           sudo mkdir -p /mnt/container/etc/docker /mnt/container/etc/conf.d
 
-          # OpenRC configuration for Docker (no leading whitespace!)
-          cat <<'DOCKERCONF' | sudo tee /mnt/container/etc/conf.d/docker > /dev/null
-# Docker daemon options for OpenRC
-DOCKER_OPTS="-H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375"
-DOCKERCONF
+          # OpenRC configuration for Docker
+          printf '%s\n' \
+            '# Docker daemon options for OpenRC' \
+            'DOCKER_OPTS="-H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375"' \
+            | sudo tee /mnt/container/etc/conf.d/docker > /dev/null
 
-          # Docker daemon JSON config - NO hosts here (they're in DOCKER_OPTS)
-          cat <<'DOCKERJSON' | sudo tee /mnt/container/etc/docker/daemon.json > /dev/null
-{
-    "storage-driver": "overlay2",
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "10m",
-        "max-file": "3"
-    }
-}
-DOCKERJSON
+          # Docker daemon JSON config - NO hosts here (they are in DOCKER_OPTS)
+          printf '%s\n' \
+            '{' \
+            '    "storage-driver": "overlay2",' \
+            '    "log-driver": "json-file",' \
+            '    "log-opts": {' \
+            '        "max-size": "10m",' \
+            '        "max-file": "3"' \
+            '    }' \
+            '}' \
+            | sudo tee /mnt/container/etc/docker/daemon.json > /dev/null
 
           # Create docker-force init script that reliably starts Docker with TCP
-          cat <<'DOCKERFORCE' | sudo tee /mnt/container/etc/init.d/docker-force > /dev/null
-#!/sbin/openrc-run
-
-description="Force start Docker daemon with TCP support"
-
-depend() {
-    need net
-    after firewall
-}
-
-start() {
-    ebegin "Starting Docker daemon with TCP support"
-    
-    # Ensure Docker daemon directory exists
-    mkdir -p /var/run /var/lib/docker
-    
-    # Start Docker daemon with explicit options
-    /usr/bin/dockerd \
-        --host=unix:///var/run/docker.sock \
-        --host=tcp://0.0.0.0:2375 \
-        --storage-driver=overlay2 \
-        --log-driver=json-file \
-        --log-opt max-size=10m \
-        --log-opt max-file=3 \
-        > /var/log/docker.log 2>&1 &
-    
-    DOCKER_PID=$!
-    echo $DOCKER_PID > /var/run/docker.pid
-    
-    # Wait for Docker to be ready
-    for i in $(seq 1 30); do
-        if /usr/bin/docker info >/dev/null 2>&1; then
-            eend 0 "Docker daemon started successfully"
-            return 0
-        fi
-        sleep 1
-    done
-    
-    eend 1 "Docker daemon failed to start"
-    return 1
-}
-
-stop() {
-    ebegin "Stopping Docker daemon"
-    if [ -f /var/run/docker.pid ]; then
-        kill $(cat /var/run/docker.pid)
-        rm -f /var/run/docker.pid
-    fi
-    eend 0
-}
-DOCKERFORCE
+          printf '%s\n' \
+            '#!/sbin/openrc-run' \
+            '' \
+            'description="Force start Docker daemon with TCP support"' \
+            '' \
+            'depend() {' \
+            '    need net' \
+            '    after firewall' \
+            '}' \
+            '' \
+            'start() {' \
+            '    ebegin "Starting Docker daemon with TCP support"' \
+            '    mkdir -p /var/run /var/lib/docker' \
+            '    /usr/bin/dockerd \' \
+            '        --host=unix:///var/run/docker.sock \' \
+            '        --host=tcp://0.0.0.0:2375 \' \
+            '        --storage-driver=overlay2 \' \
+            '        --log-driver=json-file \' \
+            '        --log-opt max-size=10m \' \
+            '        --log-opt max-file=3 \' \
+            '        > /var/log/docker.log 2>&1 &' \
+            '    DOCKER_PID=$!' \
+            '    echo $DOCKER_PID > /var/run/docker.pid' \
+            '    for i in $(seq 1 30); do' \
+            '        if /usr/bin/docker info >/dev/null 2>&1; then' \
+            '            eend 0 "Docker daemon started successfully"' \
+            '            return 0' \
+            '        fi' \
+            '        sleep 1' \
+            '    done' \
+            '    eend 1 "Docker daemon failed to start"' \
+            '    return 1' \
+            '}' \
+            '' \
+            'stop() {' \
+            '    ebegin "Stopping Docker daemon"' \
+            '    if [ -f /var/run/docker.pid ]; then' \
+            '        kill $(cat /var/run/docker.pid)' \
+            '        rm -f /var/run/docker.pid' \
+            '    fi' \
+            '    eend 0' \
+            '}' \
+            | sudo tee /mnt/container/etc/init.d/docker-force > /dev/null
           sudo chmod +x /mnt/container/etc/init.d/docker-force
 
           # Use docker-force instead of regular docker, and add local service
@@ -580,14 +572,14 @@ DOCKERFORCE
             rc-update add local default
           '
 
-          # Create network config (no leading whitespace!)
-          cat <<'NET' | sudo tee /mnt/container/etc/network/interfaces > /dev/null
-auto lo
-iface lo inet loopback
-
-auto eth0
-iface eth0 inet dhcp
-NET
+          # Create network config
+          printf '%s\n' \
+            'auto lo' \
+            'iface lo inet loopback' \
+            '' \
+            'auto eth0' \
+            'iface eth0 inet dhcp' \
+            | sudo tee /mnt/container/etc/network/interfaces > /dev/null
 
           # Set TERM for serial console
           sudo mkdir -p /mnt/container/etc/profile.d
