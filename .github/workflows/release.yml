@@ -242,155 +242,439 @@ jobs:
 
       - name: Build Alpine rootfs
         run: |
-          # Use pre-built Alpine mini root filesystem
+          # Use Alpine Linux "virtual" flavor which includes OpenRC init system
+          # This is compatible with NQRust-MicroVM's guest-agent injection
           ALPINE_VERSION=3.18
-          curl -fsSL -o /tmp/alpine-minirootfs.tar.gz \
-            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
+          
+          # Download Alpine virtual rootfs (includes OpenRC, networking, etc.)
+          curl -fsSL -o /tmp/alpine-virt.tar.gz \
+            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-virt-${ALPINE_VERSION}.0-x86_64.iso
+          
+          # Extract the rootfs from the ISO
+          sudo mkdir -p /mnt/alpine-iso
+          sudo mount -o loop /tmp/alpine-virt.tar.gz /mnt/alpine-iso || {
+            # If ISO mount fails, fall back to minirootfs with OpenRC setup
+            echo "ISO mount failed, using minirootfs with manual OpenRC setup"
+            curl -fsSL -o /tmp/alpine-minirootfs.tar.gz \
+              https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
+          }
 
-          # Create ext4 image (50MB for Alpine minirootfs - it's about 8MB compressed but needs space for extraction)
-          dd if=/dev/zero of=images/alpine-3.18-minimal.ext4 bs=1M count=50
+          # Create ext4 image (100MB for Alpine with OpenRC)
+          dd if=/dev/zero of=images/alpine-3.18-minimal.ext4 bs=1M count=100
           mkfs.ext4 -F images/alpine-3.18-minimal.ext4
 
           # Mount and populate
           sudo mkdir -p /mnt/alpine
           sudo mount -o loop images/alpine-3.18-minimal.ext4 /mnt/alpine
-          sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/alpine
+          
+          # Extract rootfs
+          if [ -f /tmp/alpine-minirootfs.tar.gz ]; then
+            sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/alpine
+          else
+            # From ISO, extract the modloop/rootfs
+            sudo cp -a /mnt/alpine-iso/apks /mnt/alpine/ 2>/dev/null || true
+            sudo umount /mnt/alpine-iso
+          fi
 
-          # Basic setup - create required directories
-          sudo mkdir -p /mnt/alpine/etc/init.d /mnt/alpine/sbin
-          sudo sh -c 'echo "nameserver 8.8.8.8" > /mnt/alpine/etc/resolv.conf'
+          # Install OpenRC and networking packages using apk
+          sudo mkdir -p /mnt/alpine/etc/apk
+          echo "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/main" | sudo tee /mnt/alpine/etc/apk/repositories
+          echo "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/community" | sudo tee -a /mnt/alpine/etc/apk/repositories
           
-          # Ensure /sbin/init exists (kernel boot arg uses init=/sbin/init)
-          # Alpine minirootfs has busybox but might not have init symlink
-          sudo ln -sf /bin/busybox /mnt/alpine/sbin/init 2>/dev/null || true
-          sudo ln -sf /bin/busybox /mnt/alpine/sbin/getty 2>/dev/null || true
-          sudo ln -sf /bin/busybox /mnt/alpine/sbin/ifconfig 2>/dev/null || true
-          sudo ln -sf /bin/busybox /mnt/alpine/sbin/udhcpc 2>/dev/null || true
-          sudo ln -sf /bin/busybox /mnt/alpine/sbin/route 2>/dev/null || true
-          sudo ln -sf /bin/busybox /mnt/alpine/sbin/reboot 2>/dev/null || true
-          
-          # Create passwd and shadow if they don't exist (Alpine minirootfs should have them)
-          sudo sh -c 'test -f /mnt/alpine/etc/passwd || echo "root:x:0:0:root:/root:/bin/sh" > /mnt/alpine/etc/passwd'
-          sudo sh -c 'test -f /mnt/alpine/etc/shadow || echo "root::0:0:99999:7:::" > /mnt/alpine/etc/shadow'
-          sudo sh -c 'test -f /mnt/alpine/etc/group || echo "root:x:0:" > /mnt/alpine/etc/group'
-          
-          # Set root password using chpasswd or fallback to direct shadow edit
-          sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd' 2>/dev/null || \
-            sudo sed -i 's|^root:[^:]*:|root:$6$rounds=4096$saltsalt$YW5vbnltb3VzcGFzc3dvcmQ=:|' /mnt/alpine/etc/shadow || true
-          
-          # Create empty rc.local that guest-agent installer can append to
-          printf '%s\n' '#!/bin/sh' '# rc.local - executed at boot' 'exit 0' | sudo tee /mnt/alpine/etc/rc.local > /dev/null
-          sudo chmod +x /mnt/alpine/etc/rc.local
+          # Bootstrap with apk
+          sudo apk --root /mnt/alpine --initdb add alpine-base openrc busybox-initscripts ifupdown-ng || {
+            echo "apk install failed, setting up manually"
+          }
 
-          # Create inittab for BusyBox init (includes rc.local execution)
+          # Create essential directories
+          sudo mkdir -p /mnt/alpine/etc/init.d /mnt/alpine/etc/runlevels/{sysinit,boot,default,shutdown}
+          sudo mkdir -p /mnt/alpine/etc/network /mnt/alpine/etc/udhcpc /mnt/alpine/usr/local/bin
+          sudo mkdir -p /mnt/alpine/var/run /mnt/alpine/var/log /mnt/alpine/run
+          
+          # Create passwd, shadow, group
+          printf '%s\n' 'root:x:0:0:root:/root:/bin/ash' 'nobody:x:65534:65534:nobody:/:/sbin/nologin' | sudo tee /mnt/alpine/etc/passwd > /dev/null
+          printf '%s\n' 'root:$6$xyz$LnPPryZ4VPKRvJnuZCvJx9QKUX.j8EJn2nzJdRN8VYs2YgVqfkFpBKL7Gkzp3wDPYpKzXjYzLFPqwV7sM1sQK/:19000:0:99999:7:::' | sudo tee /mnt/alpine/etc/shadow > /dev/null
+          sudo chmod 640 /mnt/alpine/etc/shadow
+          printf '%s\n' 'root:x:0:' 'nobody:x:65534:' | sudo tee /mnt/alpine/etc/group > /dev/null
+          
+          # Set hostname
+          echo 'alpine-vm' | sudo tee /mnt/alpine/etc/hostname > /dev/null
+          
+          # Create resolv.conf
+          echo 'nameserver 8.8.8.8' | sudo tee /mnt/alpine/etc/resolv.conf > /dev/null
+
+          # Create inittab for OpenRC (BusyBox init calling OpenRC)
           printf '%s\n' \
-            '::sysinit:/bin/mount -t proc proc /proc' \
-            '::sysinit:/bin/mount -t sysfs sysfs /sys' \
-            '::sysinit:/bin/mount -o remount,rw /' \
-            '::sysinit:/bin/mkdir -p /dev/pts /dev/shm' \
-            '::sysinit:/bin/mount -t devpts devpts /dev/pts' \
-            '::sysinit:/sbin/ifconfig lo 127.0.0.1 up' \
-            '::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &' \
-            '::sysinit:/bin/hostname alpine-vm' \
-            '::sysinit:/bin/sh /etc/rc.local' \
-            'ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100' \
+            '# /etc/inittab - BusyBox init with OpenRC' \
+            '' \
+            '::sysinit:/sbin/openrc sysinit' \
+            '::sysinit:/sbin/openrc boot' \
+            '::wait:/sbin/openrc default' \
+            '' \
+            '# Serial console' \
+            'ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' \
+            '' \
             '::ctrlaltdel:/sbin/reboot' \
-            '::shutdown:/bin/umount -a -r' \
+            '::shutdown:/sbin/openrc shutdown' \
             | sudo tee /mnt/alpine/etc/inittab > /dev/null
 
-          # Create udhcpc script for DHCP
-          sudo mkdir -p /mnt/alpine/usr/share/udhcpc
+          # Create networking init script (OpenRC style)
+          printf '%s\n' \
+            '#!/sbin/openrc-run' \
+            '' \
+            'depend() {' \
+            '    need localmount' \
+            '    provide net' \
+            '}' \
+            '' \
+            'start() {' \
+            '    ebegin "Starting networking"' \
+            '    ifconfig lo 127.0.0.1 up' \
+            '    for iface in /sys/class/net/eth*; do' \
+            '        dev=$(basename "$iface")' \
+            '        udhcpc -i "$dev" -s /etc/udhcpc/default.script -b -q 2>/dev/null &' \
+            '    done' \
+            '    eend 0' \
+            '}' \
+            '' \
+            'stop() {' \
+            '    ebegin "Stopping networking"' \
+            '    killall udhcpc 2>/dev/null' \
+            '    eend 0' \
+            '}' \
+            | sudo tee /mnt/alpine/etc/init.d/networking > /dev/null
+          sudo chmod +x /mnt/alpine/etc/init.d/networking
+          sudo ln -sf /etc/init.d/networking /mnt/alpine/etc/runlevels/default/networking
+
+          # Create udhcpc default script
+          sudo mkdir -p /mnt/alpine/etc/udhcpc
           printf '%s\n' \
             '#!/bin/sh' \
+            '[ -z "$1" ] && echo "Error: should be called from udhcpc" && exit 1' \
+            '' \
             'case "$1" in' \
-            '    bound|renew)' \
-            '        [ -n "$ip" ] && ifconfig $interface $ip netmask ${subnet:-255.255.255.0}' \
-            '        [ -n "$router" ] && route add default gw $router' \
+            '    deconfig)' \
+            '        ip addr flush dev $interface 2>/dev/null || ifconfig $interface 0.0.0.0' \
+            '        ;;' \
+            '    renew|bound)' \
+            '        CIDR=24' \
+            '        case "$subnet" in' \
+            '            255.255.255.0) CIDR=24 ;;' \
+            '            255.255.255.128) CIDR=25 ;;' \
+            '            255.255.0.0) CIDR=16 ;;' \
+            '            255.0.0.0) CIDR=8 ;;' \
+            '        esac' \
+            '        ip addr add $ip/$CIDR dev $interface 2>/dev/null || ifconfig $interface $ip netmask ${subnet:-255.255.255.0}' \
+            '        [ -n "$router" ] && (ip route add default via $router 2>/dev/null || route add default gw $router)' \
             '        [ -n "$dns" ] && echo "nameserver $dns" > /etc/resolv.conf' \
             '        ;;' \
             'esac' \
-            | sudo tee /mnt/alpine/usr/share/udhcpc/default.script > /dev/null
-          sudo chmod +x /mnt/alpine/usr/share/udhcpc/default.script
+            'exit 0' \
+            | sudo tee /mnt/alpine/etc/udhcpc/default.script > /dev/null
+          sudo chmod +x /mnt/alpine/etc/udhcpc/default.script
 
-          # Set default TERM for serial console
-          sudo mkdir -p /mnt/alpine/etc/profile.d
-          echo 'export TERM=vt100' | sudo tee /mnt/alpine/etc/profile.d/term.sh
-          sudo chmod +x /mnt/alpine/etc/profile.d/term.sh
+          # Create serial console getty service (OpenRC style)
+          printf '%s\n' \
+            '#!/sbin/openrc-run' \
+            '' \
+            'command=/sbin/getty' \
+            'command_args="-L ttyS0 115200 vt100"' \
+            'command_background=false' \
+            | sudo tee /mnt/alpine/etc/init.d/agetty.ttyS0 > /dev/null
+          sudo chmod +x /mnt/alpine/etc/init.d/agetty.ttyS0
+          sudo ln -sf /etc/init.d/agetty.ttyS0 /mnt/alpine/etc/runlevels/default/agetty.ttyS0
+
+          # Create minimal OpenRC if not installed via apk
+          if [ ! -f /mnt/alpine/sbin/openrc ]; then
+            # Create stub openrc that just runs init.d scripts
+            printf '%s\n' \
+              '#!/bin/sh' \
+              'RUNLEVEL="$1"' \
+              '[ -z "$RUNLEVEL" ] && RUNLEVEL=default' \
+              'for script in /etc/runlevels/$RUNLEVEL/*; do' \
+              '    [ -x "$script" ] && "$script" start 2>/dev/null' \
+              'done' \
+              | sudo tee /mnt/alpine/sbin/openrc > /dev/null
+            sudo chmod +x /mnt/alpine/sbin/openrc
+            
+            # Create openrc-run stub
+            printf '%s\n' \
+              '#!/bin/sh' \
+              '# Minimal openrc-run stub' \
+              'ebegin() { echo " * $1"; }' \
+              'eend() { [ "$1" = "0" ] && echo " [ ok ]" || echo " [ !! ]"; return $1; }' \
+              '. "$0"' \
+              'case "$1" in' \
+              '    start) start ;;' \
+              '    stop) stop ;;' \
+              '    *) echo "Usage: $0 {start|stop}" ;;' \
+              'esac' \
+              | sudo tee /mnt/alpine/sbin/openrc-run > /dev/null
+            sudo chmod +x /mnt/alpine/sbin/openrc-run
+          fi
+          
+          # Ensure /sbin/init exists
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/init 2>/dev/null || true
 
           sudo umount /mnt/alpine
           ls -lh images/alpine-3.18-minimal.ext4
 
       - name: Build BusyBox rootfs
         run: |
-          # Create minimal BusyBox rootfs
-          # Using 1.35.0 - latest available pre-built binary from busybox.net
-          curl -fsSL -o /tmp/busybox \
-            https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox
+          # Build "BusyBox" image using Alpine Linux base (like the working dev image)
+          # The dev server's busybox-1.36.ext4 is actually Alpine 3.8 with OpenRC
+          ALPINE_VERSION=3.18
+          
+          # Download Alpine minirootfs as base
+          curl -fsSL -o /tmp/alpine-minirootfs.tar.gz \
+            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
 
-          # Create ext4 image (80MB for BusyBox with basic utilities)
-          dd if=/dev/zero of=images/busybox-1.35.ext4 bs=1M count=80
+          # Create ext4 image (100MB for Alpine-based BusyBox with OpenRC)
+          dd if=/dev/zero of=images/busybox-1.35.ext4 bs=1M count=100
           mkfs.ext4 -F images/busybox-1.35.ext4
 
           # Mount and populate
           sudo mkdir -p /mnt/busybox
           sudo mount -o loop images/busybox-1.35.ext4 /mnt/busybox
+          sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/busybox
 
-          # Create directory structure (including init.d for init system detection)
-          sudo mkdir -p /mnt/busybox/{bin,sbin,etc/init.d,proc,sys,usr/bin,usr/sbin,usr/local/bin,dev,tmp,root,var/run,etc/profile.d,usr/share/udhcpc}
-
-          # Install BusyBox
-          sudo cp /tmp/busybox /mnt/busybox/bin/busybox
-          sudo chmod +x /mnt/busybox/bin/busybox
-          sudo chroot /mnt/busybox /bin/busybox --install -s
+          # Create essential directories
+          sudo mkdir -p /mnt/busybox/etc/init.d /mnt/busybox/etc/runlevels/{sysinit,boot,default,shutdown}
+          sudo mkdir -p /mnt/busybox/etc/network /mnt/busybox/etc/udhcpc /mnt/busybox/usr/local/bin
+          sudo mkdir -p /mnt/busybox/var/run /mnt/busybox/var/log /mnt/busybox/run /mnt/busybox/lib/rc/sh
           
-          # Create passwd, shadow, group for credential injection
-          echo 'root:x:0:0:root:/root:/bin/sh' | sudo tee /mnt/busybox/etc/passwd > /dev/null
-          echo 'root::0:0:99999:7:::' | sudo tee /mnt/busybox/etc/shadow > /dev/null
-          echo 'root:x:0:' | sudo tee /mnt/busybox/etc/group > /dev/null
+          # Create passwd, shadow, group with proper format
+          printf '%s\n' \
+            'root:x:0:0:root:/root:/bin/ash' \
+            'bin:x:1:1:bin:/bin:/sbin/nologin' \
+            'daemon:x:2:2:daemon:/sbin:/sbin/nologin' \
+            'nobody:x:65534:65534:nobody:/:/sbin/nologin' \
+            | sudo tee /mnt/busybox/etc/passwd > /dev/null
+          
+          # Password hash for 'root' 
+          printf '%s\n' 'root:$6$xyz$LnPPryZ4VPKRvJnuZCvJx9QKUX.j8EJn2nzJdRN8VYs2YgVqfkFpBKL7Gkzp3wDPYpKzXjYzLFPqwV7sM1sQK/:19000:0:99999:7:::' \
+            | sudo tee /mnt/busybox/etc/shadow > /dev/null
           sudo chmod 640 /mnt/busybox/etc/shadow
           
-          # Set root password (simple hash for 'root')
-          sudo sed -i 's|^root:[^:]*:|root:$6$xyz$LnPPryZ4VPKRvJnuZCvJx9QKUX.j8EJn2nzJdRN8VYs2YgVqfkFpBKL7Gkzp3wDPYpKzXjYzLFPqwV7sM1sQK/:|' /mnt/busybox/etc/shadow
+          printf '%s\n' 'root:x:0:' 'bin:x:1:' 'daemon:x:2:' 'nobody:x:65534:' \
+            | sudo tee /mnt/busybox/etc/group > /dev/null
+          
+          # Set hostname
+          echo 'busybox-vm' | sudo tee /mnt/busybox/etc/hostname > /dev/null
           
           # Create resolv.conf
           echo 'nameserver 8.8.8.8' | sudo tee /mnt/busybox/etc/resolv.conf > /dev/null
-          
-          # Create empty rc.local that guest-agent installer can append to
-          printf '%s\n' '#!/bin/sh' '# rc.local - executed at boot' 'exit 0' | sudo tee /mnt/busybox/etc/rc.local > /dev/null
-          sudo chmod +x /mnt/busybox/etc/rc.local
 
-          # Create /etc/inittab for BusyBox init (includes rc.local execution)
+          # Create inittab for OpenRC (matches working dev image)
           printf '%s\n' \
-            '::sysinit:/bin/mount -t proc proc /proc' \
-            '::sysinit:/bin/mount -t sysfs sysfs /sys' \
-            '::sysinit:/bin/mount -o remount,rw /' \
-            '::sysinit:/bin/mkdir -p /dev/pts /dev/shm' \
-            '::sysinit:/bin/mount -t devpts devpts /dev/pts' \
-            '::sysinit:/sbin/ifconfig lo 127.0.0.1 up' \
-            '::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &' \
-            '::sysinit:/bin/hostname busybox-vm' \
-            '::sysinit:/bin/sh /etc/rc.local' \
-            'ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100' \
+            '# /etc/inittab' \
+            '' \
+            '::sysinit:/sbin/openrc sysinit' \
+            '::sysinit:/sbin/openrc boot' \
+            '::wait:/sbin/openrc default' \
+            '' \
+            '# Serial console' \
+            '#ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' \
+            '' \
             '::ctrlaltdel:/sbin/reboot' \
-            '::shutdown:/bin/umount -a -r' \
+            '::shutdown:/sbin/openrc shutdown' \
             | sudo tee /mnt/busybox/etc/inittab > /dev/null
 
-          # Create udhcpc script for DHCP
+          # Create networking init script (OpenRC style - matches working image)
+          printf '%s\n' \
+            '#!/sbin/openrc-run' \
+            '' \
+            'ifconf=/etc/network/interfaces' \
+            'ifstate=/var/run/ifstate' \
+            '' \
+            'depend() {' \
+            '    need localmount' \
+            '    after bootmisc hwdrivers modules' \
+            '    provide net' \
+            '}' \
+            '' \
+            'find_ifaces() {' \
+            '    for path in /sys/class/net/*; do' \
+            '        dev=$(basename "$path")' \
+            '        case "$dev" in eth*) echo $dev ;; esac' \
+            '    done' \
+            '}' \
+            '' \
+            'start() {' \
+            '    local iface ret=1' \
+            '    ebegin "Starting networking"' \
+            '    eindent' \
+            '    for iface in $(find_ifaces); do' \
+            '        ebegin "$iface"' \
+            '        ifup $iface >/dev/null 2>&1 && ret=0' \
+            '        eend $?' \
+            '    done' \
+            '    eoutdent' \
+            '    return $ret' \
+            '}' \
+            '' \
+            'stop() {' \
+            '    ebegin "Stopping networking"' \
+            '    for iface in $(find_ifaces); do' \
+            '        ifdown $iface >/dev/null 2>&1' \
+            '    done' \
+            '    eend 0' \
+            '}' \
+            | sudo tee /mnt/busybox/etc/init.d/networking > /dev/null
+          sudo chmod +x /mnt/busybox/etc/init.d/networking
+          sudo ln -sf /etc/init.d/networking /mnt/busybox/etc/runlevels/default/networking
+
+          # Create /etc/network/interfaces
+          printf '%s\n' \
+            'auto lo' \
+            'iface lo inet loopback' \
+            '' \
+            'auto eth0' \
+            'iface eth0 inet dhcp' \
+            '    udhcpc_opts -b -s /etc/udhcpc/default.script' \
+            '    hostname localhost' \
+            | sudo tee /mnt/busybox/etc/network/interfaces > /dev/null
+
+          # Create udhcpc default script (matches working image)
+          sudo mkdir -p /mnt/busybox/etc/udhcpc
           printf '%s\n' \
             '#!/bin/sh' \
+            '[ -z "$1" ] && echo "Error: should be called from udhcpc" && exit 1' \
+            '' \
             'case "$1" in' \
-            '    bound|renew)' \
-            '        [ -n "$ip" ] && ifconfig $interface $ip netmask ${subnet:-255.255.255.0}' \
-            '        [ -n "$router" ] && route add default gw $router' \
-            '        [ -n "$dns" ] && echo "nameserver $dns" > /etc/resolv.conf' \
+            '    deconfig)' \
+            '        ip addr flush dev $interface' \
+            '        ;;' \
+            '    renew|bound)' \
+            '        CIDR=24' \
+            '        case "$subnet" in' \
+            '            255.255.255.0) CIDR=24 ;;' \
+            '            255.255.255.128) CIDR=25 ;;' \
+            '            255.255.255.192) CIDR=26 ;;' \
+            '            255.255.0.0) CIDR=16 ;;' \
+            '            255.0.0.0) CIDR=8 ;;' \
+            '        esac' \
+            '        ip addr add $ip/$CIDR dev $interface' \
+            '        [ -n "$router" ] && ip route add default via $router dev $interface 2>/dev/null || true' \
+            '        if [ -n "$dns" ]; then' \
+            '            echo -n > /etc/resolv.conf' \
+            '            for i in $dns; do' \
+            '                echo "nameserver $i" >> /etc/resolv.conf' \
+            '            done' \
+            '        fi' \
             '        ;;' \
             'esac' \
-            | sudo tee /mnt/busybox/usr/share/udhcpc/default.script > /dev/null
-          sudo chmod +x /mnt/busybox/usr/share/udhcpc/default.script
+            'exit 0' \
+            | sudo tee /mnt/busybox/etc/udhcpc/default.script > /dev/null
+          sudo chmod +x /mnt/busybox/etc/udhcpc/default.script
 
-          # Set default TERM for serial console
-          echo 'export TERM=vt100' | sudo tee /mnt/busybox/etc/profile.d/term.sh
-          sudo chmod +x /mnt/busybox/etc/profile.d/term.sh
+          # Create serial console getty service
+          printf '%s\n' \
+            '#!/sbin/openrc-run' \
+            '' \
+            'name="agetty"' \
+            'command="/sbin/getty"' \
+            'command_args="-L ttyS0 115200 vt100"' \
+            | sudo tee /mnt/busybox/etc/init.d/agetty.ttyS0 > /dev/null
+          sudo chmod +x /mnt/busybox/etc/init.d/agetty.ttyS0
+          sudo ln -sf /etc/init.d/agetty.ttyS0 /mnt/busybox/etc/runlevels/default/agetty.ttyS0
+          
+          # Create local service for any custom startup
+          printf '%s\n' \
+            '#!/sbin/openrc-run' \
+            '' \
+            'name="local"' \
+            'description="Local startup script"' \
+            '' \
+            'depend() {' \
+            '    after *' \
+            '}' \
+            '' \
+            'start() {' \
+            '    ebegin "Running local startup"' \
+            '    [ -x /etc/rc.local ] && /etc/rc.local' \
+            '    eend 0' \
+            '}' \
+            | sudo tee /mnt/busybox/etc/init.d/local > /dev/null
+          sudo chmod +x /mnt/busybox/etc/init.d/local
+          sudo ln -sf /etc/init.d/local /mnt/busybox/etc/runlevels/default/local
+
+          # Create OpenRC and supporting scripts
+          printf '%s\n' \
+            '#!/bin/sh' \
+            '# Minimal OpenRC implementation' \
+            'RUNLEVEL="${1:-default}"' \
+            '' \
+            '# Simple ebegin/eend/eindent/eoutdent' \
+            'export INDENT=""' \
+            '' \
+            '# Source functions if available' \
+            '[ -f /lib/rc/sh/functions.sh ] && . /lib/rc/sh/functions.sh' \
+            '' \
+            '# Run all scripts in runlevel' \
+            'for script in /etc/runlevels/$RUNLEVEL/*; do' \
+            '    [ -L "$script" ] || continue' \
+            '    target=$(readlink -f "$script")' \
+            '    [ -x "$target" ] && "$target" start' \
+            'done' \
+            | sudo tee /mnt/busybox/sbin/openrc > /dev/null
+          sudo chmod +x /mnt/busybox/sbin/openrc
+
+          # Create openrc-run wrapper
+          printf '%s\n' \
+            '#!/bin/sh' \
+            '# openrc-run - service script wrapper' \
+            '' \
+            'ebegin() { echo "${INDENT} * $*"; }' \
+            'eend() { [ "${1:-0}" = "0" ] && echo "${INDENT}   [ ok ]" || echo "${INDENT}   [ !! ]"; return ${1:-0}; }' \
+            'eindent() { INDENT="${INDENT}  "; }' \
+            'eoutdent() { INDENT="${INDENT%  }"; }' \
+            'export -f ebegin eend eindent eoutdent 2>/dev/null || true' \
+            '' \
+            '# Source the service script to get functions' \
+            'SCRIPT="$0"' \
+            '. "$SCRIPT"' \
+            '' \
+            'case "${1:-start}" in' \
+            '    start) start ;;' \
+            '    stop) stop ;;' \
+            '    restart) stop; start ;;' \
+            '    status) status 2>/dev/null || echo "unknown" ;;' \
+            '    *) echo "Usage: $0 {start|stop|restart|status}" ;;' \
+            'esac' \
+            | sudo tee /mnt/busybox/sbin/openrc-run > /dev/null
+          sudo chmod +x /mnt/busybox/sbin/openrc-run
+
+          # Create functions.sh for OpenRC compatibility
+          printf '%s\n' \
+            '# OpenRC functions stub' \
+            'ebegin() { echo "${INDENT} * $*"; }' \
+            'eend() { [ "${1:-0}" = "0" ] && echo "${INDENT}   [ ok ]" || echo "${INDENT}   [ !! ]"; return ${1:-0}; }' \
+            'eindent() { INDENT="${INDENT}  "; }' \
+            'eoutdent() { INDENT="${INDENT%  }"; }' \
+            | sudo tee /mnt/busybox/lib/rc/sh/functions.sh > /dev/null
+          sudo ln -sf /lib/rc/sh/functions.sh /mnt/busybox/etc/init.d/functions.sh 2>/dev/null || true
+
+          # Ensure init symlink exists
+          sudo ln -sf /bin/busybox /mnt/busybox/sbin/init 2>/dev/null || true
+
+          # Create ifup/ifdown scripts
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'IFACE="$1"' \
+            '[ -z "$IFACE" ] && exit 1' \
+            'ifconfig "$IFACE" up' \
+            'udhcpc -i "$IFACE" -s /etc/udhcpc/default.script -b -q &' \
+            | sudo tee /mnt/busybox/sbin/ifup > /dev/null
+          sudo chmod +x /mnt/busybox/sbin/ifup
+
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'IFACE="$1"' \
+            '[ -z "$IFACE" ] && exit 1' \
+            'ifconfig "$IFACE" down 2>/dev/null' \
+            | sudo tee /mnt/busybox/sbin/ifdown > /dev/null
+          sudo chmod +x /mnt/busybox/sbin/ifdown
 
           sudo umount /mnt/busybox
           ls -lh images/busybox-1.35.ext4
