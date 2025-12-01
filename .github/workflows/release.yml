@@ -242,22 +242,13 @@ jobs:
 
       - name: Build Alpine rootfs
         run: |
-          # Use Alpine Linux "virtual" flavor which includes OpenRC init system
-          # This is compatible with NQRust-MicroVM's guest-agent injection
+          # Build Alpine image with OpenRC-like init system
+          # Uses minirootfs as base and adds OpenRC scripts manually
           ALPINE_VERSION=3.18
           
-          # Download Alpine virtual rootfs (includes OpenRC, networking, etc.)
-          curl -fsSL -o /tmp/alpine-virt.tar.gz \
-            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-virt-${ALPINE_VERSION}.0-x86_64.iso
-          
-          # Extract the rootfs from the ISO
-          sudo mkdir -p /mnt/alpine-iso
-          sudo mount -o loop /tmp/alpine-virt.tar.gz /mnt/alpine-iso || {
-            # If ISO mount fails, fall back to minirootfs with OpenRC setup
-            echo "ISO mount failed, using minirootfs with manual OpenRC setup"
-            curl -fsSL -o /tmp/alpine-minirootfs.tar.gz \
-              https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
-          }
+          # Download Alpine minirootfs
+          curl -fsSL -o /tmp/alpine-minirootfs.tar.gz \
+            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
 
           # Create ext4 image (100MB for Alpine with OpenRC)
           dd if=/dev/zero of=images/alpine-3.18-minimal.ext4 bs=1M count=100
@@ -267,29 +258,24 @@ jobs:
           sudo mkdir -p /mnt/alpine
           sudo mount -o loop images/alpine-3.18-minimal.ext4 /mnt/alpine
           
-          # Extract rootfs
-          if [ -f /tmp/alpine-minirootfs.tar.gz ]; then
-            sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/alpine
-          else
-            # From ISO, extract the modloop/rootfs
-            sudo cp -a /mnt/alpine-iso/apks /mnt/alpine/ 2>/dev/null || true
-            sudo umount /mnt/alpine-iso
-          fi
+          # Extract minirootfs
+          sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/alpine
 
-          # Install OpenRC and networking packages using apk
-          sudo mkdir -p /mnt/alpine/etc/apk
-          echo "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/main" | sudo tee /mnt/alpine/etc/apk/repositories
-          echo "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/community" | sudo tee -a /mnt/alpine/etc/apk/repositories
-          
-          # Bootstrap with apk
-          sudo apk --root /mnt/alpine --initdb add alpine-base openrc busybox-initscripts ifupdown-ng || {
-            echo "apk install failed, setting up manually"
-          }
-
-          # Create essential directories
-          sudo mkdir -p /mnt/alpine/etc/init.d /mnt/alpine/etc/runlevels/{sysinit,boot,default,shutdown}
-          sudo mkdir -p /mnt/alpine/etc/network /mnt/alpine/etc/udhcpc /mnt/alpine/usr/local/bin
-          sudo mkdir -p /mnt/alpine/var/run /mnt/alpine/var/log /mnt/alpine/run
+          # Create all essential directories FIRST
+          sudo mkdir -p /mnt/alpine/sbin
+          sudo mkdir -p /mnt/alpine/etc/init.d
+          sudo mkdir -p /mnt/alpine/etc/runlevels/sysinit
+          sudo mkdir -p /mnt/alpine/etc/runlevels/boot  
+          sudo mkdir -p /mnt/alpine/etc/runlevels/default
+          sudo mkdir -p /mnt/alpine/etc/runlevels/shutdown
+          sudo mkdir -p /mnt/alpine/etc/network
+          sudo mkdir -p /mnt/alpine/etc/udhcpc
+          sudo mkdir -p /mnt/alpine/etc/profile.d
+          sudo mkdir -p /mnt/alpine/usr/local/bin
+          sudo mkdir -p /mnt/alpine/var/run
+          sudo mkdir -p /mnt/alpine/var/log
+          sudo mkdir -p /mnt/alpine/run
+          sudo mkdir -p /mnt/alpine/lib/rc/sh
           
           # Create passwd, shadow, group
           printf '%s\n' 'root:x:0:0:root:/root:/bin/ash' 'nobody:x:65534:65534:nobody:/:/sbin/nologin' | sudo tee /mnt/alpine/etc/passwd > /dev/null
@@ -302,6 +288,12 @@ jobs:
           
           # Create resolv.conf
           echo 'nameserver 8.8.8.8' | sudo tee /mnt/alpine/etc/resolv.conf > /dev/null
+
+          # Ensure busybox symlinks exist
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/init 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/getty 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/reboot 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/poweroff 2>/dev/null || true
 
           # Create inittab for OpenRC (BusyBox init calling OpenRC)
           printf '%s\n' \
