@@ -256,11 +256,24 @@ jobs:
           sudo mount -o loop images/alpine-3.18-minimal.ext4 /mnt/alpine
           sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/alpine
 
-          # Basic setup
+          # Basic setup - create required directories
+          sudo mkdir -p /mnt/alpine/etc/init.d
           sudo sh -c 'echo "nameserver 8.8.8.8" > /mnt/alpine/etc/resolv.conf'
-          sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd' || true
+          
+          # Create passwd and shadow if they don't exist (Alpine minirootfs should have them)
+          sudo sh -c 'test -f /mnt/alpine/etc/passwd || echo "root:x:0:0:root:/root:/bin/sh" > /mnt/alpine/etc/passwd'
+          sudo sh -c 'test -f /mnt/alpine/etc/shadow || echo "root::0:0:99999:7:::" > /mnt/alpine/etc/shadow'
+          sudo sh -c 'test -f /mnt/alpine/etc/group || echo "root:x:0:" > /mnt/alpine/etc/group'
+          
+          # Set root password using chpasswd or fallback to direct shadow edit
+          sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd' 2>/dev/null || \
+            sudo sed -i 's|^root:[^:]*:|root:$6$rounds=4096$saltsalt$YW5vbnltb3VzcGFzc3dvcmQ=:|' /mnt/alpine/etc/shadow || true
+          
+          # Create empty rc.local that guest-agent installer can append to
+          printf '%s\n' '#!/bin/sh' '# rc.local - executed at boot' 'exit 0' | sudo tee /mnt/alpine/etc/rc.local > /dev/null
+          sudo chmod +x /mnt/alpine/etc/rc.local
 
-          # Create inittab for BusyBox init
+          # Create inittab for BusyBox init (includes rc.local execution)
           printf '%s\n' \
             '::sysinit:/bin/mount -t proc proc /proc' \
             '::sysinit:/bin/mount -t sysfs sysfs /sys' \
@@ -270,6 +283,7 @@ jobs:
             '::sysinit:/sbin/ifconfig lo 127.0.0.1 up' \
             '::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &' \
             '::sysinit:/bin/hostname alpine-vm' \
+            '::sysinit:/bin/sh /etc/rc.local' \
             'ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100' \
             '::ctrlaltdel:/sbin/reboot' \
             '::shutdown:/bin/umount -a -r' \
@@ -312,15 +326,31 @@ jobs:
           sudo mkdir -p /mnt/busybox
           sudo mount -o loop images/busybox-1.35.ext4 /mnt/busybox
 
-          # Create directory structure
-          sudo mkdir -p /mnt/busybox/{bin,sbin,etc,proc,sys,usr/bin,usr/sbin,dev,tmp,root,var/run,etc/profile.d,usr/share/udhcpc}
+          # Create directory structure (including init.d for init system detection)
+          sudo mkdir -p /mnt/busybox/{bin,sbin,etc/init.d,proc,sys,usr/bin,usr/sbin,usr/local/bin,dev,tmp,root,var/run,etc/profile.d,usr/share/udhcpc}
 
           # Install BusyBox
           sudo cp /tmp/busybox /mnt/busybox/bin/busybox
           sudo chmod +x /mnt/busybox/bin/busybox
           sudo chroot /mnt/busybox /bin/busybox --install -s
+          
+          # Create passwd, shadow, group for credential injection
+          echo 'root:x:0:0:root:/root:/bin/sh' | sudo tee /mnt/busybox/etc/passwd > /dev/null
+          echo 'root::0:0:99999:7:::' | sudo tee /mnt/busybox/etc/shadow > /dev/null
+          echo 'root:x:0:' | sudo tee /mnt/busybox/etc/group > /dev/null
+          sudo chmod 640 /mnt/busybox/etc/shadow
+          
+          # Set root password (simple hash for 'root')
+          sudo sed -i 's|^root:[^:]*:|root:$6$xyz$LnPPryZ4VPKRvJnuZCvJx9QKUX.j8EJn2nzJdRN8VYs2YgVqfkFpBKL7Gkzp3wDPYpKzXjYzLFPqwV7sM1sQK/:|' /mnt/busybox/etc/shadow
+          
+          # Create resolv.conf
+          echo 'nameserver 8.8.8.8' | sudo tee /mnt/busybox/etc/resolv.conf > /dev/null
+          
+          # Create empty rc.local that guest-agent installer can append to
+          printf '%s\n' '#!/bin/sh' '# rc.local - executed at boot' 'exit 0' | sudo tee /mnt/busybox/etc/rc.local > /dev/null
+          sudo chmod +x /mnt/busybox/etc/rc.local
 
-          # Create /etc/inittab for BusyBox init
+          # Create /etc/inittab for BusyBox init (includes rc.local execution)
           printf '%s\n' \
             '::sysinit:/bin/mount -t proc proc /proc' \
             '::sysinit:/bin/mount -t sysfs sysfs /sys' \
@@ -330,6 +360,7 @@ jobs:
             '::sysinit:/sbin/ifconfig lo 127.0.0.1 up' \
             '::sysinit:/sbin/udhcpc -i eth0 -s /usr/share/udhcpc/default.script -q -b 2>/dev/null &' \
             '::sysinit:/bin/hostname busybox-vm' \
+            '::sysinit:/bin/sh /etc/rc.local' \
             'ttyS0::respawn:/sbin/getty -L -n -l /bin/sh ttyS0 115200 vt100' \
             '::ctrlaltdel:/sbin/reboot' \
             '::shutdown:/bin/umount -a -r' \
