@@ -596,6 +596,8 @@ fn find_guest_agent_binary() -> Option<String> {
     let locations = [
         // Production/installed location
         "/opt/nqrust-microvm/bin/guest-agent",
+        // Image directory (common for installed systems)
+        "/srv/images/guest-agent",
         // Development locations
         "target/x86_64-unknown-linux-musl/release/guest-agent",
         "target/release/guest-agent",

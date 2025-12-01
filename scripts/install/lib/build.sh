@@ -244,7 +244,12 @@ install_binaries() {
     # Install guest-agent
     if [[ -f "$guest_agent_src" ]]; then
         sudo install -m 755 "$guest_agent_src" "$bin_dir/guest-agent"
-        log_success "Installed guest-agent"
+        log_success "Installed guest-agent to $bin_dir"
+        
+        # Also copy to /srv/images for VM injection (manager looks here too)
+        local image_dir="${IMAGE_DIR:-/srv/images}"
+        sudo install -m 755 "$guest_agent_src" "$image_dir/guest-agent"
+        log_success "Installed guest-agent to $image_dir"
     else
         log_error "Guest-agent binary not found: $guest_agent_src"
         exit 1
