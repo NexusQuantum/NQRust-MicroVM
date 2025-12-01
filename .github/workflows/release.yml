@@ -257,8 +257,17 @@ jobs:
           sudo tar -xzf /tmp/alpine-minirootfs.tar.gz -C /mnt/alpine
 
           # Basic setup - create required directories
-          sudo mkdir -p /mnt/alpine/etc/init.d
+          sudo mkdir -p /mnt/alpine/etc/init.d /mnt/alpine/sbin
           sudo sh -c 'echo "nameserver 8.8.8.8" > /mnt/alpine/etc/resolv.conf'
+          
+          # Ensure /sbin/init exists (kernel boot arg uses init=/sbin/init)
+          # Alpine minirootfs has busybox but might not have init symlink
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/init 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/getty 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/ifconfig 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/udhcpc 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/route 2>/dev/null || true
+          sudo ln -sf /bin/busybox /mnt/alpine/sbin/reboot 2>/dev/null || true
           
           # Create passwd and shadow if they don't exist (Alpine minirootfs should have them)
           sudo sh -c 'test -f /mnt/alpine/etc/passwd || echo "root:x:0:0:root:/root:/bin/sh" > /mnt/alpine/etc/passwd'
