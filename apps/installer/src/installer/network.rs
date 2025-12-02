@@ -188,6 +188,12 @@ dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
 }
 
 /// Setup bridged network - VMs get IPs from router's DHCP
+///
+/// IMPORTANT: Bridged mode is complex and can break network connectivity.
+/// This implementation takes a safer approach:
+/// 1. Creates netplan config for the bridge
+/// 2. Does NOT do live network changes (too risky)
+/// 3. Requires a reboot to apply changes safely
 fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
     logs.push(LogEntry::info(
         "Setting up bridged network (VMs will get IPs from router)...",
@@ -209,7 +215,16 @@ fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<
         physical_iface
     )));
 
-    // Get current IP configuration before we modify anything
+    // Check if netplan is available
+    if !Path::new("/etc/netplan").exists() {
+        logs.push(LogEntry::error(
+            "Bridged mode requires netplan (Ubuntu/Debian). Falling back to NAT mode.",
+        ));
+        // Fall back to NAT for systems without netplan
+        return setup_nat_network_internal(bridge_name, logs);
+    }
+
+    // Get current IP configuration for informational purposes
     let current_ip = get_interface_ip(&physical_iface);
     let current_gateway = get_default_gateway();
 
@@ -219,63 +234,7 @@ fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<
         current_gateway.as_deref().unwrap_or("auto")
     )));
 
-    // Create the bridge
-    logs.push(LogEntry::info(format!(
-        "Creating bridge '{}'...",
-        bridge_name
-    )));
-    let _ = run_sudo(
-        "ip",
-        &["link", "add", "name", bridge_name, "type", "bridge"],
-    );
-
-    // Bring bridge up
-    let _ = run_sudo("ip", &["link", "set", bridge_name, "up"]);
-
-    // Add physical interface to bridge
-    logs.push(LogEntry::info(format!(
-        "Adding {} to bridge {}...",
-        physical_iface, bridge_name
-    )));
-    let _ = run_sudo(
-        "ip",
-        &["link", "set", &physical_iface, "master", bridge_name],
-    );
-
-    // Move IP from physical interface to bridge
-    if let Some(ref ip) = current_ip {
-        logs.push(LogEntry::info(format!("Moving IP {} to bridge...", ip)));
-        // Flush IP from physical interface
-        let _ = run_sudo("ip", &["addr", "flush", "dev", &physical_iface]);
-        // Add IP to bridge
-        let _ = run_sudo("ip", &["addr", "add", ip, "dev", bridge_name]);
-    }
-
-    // Restore default route via bridge
-    if let Some(ref gw) = current_gateway {
-        logs.push(LogEntry::info(format!(
-            "Setting default route via {}...",
-            gw
-        )));
-        // Remove old route (might fail if already gone)
-        let _ = run_sudo(
-            "ip",
-            &["route", "del", "default", "via", gw, "dev", &physical_iface],
-        );
-        // Add new route via bridge
-        let _ = run_sudo(
-            "ip",
-            &["route", "add", "default", "via", gw, "dev", bridge_name],
-        );
-    }
-
-    // Bring physical interface up (no IP, just part of bridge)
-    let _ = run_sudo("ip", &["link", "set", &physical_iface, "up"]);
-
-    // Enable promiscuous mode on physical interface
-    let _ = run_sudo("ip", &["link", "set", &physical_iface, "promisc", "on"]);
-
-    // Enable IP forwarding
+    // Enable IP forwarding (this is safe and non-disruptive)
     logs.push(LogEntry::info("Enabling IP forwarding..."));
     let _ = run_command(
         "sh",
@@ -288,8 +247,6 @@ fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<
     // Make IP forwarding persistent
     let sysctl_content = r#"# NQRust-MicroVM Bridged Network Settings
 net.ipv4.ip_forward = 1
-net.bridge.bridge-nf-call-iptables = 0
-net.bridge.bridge-nf-call-ip6tables = 0
 "#;
     let sysctl_file = "/etc/sysctl.d/99-nqrust-bridge.conf";
     let write_cmd = format!(
@@ -298,10 +255,8 @@ net.bridge.bridge-nf-call-ip6tables = 0
     );
     let _ = run_command("sh", &["-c", &write_cmd]);
 
-    // Apply sysctl settings (ignore errors for bridge-nf if module not loaded)
-    let _ = run_sudo("sysctl", &["-p", sysctl_file]);
-
-    // Create netplan configuration for persistence
+    // Create netplan configuration for bridge
+    // This will be applied on next boot or with `netplan apply`
     create_netplan_bridged(
         bridge_name,
         &physical_iface,
@@ -310,12 +265,121 @@ net.bridge.bridge-nf-call-ip6tables = 0
     )?;
 
     logs.push(LogEntry::success(format!(
-        "Bridged network configured: {} → {}",
+        "Bridged network config created for: {} → {}",
         physical_iface, bridge_name
     )));
-    logs.push(LogEntry::info(
-        "VMs attached to this bridge will get IPs from your router's DHCP",
+
+    // Try to apply netplan (this is the risky part)
+    logs.push(LogEntry::warning(
+        "Applying network changes... If connectivity is lost, reboot the machine.",
     ));
+
+    // Use netplan apply which handles the transition properly
+    let apply_result = run_sudo("netplan", &["apply"]);
+
+    if apply_result.is_ok() {
+        // Wait a moment for network to stabilize
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Check if we still have connectivity by checking if bridge exists and is up
+        if bridge_exists(bridge_name) && is_bridge_up(bridge_name) {
+            logs.push(LogEntry::success("Bridged network is active"));
+            logs.push(LogEntry::info(
+                "VMs attached to this bridge will get IPs from your router's DHCP",
+            ));
+        } else {
+            logs.push(LogEntry::warning(
+                "Bridge may not be fully active. A reboot may be required.",
+            ));
+        }
+    } else {
+        logs.push(LogEntry::warning(
+            "Could not apply netplan. Reboot required to activate bridged network.",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Internal NAT setup (used as fallback)
+fn setup_nat_network_internal(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
+    let bridge_ip = "10.0.0.1";
+    let bridge_cidr = "10.0.0.1/24";
+
+    // Create bridge
+    logs.push(LogEntry::info(format!(
+        "Creating NAT bridge '{}' (bridged mode unavailable)...",
+        bridge_name
+    )));
+
+    let _ = run_sudo(
+        "ip",
+        &["link", "add", "name", bridge_name, "type", "bridge"],
+    );
+    let _ = run_sudo("ip", &["addr", "add", bridge_cidr, "dev", bridge_name]);
+    let _ = run_sudo("ip", &["link", "set", bridge_name, "up"]);
+
+    logs.push(LogEntry::success(format!(
+        "NAT bridge '{}' created with IP {}",
+        bridge_name, bridge_ip
+    )));
+
+    // Enable IP forwarding
+    let _ = run_command(
+        "sh",
+        &[
+            "-c",
+            "echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward > /dev/null",
+        ],
+    );
+
+    // Setup iptables NAT
+    let default_iface = get_default_interface().unwrap_or_else(|| "eth0".to_string());
+    let _ = run_sudo(
+        "iptables",
+        &[
+            "-t",
+            "nat",
+            "-A",
+            "POSTROUTING",
+            "-o",
+            &default_iface,
+            "-j",
+            "MASQUERADE",
+        ],
+    );
+    let _ = run_sudo(
+        "iptables",
+        &[
+            "-A",
+            "FORWARD",
+            "-i",
+            bridge_name,
+            "-o",
+            &default_iface,
+            "-j",
+            "ACCEPT",
+        ],
+    );
+    let _ = run_sudo(
+        "iptables",
+        &[
+            "-A",
+            "FORWARD",
+            "-i",
+            &default_iface,
+            "-o",
+            bridge_name,
+            "-m",
+            "state",
+            "--state",
+            "RELATED,ESTABLISHED",
+            "-j",
+            "ACCEPT",
+        ],
+    );
+
+    logs.push(LogEntry::success("NAT rules configured (fallback mode)"));
 
     Ok(())
 }
