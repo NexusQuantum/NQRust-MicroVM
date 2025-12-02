@@ -574,19 +574,20 @@ jobs:
           
           chmod +x rootfs/tmp/setup.sh
           sudo chroot rootfs /tmp/setup.sh
-          rm rootfs/tmp/setup.sh
+          sudo rm rootfs/tmp/setup.sh
           
           # Configure Docker daemon for OpenRC
+          # All files are root-owned after chroot, so use sudo for all writes
           sudo mkdir -p rootfs/etc/docker rootfs/etc/conf.d
           
           # OpenRC configuration for Docker - enable TCP listener
-          cat > rootfs/etc/conf.d/docker << 'EOF'
+          sudo tee rootfs/etc/conf.d/docker > /dev/null << 'EOF'
           # Docker daemon options for OpenRC
           DOCKER_OPTS="-H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375"
           EOF
           
           # Docker daemon JSON config (storage settings only, hosts in DOCKER_OPTS)
-          cat > rootfs/etc/docker/daemon.json << 'EOF'
+          sudo tee rootfs/etc/docker/daemon.json > /dev/null << 'EOF'
           {
               "storage-driver": "overlay2",
               "log-driver": "json-file",
@@ -598,7 +599,7 @@ jobs:
           EOF
           
           # Configure networking (DHCP)
-          cat > rootfs/etc/network/interfaces << 'EOF'
+          sudo tee rootfs/etc/network/interfaces > /dev/null << 'EOF'
           auto lo
           iface lo inet loopback
           
@@ -607,7 +608,7 @@ jobs:
           EOF
           
           # Set hostname
-          echo "container-runtime" > rootfs/etc/hostname
+          echo "container-runtime" | sudo tee rootfs/etc/hostname > /dev/null
           
           # Enable root login without password (for debugging)
           sudo sed -i 's/root:!:/root::/' rootfs/etc/shadow
