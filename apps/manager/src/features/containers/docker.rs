@@ -448,6 +448,55 @@ impl DockerClient {
 
         Ok(resp.status().is_success())
     }
+
+    /// Load a Docker image from a tarball file into the VM's Docker daemon
+    /// Uses the Docker POST /images/load API endpoint
+    pub async fn load_image_from_tarball(&self, tarball_path: &std::path::Path) -> Result<()> {
+        let url = format!("{}/images/load", self.base_url);
+
+        tracing::info!(path = ?tarball_path, "Loading Docker image from tarball into VM");
+
+        // Read the tarball file
+        let tarball_data = tokio::fs::read(tarball_path)
+            .await
+            .with_context(|| format!("Failed to read tarball: {:?}", tarball_path))?;
+
+        let tarball_size = tarball_data.len();
+        tracing::info!(size_mb = tarball_size / 1024 / 1024, "Tarball size");
+
+        // Send the tarball to Docker's load endpoint
+        // Use a longer timeout for large images
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300)) // 5 minutes for large images
+            .build()?;
+
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "application/x-tar")
+            .body(tarball_data)
+            .send()
+            .await
+            .context("Failed to send tarball to Docker daemon")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let error_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            anyhow::bail!(
+                "Failed to load image from tarball (HTTP {}): {}",
+                status,
+                error_text
+            );
+        }
+
+        // Docker streams the load progress, read the response
+        let response_text = resp.text().await.unwrap_or_default();
+        tracing::info!(response = %response_text, "Docker load response");
+
+        Ok(())
+    }
 }
 
 // Response types from Docker API

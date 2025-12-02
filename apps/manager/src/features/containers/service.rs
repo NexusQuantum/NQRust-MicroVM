@@ -4,6 +4,7 @@ use nexus_types::{
     ExecCommandResp, GetContainerResp, ListContainersResp, OkResponse, UpdateContainerReq,
 };
 use sqlx::PgPool;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::docker::DockerClient;
@@ -66,6 +67,32 @@ pub async fn create_container(
     });
 
     Ok(CreateContainerResp { id: container_id })
+}
+
+/// Find a local Docker image tarball that was pre-downloaded via the registry feature
+///
+/// The registry feature saves Docker images as tarballs in {image_root}/docker/
+/// with the image name sanitized (e.g., "postgres:latest" -> "postgres_latest.tar")
+fn find_local_image_tarball(image: &str, image_root: &std::path::Path) -> Option<PathBuf> {
+    // Sanitize image name the same way the registry download does
+    let safe_name = image.replace(['/', ':', '.'], "_");
+    let tarball_path = image_root.join("docker").join(format!("{}.tar", safe_name));
+
+    if tarball_path.exists() {
+        tracing::info!(
+            image = %image,
+            path = ?tarball_path,
+            "Found local Docker image tarball"
+        );
+        Some(tarball_path)
+    } else {
+        tracing::debug!(
+            image = %image,
+            path = ?tarball_path,
+            "No local Docker image tarball found"
+        );
+        None
+    }
 }
 
 /// Background task to provision container VM and start Docker container
@@ -142,17 +169,47 @@ async fn provision_container_vm(
     // Connect to Docker inside the VM
     let docker = DockerClient::new(&guest_ip)?;
 
-    // Pull image if needed
+    // Try to load image from local tarball first, otherwise pull from registry
     if !docker.image_exists(&req.image).await.unwrap_or(false) {
-        eprintln!("[Container {}] Pulling image: {}", container_id, req.image);
-        if let Err(e) = docker
-            .pull_image(&req.image, req.registry_auth.as_ref())
-            .await
-        {
-            let error_msg = format!("Failed to pull image: {}", e);
-            repo.update_state(container_id, "error", Some(error_msg.clone()))
-                .await?;
-            anyhow::bail!(error_msg);
+        // Check if we have a pre-downloaded tarball on the host
+        if let Some(tarball_path) = find_local_image_tarball(&req.image, st.images.root()) {
+            eprintln!(
+                "[Container {}] Loading image from local tarball: {:?}",
+                container_id, tarball_path
+            );
+            if let Err(e) = docker.load_image_from_tarball(&tarball_path).await {
+                eprintln!(
+                    "[Container {}] Failed to load from tarball, falling back to pull: {}",
+                    container_id, e
+                );
+                // Fall back to pulling from registry
+                if let Err(e) = docker
+                    .pull_image(&req.image, req.registry_auth.as_ref())
+                    .await
+                {
+                    let error_msg = format!("Failed to pull image: {}", e);
+                    repo.update_state(container_id, "error", Some(error_msg.clone()))
+                        .await?;
+                    anyhow::bail!(error_msg);
+                }
+            } else {
+                eprintln!(
+                    "[Container {}] Successfully loaded image from local tarball",
+                    container_id
+                );
+            }
+        } else {
+            // No local tarball, pull from registry
+            eprintln!("[Container {}] Pulling image: {}", container_id, req.image);
+            if let Err(e) = docker
+                .pull_image(&req.image, req.registry_auth.as_ref())
+                .await
+            {
+                let error_msg = format!("Failed to pull image: {}", e);
+                repo.update_state(container_id, "error", Some(error_msg.clone()))
+                    .await?;
+                anyhow::bail!(error_msg);
+            }
         }
     }
 
