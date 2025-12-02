@@ -220,7 +220,10 @@ fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<
     )));
 
     // Create the bridge
-    logs.push(LogEntry::info(format!("Creating bridge '{}'...", bridge_name)));
+    logs.push(LogEntry::info(format!(
+        "Creating bridge '{}'...",
+        bridge_name
+    )));
     let _ = run_sudo(
         "ip",
         &["link", "add", "name", bridge_name, "type", "bridge"],
@@ -299,7 +302,12 @@ net.bridge.bridge-nf-call-ip6tables = 0
     let _ = run_sudo("sysctl", &["-p", sysctl_file]);
 
     // Create netplan configuration for persistence
-    create_netplan_bridged(bridge_name, &physical_iface, current_ip.as_deref(), current_gateway.as_deref())?;
+    create_netplan_bridged(
+        bridge_name,
+        &physical_iface,
+        current_ip.as_deref(),
+        current_gateway.as_deref(),
+    )?;
 
     logs.push(LogEntry::success(format!(
         "Bridged network configured: {} → {}",
