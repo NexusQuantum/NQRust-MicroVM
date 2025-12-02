@@ -525,6 +525,9 @@ jobs:
           ALPINE_VERSION=3.18
           WORK_DIR="$(pwd)/build-container-runtime"
           
+          # Clean up any leftover build directory from previous failed runs
+          sudo rm -rf "$WORK_DIR" || true
+          
           mkdir -p "$WORK_DIR"
           cd "$WORK_DIR"
           
