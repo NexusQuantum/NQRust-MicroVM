@@ -274,6 +274,22 @@ set_permissions() {
     # Data directories
     sudo chown -R nqrust:nqrust "${DATA_DIR}"
     sudo chown -R nqrust:nqrust "${IMAGE_DIR}"
+    
+    # Create containers subdirectory for Docker-in-VM feature
+    # This is where per-container runtime copies are stored
+    sudo mkdir -p "${IMAGE_DIR}/containers"
+    sudo chown -R nqrust:nqrust "${IMAGE_DIR}/containers"
+    sudo chmod 755 "${IMAGE_DIR}/containers"
+    
+    # Create functions subdirectory for serverless functions
+    # This is where per-function runtime copies are stored
+    sudo mkdir -p "${IMAGE_DIR}/functions"
+    sudo chown -R nqrust:nqrust "${IMAGE_DIR}/functions"
+    sudo chmod 755 "${IMAGE_DIR}/functions"
+    
+    # Ensure all image files are readable by nqrust
+    sudo chmod 644 "${IMAGE_DIR}"/*.ext4 2>/dev/null || true
+    sudo chmod 644 "${IMAGE_DIR}"/*.bin 2>/dev/null || true
 
     # Log directory
     sudo chown -R nqrust:nqrust "/var/log/nqrust-microvm"
