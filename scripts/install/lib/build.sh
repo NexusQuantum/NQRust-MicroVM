@@ -178,6 +178,20 @@ download_base_images() {
         "$image_dir/ubuntu-24.04-minimal.ext4" \
         "Downloading Ubuntu rootfs"
 
+    # Container runtime (for Docker-in-VM feature)
+    log_info "Downloading Container runtime (this may take a while, ~600MB compressed)..."
+    download_file \
+        "${download_url}/container-runtime.ext4.gz" \
+        "$image_dir/container-runtime.ext4.gz" \
+        "Downloading Container runtime"
+    
+    # Decompress container runtime
+    log_info "Decompressing container runtime..."
+    if [[ -f "$image_dir/container-runtime.ext4.gz" ]]; then
+        sudo gunzip -f "$image_dir/container-runtime.ext4.gz"
+        log_success "Container runtime decompressed"
+    fi
+
     # Set permissions
     sudo chown -R nqrust:nqrust "$image_dir" 2>/dev/null || true
     sudo chmod -R 755 "$image_dir"

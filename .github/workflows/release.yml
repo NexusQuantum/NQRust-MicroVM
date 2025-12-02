@@ -662,11 +662,12 @@ jobs:
             | sudo tee /mnt/container/etc/init.d/docker-force > /dev/null
           sudo chmod +x /mnt/container/etc/init.d/docker-force
 
-          # Use docker-force instead of regular docker, and add local service
+          # Keep standard docker service (uses supervise-daemon, more reliable)
+          # and also add docker-force as backup, plus local
           sudo chroot /mnt/container sh -c '
-            rc-update del docker default 2>/dev/null || true
-            rc-update add docker-force default
-            rc-update add local default
+            rc-update add docker default 2>/dev/null || true
+            rc-update add docker-force default 2>/dev/null || true
+            rc-update add local default 2>/dev/null || true
           '
 
           # Create network config
