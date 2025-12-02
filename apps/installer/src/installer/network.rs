@@ -34,11 +34,11 @@ pub fn setup_network(mode: NetworkMode, bridge_name: &str) -> Result<Vec<LogEntr
     match mode {
         NetworkMode::Nat => setup_nat_network(bridge_name, &mut logs)?,
         NetworkMode::Bridged => {
-            logs.push(LogEntry::warning(
-                "Bridged mode requires manual network configuration",
-            ));
             logs.push(LogEntry::info(
-                "Please ensure you have console access before proceeding",
+                "Setting up bridged mode - VMs will get IPs from your router",
+            ));
+            logs.push(LogEntry::warning(
+                "This will modify network configuration. Ensure console access is available.",
             ));
             setup_bridged_network(bridge_name, &mut logs)?;
         }
@@ -187,33 +187,241 @@ dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
     Ok(())
 }
 
-/// Setup bridged network
+/// Setup bridged network - VMs get IPs from router's DHCP
 fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
-    logs.push(LogEntry::warning(
-        "Bridged network setup requires manual configuration",
+    logs.push(LogEntry::info(
+        "Setting up bridged network (VMs will get IPs from router)...",
     ));
+
+    // Get the default physical interface
+    let physical_iface = match get_default_interface() {
+        Some(iface) => iface,
+        None => {
+            logs.push(LogEntry::error(
+                "Could not detect physical network interface",
+            ));
+            return Ok(());
+        }
+    };
+
     logs.push(LogEntry::info(format!(
-        "Creating bridge '{}' without IP configuration...",
-        bridge_name
+        "Detected physical interface: {}",
+        physical_iface
     )));
 
-    // Create bridge
+    // Get current IP configuration before we modify anything
+    let current_ip = get_interface_ip(&physical_iface);
+    let current_gateway = get_default_gateway();
+
+    logs.push(LogEntry::info(format!(
+        "Current IP: {}, Gateway: {}",
+        current_ip.as_deref().unwrap_or("DHCP"),
+        current_gateway.as_deref().unwrap_or("auto")
+    )));
+
+    // Create the bridge
+    logs.push(LogEntry::info(format!("Creating bridge '{}'...", bridge_name)));
     let _ = run_sudo(
         "ip",
         &["link", "add", "name", bridge_name, "type", "bridge"],
     );
+
+    // Bring bridge up
     let _ = run_sudo("ip", &["link", "set", bridge_name, "up"]);
 
-    // Enable promiscuous mode
-    let _ = run_sudo("ip", &["link", "set", bridge_name, "promisc", "on"]);
+    // Add physical interface to bridge
+    logs.push(LogEntry::info(format!(
+        "Adding {} to bridge {}...",
+        physical_iface, bridge_name
+    )));
+    let _ = run_sudo(
+        "ip",
+        &["link", "set", &physical_iface, "master", bridge_name],
+    );
+
+    // Move IP from physical interface to bridge
+    if let Some(ref ip) = current_ip {
+        logs.push(LogEntry::info(format!("Moving IP {} to bridge...", ip)));
+        // Flush IP from physical interface
+        let _ = run_sudo("ip", &["addr", "flush", "dev", &physical_iface]);
+        // Add IP to bridge
+        let _ = run_sudo("ip", &["addr", "add", ip, "dev", bridge_name]);
+    }
+
+    // Restore default route via bridge
+    if let Some(ref gw) = current_gateway {
+        logs.push(LogEntry::info(format!(
+            "Setting default route via {}...",
+            gw
+        )));
+        // Remove old route (might fail if already gone)
+        let _ = run_sudo(
+            "ip",
+            &["route", "del", "default", "via", gw, "dev", &physical_iface],
+        );
+        // Add new route via bridge
+        let _ = run_sudo(
+            "ip",
+            &["route", "add", "default", "via", gw, "dev", bridge_name],
+        );
+    }
+
+    // Bring physical interface up (no IP, just part of bridge)
+    let _ = run_sudo("ip", &["link", "set", &physical_iface, "up"]);
+
+    // Enable promiscuous mode on physical interface
+    let _ = run_sudo("ip", &["link", "set", &physical_iface, "promisc", "on"]);
+
+    // Enable IP forwarding
+    logs.push(LogEntry::info("Enabling IP forwarding..."));
+    let _ = run_command(
+        "sh",
+        &[
+            "-c",
+            "echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward > /dev/null",
+        ],
+    );
+
+    // Make IP forwarding persistent
+    let sysctl_content = r#"# NQRust-MicroVM Bridged Network Settings
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-iptables = 0
+net.bridge.bridge-nf-call-ip6tables = 0
+"#;
+    let sysctl_file = "/etc/sysctl.d/99-nqrust-bridge.conf";
+    let write_cmd = format!(
+        "echo '{}' | sudo tee {} > /dev/null",
+        sysctl_content, sysctl_file
+    );
+    let _ = run_command("sh", &["-c", &write_cmd]);
+
+    // Apply sysctl settings (ignore errors for bridge-nf if module not loaded)
+    let _ = run_sudo("sysctl", &["-p", sysctl_file]);
+
+    // Create netplan configuration for persistence
+    create_netplan_bridged(bridge_name, &physical_iface, current_ip.as_deref(), current_gateway.as_deref())?;
 
     logs.push(LogEntry::success(format!(
-        "Bridge '{}' created (bridged mode)",
-        bridge_name
+        "Bridged network configured: {} → {}",
+        physical_iface, bridge_name
     )));
     logs.push(LogEntry::info(
-        "You will need to manually attach your network interface to this bridge",
+        "VMs attached to this bridge will get IPs from your router's DHCP",
     ));
+
+    Ok(())
+}
+
+/// Get IP address of an interface
+fn get_interface_ip(iface: &str) -> Option<String> {
+    if let Ok(output) = run_command("ip", &["-4", "addr", "show", iface]) {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        // Parse "inet X.X.X.X/YY ..."
+        for line in output_str.lines() {
+            if let Some(inet_pos) = line.find("inet ") {
+                let rest = &line[inet_pos + 5..];
+                if let Some(space_pos) = rest.find(' ') {
+                    return Some(rest[..space_pos].to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Get default gateway IP
+fn get_default_gateway() -> Option<String> {
+    if let Ok(output) = run_command("ip", &["route", "show", "default"]) {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        // Parse "default via X.X.X.X ..."
+        let parts: Vec<&str> = output_str.split_whitespace().collect();
+        for (i, part) in parts.iter().enumerate() {
+            if *part == "via" && i + 1 < parts.len() {
+                return Some(parts[i + 1].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Create netplan config for bridged mode persistence
+fn create_netplan_bridged(
+    bridge_name: &str,
+    physical_iface: &str,
+    current_ip: Option<&str>,
+    current_gateway: Option<&str>,
+) -> Result<()> {
+    if !Path::new("/etc/netplan").exists() {
+        // Netplan not available, skip
+        return Ok(());
+    }
+
+    let netplan_content = if let (Some(ip), Some(gw)) = (current_ip, current_gateway) {
+        // Static IP configuration
+        format!(
+            r#"# NQRust-MicroVM Bridged Network Configuration
+# Generated by NQRust installer - bridged mode
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {}:
+      dhcp4: no
+      dhcp6: no
+  bridges:
+    {}:
+      interfaces:
+        - {}
+      addresses:
+        - {}
+      routes:
+        - to: default
+          via: {}
+      nameservers:
+        addresses:
+          - 8.8.8.8
+          - 8.8.4.4
+      parameters:
+        stp: false
+        forward-delay: 0
+"#,
+            physical_iface, bridge_name, physical_iface, ip, gw
+        )
+    } else {
+        // DHCP configuration
+        format!(
+            r#"# NQRust-MicroVM Bridged Network Configuration
+# Generated by NQRust installer - bridged mode
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {}:
+      dhcp4: no
+      dhcp6: no
+  bridges:
+    {}:
+      interfaces:
+        - {}
+      dhcp4: yes
+      dhcp6: no
+      parameters:
+        stp: false
+        forward-delay: 0
+"#,
+            physical_iface, bridge_name, physical_iface
+        )
+    };
+
+    let netplan_file = "/etc/netplan/99-nqrust-bridge.yaml";
+    let write_cmd = format!(
+        "echo '{}' | sudo tee {} > /dev/null",
+        netplan_content, netplan_file
+    );
+    run_command("sh", &["-c", &write_cmd])?;
+
+    // Set proper permissions
+    let _ = run_sudo("chmod", &["600", netplan_file]);
 
     Ok(())
 }
