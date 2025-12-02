@@ -520,26 +520,35 @@ jobs:
 
       - name: Build container runtime (Alpine + Docker)
         run: |
-          # Build container runtime for Docker-in-VM feature (matches scripts/build-container-runtime-v2.sh)
+          # Build container runtime for Docker-in-VM feature
+          # Uses the same approach as scripts/build-container-runtime-v2.sh
           ALPINE_VERSION=3.18
-          curl -fsSL -o /tmp/alpine-container.tar.gz \
-            https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz
-
-          # Create ext4 image (2.2GB for Docker runtime)
-          dd if=/dev/zero of=images/container-runtime.ext4 bs=1M count=2200
-          mkfs.ext4 -F images/container-runtime.ext4
-
-          sudo mkdir -p /mnt/container
-          sudo mount -o loop images/container-runtime.ext4 /mnt/container
-          sudo tar -xzf /tmp/alpine-container.tar.gz -C /mnt/container
-
-          # Configure DNS
-          sudo cp /etc/resolv.conf /mnt/container/etc/resolv.conf
-
-          # Install Docker and dependencies
-          sudo chroot /mnt/container sh -c '
-            apk update
-            apk add --no-cache \
+          WORK_DIR="$(pwd)/build-container-runtime"
+          
+          mkdir -p "$WORK_DIR"
+          cd "$WORK_DIR"
+          
+          # Download Alpine minirootfs
+          curl -fsSL -o alpine-minirootfs.tar.gz \
+            "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz"
+          
+          # Extract Alpine
+          mkdir -p rootfs
+          tar xzf alpine-minirootfs.tar.gz -C rootfs
+          
+          # Copy DNS config for package installation
+          sudo cp /etc/resolv.conf rootfs/etc/resolv.conf
+          
+          # Create setup script inside rootfs
+          cat > rootfs/tmp/setup.sh << 'SETUP_SCRIPT'
+          #!/bin/sh
+          set -e
+          
+          # Update package index
+          apk update
+          
+          # Install Docker and OpenRC
+          apk add --no-cache \
               docker \
               docker-openrc \
               openrc \
@@ -547,146 +556,70 @@ jobs:
               coreutils \
               bash \
               curl \
-              wget \
-              ca-certificates \
-              e2fsprogs \
-              iptables \
-              ip6tables \
-              iproute2 \
-              bridge-utils \
-              openssh \
-              shadow
-
-            # Configure OpenRC boot services
-            rc-update add devfs boot
-            rc-update add procfs boot
-            rc-update add sysfs boot
-            rc-update add cgroups boot
-            rc-update add networking boot
-            rc-update add docker default
-
-            # Set root password
-            echo "root:root" | chpasswd
-          '
-
-          # Create proper /etc/inittab for BusyBox init with OpenRC (matching working dev image)
-          printf '%s\n' \
-            '# /etc/inittab' \
-            '' \
-            '::sysinit:/sbin/openrc sysinit' \
-            '::sysinit:/sbin/openrc boot' \
-            '::wait:/sbin/openrc default' \
-            '' \
-            '# Set up a couple of gettys' \
-            'tty1::respawn:/sbin/getty 38400 tty1' \
-            'tty2::respawn:/sbin/getty 38400 tty2' \
-            'tty3::respawn:/sbin/getty 38400 tty3' \
-            'tty4::respawn:/sbin/getty 38400 tty4' \
-            'tty5::respawn:/sbin/getty 38400 tty5' \
-            'tty6::respawn:/sbin/getty 38400 tty6' \
-            '' \
-            '# Put a getty on the serial port' \
-            '#ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' \
-            '' \
-            '# Stuff to do for the 3-finger salute' \
-            '::ctrlaltdel:/sbin/reboot' \
-            '' \
-            '# Stuff to do before rebooting' \
-            '::shutdown:/sbin/openrc shutdown' \
-            | sudo tee /mnt/container/etc/inittab > /dev/null
-
+              ca-certificates
+          
+          # Configure OpenRC
+          rc-update add devfs boot
+          rc-update add procfs boot
+          rc-update add sysfs boot
+          rc-update add cgroups boot
+          rc-update add networking boot
+          rc-update add docker default
+          
+          echo "Docker version: $(docker --version)"
+          SETUP_SCRIPT
+          
+          chmod +x rootfs/tmp/setup.sh
+          sudo chroot rootfs /tmp/setup.sh
+          rm rootfs/tmp/setup.sh
+          
           # Configure Docker daemon for OpenRC
-          sudo mkdir -p /mnt/container/etc/docker /mnt/container/etc/conf.d
-
-          # OpenRC configuration for Docker
-          printf '%s\n' \
-            '# Docker daemon options for OpenRC' \
-            'DOCKER_OPTS="-H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375"' \
-            | sudo tee /mnt/container/etc/conf.d/docker > /dev/null
-
-          # Docker daemon JSON config - NO hosts here (they are in DOCKER_OPTS)
-          printf '%s\n' \
-            '{' \
-            '    "storage-driver": "overlay2",' \
-            '    "log-driver": "json-file",' \
-            '    "log-opts": {' \
-            '        "max-size": "10m",' \
-            '        "max-file": "3"' \
-            '    }' \
-            '}' \
-            | sudo tee /mnt/container/etc/docker/daemon.json > /dev/null
-
-          # Create docker-force init script that reliably starts Docker with TCP
-          printf '%s\n' \
-            '#!/sbin/openrc-run' \
-            '' \
-            'description="Force start Docker daemon with TCP support"' \
-            '' \
-            'depend() {' \
-            '    need net' \
-            '    after firewall' \
-            '}' \
-            '' \
-            'start() {' \
-            '    ebegin "Starting Docker daemon with TCP support"' \
-            '    mkdir -p /var/run /var/lib/docker' \
-            '    /usr/bin/dockerd \' \
-            '        --host=unix:///var/run/docker.sock \' \
-            '        --host=tcp://0.0.0.0:2375 \' \
-            '        --storage-driver=overlay2 \' \
-            '        --log-driver=json-file \' \
-            '        --log-opt max-size=10m \' \
-            '        --log-opt max-file=3 \' \
-            '        > /var/log/docker.log 2>&1 &' \
-            '    DOCKER_PID=$!' \
-            '    echo $DOCKER_PID > /var/run/docker.pid' \
-            '    for i in $(seq 1 30); do' \
-            '        if /usr/bin/docker info >/dev/null 2>&1; then' \
-            '            eend 0 "Docker daemon started successfully"' \
-            '            return 0' \
-            '        fi' \
-            '        sleep 1' \
-            '    done' \
-            '    eend 1 "Docker daemon failed to start"' \
-            '    return 1' \
-            '}' \
-            '' \
-            'stop() {' \
-            '    ebegin "Stopping Docker daemon"' \
-            '    if [ -f /var/run/docker.pid ]; then' \
-            '        kill $(cat /var/run/docker.pid)' \
-            '        rm -f /var/run/docker.pid' \
-            '    fi' \
-            '    eend 0' \
-            '}' \
-            | sudo tee /mnt/container/etc/init.d/docker-force > /dev/null
-          sudo chmod +x /mnt/container/etc/init.d/docker-force
-
-          # Keep standard docker service (uses supervise-daemon, more reliable)
-          # and also add docker-force as backup, plus local
-          sudo chroot /mnt/container sh -c '
-            rc-update add docker default 2>/dev/null || true
-            rc-update add docker-force default 2>/dev/null || true
-            rc-update add local default 2>/dev/null || true
-          '
-
-          # Create network config
-          printf '%s\n' \
-            'auto lo' \
-            'iface lo inet loopback' \
-            '' \
-            'auto eth0' \
-            'iface eth0 inet dhcp' \
-            | sudo tee /mnt/container/etc/network/interfaces > /dev/null
-
-          # Set TERM for serial console
-          sudo mkdir -p /mnt/container/etc/profile.d
-          echo 'export TERM=vt100' | sudo tee /mnt/container/etc/profile.d/term.sh
-          sudo chmod +x /mnt/container/etc/profile.d/term.sh
-
-          echo "container-runtime" | sudo tee /mnt/container/etc/hostname
-
-          sudo umount /mnt/container
+          sudo mkdir -p rootfs/etc/docker rootfs/etc/conf.d
+          
+          # OpenRC configuration for Docker - enable TCP listener
+          cat > rootfs/etc/conf.d/docker << 'EOF'
+          # Docker daemon options for OpenRC
+          DOCKER_OPTS="-H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375"
+          EOF
+          
+          # Docker daemon JSON config (storage settings only, hosts in DOCKER_OPTS)
+          cat > rootfs/etc/docker/daemon.json << 'EOF'
+          {
+              "storage-driver": "overlay2",
+              "log-driver": "json-file",
+              "log-opts": {
+                  "max-size": "10m",
+                  "max-file": "3"
+              }
+          }
+          EOF
+          
+          # Configure networking (DHCP)
+          cat > rootfs/etc/network/interfaces << 'EOF'
+          auto lo
+          iface lo inet loopback
+          
+          auto eth0
+          iface eth0 inet dhcp
+          EOF
+          
+          # Set hostname
+          echo "container-runtime" > rootfs/etc/hostname
+          
+          # Enable root login without password (for debugging)
+          sudo sed -i 's/root:!:/root::/' rootfs/etc/shadow
+          
+          # Create ext4 filesystem directly from rootfs directory (matching dev script)
+          # This is more reliable than mount/copy/umount approach
+          sudo mkfs.ext4 -L container-runtime -d rootfs -E lazy_itable_init=0,lazy_journal_init=0 container-runtime.ext4 2200M
+          
+          # Move to images directory
+          mv container-runtime.ext4 ../images/
+          
+          # Cleanup
+          cd ..
+          sudo rm -rf "$WORK_DIR"
+          
           ls -lh images/container-runtime.ext4
 
       - name: Compress large images
