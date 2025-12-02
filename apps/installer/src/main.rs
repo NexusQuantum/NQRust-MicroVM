@@ -75,8 +75,8 @@ enum Commands {
         #[arg(long, default_value = "true")]
         with_ui: bool,
 
-        /// Include container runtime
-        #[arg(long)]
+        /// Include container runtime (Docker-in-VM support, ~500MB download)
+        #[arg(long, default_value = "true")]
         with_container_runtime: bool,
 
         /// Install Docker (for DockerHub image pulling and container features)
