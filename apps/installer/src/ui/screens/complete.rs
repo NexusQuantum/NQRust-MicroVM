@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{App, NetworkMode},
     theme::{styles, COMPANY_NAME, PRODUCT_NAME},
 };
 
@@ -128,18 +128,44 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let steps = Paragraph::new(steps_lines).block(steps_block);
     frame.render_widget(steps, chunks[4]);
 
-    // Key hints
-    let hints = Text::from(vec![Line::from(vec![
-        Span::styled("Press ", styles::muted()),
-        Span::styled("Enter", styles::key_hint()),
-        Span::styled(" or ", styles::muted()),
-        Span::styled("q", styles::key_hint()),
-        Span::styled(" to exit  •  ", styles::muted()),
-        Span::styled(
-            format!("Thank you for using {} by {}", PRODUCT_NAME, COMPANY_NAME),
-            styles::muted(),
-        ),
-    ])]);
+    // Key hints - show reboot option for bridged mode or ISO mode
+    let needs_reboot =
+        app.config.network_mode == NetworkMode::Bridged || app.config.install_source.is_offline();
+
+    let hints = if needs_reboot {
+        Text::from(vec![
+            Line::from(vec![
+                Span::styled("⚠ ", styles::warning()),
+                Span::styled(
+                    "A reboot is recommended for network changes to take effect",
+                    styles::warning(),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Press ", styles::muted()),
+                Span::styled("r", styles::key_hint()),
+                Span::styled(" to reboot now  •  ", styles::muted()),
+                Span::styled("q", styles::key_hint()),
+                Span::styled(" to exit  •  ", styles::muted()),
+                Span::styled(
+                    format!("Thank you for using {} by {}", PRODUCT_NAME, COMPANY_NAME),
+                    styles::muted(),
+                ),
+            ]),
+        ])
+    } else {
+        Text::from(vec![Line::from(vec![
+            Span::styled("Press ", styles::muted()),
+            Span::styled("Enter", styles::key_hint()),
+            Span::styled(" or ", styles::muted()),
+            Span::styled("q", styles::key_hint()),
+            Span::styled(" to exit  •  ", styles::muted()),
+            Span::styled(
+                format!("Thank you for using {} by {}", PRODUCT_NAME, COMPANY_NAME),
+                styles::muted(),
+            ),
+        ])])
+    };
     let hints_para = Paragraph::new(hints).alignment(Alignment::Center);
     frame.render_widget(hints_para, chunks[5]);
 }

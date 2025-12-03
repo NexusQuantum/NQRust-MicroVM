@@ -26,13 +26,23 @@ pub enum InstallMessage {
 
 /// Run the complete installation process
 pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Result<()> {
+    let is_offline = config.install_source.is_offline();
+
     // Phase 1: Preflight Checks
     tx.send(InstallMessage::PhaseStart(Phase::Preflight))?;
     tx.send(InstallMessage::Log(LogEntry::info(
         "Running preflight checks...",
     )))?;
 
-    let checks = preflight::run_preflight_checks();
+    // In ISO mode, run modified preflight checks (skip network)
+    let checks = if is_offline {
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "ISO mode: Skipping network connectivity checks",
+        )))?;
+        preflight::run_preflight_checks_offline()
+    } else {
+        preflight::run_preflight_checks()
+    };
     let has_errors = checks.iter().any(|c| c.status == Status::Error);
 
     tx.send(InstallMessage::PreflightResult(checks.clone()))?;
@@ -62,80 +72,105 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         "Installing system dependencies...",
     )))?;
 
-    // Detect package manager
-    let pm = match deps::PackageManager::detect() {
-        Some(pm) => pm,
-        None => {
-            tx.send(InstallMessage::PhaseComplete(
-                Phase::Dependencies,
-                Status::Error,
-            ))?;
-            tx.send(InstallMessage::Error(
-                "No supported package manager found (apt, dnf, yum)".to_string(),
-            ))?;
-            return Ok(());
-        }
-    };
-
-    // Update package manager
-    tx.send(InstallMessage::Log(LogEntry::info(
-        "Updating package manager...",
-    )))?;
-    if let Err(e) = pm.update() {
-        tx.send(InstallMessage::Log(LogEntry::warning(format!(
-            "Failed to update package manager: {}",
-            e
-        ))))?;
-    }
-
-    // Install system packages
-    let packages = deps::get_required_packages(pm);
-    tx.send(InstallMessage::Log(LogEntry::info(format!(
-        "Installing {} system packages...",
-        packages.len()
-    ))))?;
-    if let Err(e) = pm.install(&packages) {
-        tx.send(InstallMessage::PhaseComplete(
-            Phase::Dependencies,
-            Status::Error,
-        ))?;
-        tx.send(InstallMessage::Error(format!(
-            "Failed to install system packages: {}",
-            e
-        )))?;
-        return Ok(());
-    }
-    tx.send(InstallMessage::Log(LogEntry::success(
-        "System packages installed",
-    )))?;
-
-    // Install PostgreSQL packages if manager is included
-    if config.mode.includes_manager() {
-        let pg_packages = deps::get_postgres_packages(pm);
+    // In ISO mode, install from bundled packages
+    if is_offline {
         tx.send(InstallMessage::Log(LogEntry::info(
-            "Installing PostgreSQL...",
+            "ISO mode: Installing from bundled packages",
         )))?;
-        if let Err(e) = pm.install(&pg_packages) {
+        match deps::install_bundled_packages(config.install_source.bundle_path().unwrap()) {
+            Ok(logs) => {
+                for log in logs {
+                    tx.send(InstallMessage::Log(log))?;
+                }
+            }
+            Err(e) => {
+                tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                    "Failed to install bundled packages: {} - continuing with system packages",
+                    e
+                ))))?;
+            }
+        }
+    } else {
+        // Detect package manager
+        let pm = match deps::PackageManager::detect() {
+            Some(pm) => pm,
+            None => {
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Dependencies,
+                    Status::Error,
+                ))?;
+                tx.send(InstallMessage::Error(
+                    "No supported package manager found (apt, dnf, yum)".to_string(),
+                ))?;
+                return Ok(());
+            }
+        };
+
+        // Update package manager
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "Updating package manager...",
+        )))?;
+        if let Err(e) = pm.update() {
+            tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                "Failed to update package manager: {}",
+                e
+            ))))?;
+        }
+
+        // Install system packages
+        let packages = deps::get_required_packages(pm);
+        tx.send(InstallMessage::Log(LogEntry::info(format!(
+            "Installing {} system packages...",
+            packages.len()
+        ))))?;
+        if let Err(e) = pm.install(&packages) {
             tx.send(InstallMessage::PhaseComplete(
                 Phase::Dependencies,
                 Status::Error,
             ))?;
             tx.send(InstallMessage::Error(format!(
-                "Failed to install PostgreSQL: {}",
+                "Failed to install system packages: {}",
                 e
             )))?;
             return Ok(());
         }
         tx.send(InstallMessage::Log(LogEntry::success(
-            "PostgreSQL installed",
+            "System packages installed",
         )))?;
+
+        // Install PostgreSQL packages if manager is included
+        if config.mode.includes_manager() {
+            let pg_packages = deps::get_postgres_packages(pm);
+            tx.send(InstallMessage::Log(LogEntry::info(
+                "Installing PostgreSQL...",
+            )))?;
+            if let Err(e) = pm.install(&pg_packages) {
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Dependencies,
+                    Status::Error,
+                ))?;
+                tx.send(InstallMessage::Error(format!(
+                    "Failed to install PostgreSQL: {}",
+                    e
+                )))?;
+                return Ok(());
+            }
+            tx.send(InstallMessage::Log(LogEntry::success(
+                "PostgreSQL installed",
+            )))?;
+        }
     }
 
-    // Install Firecracker v1.13.1
+    // Install Firecracker v1.13.1 (from bundle in ISO mode, or download)
     tx.send(InstallMessage::Log(LogEntry::info(
         "Installing Firecracker v1.13.1...",
     )))?;
-    match deps::install_firecracker(build::FIRECRACKER_VERSION) {
+    let firecracker_result = if is_offline {
+        deps::install_firecracker_from_bundle(config.install_source.bundle_path().unwrap())
+    } else {
+        deps::install_firecracker(build::FIRECRACKER_VERSION)
+    };
+    match firecracker_result {
         Ok(logs) => {
             for log in logs {
                 tx.send(InstallMessage::Log(log))?;
@@ -154,8 +189,8 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
-    // Install Node.js if UI is included
-    if config.with_ui {
+    // Install Node.js if UI is included (skip in ISO mode - pre-bundled)
+    if config.with_ui && !is_offline {
         tx.send(InstallMessage::Log(LogEntry::info(
             "Installing Node.js for UI...",
         )))?;
@@ -174,8 +209,8 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
-    // Install Docker if requested (for DockerHub image pulling and container features)
-    if config.with_docker {
+    // Install Docker if requested (skip in ISO mode - use bundled Docker images)
+    if config.with_docker && !is_offline {
         tx.send(InstallMessage::Log(LogEntry::info(
             "Installing Docker for container features...",
         )))?;
@@ -308,33 +343,67 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         ))?;
     }
 
-    // Phase 6: Download Pre-built Binaries
+    // Phase 6: Download/Copy Pre-built Binaries
     tx.send(InstallMessage::PhaseStart(Phase::Binaries))?;
-    tx.send(InstallMessage::Log(LogEntry::info(
-        "Downloading pre-built binaries from GitHub releases...",
-    )))?;
 
-    // Download binaries from latest GitHub release
-    match build::download_binaries(&config, "latest") {
-        Ok(logs) => {
-            for log in logs {
-                tx.send(InstallMessage::Log(log))?;
+    if is_offline {
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "ISO mode: Copying binaries from bundle...",
+        )))?;
+
+        // Copy binaries from bundle
+        match build::copy_binaries_from_bundle(
+            &config,
+            config.install_source.bundle_path().unwrap(),
+        ) {
+            Ok(logs) => {
+                for log in logs {
+                    tx.send(InstallMessage::Log(log))?;
+                }
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Binaries,
+                    Status::Success,
+                ))?;
             }
-            tx.send(InstallMessage::PhaseComplete(
-                Phase::Binaries,
-                Status::Success,
-            ))?;
+            Err(e) => {
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Binaries,
+                    Status::Error,
+                ))?;
+                tx.send(InstallMessage::Error(format!(
+                    "Failed to copy binaries from bundle: {}",
+                    e
+                )))?;
+                return Ok(());
+            }
         }
-        Err(e) => {
-            tx.send(InstallMessage::PhaseComplete(
-                Phase::Binaries,
-                Status::Error,
-            ))?;
-            tx.send(InstallMessage::Error(format!(
-                "Failed to download binaries: {}",
-                e
-            )))?;
-            return Ok(());
+    } else {
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "Downloading pre-built binaries from GitHub releases...",
+        )))?;
+
+        // Download binaries from latest GitHub release
+        match build::download_binaries(&config, "latest") {
+            Ok(logs) => {
+                for log in logs {
+                    tx.send(InstallMessage::Log(log))?;
+                }
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Binaries,
+                    Status::Success,
+                ))?;
+            }
+            Err(e) => {
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Binaries,
+                    Status::Error,
+                ))?;
+                tx.send(InstallMessage::Error(format!(
+                    "Failed to download binaries: {}",
+                    e
+                )))?;
+                return Ok(());
+            }
         }
     }
 
@@ -364,32 +433,63 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
-    // Phase 8: Download Base Images (kernels, rootfs, runtimes)
+    // Phase 8: Download/Copy Base Images (kernels, rootfs, runtimes, docker images)
     tx.send(InstallMessage::PhaseStart(Phase::Images))?;
-    tx.send(InstallMessage::Log(LogEntry::info(
-        "Downloading base images (kernels, rootfs, function runtimes)...",
-    )))?;
 
-    match build::download_base_images(&config, "latest") {
-        Ok(logs) => {
-            for log in logs {
-                tx.send(InstallMessage::Log(log))?;
+    if is_offline {
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "ISO mode: Copying images from bundle (kernels, rootfs, docker images)...",
+        )))?;
+
+        match build::copy_images_from_bundle(&config, config.install_source.bundle_path().unwrap())
+        {
+            Ok(logs) => {
+                for log in logs {
+                    tx.send(InstallMessage::Log(log))?;
+                }
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Images,
+                    Status::Success,
+                ))?;
             }
-            tx.send(InstallMessage::PhaseComplete(
-                Phase::Images,
-                Status::Success,
-            ))?;
+            Err(e) => {
+                // Don't fail - images are optional, user can add them later
+                tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                    "Failed to copy some images from bundle: {}",
+                    e
+                ))))?;
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Images,
+                    Status::Warning,
+                ))?;
+            }
         }
-        Err(e) => {
-            // Don't fail - images are optional, user can add them later
-            tx.send(InstallMessage::Log(LogEntry::warning(format!(
-                "Failed to download some images: {}",
-                e
-            ))))?;
-            tx.send(InstallMessage::PhaseComplete(
-                Phase::Images,
-                Status::Warning,
-            ))?;
+    } else {
+        tx.send(InstallMessage::Log(LogEntry::info(
+            "Downloading base images (kernels, rootfs, function runtimes)...",
+        )))?;
+
+        match build::download_base_images(&config, "latest") {
+            Ok(logs) => {
+                for log in logs {
+                    tx.send(InstallMessage::Log(log))?;
+                }
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Images,
+                    Status::Success,
+                ))?;
+            }
+            Err(e) => {
+                // Don't fail - images are optional, user can add them later
+                tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                    "Failed to download some images: {}",
+                    e
+                ))))?;
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Images,
+                    Status::Warning,
+                ))?;
+            }
         }
     }
 

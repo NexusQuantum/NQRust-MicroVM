@@ -1,0 +1,21 @@
+[Unit]
+Description=NQR-MicroVM First Boot Installer
+Documentation=https://github.com/nexus/nqrust-microvm
+After=multi-user.target network.target
+ConditionPathExists=!/var/lib/nqrust-installed
+
+[Service]
+Type=oneshot
+ExecStart=/opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+ExecStartPost=/bin/touch /var/lib/nqrust-installed
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

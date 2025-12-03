@@ -27,6 +27,44 @@ pub fn run_preflight_checks() -> Vec<CheckItem> {
     ]
 }
 
+/// Run pre-flight checks for offline/ISO mode (skip network-related checks)
+pub fn run_preflight_checks_offline() -> Vec<CheckItem> {
+    vec![
+        check_architecture(),
+        check_os(),
+        check_kernel(),
+        check_systemd(),
+        check_kvm_support(),
+        check_memory(),
+        check_disk_space(),
+        check_required_commands_offline(),
+        check_port_available(18080, "Manager API"),
+        check_port_available(9090, "Agent API"),
+        check_port_available(3000, "Web UI"),
+        check_port_available(5432, "PostgreSQL"),
+    ]
+}
+
+/// Check required commands for offline mode (less strict, no curl/git needed)
+fn check_required_commands_offline() -> CheckItem {
+    let required = ["sudo", "systemctl", "ip", "cp"];
+    let missing: Vec<&str> = required
+        .iter()
+        .filter(|cmd| !command_exists(cmd))
+        .copied()
+        .collect();
+
+    if missing.is_empty() {
+        CheckItem::new("Required Commands", "sudo, systemctl, ip, cp")
+            .with_status(Status::Success)
+            .with_message("All commands available")
+    } else {
+        CheckItem::new("Required Commands", "sudo, systemctl, ip, cp")
+            .with_status(Status::Error)
+            .with_message(format!("Missing: {}", missing.join(", ")))
+    }
+}
+
 /// Check CPU architecture
 fn check_architecture() -> CheckItem {
     let arch = std::env::consts::ARCH;

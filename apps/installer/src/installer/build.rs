@@ -672,3 +672,217 @@ pub fn verify_binaries(config: &InstallConfig) -> Result<bool> {
 
     Ok(true)
 }
+
+/// Copy binaries from bundle (for ISO/offline mode)
+pub fn copy_binaries_from_bundle(
+    config: &InstallConfig,
+    bundle_path: &Path,
+) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    let bundle_bin = bundle_path.join("bin");
+    let download_dir = PathBuf::from("/tmp/nqrust-download");
+
+    logs.push(LogEntry::info(format!(
+        "Copying binaries from bundle {:?}...",
+        bundle_bin
+    )));
+
+    // Create temp download dir (to be compatible with install_binaries)
+    let _ = fs::create_dir_all(&download_dir);
+
+    // Copy manager if needed
+    if config.mode.includes_manager() {
+        let src = bundle_bin.join("nqrust-manager");
+        let dst = download_dir.join("manager");
+
+        if src.exists() {
+            fs::copy(&src, &dst)?;
+            logs.push(LogEntry::success("Manager binary copied from bundle"));
+        } else {
+            logs.push(LogEntry::error(format!(
+                "Manager binary not found in bundle at {:?}",
+                src
+            )));
+            return Err(anyhow!("Manager binary not found in bundle"));
+        }
+    }
+
+    // Copy agent if needed
+    if config.mode.includes_agent() {
+        let src = bundle_bin.join("nqrust-agent");
+        let dst = download_dir.join("agent");
+
+        if src.exists() {
+            fs::copy(&src, &dst)?;
+            logs.push(LogEntry::success("Agent binary copied from bundle"));
+        } else {
+            logs.push(LogEntry::error(format!(
+                "Agent binary not found in bundle at {:?}",
+                src
+            )));
+            return Err(anyhow!("Agent binary not found in bundle"));
+        }
+
+        // Copy guest-agent
+        let src = bundle_bin.join("guest-agent");
+        let dst = download_dir.join("guest-agent");
+
+        if src.exists() {
+            fs::copy(&src, &dst)?;
+            logs.push(LogEntry::success("Guest-agent binary copied from bundle"));
+        } else {
+            logs.push(LogEntry::warning("Guest-agent binary not found in bundle"));
+        }
+    }
+
+    // Copy UI if available
+    if config.with_ui {
+        let src = bundle_path.join("ui").join("nqrust-ui.tar.gz");
+        let dst = download_dir.join("nqrust-ui.tar.gz");
+
+        if src.exists() {
+            fs::copy(&src, &dst)?;
+            logs.push(LogEntry::success("UI package copied from bundle"));
+        } else {
+            logs.push(LogEntry::warning("UI package not found in bundle"));
+        }
+    }
+
+    logs.push(LogEntry::success("All binaries copied from bundle"));
+
+    Ok(logs)
+}
+
+/// Copy images from bundle (for ISO/offline mode)
+pub fn copy_images_from_bundle(
+    _config: &InstallConfig,
+    bundle_path: &Path,
+) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    let bundle_images = bundle_path.join("images");
+    let image_dir = PathBuf::from("/srv/images");
+    let image_dir_str = image_dir.display().to_string();
+
+    logs.push(LogEntry::info(format!(
+        "Copying images from bundle {:?} to {}...",
+        bundle_images, image_dir_str
+    )));
+
+    // Create image directory structure
+    let _ = run_sudo("mkdir", &["-p", &image_dir_str]);
+
+    // Copy all files from bundle images directory
+    if bundle_images.exists() {
+        // Copy kernel files
+        let kernel_src = bundle_images.join("kernel");
+        if kernel_src.exists() {
+            logs.push(LogEntry::info("Copying kernel images..."));
+            let output = run_sudo(
+                "cp",
+                &["-r", &kernel_src.display().to_string(), &image_dir_str],
+            )?;
+
+            if output.status.success() {
+                logs.push(LogEntry::success("Kernel images copied"));
+            } else {
+                logs.push(LogEntry::warning("Failed to copy kernel images"));
+            }
+        }
+
+        // Copy rootfs files
+        let rootfs_src = bundle_images.join("rootfs");
+        if rootfs_src.exists() {
+            logs.push(LogEntry::info("Copying rootfs images..."));
+            let output = run_sudo(
+                "cp",
+                &["-r", &rootfs_src.display().to_string(), &image_dir_str],
+            )?;
+
+            if output.status.success() {
+                logs.push(LogEntry::success("Rootfs images copied"));
+            } else {
+                logs.push(LogEntry::warning("Failed to copy rootfs images"));
+            }
+        }
+
+        // Copy docker image tarballs
+        let docker_src = bundle_images.join("docker");
+        if docker_src.exists() {
+            logs.push(LogEntry::info("Copying Docker image tarballs..."));
+            let docker_dst = image_dir.join("docker");
+            let _ = run_sudo("mkdir", &["-p", &docker_dst.display().to_string()]);
+
+            let output = run_sudo(
+                "sh",
+                &[
+                    "-c",
+                    &format!("cp -r {}/* {}/", docker_src.display(), docker_dst.display()),
+                ],
+            )?;
+
+            if output.status.success() {
+                logs.push(LogEntry::success("Docker image tarballs copied"));
+            } else {
+                logs.push(LogEntry::warning("Failed to copy Docker image tarballs"));
+            }
+        }
+
+        // Copy runtime images
+        let runtimes_src = bundle_images.join("runtimes");
+        if runtimes_src.exists() {
+            logs.push(LogEntry::info("Copying runtime images..."));
+            let output = run_sudo(
+                "sh",
+                &[
+                    "-c",
+                    &format!("cp -r {}/* {}/", runtimes_src.display(), image_dir_str),
+                ],
+            )?;
+
+            if output.status.success() {
+                logs.push(LogEntry::success("Runtime images copied"));
+            } else {
+                logs.push(LogEntry::warning("Failed to copy runtime images"));
+            }
+        }
+
+        // Copy individual .ext4 files from images root
+        logs.push(LogEntry::info("Copying additional image files..."));
+        let output = run_sudo(
+            "sh",
+            &[
+                "-c",
+                &format!(
+                    "find {} -maxdepth 1 -name '*.ext4' -exec cp {{}} {} \\; 2>/dev/null || true",
+                    bundle_images.display(),
+                    image_dir_str
+                ),
+            ],
+        )?;
+
+        if output.status.success() {
+            logs.push(LogEntry::success("Image files copied"));
+        }
+    } else {
+        logs.push(LogEntry::warning(format!(
+            "Bundle images directory not found at {:?}",
+            bundle_images
+        )));
+    }
+
+    // Create subdirectories for functions and containers
+    let functions_dir = image_dir.join("functions");
+    let containers_dir = image_dir.join("containers");
+    let _ = run_sudo("mkdir", &["-p", &functions_dir.display().to_string()]);
+    let _ = run_sudo("mkdir", &["-p", &containers_dir.display().to_string()]);
+
+    // Set ownership and permissions
+    let _ = run_sudo("chown", &["-R", "nqrust:nqrust", &image_dir_str]);
+    let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
+
+    logs.push(LogEntry::success("Images copied from bundle"));
+
+    Ok(logs)
+}

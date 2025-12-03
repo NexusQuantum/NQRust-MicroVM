@@ -1,6 +1,7 @@
 //! Dependency installation module.
 
 use std::fs;
+use std::path::Path;
 
 use anyhow::{anyhow, Result};
 
@@ -382,6 +383,93 @@ pub fn install_sqlx_cli() -> Result<Vec<LogEntry>> {
     } else {
         logs.push(LogEntry::success("SQLx CLI installed"));
     }
+
+    Ok(logs)
+}
+
+/// Install packages from bundled .deb files (for ISO/offline mode)
+pub fn install_bundled_packages(bundle_path: &Path) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+    let debs_dir = bundle_path.join("debs");
+
+    if !debs_dir.exists() {
+        logs.push(LogEntry::warning(format!(
+            "No bundled packages found at {:?}",
+            debs_dir
+        )));
+        return Ok(logs);
+    }
+
+    logs.push(LogEntry::info(format!(
+        "Installing bundled packages from {:?}...",
+        debs_dir
+    )));
+
+    // Install all .deb files in the directory
+    let output = run_sudo(
+        "sh",
+        &[
+            "-c",
+            &format!(
+                "dpkg -i {}/*.deb 2>/dev/null || apt-get install -f -y",
+                debs_dir.display()
+            ),
+        ],
+    )?;
+
+    if output.status.success() {
+        logs.push(LogEntry::success("Bundled packages installed"));
+    } else {
+        logs.push(LogEntry::warning(
+            "Some bundled packages may have failed to install",
+        ));
+    }
+
+    Ok(logs)
+}
+
+/// Install Firecracker from bundled binary (for ISO/offline mode)
+pub fn install_firecracker_from_bundle(bundle_path: &Path) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    let firecracker_src = bundle_path.join("bin").join("firecracker");
+    let jailer_src = bundle_path.join("bin").join("jailer");
+
+    if !firecracker_src.exists() {
+        return Err(anyhow!(
+            "Firecracker binary not found in bundle at {:?}",
+            firecracker_src
+        ));
+    }
+
+    logs.push(LogEntry::info("Installing Firecracker from bundle..."));
+
+    // Copy firecracker binary
+    let output = run_sudo(
+        "cp",
+        &[
+            firecracker_src.to_str().unwrap(),
+            "/usr/local/bin/firecracker",
+        ],
+    )?;
+
+    if !output.status.success() {
+        return Err(anyhow!("Failed to copy Firecracker binary"));
+    }
+
+    run_sudo("chmod", &["+x", "/usr/local/bin/firecracker"])?;
+
+    // Copy jailer if exists
+    if jailer_src.exists() {
+        let _ = run_sudo(
+            "cp",
+            &[jailer_src.to_str().unwrap(), "/usr/local/bin/jailer"],
+        );
+        let _ = run_sudo("chmod", &["+x", "/usr/local/bin/jailer"]);
+        logs.push(LogEntry::info("Jailer installed"));
+    }
+
+    logs.push(LogEntry::success("Firecracker installed from bundle"));
 
     Ok(logs)
 }

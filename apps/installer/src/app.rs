@@ -4,6 +4,31 @@
 
 use std::path::PathBuf;
 
+/// Installation source - where to get binaries and images from
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum InstallSource {
+    /// Download from internet (default)
+    #[default]
+    Download,
+    /// Build from source
+    BuildFromSource,
+    /// Use pre-bundled files from local path (for ISO/air-gapped installation)
+    LocalBundle(PathBuf),
+}
+
+impl InstallSource {
+    pub fn is_offline(&self) -> bool {
+        matches!(self, InstallSource::LocalBundle(_))
+    }
+
+    pub fn bundle_path(&self) -> Option<&PathBuf> {
+        match self {
+            InstallSource::LocalBundle(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
 /// Installation mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InstallMode {
@@ -105,6 +130,8 @@ impl NetworkMode {
 pub struct InstallConfig {
     /// Installation mode
     pub mode: InstallMode,
+    /// Installation source (download, build, or local bundle)
+    pub install_source: InstallSource,
     /// Installation directory for binaries
     pub install_dir: PathBuf,
     /// Data directory for VMs and images
@@ -141,6 +168,7 @@ impl Default for InstallConfig {
     fn default() -> Self {
         Self {
             mode: InstallMode::default(),
+            install_source: InstallSource::default(),
             install_dir: PathBuf::from("/opt/nqrust-microvm"),
             data_dir: PathBuf::from("/srv/fc"),
             config_dir: PathBuf::from("/etc/nqrust-microvm"),

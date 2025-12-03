@@ -1,0 +1,327 @@
+# =============================================================================
+# NQR-MicroVM Air-Gapped ISO Build Workflow
+# =============================================================================
+# This workflow builds the air-gapped ISO for offline installation.
+# It is triggered after a release is published.
+#
+# The ISO includes:
+#   - NQR-MicroVM binaries (manager, guest-agent, installer)
+#   - Firecracker
+#   - Kernel and rootfs images
+#   - Docker container images
+#   - Required Debian packages
+# =============================================================================
+
+name: Build Air-Gapped ISO
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version to bundle (e.g., v0.1.64)'
+        required: false
+        default: 'latest'
+
+concurrency:
+  group: iso-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-iso:
+    name: Build Air-Gapped ISO
+    runs-on: ubuntu-24.04
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine release version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.release_version }}"
+          else
+            # Get the latest release tag
+            VERSION=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name')
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+
+      - name: Install live-build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            live-build \
+            debootstrap \
+            xorriso \
+            isolinux \
+            syslinux-common \
+            syslinux-efi \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
+            squashfs-tools \
+            dosfstools \
+            mtools
+
+      - name: Install Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Download release binaries
+        run: |
+          mkdir -p /tmp/bundle/bin
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Download from release
+          if [[ "${VERSION}" == "latest" ]]; then
+            BASE_URL="https://github.com/${{ github.repository }}/releases/latest/download"
+          else
+            BASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}"
+          fi
+          
+          echo "Downloading binaries from: ${BASE_URL}"
+          
+          curl -fsSL "${BASE_URL}/nqr-manager" -o /tmp/bundle/bin/nqr-manager || echo "Manager download failed"
+          curl -fsSL "${BASE_URL}/nqr-installer" -o /tmp/bundle/bin/nqr-installer || echo "Installer download failed"
+          curl -fsSL "${BASE_URL}/nqr-guest-agent" -o /tmp/bundle/bin/nqr-guest-agent || echo "Guest agent download failed"
+          
+          chmod +x /tmp/bundle/bin/* 2>/dev/null || true
+          ls -la /tmp/bundle/bin/
+
+      - name: Download Firecracker
+        run: |
+          FC_VERSION="v1.13.1"
+          FC_URL="https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-x86_64.tgz"
+          
+          curl -fsSL "${FC_URL}" -o /tmp/firecracker.tgz
+          tar -xzf /tmp/firecracker.tgz -C /tmp
+          
+          cp "/tmp/release-${FC_VERSION}-x86_64/firecracker-${FC_VERSION}-x86_64" /tmp/bundle/bin/firecracker
+          cp "/tmp/release-${FC_VERSION}-x86_64/jailer-${FC_VERSION}-x86_64" /tmp/bundle/bin/jailer
+          
+          chmod +x /tmp/bundle/bin/firecracker /tmp/bundle/bin/jailer
+
+      - name: Download images
+        run: |
+          mkdir -p /tmp/bundle/images/kernel
+          mkdir -p /tmp/bundle/images/rootfs
+          
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          if [[ "${VERSION}" == "latest" ]]; then
+            BASE_URL="https://github.com/${{ github.repository }}/releases/latest/download"
+          else
+            BASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}"
+          fi
+          
+          # Download kernel
+          curl -fsSL "${BASE_URL}/vmlinux-6.1" -o /tmp/bundle/images/kernel/vmlinux-6.1 || echo "Kernel download failed"
+          
+          # Download rootfs images
+          curl -fsSL "${BASE_URL}/debian-minimal.ext4" -o /tmp/bundle/images/rootfs/debian-minimal.ext4 || echo "Debian rootfs download failed"
+          curl -fsSL "${BASE_URL}/container-runtime.ext4" -o /tmp/bundle/images/rootfs/container-runtime.ext4 || echo "Container rootfs download failed"
+          
+          ls -la /tmp/bundle/images/kernel/
+          ls -la /tmp/bundle/images/rootfs/
+
+      - name: Export Docker images
+        run: |
+          mkdir -p /tmp/bundle/images/docker
+          
+          IMAGES=(
+            "postgres:16-alpine"
+            "redis:7-alpine"
+            "nginx:alpine"
+            "alpine:latest"
+          )
+          
+          for image in "${IMAGES[@]}"; do
+            echo "Exporting ${image}..."
+            docker pull "${image}"
+            tarball_name=$(echo "${image}" | sed 's/[:\\/]/-/g').tar
+            docker save "${image}" -o "/tmp/bundle/images/docker/${tarball_name}"
+            echo "Exported: ${tarball_name}"
+          done
+          
+          ls -la /tmp/bundle/images/docker/
+
+      - name: Build ISO
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Set up live-build
+          mkdir -p /tmp/iso-build
+          cd /tmp/iso-build
+          
+          lb config \
+            --architecture amd64 \
+            --distribution bookworm \
+            --binary-images iso-hybrid \
+            --debian-installer false \
+            --memtest none \
+            --bootloaders "syslinux,grub-efi" \
+            --bootappend-live "boot=live components quiet splash" \
+            --apt-indices false \
+            --apt-recommends false \
+            --archive-areas "main contrib non-free non-free-firmware" \
+            --iso-application "NQR-MicroVM Installer" \
+            --iso-preparer "Nexus" \
+            --iso-publisher "Nexus" \
+            --iso-volume "NQR-MicroVM"
+          
+          # Package lists
+          mkdir -p config/package-lists
+          
+          cat > config/package-lists/base.list.chroot << 'EOF'
+          linux-image-amd64
+          live-boot
+          systemd
+          systemd-sysv
+          dbus
+          locales
+          console-setup
+          kbd
+          iproute2
+          iptables
+          bridge-utils
+          net-tools
+          iputils-ping
+          openssh-server
+          openssh-client
+          curl
+          wget
+          lvm2
+          parted
+          fdisk
+          gdisk
+          e2fsprogs
+          xfsprogs
+          dosfstools
+          ncurses-term
+          dialog
+          tmux
+          sudo
+          vim-tiny
+          less
+          ca-certificates
+          gnupg
+          postgresql
+          postgresql-client
+          EOF
+          
+          # Include bundle
+          mkdir -p config/includes.chroot/opt/nqrust-bundle
+          cp -r /tmp/bundle/* config/includes.chroot/opt/nqrust-bundle/
+          
+          # Create first-boot service
+          mkdir -p config/includes.chroot/etc/systemd/system
+          cp ${{ github.workspace }}/scripts/iso/files/nqrust-firstboot.service \
+            config/includes.chroot/etc/systemd/system/
+          
+          mkdir -p config/includes.chroot/etc/systemd/system/multi-user.target.wants
+          ln -sf ../nqrust-firstboot.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/nqrust-firstboot.service
+          
+          # Auto-login on tty1
+          mkdir -p config/includes.chroot/etc/systemd/system/getty@tty1.service.d
+          cat > config/includes.chroot/etc/systemd/system/getty@tty1.service.d/autologin.conf << 'EOF'
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
+          EOF
+          
+          # MOTD
+          cat > config/includes.chroot/etc/motd << EOF
+          
+              _   _  ___  ____       __  __ _               __     ____  __
+             | \ | |/ _ \|  _ \     |  \/  (_) ___ _ __ ___\ \   / /  \/  |
+             |  \| | | | | |_) |____| |\/| | |/ __| '__/ _ \\ \ / /| |\/| |
+             | |\  | |_| |  _ <_____| |  | | | (__| | | (_) |\ V / | |  | |
+             |_| \_|\__\_\_| \_\    |_|  |_|_|\___|_|  \___/  \_/  |_|  |_|
+          
+             Air-Gapped Installer ${VERSION}
+             
+             The installer will start automatically on first boot.
+             For manual installation, run: /opt/nqrust-bundle/bin/nqr-installer --iso-mode
+          
+          EOF
+          
+          # Build hook
+          mkdir -p config/hooks/live
+          cat > config/hooks/live/9999-setup.hook.chroot << 'EOF'
+          #!/bin/bash
+          set -e
+          ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+          systemctl enable ssh
+          echo "KEYMAP=us" > /etc/vconsole.conf
+          echo "root:nqrust" | chpasswd
+          chmod +x /opt/nqrust-bundle/bin/* 2>/dev/null || true
+          ln -sf /opt/nqrust-bundle/bin/nqr-installer /usr/local/bin/nqr-installer 2>/dev/null || true
+          ln -sf /opt/nqrust-bundle/bin/nqr-manager /usr/local/bin/nqr-manager 2>/dev/null || true
+          EOF
+          chmod +x config/hooks/live/9999-setup.hook.chroot
+          
+          # Build
+          sudo lb build 2>&1 | tee build.log
+
+      - name: Rename and create checksums
+        id: iso
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ISO_NAME="nqr-microvm-${VERSION}-airgap-amd64.iso"
+          
+          cd /tmp/iso-build
+          
+          if [[ -f "live-image-amd64.hybrid.iso" ]]; then
+            mv live-image-amd64.hybrid.iso "${ISO_NAME}"
+            
+            # Generate checksums
+            sha256sum "${ISO_NAME}" > "${ISO_NAME}.sha256"
+            md5sum "${ISO_NAME}" > "${ISO_NAME}.md5"
+            
+            echo "iso_name=${ISO_NAME}" >> $GITHUB_OUTPUT
+            echo "iso_path=/tmp/iso-build/${ISO_NAME}" >> $GITHUB_OUTPUT
+            
+            ls -lh "${ISO_NAME}"
+          else
+            echo "ISO build failed!"
+            cat build.log
+            exit 1
+          fi
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nqr-microvm-airgap-iso
+          path: |
+            /tmp/iso-build/${{ steps.iso.outputs.iso_name }}
+            /tmp/iso-build/${{ steps.iso.outputs.iso_name }}.sha256
+            /tmp/iso-build/${{ steps.iso.outputs.iso_name }}.md5
+          retention-days: 30
+
+      - name: Upload to release
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_version != 'latest')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          files: |
+            /tmp/iso-build/${{ steps.iso.outputs.iso_name }}
+            /tmp/iso-build/${{ steps.iso.outputs.iso_name }}.sha256
+            /tmp/iso-build/${{ steps.iso.outputs.iso_name }}.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-build-log
+          path: /tmp/iso-build/build.log
+          retention-days: 7

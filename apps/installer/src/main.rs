@@ -18,7 +18,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::app::{App, InstallConfig, InstallMode, NetworkMode, Screen};
+use crate::app::{App, InstallConfig, InstallMode, InstallSource, NetworkMode, Screen};
 
 /// NQR-MicroVM Installer - Rust Firecracker MicroVM Platform by Nexus
 #[derive(Parser)]
@@ -94,6 +94,15 @@ enum Commands {
         /// Enable debug output
         #[arg(long)]
         debug: bool,
+
+        /// ISO mode: use pre-bundled files from local path (for air-gapped/offline installation)
+        /// When enabled, skips all downloads and uses files from the bundle directory
+        #[arg(long)]
+        iso_mode: bool,
+
+        /// Path to the pre-bundled files for ISO mode (default: /opt/nqrust-bundle)
+        #[arg(long, default_value = "/opt/nqrust-bundle")]
+        bundle_path: PathBuf,
     },
     /// Uninstall NQR-MicroVM
     Uninstall {
@@ -175,9 +184,21 @@ fn main() -> Result<()> {
             non_interactive,
             config: _config_file,
             debug: _debug,
+            iso_mode,
+            bundle_path,
         }) => {
+            // Determine installation source
+            let install_source = if iso_mode {
+                InstallSource::LocalBundle(bundle_path)
+            } else if mode == CliInstallMode::Dev {
+                InstallSource::BuildFromSource
+            } else {
+                InstallSource::Download
+            };
+
             let config = InstallConfig {
                 mode: mode.into(),
+                install_source,
                 install_dir,
                 data_dir,
                 config_dir,
@@ -474,7 +495,16 @@ fn handle_verify_input(app: &mut App, key: KeyCode) {
 }
 
 fn handle_complete_input(app: &mut App, key: KeyCode) {
+    let needs_reboot =
+        app.config.network_mode == NetworkMode::Bridged || app.config.install_source.is_offline();
+
     match key {
+        KeyCode::Char('r') if needs_reboot => {
+            // Initiate system reboot
+            // Note: The app will quit before the reboot completes
+            let _ = std::process::Command::new("sudo").args(["reboot"]).spawn();
+            app.should_quit = true;
+        }
         KeyCode::Enter | KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
