@@ -159,6 +159,7 @@ init_live_build() {
 
     # Initialize live-build with Debian bookworm
     # Note: Use --mode debian to avoid Ubuntu-specific packages like ubuntu-keyring
+    # Disable security/updates repos to avoid URL mismatch issues
     lb config \
         --mode debian \
         --system live \
@@ -174,8 +175,8 @@ init_live_build() {
         --mirror-bootstrap "http://deb.debian.org/debian" \
         --mirror-chroot "http://deb.debian.org/debian" \
         --mirror-binary "http://deb.debian.org/debian" \
-        --mirror-chroot-security "http://security.debian.org/debian-security" \
-        --mirror-binary-security "http://security.debian.org/debian-security" \
+        --security false \
+        --updates false \
         --iso-application "NQR-MicroVM Installer" \
         --iso-preparer "Nexus" \
         --iso-publisher "Nexus" \
