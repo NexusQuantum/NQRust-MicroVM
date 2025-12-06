@@ -158,13 +158,13 @@ init_live_build() {
     cd "${BUILD_DIR}"
 
     # Initialize live-build with Debian bookworm
+    # Note: Use syslinux for BIOS boot, grub-efi handled via packages
     lb config \
         --architecture amd64 \
         --distribution bookworm \
         --binary-images iso-hybrid \
         --debian-installer false \
         --memtest none \
-        --bootloaders "syslinux,grub-efi" \
         --bootappend-live "boot=live components quiet splash" \
         --apt-indices false \
         --apt-recommends false \
