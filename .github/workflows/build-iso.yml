@@ -161,8 +161,10 @@ jobs:
           mkdir -p /tmp/iso-build
           cd /tmp/iso-build
           
-          # Use Debian mirrors (not Ubuntu) for bookworm
+          # Use Debian mode explicitly (not Ubuntu) for bookworm
           lb config \
+            --mode debian \
+            --system live \
             --architecture amd64 \
             --distribution bookworm \
             --binary-images iso-hybrid \
@@ -177,6 +179,7 @@ jobs:
             --mirror-binary "http://deb.debian.org/debian" \
             --mirror-chroot-security "http://security.debian.org/debian-security" \
             --mirror-binary-security "http://security.debian.org/debian-security" \
+            --debootstrap-options "--no-check-gpg" \
             --iso-application "NQR-MicroVM Installer" \
             --iso-preparer "Nexus" \
             --iso-publisher "Nexus" \

@@ -158,8 +158,10 @@ init_live_build() {
     cd "${BUILD_DIR}"
 
     # Initialize live-build with Debian bookworm
-    # Note: Explicitly set Debian mirrors to avoid using host system's mirrors
+    # Note: Use --mode debian to avoid Ubuntu-specific packages like ubuntu-keyring
     lb config \
+        --mode debian \
+        --system live \
         --architecture amd64 \
         --distribution bookworm \
         --binary-images iso-hybrid \
@@ -174,6 +176,7 @@ init_live_build() {
         --mirror-binary "http://deb.debian.org/debian" \
         --mirror-chroot-security "http://security.debian.org/debian-security" \
         --mirror-binary-security "http://security.debian.org/debian-security" \
+        --debootstrap-options "--no-check-gpg" \
         --iso-application "NQR-MicroVM Installer" \
         --iso-preparer "Nexus" \
         --iso-publisher "Nexus" \
