@@ -158,7 +158,7 @@ init_live_build() {
     cd "${BUILD_DIR}"
 
     # Initialize live-build with Debian bookworm
-    # Note: Use syslinux for BIOS boot, grub-efi handled via packages
+    # Note: Explicitly set Debian mirrors to avoid using host system's mirrors
     lb config \
         --architecture amd64 \
         --distribution bookworm \
@@ -169,6 +169,11 @@ init_live_build() {
         --apt-indices false \
         --apt-recommends false \
         --archive-areas "main contrib non-free non-free-firmware" \
+        --mirror-bootstrap "http://deb.debian.org/debian" \
+        --mirror-chroot "http://deb.debian.org/debian" \
+        --mirror-binary "http://deb.debian.org/debian" \
+        --mirror-chroot-security "http://security.debian.org/debian-security" \
+        --mirror-binary-security "http://security.debian.org/debian-security" \
         --iso-application "NQR-MicroVM Installer" \
         --iso-preparer "Nexus" \
         --iso-publisher "Nexus" \

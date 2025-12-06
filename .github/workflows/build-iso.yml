@@ -69,7 +69,8 @@ jobs:
             grub-efi-amd64-bin \
             squashfs-tools \
             dosfstools \
-            mtools
+            mtools \
+            debian-archive-keyring
 
       - name: Install Docker
         uses: docker/setup-buildx-action@v3
@@ -160,6 +161,7 @@ jobs:
           mkdir -p /tmp/iso-build
           cd /tmp/iso-build
           
+          # Use Debian mirrors (not Ubuntu) for bookworm
           lb config \
             --architecture amd64 \
             --distribution bookworm \
@@ -170,6 +172,11 @@ jobs:
             --apt-indices false \
             --apt-recommends false \
             --archive-areas "main contrib non-free non-free-firmware" \
+            --mirror-bootstrap "http://deb.debian.org/debian" \
+            --mirror-chroot "http://deb.debian.org/debian" \
+            --mirror-binary "http://deb.debian.org/debian" \
+            --mirror-chroot-security "http://security.debian.org/debian-security" \
+            --mirror-binary-security "http://security.debian.org/debian-security" \
             --iso-application "NQR-MicroVM Installer" \
             --iso-preparer "Nexus" \
             --iso-publisher "Nexus" \
