@@ -274,10 +274,11 @@ configure_bootloader() {
     local bootloader_dir="${BUILD_DIR}/config/bootloaders/isolinux"
     mkdir -p "${bootloader_dir}"
 
-    # Copy the template files from live-build (skip splash.svg.in to avoid rsvg dependency)
+    # Copy only the cfg files (NOT splash.svg.in which requires old 'rsvg' command)
     cp /usr/share/live/build/bootloaders/isolinux/*.cfg "${bootloader_dir}/" 2>/dev/null || true
-    cp /usr/share/live/build/bootloaders/isolinux/*.cfg.in "${bootloader_dir}/" 2>/dev/null || true
-    # Don't copy splash.svg.in - it requires 'rsvg' which isn't available in modern distros
+    cp /usr/share/live/build/bootloaders/isolinux/live.cfg.in "${bootloader_dir}/" 2>/dev/null || true
+    # Explicitly do NOT copy splash.svg.in - it requires 'rsvg' which doesn't exist in modern distros
+    # (librsvg2-bin provides 'rsvg-convert' not 'rsvg')
 
     # Copy the actual binary files (not symlinks) with correct paths
     cp /usr/lib/ISOLINUX/isolinux.bin "${bootloader_dir}/"
@@ -285,6 +286,9 @@ configure_bootloader() {
     cp /usr/lib/syslinux/modules/bios/ldlinux.c32 "${bootloader_dir}/"
     cp /usr/lib/syslinux/modules/bios/libcom32.c32 "${bootloader_dir}/"
     cp /usr/lib/syslinux/modules/bios/libutil.c32 "${bootloader_dir}/"
+
+    # Verify no splash.svg.in was copied
+    rm -f "${bootloader_dir}/splash.svg.in" 2>/dev/null || true
 
     log_success "Bootloader configured"
 }

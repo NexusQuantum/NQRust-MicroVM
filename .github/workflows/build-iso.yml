@@ -237,10 +237,11 @@ jobs:
           # Create a custom bootloader config with correct paths
           mkdir -p config/bootloaders/isolinux
           
-          # Copy the template files from live-build (skip splash.svg.in to avoid rsvg dependency)
+          # Copy only the cfg files (NOT splash.svg.in which requires old 'rsvg' command)
           cp /usr/share/live/build/bootloaders/isolinux/*.cfg config/bootloaders/isolinux/ 2>/dev/null || true
-          cp /usr/share/live/build/bootloaders/isolinux/*.cfg.in config/bootloaders/isolinux/ 2>/dev/null || true
-          # Don't copy splash.svg.in - it requires 'rsvg' which isn't available in modern distros
+          cp /usr/share/live/build/bootloaders/isolinux/live.cfg.in config/bootloaders/isolinux/ 2>/dev/null || true
+          # Explicitly do NOT copy splash.svg.in - it requires 'rsvg' which doesn't exist in modern distros
+          # (librsvg2-bin provides 'rsvg-convert' not 'rsvg')
           
           # Copy the actual binary files (not symlinks) with correct paths
           cp /usr/lib/ISOLINUX/isolinux.bin config/bootloaders/isolinux/
@@ -248,6 +249,9 @@ jobs:
           cp /usr/lib/syslinux/modules/bios/ldlinux.c32 config/bootloaders/isolinux/
           cp /usr/lib/syslinux/modules/bios/libcom32.c32 config/bootloaders/isolinux/
           cp /usr/lib/syslinux/modules/bios/libutil.c32 config/bootloaders/isolinux/
+          
+          # Verify no splash.svg.in was copied
+          rm -f config/bootloaders/isolinux/splash.svg.in 2>/dev/null || true
           
           # Include bundle
           mkdir -p config/includes.chroot/opt/nqrust-bundle
