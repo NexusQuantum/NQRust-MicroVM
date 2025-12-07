@@ -267,6 +267,28 @@ EOF
     log_success "Package lists configured"
 }
 
+# Fix bootloader symlinks - the default live-build bootloader config has broken symlinks
+configure_bootloader() {
+    log_info "Configuring bootloader with correct paths..."
+
+    local bootloader_dir="${BUILD_DIR}/config/bootloaders/isolinux"
+    mkdir -p "${bootloader_dir}"
+
+    # Copy the template files from live-build
+    cp /usr/share/live/build/bootloaders/isolinux/*.cfg "${bootloader_dir}/" 2>/dev/null || true
+    cp /usr/share/live/build/bootloaders/isolinux/*.cfg.in "${bootloader_dir}/" 2>/dev/null || true
+    cp /usr/share/live/build/bootloaders/isolinux/*.svg.in "${bootloader_dir}/" 2>/dev/null || true
+
+    # Copy the actual binary files (not symlinks) with correct paths
+    cp /usr/lib/ISOLINUX/isolinux.bin "${bootloader_dir}/"
+    cp /usr/lib/syslinux/modules/bios/vesamenu.c32 "${bootloader_dir}/"
+    cp /usr/lib/syslinux/modules/bios/ldlinux.c32 "${bootloader_dir}/"
+    cp /usr/lib/syslinux/modules/bios/libcom32.c32 "${bootloader_dir}/"
+    cp /usr/lib/syslinux/modules/bios/libutil.c32 "${bootloader_dir}/"
+
+    log_success "Bootloader configured"
+}
+
 # Create bundle directory structure in live filesystem
 create_bundle_structure() {
     log_info "Creating bundle directory structure..."
@@ -607,6 +629,7 @@ main() {
     clean_build
     init_live_build
     configure_packages
+    configure_bootloader
     create_bundle_structure
     bundle_binaries
     bundle_firecracker

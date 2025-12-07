@@ -233,6 +233,22 @@ jobs:
           isolinux
           EOF
           
+          # Fix bootloader symlinks - the default live-build bootloader config has broken symlinks
+          # Create a custom bootloader config with correct paths
+          mkdir -p config/bootloaders/isolinux
+          
+          # Copy the template files from live-build
+          cp /usr/share/live/build/bootloaders/isolinux/*.cfg config/bootloaders/isolinux/ 2>/dev/null || true
+          cp /usr/share/live/build/bootloaders/isolinux/*.cfg.in config/bootloaders/isolinux/ 2>/dev/null || true
+          cp /usr/share/live/build/bootloaders/isolinux/*.svg.in config/bootloaders/isolinux/ 2>/dev/null || true
+          
+          # Copy the actual binary files (not symlinks) with correct paths
+          cp /usr/lib/ISOLINUX/isolinux.bin config/bootloaders/isolinux/
+          cp /usr/lib/syslinux/modules/bios/vesamenu.c32 config/bootloaders/isolinux/
+          cp /usr/lib/syslinux/modules/bios/ldlinux.c32 config/bootloaders/isolinux/
+          cp /usr/lib/syslinux/modules/bios/libcom32.c32 config/bootloaders/isolinux/
+          cp /usr/lib/syslinux/modules/bios/libutil.c32 config/bootloaders/isolinux/
+          
           # Include bundle
           mkdir -p config/includes.chroot/opt/nqrust-bundle
           cp -r /tmp/bundle/* config/includes.chroot/opt/nqrust-bundle/
