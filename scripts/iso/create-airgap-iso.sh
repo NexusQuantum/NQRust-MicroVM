@@ -160,7 +160,8 @@ init_live_build() {
     # Initialize live-build with Debian bookworm
     # Note: Use --mode debian to avoid Ubuntu-specific packages like ubuntu-keyring
     # Disable security repos to avoid URL mismatch issues
-    # Disable contents to avoid 404 on Contents-amd64.gz
+    # Specify linux-flavours and linux-packages to avoid Contents file lookup
+    # Disable firmware-chroot to prevent downloading Contents-amd64.gz (404)
     lb config \
         --mode debian \
         --system live \
@@ -172,7 +173,10 @@ init_live_build() {
         --bootappend-live "boot=live components quiet splash" \
         --apt-indices false \
         --apt-recommends false \
-        --contents false \
+        --linux-flavours "amd64" \
+        --linux-packages "linux-image" \
+        --firmware-chroot false \
+        --firmware-binary false \
         --archive-areas "main contrib non-free non-free-firmware" \
         --mirror-bootstrap "http://deb.debian.org/debian" \
         --mirror-chroot "http://deb.debian.org/debian" \
