@@ -274,10 +274,10 @@ configure_bootloader() {
     local bootloader_dir="${BUILD_DIR}/config/bootloaders/isolinux"
     mkdir -p "${bootloader_dir}"
 
-    # Copy the template files from live-build
+    # Copy the template files from live-build (skip splash.svg.in to avoid rsvg dependency)
     cp /usr/share/live/build/bootloaders/isolinux/*.cfg "${bootloader_dir}/" 2>/dev/null || true
     cp /usr/share/live/build/bootloaders/isolinux/*.cfg.in "${bootloader_dir}/" 2>/dev/null || true
-    cp /usr/share/live/build/bootloaders/isolinux/*.svg.in "${bootloader_dir}/" 2>/dev/null || true
+    # Don't copy splash.svg.in - it requires 'rsvg' which isn't available in modern distros
 
     # Copy the actual binary files (not symlinks) with correct paths
     cp /usr/lib/ISOLINUX/isolinux.bin "${bootloader_dir}/"

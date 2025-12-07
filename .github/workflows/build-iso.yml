@@ -237,10 +237,10 @@ jobs:
           # Create a custom bootloader config with correct paths
           mkdir -p config/bootloaders/isolinux
           
-          # Copy the template files from live-build
+          # Copy the template files from live-build (skip splash.svg.in to avoid rsvg dependency)
           cp /usr/share/live/build/bootloaders/isolinux/*.cfg config/bootloaders/isolinux/ 2>/dev/null || true
           cp /usr/share/live/build/bootloaders/isolinux/*.cfg.in config/bootloaders/isolinux/ 2>/dev/null || true
-          cp /usr/share/live/build/bootloaders/isolinux/*.svg.in config/bootloaders/isolinux/ 2>/dev/null || true
+          # Don't copy splash.svg.in - it requires 'rsvg' which isn't available in modern distros
           
           # Copy the actual binary files (not symlinks) with correct paths
           cp /usr/lib/ISOLINUX/isolinux.bin config/bootloaders/isolinux/
