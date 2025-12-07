@@ -170,6 +170,7 @@ jobs:
             --architecture amd64 \
             --distribution bookworm \
             --binary-images iso-hybrid \
+            --bootloader syslinux \
             --debian-installer false \
             --memtest none \
             --bootappend-live "boot=live components quiet splash" \
@@ -227,6 +228,9 @@ jobs:
           gnupg
           postgresql
           postgresql-client
+          syslinux
+          syslinux-common
+          isolinux
           EOF
           
           # Include bundle

@@ -168,6 +168,7 @@ init_live_build() {
         --architecture amd64 \
         --distribution bookworm \
         --binary-images iso-hybrid \
+        --bootloader syslinux \
         --debian-installer false \
         --memtest none \
         --bootappend-live "boot=live components quiet splash" \
@@ -207,6 +208,11 @@ dbus
 locales
 console-setup
 kbd
+
+# Bootloader
+syslinux
+syslinux-common
+isolinux
 
 # Network
 iproute2
