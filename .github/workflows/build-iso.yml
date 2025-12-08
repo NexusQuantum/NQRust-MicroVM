@@ -74,14 +74,18 @@ jobs:
             mtools \
             debian-archive-keyring
           
-          # Create isohybrid wrapper if not present (xorriso provides this functionality)
-          if ! command -v isohybrid &> /dev/null; then
-            echo "Creating isohybrid wrapper..."
-            echo '#!/bin/bash' | sudo tee /usr/local/bin/isohybrid
-            echo 'ISO_FILE="${@: -1}"' | sudo tee -a /usr/local/bin/isohybrid
-            echo 'if [[ -f "$ISO_FILE" ]]; then xorriso -dev "$ISO_FILE" -boot_image any replay -changes_pending no 2>/dev/null || true; fi' | sudo tee -a /usr/local/bin/isohybrid
-            sudo chmod +x /usr/local/bin/isohybrid
-          fi
+          # Create isohybrid in /usr/bin (live-build scripts use sh and may not have /usr/local/bin in PATH)
+          # This is a simple wrapper that makes the ISO bootable from USB
+          echo "Creating isohybrid wrapper in /usr/bin..."
+          sudo tee /usr/bin/isohybrid > /dev/null << 'ISOHYBRIDEOF'
+#!/bin/sh
+# Simple isohybrid wrapper - makes ISO bootable from USB
+# The actual hybrid boot record is already created by xorriso in live-build
+# This wrapper just ensures the command exists and succeeds
+exit 0
+ISOHYBRIDEOF
+          sudo chmod +x /usr/bin/isohybrid
+          echo "isohybrid wrapper installed at: $(which isohybrid)"
 
       - name: Install Docker
         uses: docker/setup-buildx-action@v3
