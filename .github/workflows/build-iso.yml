@@ -238,6 +238,7 @@ jobs:
           postgresql-client
           syslinux
           syslinux-common
+          syslinux-utils
           isolinux
           EOF
           
