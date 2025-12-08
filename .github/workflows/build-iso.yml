@@ -15,16 +15,16 @@
 name: Build Air-Gapped ISO
 
 on:
-  workflow_run:
-    workflows: ["Release"]
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       release_version:
         description: 'Release version to bundle (e.g., v0.1.64)'
         required: false
         default: 'latest'
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
 
 concurrency:
   group: iso-build-${{ github.ref }}
