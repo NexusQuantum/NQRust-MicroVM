@@ -345,39 +345,25 @@ jobs:
           chmod +x config/hooks/live/9999-setup.hook.chroot
           
           # Explicitly disable source build in config
-          echo "LB_SOURCE=\"false\"" >> config/source
+          mkdir -p config
+          echo 'LB_SOURCE="false"' > config/source
           
-          # Create source stage marker to skip lb_source
-          mkdir -p .build
-          touch .build/source
+          # Build - ignore exit code since lb_source may fail even though ISO is built
+          sudo lb build 2>&1 | tee build.log || true
           
-          # Debug: list what we're building with
-          echo "=== Live-build config ==="
-          cat config/source || true
-          echo "=== Build markers ==="
-          ls -la .build/ || true
-          
-          # Build
-          set -o pipefail
-          sudo lb build 2>&1 | tee build.log
-          BUILD_EXIT=$?
-          
-          # List all files to find the ISO
+          # Check if ISO was created (the important part)
           echo "=== Build directory contents ==="
           ls -la
           echo "=== Looking for ISO files ==="
-          find . -name "*.iso" -o -name "*.hybrid.iso" 2>/dev/null || true
+          find . -name "*.iso" -type f 2>/dev/null || true
           
-          if [[ $BUILD_EXIT -ne 0 ]]; then
-            echo "lb build exited with code $BUILD_EXIT"
-            # Check if ISO exists despite exit code
-            if [[ -f "live-image-amd64.hybrid.iso" ]]; then
-              echo "ISO exists despite non-zero exit code, continuing..."
-            else
-              echo "Build failed and no ISO found"
-              tail -100 build.log
-              exit 1
-            fi
+          if [[ -f "live-image-amd64.hybrid.iso" ]]; then
+            echo "ISO built successfully!"
+            ls -lh live-image-amd64.hybrid.iso
+          else
+            echo "ISO file not found after build"
+            tail -100 build.log
+            exit 1
           fi
 
       - name: Rename and create checksums
