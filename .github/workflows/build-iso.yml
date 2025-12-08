@@ -181,6 +181,7 @@ jobs:
             --bootloader syslinux \
             --debian-installer false \
             --memtest none \
+            --source false \
             --bootappend-live "boot=live components quiet splash" \
             --apt-indices false \
             --apt-recommends false \
