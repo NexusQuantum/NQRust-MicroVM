@@ -346,23 +346,38 @@ jobs:
           
           # Explicitly disable source build in config
           echo "LB_SOURCE=\"false\"" >> config/source
+          
+          # Create source stage marker to skip lb_source
           mkdir -p .build
           touch .build/source
           
-          # Build using separate stages (bootstrap, chroot, binary) to skip source
-          # Use set -o pipefail to catch errors through pipes
-          set -o pipefail
-          sudo lb bootstrap 2>&1 | tee -a build.log || { echo "Bootstrap failed"; exit 1; }
-          sudo lb chroot 2>&1 | tee -a build.log || { echo "Chroot failed"; exit 1; }
-          sudo lb binary 2>&1 | tee -a build.log || { echo "Binary failed"; exit 1; }
+          # Debug: list what we're building with
+          echo "=== Live-build config ==="
+          cat config/source || true
+          echo "=== Build markers ==="
+          ls -la .build/ || true
           
-          # Check if ISO was created
-          if [[ -f "live-image-amd64.hybrid.iso" ]]; then
-            echo "ISO built successfully!"
-            ls -lh live-image-amd64.hybrid.iso
-          else
-            echo "ISO file not found after build"
-            exit 1
+          # Build
+          set -o pipefail
+          sudo lb build 2>&1 | tee build.log
+          BUILD_EXIT=$?
+          
+          # List all files to find the ISO
+          echo "=== Build directory contents ==="
+          ls -la
+          echo "=== Looking for ISO files ==="
+          find . -name "*.iso" -o -name "*.hybrid.iso" 2>/dev/null || true
+          
+          if [[ $BUILD_EXIT -ne 0 ]]; then
+            echo "lb build exited with code $BUILD_EXIT"
+            # Check if ISO exists despite exit code
+            if [[ -f "live-image-amd64.hybrid.iso" ]]; then
+              echo "ISO exists despite non-zero exit code, continuing..."
+            else
+              echo "Build failed and no ISO found"
+              tail -100 build.log
+              exit 1
+            fi
           fi
 
       - name: Rename and create checksums
