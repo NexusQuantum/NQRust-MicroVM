@@ -342,6 +342,12 @@ jobs:
           EOF
           chmod +x config/hooks/live/9999-setup.hook.chroot
           
+          # Verify isohybrid is available before build
+          echo "Checking isohybrid availability..."
+          ls -la /usr/bin/isohybrid || echo "isohybrid not in /usr/bin"
+          which isohybrid || echo "isohybrid not in PATH"
+          sudo which isohybrid || echo "isohybrid not in sudo PATH"
+          
           # Build
           sudo lb build 2>&1 | tee build.log
 
