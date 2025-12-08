@@ -350,9 +350,20 @@ jobs:
           touch .build/source
           
           # Build using separate stages (bootstrap, chroot, binary) to skip source
-          sudo lb bootstrap 2>&1 | tee -a build.log
-          sudo lb chroot 2>&1 | tee -a build.log
-          sudo lb binary 2>&1 | tee -a build.log
+          # Use set -o pipefail to catch errors through pipes
+          set -o pipefail
+          sudo lb bootstrap 2>&1 | tee -a build.log || { echo "Bootstrap failed"; exit 1; }
+          sudo lb chroot 2>&1 | tee -a build.log || { echo "Chroot failed"; exit 1; }
+          sudo lb binary 2>&1 | tee -a build.log || { echo "Binary failed"; exit 1; }
+          
+          # Check if ISO was created
+          if [[ -f "live-image-amd64.hybrid.iso" ]]; then
+            echo "ISO built successfully!"
+            ls -lh live-image-amd64.hybrid.iso
+          else
+            echo "ISO file not found after build"
+            exit 1
+          fi
 
       - name: Rename and create checksums
         id: iso
