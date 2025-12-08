@@ -77,15 +77,9 @@ jobs:
           # Create isohybrid wrapper if not present (xorriso provides this functionality)
           if ! command -v isohybrid &> /dev/null; then
             echo "Creating isohybrid wrapper..."
-            sudo tee /usr/local/bin/isohybrid << 'WRAPPER'
-#!/bin/bash
-# Wrapper for isohybrid using xorriso
-# Usage: isohybrid [options] <iso_file>
-ISO_FILE="${@: -1}"
-if [[ -f "$ISO_FILE" ]]; then
-    xorriso -dev "$ISO_FILE" -boot_image any replay -changes_pending no 2>/dev/null || true
-fi
-WRAPPER
+            echo '#!/bin/bash' | sudo tee /usr/local/bin/isohybrid
+            echo 'ISO_FILE="${@: -1}"' | sudo tee -a /usr/local/bin/isohybrid
+            echo 'if [[ -f "$ISO_FILE" ]]; then xorriso -dev "$ISO_FILE" -boot_image any replay -changes_pending no 2>/dev/null || true; fi' | sudo tee -a /usr/local/bin/isohybrid
             sudo chmod +x /usr/local/bin/isohybrid
           fi
 
