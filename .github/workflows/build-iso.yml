@@ -182,7 +182,7 @@ jobs:
             --debian-installer false \
             --memtest none \
             --source false \
-            --bootappend-live "boot=live components quiet splash" \
+            --bootappend-live "boot=live components quiet splash live-config.username=root live-config.user-fullname=Root live-config.user-default-groups=sudo,audio,video,cdrom,plugdev live-config.noroot=false" \
             --apt-indices false \
             --apt-recommends false \
             --linux-flavours "amd64" \
@@ -313,6 +313,37 @@ jobs:
           ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
           EOF
           
+          # Auto-start installer when root logs in on tty1
+          mkdir -p config/includes.chroot/root
+          cat > config/includes.chroot/root/.bash_profile << 'BASHPROFILE'
+          #!/bin/bash
+          # Auto-start installer on first boot (only on tty1)
+          if [ "$(tty)" = "/dev/tty1" ] && [ ! -f /var/lib/nqrust-installed ]; then
+            clear
+            echo ""
+            echo "  ╔════════════════════════════════════════════════════════════╗"
+            echo "  ║           NQR-MicroVM Air-Gapped Installer                 ║"
+            echo "  ╚════════════════════════════════════════════════════════════╝"
+            echo ""
+            
+            if [ -x /opt/nqrust-bundle/bin/nqr-installer ]; then
+              echo "Starting installer..."
+              sleep 2
+              /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+              touch /var/lib/nqrust-installed
+            else
+              echo "WARNING: Installer binary not found!"
+              echo ""
+              echo "Available files in bundle:"
+              ls -la /opt/nqrust-bundle/bin/ 2>/dev/null || echo "  (none)"
+              echo ""
+              echo "You can manually install by running the installer once it's available."
+              echo "Press Enter to continue to shell..."
+              read
+            fi
+          fi
+          BASHPROFILE
+          
           # MOTD
           cat > config/includes.chroot/etc/motd << EOF
           
@@ -337,7 +368,19 @@ jobs:
           ln -sf /usr/share/zoneinfo/UTC /etc/localtime
           systemctl enable ssh
           echo "KEYMAP=us" > /etc/vconsole.conf
+          
+          # Set root password and ensure account is unlocked
           echo "root:nqrust" | chpasswd
+          passwd -u root 2>/dev/null || true
+          sed -i 's/^root:\*:/root:$6$live$PLACEHOLDER:/' /etc/shadow 2>/dev/null || true
+          
+          # Also create a 'live' user as fallback (password: live)
+          useradd -m -s /bin/bash -G sudo,audio,video,cdrom,plugdev live 2>/dev/null || true
+          echo "live:live" | chpasswd
+          
+          # Allow root login via SSH (optional)
+          sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
+          
           chmod +x /opt/nqrust-bundle/bin/* 2>/dev/null || true
           ln -sf /opt/nqrust-bundle/bin/nqr-installer /usr/local/bin/nqr-installer 2>/dev/null || true
           ln -sf /opt/nqrust-bundle/bin/nqr-manager /usr/local/bin/nqr-manager 2>/dev/null || true
