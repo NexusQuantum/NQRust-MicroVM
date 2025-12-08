@@ -357,11 +357,32 @@ jobs:
           echo "=== Looking for ISO files ==="
           find . -name "*.iso" -type f 2>/dev/null || true
           
-          if [[ -f "live-image-amd64.hybrid.iso" ]]; then
-            echo "ISO built successfully!"
-            ls -lh live-image-amd64.hybrid.iso
+          # Find the ISO file - live-build may use different naming patterns
+          ISO_FILE=$(find . -maxdepth 1 -name "*.hybrid.iso" -type f 2>/dev/null | head -n1)
+          
+          # If not found at top level, check common subdirectories
+          if [[ -z "${ISO_FILE}" ]]; then
+            ISO_FILE=$(find . -name "*.hybrid.iso" -type f 2>/dev/null | head -n1)
+          fi
+          
+          # Also check for non-hybrid ISOs as fallback
+          if [[ -z "${ISO_FILE}" ]]; then
+            ISO_FILE=$(find . -name "*.iso" -type f 2>/dev/null | head -n1)
+          fi
+          
+          if [[ -n "${ISO_FILE}" && -f "${ISO_FILE}" ]]; then
+            echo "ISO built successfully: ${ISO_FILE}"
+            ls -lh "${ISO_FILE}"
+            # Rename to expected name if different
+            if [[ "${ISO_FILE}" != "./live-image-amd64.hybrid.iso" ]]; then
+              echo "Renaming ${ISO_FILE} to live-image-amd64.hybrid.iso"
+              mv "${ISO_FILE}" live-image-amd64.hybrid.iso
+            fi
           else
             echo "ISO file not found after build"
+            echo "=== Full directory tree ==="
+            find . -name "*.iso" -o -name "*.img" 2>/dev/null || true
+            echo "=== Last 100 lines of build log ==="
             tail -100 build.log
             exit 1
           fi
