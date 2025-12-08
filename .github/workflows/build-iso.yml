@@ -305,7 +305,8 @@ jobs:
           ln -sf ../nqrust-firstboot.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/nqrust-firstboot.service
           
-          # Auto-login on tty1
+          # For sysvinit: Configure auto-login via inittab modification hook
+          # (The systemd config is ignored when using sysvinit)
           mkdir -p config/includes.chroot/etc/systemd/system/getty@tty1.service.d
           cat > config/includes.chroot/etc/systemd/system/getty@tty1.service.d/autologin.conf << 'EOF'
           [Service]
@@ -360,26 +361,47 @@ jobs:
           
           EOF
           
-          # Build hook
+          # Build hook - works with both systemd and sysvinit
           mkdir -p config/hooks/live
           cat > config/hooks/live/9999-setup.hook.chroot << 'EOF'
           #!/bin/bash
           set -e
           ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-          systemctl enable ssh
           echo "KEYMAP=us" > /etc/vconsole.conf
           
-          # Set root password and ensure account is unlocked
-          echo "root:nqrust" | chpasswd
+          # Set root password - use direct shadow file modification for reliability
+          # Generate password hash for 'nqrust'
+          HASH=$(echo 'nqrust' | openssl passwd -6 -stdin)
+          # Update root's password in shadow file
+          sed -i "s|^root:[^:]*:|root:${HASH}:|" /etc/shadow
+          
+          # Ensure root account is not locked
+          sed -i 's/^root:!/root:/' /etc/shadow
           passwd -u root 2>/dev/null || true
-          sed -i 's/^root:\*:/root:$6$live$PLACEHOLDER:/' /etc/shadow 2>/dev/null || true
           
-          # Also create a 'live' user as fallback (password: live)
-          useradd -m -s /bin/bash -G sudo,audio,video,cdrom,plugdev live 2>/dev/null || true
-          echo "live:live" | chpasswd
+          # Create 'live' user as fallback (password: live)
+          useradd -m -s /bin/bash live 2>/dev/null || true
+          LIVE_HASH=$(echo 'live' | openssl passwd -6 -stdin)
+          sed -i "s|^live:[^:]*:|live:${LIVE_HASH}:|" /etc/shadow || true
           
-          # Allow root login via SSH (optional)
+          # Enable SSH (works with both systemd and sysvinit)
+          if command -v systemctl >/dev/null 2>&1; then
+            systemctl enable ssh 2>/dev/null || true
+          else
+            update-rc.d ssh defaults 2>/dev/null || true
+          fi
+          
+          # Allow root login via SSH
           sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
+          sed -i 's/PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
+          
+          # Configure auto-login for sysvinit (modify inittab)
+          if [ -f /etc/inittab ]; then
+            # Replace the tty1 getty line with auto-login version
+            sed -i 's|^1:2345:respawn:/sbin/getty.*tty1|1:2345:respawn:/sbin/getty --autologin root 38400 tty1|' /etc/inittab
+            # Also try alternative format
+            sed -i 's|^1:23:respawn:/sbin/getty.*tty1|1:23:respawn:/sbin/getty --autologin root 38400 tty1|' /etc/inittab
+          fi
           
           chmod +x /opt/nqrust-bundle/bin/* 2>/dev/null || true
           ln -sf /opt/nqrust-bundle/bin/nqr-installer /usr/local/bin/nqr-installer 2>/dev/null || true
