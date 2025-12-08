@@ -63,6 +63,7 @@ jobs:
             debootstrap \
             xorriso \
             isolinux \
+            syslinux \
             syslinux-common \
             syslinux-efi \
             syslinux-utils \
@@ -72,6 +73,21 @@ jobs:
             dosfstools \
             mtools \
             debian-archive-keyring
+          
+          # Create isohybrid wrapper if not present (xorriso provides this functionality)
+          if ! command -v isohybrid &> /dev/null; then
+            echo "Creating isohybrid wrapper..."
+            sudo tee /usr/local/bin/isohybrid << 'WRAPPER'
+#!/bin/bash
+# Wrapper for isohybrid using xorriso
+# Usage: isohybrid [options] <iso_file>
+ISO_FILE="${@: -1}"
+if [[ -f "$ISO_FILE" ]]; then
+    xorriso -dev "$ISO_FILE" -boot_image any replay -changes_pending no 2>/dev/null || true
+fi
+WRAPPER
+            sudo chmod +x /usr/local/bin/isohybrid
+          fi
 
       - name: Install Docker
         uses: docker/setup-buildx-action@v3
