@@ -274,21 +274,44 @@ configure_bootloader() {
     local bootloader_dir="${BUILD_DIR}/config/bootloaders/isolinux"
     mkdir -p "${bootloader_dir}"
 
-    # Copy only the cfg files (NOT splash.svg.in which requires old 'rsvg' command)
-    cp /usr/share/live/build/bootloaders/isolinux/*.cfg "${bootloader_dir}/" 2>/dev/null || true
-    cp /usr/share/live/build/bootloaders/isolinux/live.cfg.in "${bootloader_dir}/" 2>/dev/null || true
-    # Explicitly do NOT copy splash.svg.in - it requires 'rsvg' which doesn't exist in modern distros
-    # (librsvg2-bin provides 'rsvg-convert' not 'rsvg')
-
     # Copy the actual binary files (not symlinks) with correct paths
     cp /usr/lib/ISOLINUX/isolinux.bin "${bootloader_dir}/"
-    cp /usr/lib/syslinux/modules/bios/vesamenu.c32 "${bootloader_dir}/"
+    cp /usr/lib/syslinux/modules/bios/menu.c32 "${bootloader_dir}/"
     cp /usr/lib/syslinux/modules/bios/ldlinux.c32 "${bootloader_dir}/"
     cp /usr/lib/syslinux/modules/bios/libcom32.c32 "${bootloader_dir}/"
     cp /usr/lib/syslinux/modules/bios/libutil.c32 "${bootloader_dir}/"
 
-    # Verify no splash.svg.in was copied
-    rm -f "${bootloader_dir}/splash.svg.in" 2>/dev/null || true
+    # Create simple text-based menu config (avoids vesamenu/bootlogo/rsvg issues)
+    cat > "${bootloader_dir}/isolinux.cfg" << 'ISOCFG'
+ui menu.c32
+prompt 0
+timeout 50
+
+menu title NQR-MicroVM Installer
+
+label live
+  menu label ^Start NQR-MicroVM Installer
+  menu default
+  linux /live/vmlinuz
+  initrd /live/initrd.img
+  append boot=live components quiet splash
+
+label live-failsafe
+  menu label Start in ^Safe Mode
+  linux /live/vmlinuz
+  initrd /live/initrd.img
+  append boot=live components memtest noapic noapm nodma nomce nolapic nomodeset nosmp nosplash vga=normal
+ISOCFG
+
+    # Create live.cfg.in for kernel version substitution
+    cat > "${bootloader_dir}/live.cfg.in" << 'LIVECFG'
+label live
+  menu label ^Start NQR-MicroVM Installer
+  menu default
+  linux /live/vmlinuz
+  initrd /live/initrd.img
+  append boot=live components quiet splash
+LIVECFG
 
     log_success "Bootloader configured"
 }
