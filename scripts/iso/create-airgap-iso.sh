@@ -134,6 +134,11 @@ check_dependencies() {
         missing+=("syslinux")
     fi
 
+    # Check for isohybrid (from syslinux-utils)
+    if ! command -v isohybrid &> /dev/null; then
+        missing+=("syslinux-utils")
+    fi
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_error "Missing dependencies: ${missing[*]}"
         log_info "Install with: sudo apt-get install ${missing[*]}"
