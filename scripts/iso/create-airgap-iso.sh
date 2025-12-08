@@ -313,6 +313,10 @@ label live
   append boot=live components quiet splash
 LIVECFG
 
+    # Create empty bootlogo archive - live-build unconditionally reads this file
+    # at line 365 of lb_binary_syslinux regardless of config options
+    (cd "${bootloader_dir}" && echo "" | cpio -o > bootlogo)
+
     log_success "Bootloader configured"
 }
 

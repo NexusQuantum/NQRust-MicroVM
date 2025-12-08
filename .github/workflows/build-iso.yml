@@ -244,6 +244,12 @@ jobs:
           cp /usr/lib/syslinux/modules/bios/libcom32.c32 config/bootloaders/isolinux/
           cp /usr/lib/syslinux/modules/bios/libutil.c32 config/bootloaders/isolinux/
           
+          # Create empty bootlogo archive (live-build requires this file even if unused)
+          mkdir -p /tmp/bootlogo-tmp
+          touch /tmp/bootlogo-tmp/placeholder
+          (cd /tmp/bootlogo-tmp && echo placeholder | cpio --quiet -o) > config/bootloaders/isolinux/bootlogo
+          rm -rf /tmp/bootlogo-tmp
+          
           # Create simple text-based menu config (avoids vesamenu/bootlogo/rsvg issues)
           cat > config/bootloaders/isolinux/isolinux.cfg << 'ISOCFG'
           ui menu.c32
