@@ -75,15 +75,8 @@ jobs:
             debian-archive-keyring
           
           # Create isohybrid in /usr/bin (live-build scripts use sh and may not have /usr/local/bin in PATH)
-          # This is a simple wrapper that makes the ISO bootable from USB
           echo "Creating isohybrid wrapper in /usr/bin..."
-          sudo tee /usr/bin/isohybrid > /dev/null << 'ISOHYBRIDEOF'
-#!/bin/sh
-# Simple isohybrid wrapper - makes ISO bootable from USB
-# The actual hybrid boot record is already created by xorriso in live-build
-# This wrapper just ensures the command exists and succeeds
-exit 0
-ISOHYBRIDEOF
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/bin/isohybrid > /dev/null
           sudo chmod +x /usr/bin/isohybrid
           echo "isohybrid wrapper installed at: $(which isohybrid)"
 
