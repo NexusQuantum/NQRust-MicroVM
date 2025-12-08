@@ -345,12 +345,14 @@ jobs:
           chmod +x config/hooks/live/9999-setup.hook.chroot
           
           # Explicitly disable source build in config
-          echo "LB_SOURCE=false" >> config/source
+          echo "LB_SOURCE=\"false\"" >> config/source
           mkdir -p .build
           touch .build/source
           
-          # Build (only binary, skip source)
-          sudo lb build --binary 2>&1 | tee build.log
+          # Build using separate stages (bootstrap, chroot, binary) to skip source
+          sudo lb bootstrap 2>&1 | tee -a build.log
+          sudo lb chroot 2>&1 | tee -a build.log
+          sudo lb binary 2>&1 | tee -a build.log
 
       - name: Rename and create checksums
         id: iso
