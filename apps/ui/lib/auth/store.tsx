@@ -15,9 +15,11 @@ interface AuthState {
   token: string | null
   user: User | null
   isAuthenticated: boolean
+  avatarRefreshKey: number
   setAuth: (token: string, user: User) => void
   clearAuth: () => void
   setUser: (user: User) => void
+  refreshAvatar: () => void
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined)
@@ -61,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { token: initialToken, user: initialUser } = loadFromStorage()
   const [token, setToken] = useState<string | null>(initialToken)
   const [user, setUserState] = useState<User | null>(initialUser)
+  const [avatarRefreshKey, setAvatarRefreshKey] = useState(0)
 
   useEffect(() => {
     saveToStorage(token, user)
@@ -86,15 +89,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUserState(newUser)
   }
 
+  const refreshAvatar = () => {
+    setAvatarRefreshKey((prev) => prev + 1)
+  }
+
   return (
     <AuthContext.Provider
       value={{
         token,
         user,
         isAuthenticated: !!token && !!user,
+        avatarRefreshKey,
         setAuth,
         clearAuth,
         setUser,
+        refreshAvatar,
       }}
     >
       {children}

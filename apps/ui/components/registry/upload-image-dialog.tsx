@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,6 +23,29 @@ export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }
   const [kind, setKind] = useState<"docker" | "kernel" | "rootfs">(defaultKind)
   const [name, setName] = useState("")
   const [project, setProject] = useState("")
+
+  const resetForm = useCallback(() => {
+    setSelectedFile(null)
+    setName("")
+    setProject("")
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ""
+    }
+  }, [])
+
+  // Reset form when dialog is closed
+  useEffect(() => {
+    if (!open) {
+      resetForm()
+    }
+  }, [open, resetForm])
+
+  // Sync kind with defaultKind when dialog opens
+  useEffect(() => {
+    if (open) {
+      setKind(defaultKind)
+    }
+  }, [open, defaultKind])
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -52,15 +75,6 @@ export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }
         },
       }
     )
-  }
-
-  const resetForm = () => {
-    setSelectedFile(null)
-    setName("")
-    setProject("")
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ""
-    }
   }
 
   const formatFileSize = (bytes: number) => {

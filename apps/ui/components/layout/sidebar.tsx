@@ -125,7 +125,7 @@ const SidebarSection = React.memo(function SidebarSection({
 
 /** User panel yang pindah dari Topbar ke Sidebar bawah */
 function SidebarUser({ collapsed }: { collapsed: boolean }) {
-  const { user, clearAuth } = useAuthStore()
+  const { user, clearAuth, avatarRefreshKey } = useAuthStore()
   const router = useRouter()
   const { data: profile } = useProfile()
 
@@ -158,11 +158,11 @@ function SidebarUser({ collapsed }: { collapsed: boolean }) {
               title={user.username}
             >
               <Avatar
-                key={profile?.avatar_path || user.id}
                 avatarPath={profile?.avatar_path}
                 username={user.username}
                 size="md"
                 className="h-10 w-10"
+                refreshKey={avatarRefreshKey}
               />
             </Button>
           </DropdownMenuTrigger>
@@ -203,11 +203,11 @@ function SidebarUser({ collapsed }: { collapsed: boolean }) {
       <div className="flex items-center gap-3 rounded-lg bg-muted/50 p-3">
         <div className="relative">
           <Avatar
-            key={profile?.avatar_path || user.id}
             avatarPath={profile?.avatar_path}
             username={user.username}
             size="md"
             className="h-9 w-9"
+            refreshKey={avatarRefreshKey}
           />
           {/* status dot */}
           <span className="absolute -right-0.5 -bottom-0.5 inline-block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-white dark:ring-background" />

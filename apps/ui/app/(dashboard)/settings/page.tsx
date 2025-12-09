@@ -49,7 +49,7 @@ import { useAuthStore } from "@/lib/auth/store"
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
-  const { user: authUser } = useAuthStore() // Get current user from auth store
+  const { user: authUser, avatarRefreshKey, refreshAvatar } = useAuthStore() // Get current user from auth store
   const [mounted, setMounted] = useState(false)
   const dateFormat = useDateFormat()
 
@@ -241,6 +241,7 @@ export default function SettingsPage() {
   const handleAvatarUpload = (file: File) => {
     uploadAvatarMutation.mutate(file, {
       onSuccess: () => {
+        refreshAvatar() // Force avatar refresh globally
         toast.success("Avatar Uploaded", {
           description: "Your avatar has been uploaded successfully",
         })
@@ -257,6 +258,7 @@ export default function SettingsPage() {
     if (confirm("Are you sure you want to delete your avatar?")) {
       deleteAvatarMutation.mutate(undefined, {
         onSuccess: () => {
+          refreshAvatar() // Force avatar refresh globally
           toast.success("Avatar Deleted", {
             description: "Your avatar has been deleted successfully",
           })
@@ -359,6 +361,7 @@ export default function SettingsPage() {
                   currentAvatarPath={profile?.avatar_path}
                   username={authUser?.username}
                   isUploading={uploadAvatarMutation.isPending}
+                  refreshKey={avatarRefreshKey}
                 />
 
                 <div className="flex-1 space-y-4 w-full">

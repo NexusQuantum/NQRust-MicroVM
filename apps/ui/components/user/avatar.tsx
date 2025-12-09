@@ -10,6 +10,7 @@ interface AvatarProps {
   username?: string
   size?: "sm" | "md" | "lg" | "xl"
   className?: string
+  refreshKey?: number // Force refresh when this changes
 }
 
 const sizeMap = {
@@ -19,7 +20,7 @@ const sizeMap = {
   xl: "h-24 w-24 text-2xl",
 }
 
-export function Avatar({ userId, avatarPath, username, size = "md", className }: AvatarProps) {
+export function Avatar({ userId, avatarPath, username, size = "md", className, refreshKey }: AvatarProps) {
   const [imageError, setImageError] = React.useState(false)
   const [blobUrl, setBlobUrl] = React.useState<string | null>(null)
 
@@ -32,6 +33,11 @@ export function Avatar({ userId, avatarPath, username, size = "md", className }:
     }
     return username.substring(0, 2).toUpperCase()
   }, [username])
+
+  // Reset error state when refreshKey changes
+  React.useEffect(() => {
+    setImageError(false)
+  }, [refreshKey])
 
   // Fetch avatar image with authentication
   React.useEffect(() => {
@@ -56,7 +62,9 @@ export function Avatar({ userId, avatarPath, username, size = "md", className }:
           ? facadeApi.getAvatarUrl(userId)
           : facadeApi.getMyAvatarUrl()
 
-        const response = await fetch(endpoint, { headers })
+        // Add cache busting query parameter
+        const url = refreshKey ? `${endpoint}?t=${refreshKey}` : endpoint
+        const response = await fetch(url, { headers })
 
         if (!response.ok) {
           if (response.status === 404) {
@@ -85,7 +93,7 @@ export function Avatar({ userId, avatarPath, username, size = "md", className }:
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [avatarPath, userId, imageError])
+  }, [avatarPath, userId, imageError, refreshKey])
 
   // Generate a consistent color based on username
   const backgroundColor = React.useMemo(() => {
@@ -133,6 +141,7 @@ interface AvatarUploadProps {
   username?: string
   isUploading?: boolean
   className?: string
+  refreshKey?: number // Force refresh when this changes
 }
 
 export function AvatarUpload({
@@ -141,6 +150,7 @@ export function AvatarUpload({
   username,
   isUploading = false,
   className,
+  refreshKey,
 }: AvatarUploadProps) {
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
@@ -175,6 +185,7 @@ export function AvatarUpload({
           username={username}
           size="xl"
           className="transition-opacity group-hover:opacity-75"
+          refreshKey={refreshKey}
         />
         <button
           type="button"

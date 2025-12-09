@@ -479,7 +479,7 @@ export function FunctionTable({ functions }: FunctionTableProps) {
 
             <div className="border rounded-lg bg-muted/30 max-h-56 overflow-auto w-full max-w-full min-w-0">
               <pre className="p-3 text-xs leading-relaxed whitespace-pre-wrap break-words break-all overflow-x-hidden">
-                {invokeOutput ? invokeOutput : "// Response akan ditampilkan di sini setelah Invoke."}
+                {invokeOutput ? invokeOutput : "// Response will be displayed here after Invoke."}
               </pre>
             </div>
           </div>
