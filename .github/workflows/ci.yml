@@ -61,18 +61,36 @@ jobs:
       - name: Start PostgreSQL
         run: |
           sudo systemctl start postgresql || true
-          
+
+          # Wait for PostgreSQL to be ready
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in {1..30}; do
+            if sudo -u postgres psql -c "SELECT 1" > /dev/null 2>&1; then
+              echo "PostgreSQL is ready after $i seconds"
+              break
+            fi
+            echo "Attempt $i/30 - waiting..."
+            sleep 1
+          done
+
           # Create database if it doesn't exist
           sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'nexus'" | grep -q 1 || \
             sudo -u postgres psql -c "CREATE DATABASE nexus;"
-          
+
           # Create user if it doesn't exist
           sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'nexus'" | grep -q 1 || \
             sudo -u postgres psql -c "CREATE USER nexus WITH PASSWORD 'nexus';"
-          
+
           # Grant privileges (idempotent - safe to run multiple times)
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
+
+          # Verify connection with nexus user
+          echo "Verifying database connection..."
+          PGPASSWORD=nexus psql -U nexus -d nexus -h localhost -c "SELECT 1" || {
+            echo "Failed to connect to database"
+            exit 1
+          }
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -124,6 +142,17 @@ jobs:
           # Start PostgreSQL if not running
           sudo systemctl start postgresql || true
 
+          # Wait for PostgreSQL to be ready
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in {1..30}; do
+            if sudo -u postgres psql -c "SELECT 1" > /dev/null 2>&1; then
+              echo "PostgreSQL is ready after $i seconds"
+              break
+            fi
+            echo "Attempt $i/30 - waiting..."
+            sleep 1
+          done
+
           # Create database and user if they don't exist
           sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'nexus'" | grep -q 1 || \
             sudo -u postgres psql -c "CREATE DATABASE nexus;"
@@ -133,6 +162,13 @@ jobs:
 
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
+
+          # Verify connection with nexus user
+          echo "Verifying database connection..."
+          PGPASSWORD=nexus psql -U nexus -d nexus -h localhost -c "SELECT 1" || {
+            echo "Failed to connect to database"
+            exit 1
+          }
 
       - name: Setup sccache (local)
         run: |
@@ -329,18 +365,36 @@ jobs:
       - name: Start PostgreSQL
         run: |
           sudo systemctl start postgresql || true
-          
+
+          # Wait for PostgreSQL to be ready
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in {1..30}; do
+            if sudo -u postgres psql -c "SELECT 1" > /dev/null 2>&1; then
+              echo "PostgreSQL is ready after $i seconds"
+              break
+            fi
+            echo "Attempt $i/30 - waiting..."
+            sleep 1
+          done
+
           # Create database if it doesn't exist
           sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'nexus'" | grep -q 1 || \
             sudo -u postgres psql -c "CREATE DATABASE nexus;"
-          
+
           # Create user if it doesn't exist
           sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'nexus'" | grep -q 1 || \
             sudo -u postgres psql -c "CREATE USER nexus WITH PASSWORD 'nexus';"
-          
+
           # Grant privileges (idempotent - safe to run multiple times)
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
+
+          # Verify connection with nexus user
+          echo "Verifying database connection..."
+          PGPASSWORD=nexus psql -U nexus -d nexus -h localhost -c "SELECT 1" || {
+            echo "Failed to connect to database"
+            exit 1
+          }
 
       - name: Build all components
         run: |
@@ -353,8 +407,26 @@ jobs:
       - name: Run database migrations
         working-directory: apps/manager
         run: |
-          cargo install sqlx-cli --no-default-features --features postgres
-          sqlx migrate run
+          # Install sqlx-cli if not already installed (or force reinstall)
+          if ! command -v sqlx &> /dev/null; then
+            cargo install sqlx-cli --no-default-features --features postgres
+          else
+            echo "sqlx-cli already installed, skipping..."
+          fi
+
+          # Run migrations with retry logic
+          echo "Running database migrations..."
+          for i in {1..5}; do
+            if sqlx migrate run; then
+              echo "Migrations completed successfully"
+              exit 0
+            fi
+            echo "Migration attempt $i/5 failed, retrying in 2 seconds..."
+            sleep 2
+          done
+
+          echo "Failed to run migrations after 5 attempts"
+          exit 1
         env:
           DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
 
