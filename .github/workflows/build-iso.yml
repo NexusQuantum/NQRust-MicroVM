@@ -88,49 +88,79 @@ jobs:
           mkdir -p /tmp/bundle/bin
           VERSION="${{ steps.version.outputs.version }}"
           
-          # Download from release
+          # First, fetch available assets from GitHub API
+          echo "=== Fetching release assets from GitHub API ==="
+          if [[ "${VERSION}" == "latest" ]]; then
+            RELEASE_API_URL="https://api.github.com/repos/${{ github.repository }}/releases/latest"
+          else
+            RELEASE_API_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/${VERSION}"
+          fi
+          
+          echo "API URL: ${RELEASE_API_URL}"
+          ASSETS_JSON=$(curl -fsSL "${RELEASE_API_URL}")
+          
+          echo "=== Available release assets ==="
+          echo "${ASSETS_JSON}" | jq -r '.assets[].name' || echo "Failed to parse assets"
+          
+          # Get download URL base
           if [[ "${VERSION}" == "latest" ]]; then
             BASE_URL="https://github.com/${{ github.repository }}/releases/latest/download"
           else
             BASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}"
           fi
           
-          echo "Downloading binaries from: ${BASE_URL}"
+          echo ""
+          echo "Download base URL: ${BASE_URL}"
+          echo ""
           
-          # Download with correct release asset names
-          echo "Downloading nqrust-manager..."
-          curl -fsSL "${BASE_URL}/nqrust-manager-x86_64-unknown-linux-gnu" -o /tmp/bundle/bin/nqr-manager || {
-            echo "Failed to download nqrust-manager-x86_64-unknown-linux-gnu"
-            # Try alternative name
-            curl -fsSL "${BASE_URL}/nqr-manager" -o /tmp/bundle/bin/nqr-manager || echo "Manager download failed completely"
-          }
+          # Find and download manager binary (look for patterns: nqrust-manager*, nqr-manager*)
+          echo "=== Downloading manager binary ==="
+          MANAGER_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqrust-manager|nqr-manager)' | head -n1)
+          if [[ -n "${MANAGER_ASSET}" ]]; then
+            echo "Found manager asset: ${MANAGER_ASSET}"
+            curl -fsSL "${BASE_URL}/${MANAGER_ASSET}" -o /tmp/bundle/bin/nqr-manager
+          else
+            echo "WARNING: No manager binary found in release assets"
+          fi
           
-          echo "Downloading nqr-installer..."
-          curl -fsSL "${BASE_URL}/nqr-installer-x86_64-linux-musl" -o /tmp/bundle/bin/nqr-installer || {
-            echo "Failed to download nqr-installer-x86_64-linux-musl"
-            # Try alternative name
-            curl -fsSL "${BASE_URL}/nqr-installer" -o /tmp/bundle/bin/nqr-installer || echo "Installer download failed completely"
-          }
+          # Find and download installer binary (look for patterns: nqr-installer*, nqrust-installer*)
+          echo "=== Downloading installer binary ==="
+          INSTALLER_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqr-installer|nqrust-installer)' | grep -v '\.tar\.gz$' | head -n1)
+          if [[ -n "${INSTALLER_ASSET}" ]]; then
+            echo "Found installer asset: ${INSTALLER_ASSET}"
+            curl -fsSL "${BASE_URL}/${INSTALLER_ASSET}" -o /tmp/bundle/bin/nqr-installer
+          else
+            echo "WARNING: No installer binary found in release assets"
+          fi
           
-          echo "Downloading nqrust-guest-agent..."
-          curl -fsSL "${BASE_URL}/nqrust-guest-agent-x86_64-linux-musl" -o /tmp/bundle/bin/nqr-guest-agent || {
-            echo "Failed to download nqrust-guest-agent-x86_64-linux-musl"
-            # Try alternative name  
-            curl -fsSL "${BASE_URL}/nqr-guest-agent" -o /tmp/bundle/bin/nqr-guest-agent || echo "Guest agent download failed completely"
-          }
+          # Find and download guest-agent binary (look for patterns: nqrust-guest-agent*, nqr-guest-agent*)
+          echo "=== Downloading guest-agent binary ==="
+          AGENT_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqrust-guest-agent|nqr-guest-agent)' | head -n1)
+          if [[ -n "${AGENT_ASSET}" ]]; then
+            echo "Found guest-agent asset: ${AGENT_ASSET}"
+            curl -fsSL "${BASE_URL}/${AGENT_ASSET}" -o /tmp/bundle/bin/nqr-guest-agent
+          else
+            echo "WARNING: No guest-agent binary found in release assets"
+          fi
           
           chmod +x /tmp/bundle/bin/* 2>/dev/null || true
           
+          echo ""
           echo "=== Downloaded binaries ==="
           ls -la /tmp/bundle/bin/
           
           # Verify critical binaries exist and are executable
           if [[ ! -x /tmp/bundle/bin/nqr-installer ]]; then
+            echo ""
             echo "ERROR: nqr-installer not found or not executable!"
             echo "This is required for the air-gapped installer to work."
+            echo ""
+            echo "Available assets in release:"
+            echo "${ASSETS_JSON}" | jq -r '.assets[].name'
             exit 1
           fi
           
+          echo ""
           echo "=== Binary verification ==="
           file /tmp/bundle/bin/* || true
 
