@@ -533,12 +533,84 @@ EOF
     ln -sf "../nqrust-firstboot.service" \
         "${include_dir}/etc/systemd/system/multi-user.target.wants/nqrust-firstboot.service"
 
-    # Create getty override to auto-login on tty1
+    # Create getty override for systemd auto-login on tty1
     mkdir -p "${include_dir}/etc/systemd/system/getty@tty1.service.d"
     cat > "${include_dir}/etc/systemd/system/getty@tty1.service.d/autologin.conf" << 'EOF'
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
+EOF
+
+    # Create sysvinit inittab override for auto-login (live-boot uses sysvinit)
+    # This replaces the default tty1 getty with autologin
+    mkdir -p "${include_dir}/etc"
+    cat > "${include_dir}/etc/inittab" << 'EOF'
+# /etc/inittab: init(8) configuration for NQR-MicroVM Installer
+# Auto-login on tty1 for installer
+
+# Default runlevel
+id:2:initdefault:
+
+# System initialization
+si::sysinit:/etc/init.d/rcS
+
+# Runlevels
+l0:0:wait:/etc/init.d/rc 0
+l1:1:wait:/etc/init.d/rc 1
+l2:2:wait:/etc/init.d/rc 2
+l3:3:wait:/etc/init.d/rc 3
+l4:4:wait:/etc/init.d/rc 4
+l5:5:wait:/etc/init.d/rc 5
+l6:6:wait:/etc/init.d/rc 6
+
+# Ctrl-Alt-Del
+ca:12345:ctrlaltdel:/sbin/shutdown -t1 -a -r now
+
+# Power management
+pf::powerwait:/etc/init.d/powerfail start
+pn::powerfailnow:/etc/init.d/powerfail now
+po::powerokwait:/etc/init.d/powerfail stop
+
+# TTY1 with AUTO-LOGIN as root, then launch installer
+1:2345:respawn:/sbin/agetty --autologin root --noclear tty1 linux
+
+# Other TTYs - normal login
+2:23:respawn:/sbin/getty 38400 tty2
+3:23:respawn:/sbin/getty 38400 tty3
+4:23:respawn:/sbin/getty 38400 tty4
+5:23:respawn:/sbin/getty 38400 tty5
+6:23:respawn:/sbin/getty 38400 tty6
+EOF
+
+    # Create root's .bash_profile to auto-launch installer on tty1
+    mkdir -p "${include_dir}/root"
+    cat > "${include_dir}/root/.bash_profile" << 'EOF'
+# NQR-MicroVM Installer Auto-Launch
+# Only run on tty1 and if installer hasn't run yet
+
+if [ "$(tty)" = "/dev/tty1" ] && [ ! -f /var/lib/nqrust-installed ]; then
+    echo ""
+    echo "Starting NQR-MicroVM Installer..."
+    echo ""
+    sleep 1
+    /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+    touch /var/lib/nqrust-installed
+fi
+EOF
+
+    # Also create .profile for sh compatibility
+    cat > "${include_dir}/root/.profile" << 'EOF'
+# NQR-MicroVM Installer Auto-Launch
+# Only run on tty1 and if installer hasn't run yet
+
+if [ "$(tty)" = "/dev/tty1" ] && [ ! -f /var/lib/nqrust-installed ]; then
+    echo ""
+    echo "Starting NQR-MicroVM Installer..."
+    echo ""
+    sleep 1
+    /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+    touch /var/lib/nqrust-installed
+fi
 EOF
 
     log_success "First-boot service created"

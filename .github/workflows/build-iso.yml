@@ -314,8 +314,63 @@ jobs:
           ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
           EOF
           
-          # Auto-start installer when root logs in on tty1
+          # Create sysvinit inittab for auto-login (live-boot uses sysvinit, not systemd)
+          cat > config/includes.chroot/etc/inittab << 'INITTAB'
+          # /etc/inittab: init(8) configuration for NQR-MicroVM Installer
+          # Auto-login on tty1 for installer
+          
+          # Default runlevel
+          id:2:initdefault:
+          
+          # System initialization
+          si::sysinit:/etc/init.d/rcS
+          
+          # Runlevels
+          l0:0:wait:/etc/init.d/rc 0
+          l1:1:wait:/etc/init.d/rc 1
+          l2:2:wait:/etc/init.d/rc 2
+          l3:3:wait:/etc/init.d/rc 3
+          l4:4:wait:/etc/init.d/rc 4
+          l5:5:wait:/etc/init.d/rc 5
+          l6:6:wait:/etc/init.d/rc 6
+          
+          # Ctrl-Alt-Del
+          ca:12345:ctrlaltdel:/sbin/shutdown -t1 -a -r now
+          
+          # Power management
+          pf::powerwait:/etc/init.d/powerfail start
+          pn::powerfailnow:/etc/init.d/powerfail now
+          po::powerokwait:/etc/init.d/powerfail stop
+          
+          # TTY1 with AUTO-LOGIN as root
+          1:2345:respawn:/sbin/agetty --autologin root --noclear tty1 linux
+          
+          # Other TTYs - normal login
+          2:23:respawn:/sbin/getty 38400 tty2
+          3:23:respawn:/sbin/getty 38400 tty3
+          4:23:respawn:/sbin/getty 38400 tty4
+          5:23:respawn:/sbin/getty 38400 tty5
+          6:23:respawn:/sbin/getty 38400 tty6
+          INITTAB
+          
+          # Also create .profile for sh compatibility (some shells read this instead of .bash_profile)
           mkdir -p config/includes.chroot/root
+          cat > config/includes.chroot/root/.profile << 'PROFILE'
+          # NQR-MicroVM Installer Auto-Launch
+          # Only run on tty1 and if installer hasn't run yet
+          if [ "$(tty)" = "/dev/tty1" ] && [ ! -f /var/lib/nqrust-installed ]; then
+            echo ""
+            echo "Starting NQR-MicroVM Installer..."
+            echo ""
+            sleep 1
+            if [ -x /opt/nqrust-bundle/bin/nqr-installer ]; then
+              /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+              touch /var/lib/nqrust-installed
+            fi
+          fi
+          PROFILE
+          
+          # Auto-start installer when root logs in on tty1
           cat > config/includes.chroot/root/.bash_profile << 'BASHPROFILE'
           #!/bin/bash
           # Auto-start installer on first boot (only on tty1)
