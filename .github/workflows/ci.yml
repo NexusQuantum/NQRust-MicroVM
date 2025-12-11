@@ -335,6 +335,15 @@ jobs:
           
           echo "PostgreSQL version: ${PG_VERSION}"
           
+          # Detect the port PostgreSQL is configured to use
+          PG_PORT=$(grep -E "^port\s*=" "$PG_CONF" | sed 's/port\s*=\s*//' | tr -d ' ' || echo "5432")
+          if [ -z "$PG_PORT" ]; then
+            PG_PORT=$(grep -E "#?port\s*=" "$PG_CONF" | head -1 | sed 's/#*port\s*=\s*//' | tr -d ' ' || echo "5432")
+          fi
+          [ -z "$PG_PORT" ] && PG_PORT="5432"
+          echo "PostgreSQL port: ${PG_PORT}"
+          echo "PG_PORT=${PG_PORT}" >> $GITHUB_ENV
+          
           # Ensure PostgreSQL listens on localhost
           sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = 'localhost'/" "$PG_CONF"
           sudo sed -i "s/listen_addresses = ''/listen_addresses = 'localhost'/" "$PG_CONF"
@@ -371,10 +380,10 @@ jobs:
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
 
-          # Verify connection with nexus user via TCP
-          echo "Verifying database connection via TCP..."
+          # Verify connection with nexus user via TCP using detected port
+          echo "Verifying database connection via TCP on port ${PG_PORT}..."
           for i in {1..10}; do
-            if PGPASSWORD=nexus psql -U nexus -d nexus -h 127.0.0.1 -c "SELECT 1" > /dev/null 2>&1; then
+            if PGPASSWORD=nexus psql -U nexus -d nexus -h 127.0.0.1 -p ${PG_PORT} -c "SELECT 1" > /dev/null 2>&1; then
               echo "Database connection successful!"
               exit 0
             fi
@@ -382,7 +391,7 @@ jobs:
             sleep 1
           done
           
-          echo "Failed to connect to database"
+          echo "Failed to connect to database on port ${PG_PORT}"
           echo "=== PostgreSQL logs ==="
           sudo tail -50 /var/log/postgresql/postgresql-${PG_VERSION}-main.log || true
           exit 1
@@ -393,7 +402,7 @@ jobs:
           cargo build --release -p agent
           cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
         env:
-          DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
+          DATABASE_URL: postgresql://nexus:nexus@localhost:${{ env.PG_PORT }}/nexus
 
       - name: Run database migrations
         working-directory: apps/manager
@@ -401,7 +410,7 @@ jobs:
           cargo install sqlx-cli --no-default-features --features postgres
           sqlx migrate run
         env:
-          DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
+          DATABASE_URL: postgresql://nexus:nexus@localhost:${{ env.PG_PORT }}/nexus
 
       - name: Start manager (background)
         run: |
@@ -413,7 +422,7 @@ jobs:
           fuser -k $MANAGER_PORT/tcp 2>/dev/null || true
           sleep 1
 
-          export DATABASE_URL=postgresql://nexus:nexus@localhost/nexus
+          export DATABASE_URL=postgresql://nexus:nexus@localhost:${PG_PORT}/nexus
           export MANAGER_BIND=127.0.0.1:$MANAGER_PORT
           export MANAGER_ALLOW_IMAGE_PATHS=true
           export MANAGER_RECONCILER_DISABLED=1
