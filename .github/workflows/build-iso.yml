@@ -97,12 +97,42 @@ jobs:
           
           echo "Downloading binaries from: ${BASE_URL}"
           
-          curl -fsSL "${BASE_URL}/nqr-manager" -o /tmp/bundle/bin/nqr-manager || echo "Manager download failed"
-          curl -fsSL "${BASE_URL}/nqr-installer" -o /tmp/bundle/bin/nqr-installer || echo "Installer download failed"
-          curl -fsSL "${BASE_URL}/nqr-guest-agent" -o /tmp/bundle/bin/nqr-guest-agent || echo "Guest agent download failed"
+          # Download with correct release asset names
+          echo "Downloading nqrust-manager..."
+          curl -fsSL "${BASE_URL}/nqrust-manager-x86_64-unknown-linux-gnu" -o /tmp/bundle/bin/nqr-manager || {
+            echo "Failed to download nqrust-manager-x86_64-unknown-linux-gnu"
+            # Try alternative name
+            curl -fsSL "${BASE_URL}/nqr-manager" -o /tmp/bundle/bin/nqr-manager || echo "Manager download failed completely"
+          }
+          
+          echo "Downloading nqr-installer..."
+          curl -fsSL "${BASE_URL}/nqr-installer-x86_64-linux-musl" -o /tmp/bundle/bin/nqr-installer || {
+            echo "Failed to download nqr-installer-x86_64-linux-musl"
+            # Try alternative name
+            curl -fsSL "${BASE_URL}/nqr-installer" -o /tmp/bundle/bin/nqr-installer || echo "Installer download failed completely"
+          }
+          
+          echo "Downloading nqrust-guest-agent..."
+          curl -fsSL "${BASE_URL}/nqrust-guest-agent-x86_64-linux-musl" -o /tmp/bundle/bin/nqr-guest-agent || {
+            echo "Failed to download nqrust-guest-agent-x86_64-linux-musl"
+            # Try alternative name  
+            curl -fsSL "${BASE_URL}/nqr-guest-agent" -o /tmp/bundle/bin/nqr-guest-agent || echo "Guest agent download failed completely"
+          }
           
           chmod +x /tmp/bundle/bin/* 2>/dev/null || true
+          
+          echo "=== Downloaded binaries ==="
           ls -la /tmp/bundle/bin/
+          
+          # Verify critical binaries exist and are executable
+          if [[ ! -x /tmp/bundle/bin/nqr-installer ]]; then
+            echo "ERROR: nqr-installer not found or not executable!"
+            echo "This is required for the air-gapped installer to work."
+            exit 1
+          fi
+          
+          echo "=== Binary verification ==="
+          file /tmp/bundle/bin/* || true
 
       - name: Download Firecracker
         run: |
