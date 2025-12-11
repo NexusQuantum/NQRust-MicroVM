@@ -349,40 +349,93 @@ bundle_binaries() {
     local bundle_dir="${include_dir}${BUNDLE_BASE}"
     local bin_dir="${bundle_dir}/bin"
 
-    # Download from GitHub releases
-    local base_url="https://github.com/nexus/nqrust-microvm/releases"
+    # GitHub repository info
+    local repo="NexusQuantum/NQRust-MicroVM"
+    local api_url
     local download_url
 
     if [[ "${RELEASE_VERSION}" == "latest" ]]; then
-        download_url="${base_url}/latest/download"
+        api_url="https://api.github.com/repos/${repo}/releases/latest"
+        download_url="https://github.com/${repo}/releases/latest/download"
     else
-        download_url="${base_url}/download/${RELEASE_VERSION}"
+        api_url="https://api.github.com/repos/${repo}/releases/tags/${RELEASE_VERSION}"
+        download_url="https://github.com/${repo}/releases/download/${RELEASE_VERSION}"
     fi
 
-    log_info "Downloading from: ${download_url}"
-
-    # Download manager
-    curl -fsSL "${download_url}/nqr-manager" -o "${bin_dir}/nqr-manager" || {
-        log_warn "Failed to download manager, using local build..."
+    log_info "Fetching release assets from: ${api_url}"
+    
+    # Fetch available assets from GitHub API
+    local assets_json
+    assets_json=$(curl -fsSL "${api_url}" 2>/dev/null) || {
+        log_warn "Failed to fetch release info from GitHub API"
+        log_info "Falling back to local build..."
+        copy_local_binaries "${bin_dir}"
+        return
+    }
+    
+    log_info "Available release assets:"
+    echo "${assets_json}" | jq -r '.assets[].name' 2>/dev/null || log_warn "Failed to parse assets"
+    
+    # Find and download manager binary
+    local manager_asset
+    manager_asset=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E '^(nqrust-manager|nqr-manager)' | head -n1)
+    if [[ -n "${manager_asset}" ]]; then
+        log_info "Downloading manager: ${manager_asset}"
+        curl -fsSL "${download_url}/${manager_asset}" -o "${bin_dir}/nqr-manager" || {
+            log_warn "Failed to download manager, trying local build..."
+            cp "${PROJECT_ROOT}/target/release/nqr-manager" "${bin_dir}/" 2>/dev/null || \
+            cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-manager" "${bin_dir}/" 2>/dev/null || true
+        }
+    else
+        log_warn "No manager binary found in release, trying local build..."
         cp "${PROJECT_ROOT}/target/release/nqr-manager" "${bin_dir}/" 2>/dev/null || \
-        cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-manager" "${bin_dir}/"
-    }
-
-    # Download installer
-    curl -fsSL "${download_url}/nqr-installer" -o "${bin_dir}/nqr-installer" || {
-        log_warn "Failed to download installer, using local build..."
+        cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-manager" "${bin_dir}/" 2>/dev/null || true
+    fi
+    
+    # Find and download installer binary (exclude .tar.gz archives)
+    local installer_asset
+    installer_asset=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E '^(nqr-installer|nqrust-installer)' | grep -v '\.tar\.gz$' | head -n1)
+    if [[ -n "${installer_asset}" ]]; then
+        log_info "Downloading installer: ${installer_asset}"
+        curl -fsSL "${download_url}/${installer_asset}" -o "${bin_dir}/nqr-installer" || {
+            log_warn "Failed to download installer, trying local build..."
+            cp "${PROJECT_ROOT}/target/release/nqr-installer" "${bin_dir}/" 2>/dev/null || \
+            cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-installer" "${bin_dir}/" 2>/dev/null || true
+        }
+    else
+        log_warn "No installer binary found in release, trying local build..."
         cp "${PROJECT_ROOT}/target/release/nqr-installer" "${bin_dir}/" 2>/dev/null || \
-        cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-installer" "${bin_dir}/"
-    }
-
-    # Download guest-agent
-    curl -fsSL "${download_url}/nqr-guest-agent" -o "${bin_dir}/nqr-guest-agent" || {
-        log_warn "Failed to download guest-agent, using local build..."
+        cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-installer" "${bin_dir}/" 2>/dev/null || true
+    fi
+    
+    # Find and download guest-agent binary
+    local agent_asset
+    agent_asset=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E '^(nqrust-guest-agent|nqr-guest-agent)' | head -n1)
+    if [[ -n "${agent_asset}" ]]; then
+        log_info "Downloading guest-agent: ${agent_asset}"
+        curl -fsSL "${download_url}/${agent_asset}" -o "${bin_dir}/nqr-guest-agent" || {
+            log_warn "Failed to download guest-agent, trying local build..."
+            cp "${PROJECT_ROOT}/target/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || \
+            cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || true
+        }
+    else
+        log_warn "No guest-agent binary found in release, trying local build..."
         cp "${PROJECT_ROOT}/target/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || \
-        cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-guest-agent" "${bin_dir}/"
-    }
+        cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || true
+    fi
 
-    chmod +x "${bin_dir}"/*
+    chmod +x "${bin_dir}"/* 2>/dev/null || true
+    
+    # Verify binaries are present
+    log_info "Verifying bundled binaries..."
+    ls -la "${bin_dir}/"
+    
+    if [[ ! -x "${bin_dir}/nqr-installer" ]]; then
+        log_error "nqr-installer not found or not executable!"
+        log_error "Available assets in release:"
+        echo "${assets_json}" | jq -r '.assets[].name' 2>/dev/null || true
+        exit 1
+    fi
 
     log_success "Binaries bundled"
 }
@@ -422,42 +475,63 @@ bundle_images() {
     local include_dir="${BUILD_DIR}/config/includes.chroot"
     local bundle_dir="${include_dir}${BUNDLE_BASE}"
     local images_dir="${bundle_dir}/images"
+    
+    local repo="NexusQuantum/NQRust-MicroVM"
+    local base_url="https://github.com/${repo}/releases/latest/download"
 
-    # Kernel image
-    local kernel_url="https://github.com/nexus/nqrust-microvm/releases/latest/download/vmlinux-6.1"
+    # Kernel image (use the one that matches what's in the release)
     log_info "Downloading kernel image..."
-    curl -fsSL "${kernel_url}" -o "${images_dir}/kernel/vmlinux-6.1" || {
-        log_warn "Failed to download kernel, checking local..."
-        if [[ -f "/srv/images/kernel/vmlinux-6.1" ]]; then
-            cp "/srv/images/kernel/vmlinux-6.1" "${images_dir}/kernel/"
+    curl -fsSL "${base_url}/vmlinux-5.10.fc.bin" -o "${images_dir}/kernel/vmlinux-5.10.fc.bin" || {
+        log_warn "Failed to download kernel from release, checking local..."
+        if [[ -f "/srv/images/kernel/vmlinux-5.10.fc.bin" ]]; then
+            cp "/srv/images/kernel/vmlinux-5.10.fc.bin" "${images_dir}/kernel/"
+        elif [[ -f "/srv/images/vmlinux-5.10.fc.bin" ]]; then
+            cp "/srv/images/vmlinux-5.10.fc.bin" "${images_dir}/kernel/"
         else
-            log_error "Kernel image not found"
-            exit 1
+            log_warn "Kernel image not found - will need to be added manually"
         fi
     }
 
-    # Rootfs images
-    local rootfs_url="https://github.com/nexus/nqrust-microvm/releases/latest/download/debian-minimal.ext4"
-    log_info "Downloading rootfs image..."
-    curl -fsSL "${rootfs_url}" -o "${images_dir}/rootfs/debian-minimal.ext4" || {
-        log_warn "Failed to download rootfs, checking local..."
-        if [[ -f "/srv/images/rootfs/debian-minimal.ext4" ]]; then
-            cp "/srv/images/rootfs/debian-minimal.ext4" "${images_dir}/rootfs/"
-        else
-            log_error "Rootfs image not found"
-            exit 1
-        fi
-    }
+    # All rootfs images available in the release
+    local rootfs_images=(
+        "alpine-3.18-minimal.ext4"
+        "busybox-1.35.ext4"
+        "ubuntu-24.04-minimal.ext4"
+        "python-runtime.ext4"
+        "bun-runtime.ext4"
+        "node-runtime.ext4"
+    )
+    
+    for img in "${rootfs_images[@]}"; do
+        log_info "Downloading ${img}..."
+        curl -fsSL "${base_url}/${img}" -o "${images_dir}/rootfs/${img}" || {
+            log_warn "Failed to download ${img} from release, checking local..."
+            if [[ -f "/srv/images/rootfs/${img}" ]]; then
+                cp "/srv/images/rootfs/${img}" "${images_dir}/rootfs/"
+            elif [[ -f "/srv/images/${img}" ]]; then
+                cp "/srv/images/${img}" "${images_dir}/rootfs/"
+            fi
+        }
+    done
 
-    # Container rootfs
-    local container_rootfs_url="https://github.com/nexus/nqrust-microvm/releases/latest/download/container-runtime.ext4"
-    log_info "Downloading container runtime rootfs..."
-    curl -fsSL "${container_rootfs_url}" -o "${images_dir}/rootfs/container-runtime.ext4" || {
-        log_warn "Failed to download container rootfs, checking local..."
+    # Container runtime (compressed in release due to GitHub 2GB limit)
+    log_info "Downloading container runtime rootfs (compressed)..."
+    curl -fsSL "${base_url}/container-runtime.ext4.gz" -o "${images_dir}/rootfs/container-runtime.ext4.gz" || {
+        log_warn "Failed to download container-runtime.ext4.gz, checking local..."
         if [[ -f "/srv/images/rootfs/container-runtime.ext4" ]]; then
             cp "/srv/images/rootfs/container-runtime.ext4" "${images_dir}/rootfs/"
         fi
     }
+    
+    # Decompress if downloaded successfully
+    if [[ -f "${images_dir}/rootfs/container-runtime.ext4.gz" ]]; then
+        log_info "Decompressing container-runtime.ext4.gz..."
+        gunzip -f "${images_dir}/rootfs/container-runtime.ext4.gz" || log_warn "Decompression failed"
+    fi
+    
+    log_info "Bundled images:"
+    ls -la "${images_dir}/kernel/" 2>/dev/null || true
+    ls -la "${images_dir}/rootfs/" 2>/dev/null || true
 
     log_success "Images bundled"
 }
@@ -514,7 +588,7 @@ ConditionPathExists=!/var/lib/nqrust-installed
 
 [Service]
 Type=oneshot
-ExecStart=/opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+ExecStart=/opt/nqrust-bundle/bin/nqr-installer install --iso-mode --bundle-path /opt/nqrust-bundle
 ExecStartPost=/bin/touch /var/lib/nqrust-installed
 StandardInput=tty
 StandardOutput=tty
@@ -593,7 +667,7 @@ if [ "$(tty)" = "/dev/tty1" ] && [ ! -f /var/lib/nqrust-installed ]; then
     echo "Starting NQR-MicroVM Installer..."
     echo ""
     sleep 1
-    /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+    /opt/nqrust-bundle/bin/nqr-installer install --iso-mode --bundle-path /opt/nqrust-bundle
     touch /var/lib/nqrust-installed
 fi
 EOF
@@ -608,7 +682,7 @@ if [ "$(tty)" = "/dev/tty1" ] && [ ! -f /var/lib/nqrust-installed ]; then
     echo "Starting NQR-MicroVM Installer..."
     echo ""
     sleep 1
-    /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+    /opt/nqrust-bundle/bin/nqr-installer install --iso-mode --bundle-path /opt/nqrust-bundle
     touch /var/lib/nqrust-installed
 fi
 EOF
@@ -635,7 +709,7 @@ configure_branding() {
    Air-Gapped Installer v${RELEASE_VERSION:-latest}
    
    The installer will start automatically on first boot.
-   For manual installation, run: /opt/nqrust-bundle/bin/nqr-installer --iso-mode
+   For manual installation, run: /opt/nqrust-bundle/bin/nqr-installer install --iso-mode
 
 EOF
 

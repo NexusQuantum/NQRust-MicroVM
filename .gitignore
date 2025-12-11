@@ -62,3 +62,5 @@ build-node-runtime/*
 build-container-runtime/*
 build-python-runtime/*
 build-bun-runtime/*
+
+docs/public

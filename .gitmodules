@@ -1,3 +1,6 @@
 [submodule "docs/themes/deepthought"]
 	path = docs/themes/deepthought
 	url = https://github.com/RatanShreshtha/DeepThought.git
+[submodule "docs/themes/lotusdocs"]
+	path = docs/themes/lotusdocs
+	url = https://github.com/colinwilson/lotusdocs.git

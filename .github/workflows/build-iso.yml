@@ -117,6 +117,28 @@ jobs:
           mkdir -p /tmp/bundle/bin
           VERSION="${{ steps.version.outputs.version }}"
           
+          # Helper function to download with retries
+          download_with_retry() {
+            local url="$1"
+            local output="$2"
+            local max_attempts=5
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "Download attempt $attempt/$max_attempts: $url"
+              if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors "$url" -o "$output"; then
+                echo "Download successful!"
+                return 0
+              fi
+              echo "Attempt $attempt failed, waiting before retry..."
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+            
+            echo "ERROR: Failed to download after $max_attempts attempts"
+            return 1
+          }
+          
           # First, fetch available assets from GitHub API
           echo "=== Fetching release assets from GitHub API ==="
           if [[ "${VERSION}" == "latest" ]]; then
@@ -126,7 +148,7 @@ jobs:
           fi
           
           echo "API URL: ${RELEASE_API_URL}"
-          ASSETS_JSON=$(curl -fsSL "${RELEASE_API_URL}")
+          ASSETS_JSON=$(curl -fsSL --retry 3 --retry-delay 5 "${RELEASE_API_URL}")
           
           echo "=== Available release assets ==="
           echo "${ASSETS_JSON}" | jq -r '.assets[].name' || echo "Failed to parse assets"
@@ -147,7 +169,7 @@ jobs:
           MANAGER_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqrust-manager|nqr-manager)' | head -n1)
           if [[ -n "${MANAGER_ASSET}" ]]; then
             echo "Found manager asset: ${MANAGER_ASSET}"
-            curl -fsSL "${BASE_URL}/${MANAGER_ASSET}" -o /tmp/bundle/bin/nqr-manager
+            download_with_retry "${BASE_URL}/${MANAGER_ASSET}" /tmp/bundle/bin/nqr-manager
           else
             echo "WARNING: No manager binary found in release assets"
           fi
@@ -157,7 +179,7 @@ jobs:
           INSTALLER_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqr-installer|nqrust-installer)' | grep -v '\.tar\.gz$' | head -n1)
           if [[ -n "${INSTALLER_ASSET}" ]]; then
             echo "Found installer asset: ${INSTALLER_ASSET}"
-            curl -fsSL "${BASE_URL}/${INSTALLER_ASSET}" -o /tmp/bundle/bin/nqr-installer
+            download_with_retry "${BASE_URL}/${INSTALLER_ASSET}" /tmp/bundle/bin/nqr-installer
           else
             echo "WARNING: No installer binary found in release assets"
           fi
@@ -167,7 +189,7 @@ jobs:
           AGENT_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqrust-guest-agent|nqr-guest-agent)' | head -n1)
           if [[ -n "${AGENT_ASSET}" ]]; then
             echo "Found guest-agent asset: ${AGENT_ASSET}"
-            curl -fsSL "${BASE_URL}/${AGENT_ASSET}" -o /tmp/bundle/bin/nqr-guest-agent
+            download_with_retry "${BASE_URL}/${AGENT_ASSET}" /tmp/bundle/bin/nqr-guest-agent
           else
             echo "WARNING: No guest-agent binary found in release assets"
           fi

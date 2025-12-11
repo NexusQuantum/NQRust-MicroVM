@@ -1,0 +1,37 @@
+base_url = "http://127.0.0.1:1111"
+title = "NQRust-MicroVM Documentation"
+description = "Modern Firecracker microVM orchestration platform"
+default_language = "en"
+
+theme = "olivine"
+compile_sass = true
+minify_html = true
+build_search_index = true
+
+# Taxonomies for Olivine theme
+taxonomies = [
+    {name = "tags"}
+]
+
+[markdown]
+highlight_code = true
+highlight_theme = "base16-ocean-dark"
+render_emoji = true
+external_links_target_blank = true
+smart_punctuation = true
+
+[search]
+include_title = true
+include_description = true
+include_content = true
+truncate_content_length = 100
+
+[link_checker]
+internal_level = "warn"
+
+[extra.olivine]
+journal = true   # Enables journal functionality
+graph = true     # Enables graph view
+mathjax = false  # Disables MathJax (not needed for this project)
+tikzjax = false  # Disables TikzJax (not needed for this project)
+extra_js = []    # Extra javascript files

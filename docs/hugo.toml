@@ -1,0 +1,87 @@
+baseURL = 'http://localhost:1313'
+languageCode = 'en-us'
+title = 'NQRust-MicroVM Documentation'
+enableEmoji = true
+enableGitInfo = false
+
+# Hugo Modules
+[module]
+  [module.hugoVersion]
+    extended = true
+    min = "0.100.0"
+  [[module.imports]]
+    path = "github.com/colinwilson/lotusdocs"
+    disable = false
+  [[module.imports]]
+    path = "github.com/gohugoio/hugo-mod-bootstrap-scss/v5"
+    disable = false
+
+# Site Description
+[params]
+  description = "Modern Firecracker microVM orchestration platform"
+
+  # Google Fonts
+  google_fonts = [
+    ["Inter", "300, 400, 600, 700"],
+    ["Fira Code", "500, 700"]
+  ]
+
+  sans_serif_font = "Inter"
+  secondary_font = "Inter"
+  mono_font = "Fira Code"
+
+# Lotus Docs Settings
+[params.docs]
+  title = "NQRust-MicroVM Docs"
+  pathName = "docs"
+  themeColor = "cyan"
+  darkMode = true
+  prism = true
+  prismTheme = "lotusdocs"
+  tableOfContents = true
+  scrollSpy = true
+
+# Navigation
+[params.plausible]
+  enable = false
+
+# Social Links
+[params.social]
+  github = "yourusername/nqrust-microvm"
+
+# Main Menu
+[menu]
+  [[menu.primary]]
+    name = "Docs"
+    url = "/docs"
+    weight = 10
+  [[menu.primary]]
+    name = "API"
+    url = "http://localhost:18080/swagger-ui/"
+    weight = 20
+
+# Sidebar Menu (Getting Started)
+[[menu.sidebar]]
+  name = "Getting Started"
+  weight = 10
+  identifier = "getting-started"
+
+[[menu.sidebar]]
+  name = "Installation"
+  parent = "getting-started"
+  url = "/docs/getting-started/installation/"
+  weight = 11
+
+[[menu.sidebar]]
+  name = "Quick Start"
+  parent = "getting-started"
+  url = "/docs/getting-started/quick-start/"
+  weight = 12
+
+# Markup Configuration
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+  [markup.highlight]
+    style = 'monokai'

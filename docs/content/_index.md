@@ -9,7 +9,7 @@ template = "index.html"
 
 Manage **lightweight microVMs** and **Docker containers** with the safety of KVM, the speed of Rust, and the elegance of a modern React UI.
 
----
++++
 
 ## Why NQRust-MicroVM?
 
@@ -26,7 +26,7 @@ Manage **lightweight microVMs** and **Docker containers** with the safety of KVM
 - **Modern UI**: Next.js 15 + React 19 frontend with real-time metrics and monitoring
 - **Production Ready**: PostgreSQL backend, RBAC, audit logs, and multi-host orchestration
 
----
++++
 
 ## Quick Start
 
@@ -36,7 +36,7 @@ Get up and running in minutes with our comprehensive guides:
 - [**Quick Start**](/getting-started/quick-start/) - Create your first VM in 5 minutes
 - [**User Guide**](/user-guide/) - Complete feature documentation
 
----
++++
 
 ## Architecture
 
@@ -49,7 +49,7 @@ The system is composed of three lightweight components communicating over HTTP a
 
 See the [Introduction](/introduction/) for detailed architecture overview.
 
----
++++
 
 ## Features
 
@@ -62,7 +62,7 @@ Explore what NQRust-MicroVM can do:
 - [**Storage**](/user-guide/storage/) - Volume management and image registry
 - [**Infrastructure**](/user-guide/infrastructure/) - Multi-host management and monitoring
 
----
++++
 
 ## Getting Help
 
@@ -70,7 +70,7 @@ Explore what NQRust-MicroVM can do:
 - [GitHub Issues](https://github.com/yourusername/nqrust-microvm/issues) - Report bugs or request features
 - [API Reference](http://localhost:18080/swagger-ui/) - OpenAPI documentation
 
----
++++
 
 ## License
 
