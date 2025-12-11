@@ -592,8 +592,12 @@ fn apply_config_field(app: &mut App) {
 fn run_preflight_checks(app: &mut App) {
     use installer::preflight;
 
-    // Run actual preflight checks
-    app.preflight_checks = preflight::run_preflight_checks();
+    // Run actual preflight checks - use offline version for ISO mode
+    app.preflight_checks = if app.config.install_source.is_offline() {
+        preflight::run_preflight_checks_offline()
+    } else {
+        preflight::run_preflight_checks()
+    };
 }
 
 fn run_non_interactive(_config: InstallConfig) -> Result<()> {

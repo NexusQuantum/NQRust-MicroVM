@@ -27,16 +27,16 @@ pub fn run_preflight_checks() -> Vec<CheckItem> {
     ]
 }
 
-/// Run pre-flight checks for offline/ISO mode (skip network-related checks)
+/// Run pre-flight checks for offline/ISO mode (skip network-related checks, lenient on systemd/disk)
 pub fn run_preflight_checks_offline() -> Vec<CheckItem> {
     vec![
         check_architecture(),
         check_os(),
         check_kernel(),
-        check_systemd(),
+        check_systemd_offline(), // Lenient - live ISO uses sysvinit
         check_kvm_support(),
         check_memory(),
-        check_disk_space(),
+        check_disk_space_offline(), // Lenient - live ISO has limited RAM disk
         check_required_commands_offline(),
         check_port_available(18080, "Manager API"),
         check_port_available(9090, "Agent API"),
@@ -45,9 +45,51 @@ pub fn run_preflight_checks_offline() -> Vec<CheckItem> {
     ]
 }
 
-/// Check required commands for offline mode (less strict, no curl/git needed)
+/// Check for systemd in offline mode (warning only, not error)
+/// Live ISO uses sysvinit, but target installation will have systemd
+fn check_systemd_offline() -> CheckItem {
+    if Path::new("/run/systemd/system").exists() {
+        CheckItem::new("Systemd", "systemd init (target system)")
+            .with_status(Status::Success)
+            .with_message("systemd detected")
+    } else {
+        // In live ISO, sysvinit is expected - this is just a warning
+        CheckItem::new("Systemd", "systemd init (target system)")
+            .with_status(Status::Warning)
+            .with_message("Live ISO uses sysvinit (OK for installation)")
+    }
+}
+
+/// Check disk space in offline mode (more lenient, skip if on tmpfs)
+fn check_disk_space_offline() -> CheckItem {
+    // In live ISO mode, we're usually running from RAM (tmpfs/overlay)
+    // The actual disk space check should happen when installing to target
+    // For now, just show a warning that user needs to select a target disk
+    
+    // Try to find available block devices for installation
+    if let Ok(output) = run_command("lsblk", &["-d", "-n", "-o", "NAME,SIZE,TYPE"]) {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let disks: Vec<&str> = output_str
+            .lines()
+            .filter(|l| l.contains("disk"))
+            .collect();
+        
+        if !disks.is_empty() {
+            return CheckItem::new("Disk Space", "Target disk available")
+                .with_status(Status::Success)
+                .with_message(format!("{} disk(s) found for installation", disks.len()));
+        }
+    }
+    
+    CheckItem::new("Disk Space", "Target disk available")
+        .with_status(Status::Warning)
+        .with_message("Select target disk during installation")
+}
+
+/// Check required commands for offline mode (no systemctl/curl/git needed in live ISO)
 fn check_required_commands_offline() -> CheckItem {
-    let required = ["sudo", "systemctl", "ip", "cp"];
+    // In live ISO mode, we don't need systemctl (sysvinit), curl (offline), or git (offline)
+    let required = ["sudo", "ip", "cp", "mount"];
     let missing: Vec<&str> = required
         .iter()
         .filter(|cmd| !command_exists(cmd))
@@ -55,11 +97,11 @@ fn check_required_commands_offline() -> CheckItem {
         .collect();
 
     if missing.is_empty() {
-        CheckItem::new("Required Commands", "sudo, systemctl, ip, cp")
+        CheckItem::new("Required Commands", "sudo, ip, cp, mount")
             .with_status(Status::Success)
             .with_message("All commands available")
     } else {
-        CheckItem::new("Required Commands", "sudo, systemctl, ip, cp")
+        CheckItem::new("Required Commands", "sudo, ip, cp, mount")
             .with_status(Status::Error)
             .with_message(format!("Missing: {}", missing.join(", ")))
     }
