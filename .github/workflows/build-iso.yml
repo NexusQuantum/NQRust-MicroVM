@@ -55,6 +55,35 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Release version: ${VERSION}"
 
+      - name: Free up disk space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          
+          # Remove unnecessary large packages to free disk space
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          
+          # Clean apt cache
+          sudo apt-get clean
+          sudo apt-get autoremove -y
+          
+          # Remove large unused packages
+          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' '^mysql-.*' azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox 2>/dev/null || true
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          
+          # Clean docker images
+          docker system prune -af 2>/dev/null || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+
       - name: Install live-build dependencies
         run: |
           sudo apt-get update
@@ -210,7 +239,7 @@ jobs:
             curl -fsSL "${BASE_URL}/${img}" -o "/tmp/bundle/images/rootfs/${img}" || echo "Failed to download ${img}"
           done
           
-          # Container runtime is large and compressed - download .gz version
+          # Container runtime (large file, compressed in release)
           echo "Downloading container-runtime.ext4.gz (large file, may take a while)..."
           curl -fsSL "${BASE_URL}/container-runtime.ext4.gz" -o /tmp/bundle/images/rootfs/container-runtime.ext4.gz || echo "Container runtime download failed"
           
