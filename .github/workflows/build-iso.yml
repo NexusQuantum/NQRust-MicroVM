@@ -190,13 +190,37 @@ jobs:
             BASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}"
           fi
           
-          # Download kernel
-          curl -fsSL "${BASE_URL}/vmlinux-6.1" -o /tmp/bundle/images/kernel/vmlinux-6.1 || echo "Kernel download failed"
+          echo "=== Downloading kernel images ==="
+          # Kernel (matches what's in the release)
+          curl -fsSL "${BASE_URL}/vmlinux-5.10.fc.bin" -o /tmp/bundle/images/kernel/vmlinux-5.10.fc.bin || echo "Kernel 5.10 download failed"
           
-          # Download rootfs images
-          curl -fsSL "${BASE_URL}/debian-minimal.ext4" -o /tmp/bundle/images/rootfs/debian-minimal.ext4 || echo "Debian rootfs download failed"
-          curl -fsSL "${BASE_URL}/container-runtime.ext4" -o /tmp/bundle/images/rootfs/container-runtime.ext4 || echo "Container rootfs download failed"
+          echo "=== Downloading rootfs images ==="
+          # All rootfs images that are in the release
+          ROOTFS_IMAGES=(
+            "alpine-3.18-minimal.ext4"
+            "busybox-1.35.ext4"
+            "ubuntu-24.04-minimal.ext4"
+            "python-runtime.ext4"
+            "bun-runtime.ext4"
+            "node-runtime.ext4"
+          )
           
+          for img in "${ROOTFS_IMAGES[@]}"; do
+            echo "Downloading ${img}..."
+            curl -fsSL "${BASE_URL}/${img}" -o "/tmp/bundle/images/rootfs/${img}" || echo "Failed to download ${img}"
+          done
+          
+          # Container runtime is large and compressed - download .gz version
+          echo "Downloading container-runtime.ext4.gz (large file, may take a while)..."
+          curl -fsSL "${BASE_URL}/container-runtime.ext4.gz" -o /tmp/bundle/images/rootfs/container-runtime.ext4.gz || echo "Container runtime download failed"
+          
+          # Decompress if downloaded successfully
+          if [[ -f /tmp/bundle/images/rootfs/container-runtime.ext4.gz ]]; then
+            echo "Decompressing container-runtime.ext4.gz..."
+            gunzip -f /tmp/bundle/images/rootfs/container-runtime.ext4.gz || echo "Decompression failed"
+          fi
+          
+          echo "=== Downloaded images ==="
           ls -la /tmp/bundle/images/kernel/
           ls -la /tmp/bundle/images/rootfs/
 
@@ -424,7 +448,7 @@ jobs:
             echo ""
             sleep 1
             if [ -x /opt/nqrust-bundle/bin/nqr-installer ]; then
-              /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+              /opt/nqrust-bundle/bin/nqr-installer install --iso-mode --bundle-path /opt/nqrust-bundle
               touch /var/lib/nqrust-installed
             fi
           fi
@@ -445,7 +469,7 @@ jobs:
             if [ -x /opt/nqrust-bundle/bin/nqr-installer ]; then
               echo "Starting installer..."
               sleep 2
-              /opt/nqrust-bundle/bin/nqr-installer --iso-mode --bundle-path /opt/nqrust-bundle
+              /opt/nqrust-bundle/bin/nqr-installer install --iso-mode --bundle-path /opt/nqrust-bundle
               touch /var/lib/nqrust-installed
             else
               echo "WARNING: Installer binary not found!"
@@ -472,7 +496,7 @@ jobs:
              Air-Gapped Installer ${VERSION}
              
              The installer will start automatically on first boot.
-             For manual installation, run: /opt/nqrust-bundle/bin/nqr-installer --iso-mode
+             For manual installation, run: /opt/nqrust-bundle/bin/nqr-installer install --iso-mode
           
           EOF
           
