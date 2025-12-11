@@ -328,8 +328,26 @@ jobs:
 
       - name: Start PostgreSQL
         run: |
-          sudo systemctl start postgresql || true
-
+          # Configure PostgreSQL to listen on localhost
+          PG_VERSION=$(ls /etc/postgresql/ | head -1)
+          PG_CONF="/etc/postgresql/${PG_VERSION}/main/postgresql.conf"
+          PG_HBA="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
+          
+          echo "PostgreSQL version: ${PG_VERSION}"
+          
+          # Ensure PostgreSQL listens on localhost
+          sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = 'localhost'/" "$PG_CONF"
+          sudo sed -i "s/listen_addresses = ''/listen_addresses = 'localhost'/" "$PG_CONF"
+          
+          # Add md5 authentication for local TCP connections if not present
+          if ! sudo grep -q "host.*nexus.*nexus.*127.0.0.1" "$PG_HBA"; then
+            echo "host    nexus           nexus           127.0.0.1/32            md5" | sudo tee -a "$PG_HBA"
+            echo "host    nexus           nexus           ::1/128                 md5" | sudo tee -a "$PG_HBA"
+          fi
+          
+          # Restart PostgreSQL to apply changes
+          sudo systemctl restart postgresql
+          
           # Wait for PostgreSQL to be ready
           echo "Waiting for PostgreSQL to be ready..."
           for i in {1..30}; do
@@ -353,12 +371,21 @@ jobs:
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
 
-          # Verify connection with nexus user
-          echo "Verifying database connection..."
-          PGPASSWORD=nexus psql -U nexus -d nexus -h localhost -c "SELECT 1" || {
-            echo "Failed to connect to database"
-            exit 1
-          }
+          # Verify connection with nexus user via TCP
+          echo "Verifying database connection via TCP..."
+          for i in {1..10}; do
+            if PGPASSWORD=nexus psql -U nexus -d nexus -h 127.0.0.1 -c "SELECT 1" > /dev/null 2>&1; then
+              echo "Database connection successful!"
+              exit 0
+            fi
+            echo "Connection attempt $i/10 - waiting..."
+            sleep 1
+          done
+          
+          echo "Failed to connect to database"
+          echo "=== PostgreSQL logs ==="
+          sudo tail -50 /var/log/postgresql/postgresql-${PG_VERSION}-main.log || true
+          exit 1
 
       - name: Build all components
         run: |
