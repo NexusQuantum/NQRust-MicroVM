@@ -65,22 +65,19 @@ fn check_disk_space_offline() -> CheckItem {
     // In live ISO mode, we're usually running from RAM (tmpfs/overlay)
     // The actual disk space check should happen when installing to target
     // For now, just show a warning that user needs to select a target disk
-    
+
     // Try to find available block devices for installation
     if let Ok(output) = run_command("lsblk", &["-d", "-n", "-o", "NAME,SIZE,TYPE"]) {
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let disks: Vec<&str> = output_str
-            .lines()
-            .filter(|l| l.contains("disk"))
-            .collect();
-        
+        let disks: Vec<&str> = output_str.lines().filter(|l| l.contains("disk")).collect();
+
         if !disks.is_empty() {
             return CheckItem::new("Disk Space", "Target disk available")
                 .with_status(Status::Success)
                 .with_message(format!("{} disk(s) found for installation", disks.len()));
         }
     }
-    
+
     CheckItem::new("Disk Space", "Target disk available")
         .with_status(Status::Warning)
         .with_message("Select target disk during installation")
