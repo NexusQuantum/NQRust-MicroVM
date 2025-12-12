@@ -148,10 +148,7 @@ pub async fn create(
         .snapshot_size_bytes
         .unwrap_or(0)
         .saturating_add(sizes_resp.mem_size_bytes.unwrap_or(0));
-    let total_size: i64 = match combined_size.try_into() {
-        Ok(value) => value,
-        Err(_) => i64::MAX,
-    };
+    let total_size: i64 = combined_size.try_into().unwrap_or(i64::MAX);
 
     let repo: SnapshotRepository = st.snapshots.clone();
     let row = repo
