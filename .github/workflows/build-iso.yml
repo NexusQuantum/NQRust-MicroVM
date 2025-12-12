@@ -186,12 +186,22 @@ jobs:
           
           # Find and download guest-agent binary (look for patterns: nqrust-guest-agent*, nqr-guest-agent*)
           echo "=== Downloading guest-agent binary ==="
-          AGENT_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqrust-guest-agent|nqr-guest-agent)' | head -n1)
-          if [[ -n "${AGENT_ASSET}" ]]; then
-            echo "Found guest-agent asset: ${AGENT_ASSET}"
-            download_with_retry "${BASE_URL}/${AGENT_ASSET}" /tmp/bundle/bin/nqr-guest-agent
+          GUEST_AGENT_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqrust-guest-agent|nqr-guest-agent)' | head -n1)
+          if [[ -n "${GUEST_AGENT_ASSET}" ]]; then
+            echo "Found guest-agent asset: ${GUEST_AGENT_ASSET}"
+            download_with_retry "${BASE_URL}/${GUEST_AGENT_ASSET}" /tmp/bundle/bin/nqr-guest-agent
           else
             echo "WARNING: No guest-agent binary found in release assets"
+          fi
+          
+          # Find and download host agent binary (look for patterns: nqrust-agent*, nqr-agent*)
+          echo "=== Downloading agent binary ==="
+          AGENT_ASSET=$(echo "${ASSETS_JSON}" | jq -r '.assets[].name' | grep -E '^(nqrust-agent|nqr-agent)-' | head -n1)
+          if [[ -n "${AGENT_ASSET}" ]]; then
+            echo "Found agent asset: ${AGENT_ASSET}"
+            download_with_retry "${BASE_URL}/${AGENT_ASSET}" /tmp/bundle/bin/nqr-agent
+          else
+            echo "WARNING: No agent binary found in release assets"
           fi
           
           chmod +x /tmp/bundle/bin/* 2>/dev/null || true

@@ -691,18 +691,32 @@ pub fn copy_binaries_from_bundle(
     // Create temp download dir (to be compatible with install_binaries)
     let _ = fs::create_dir_all(&download_dir);
 
+    // Helper to find binary with multiple possible names
+    fn find_binary(bundle_bin: &Path, names: &[&str]) -> Option<std::path::PathBuf> {
+        for name in names {
+            let path = bundle_bin.join(name);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
     // Copy manager if needed
     if config.mode.includes_manager() {
-        let src = bundle_bin.join("nqrust-manager");
-        let dst = download_dir.join("manager");
-
-        if src.exists() {
+        // Check for multiple possible names
+        let manager_names = ["nqrust-manager", "nqr-manager", "manager"];
+        if let Some(src) = find_binary(&bundle_bin, &manager_names) {
+            let dst = download_dir.join("manager");
             fs::copy(&src, &dst)?;
-            logs.push(LogEntry::success("Manager binary copied from bundle"));
+            logs.push(LogEntry::success(format!(
+                "Manager binary copied from bundle ({:?})",
+                src.file_name().unwrap_or_default()
+            )));
         } else {
             logs.push(LogEntry::error(format!(
-                "Manager binary not found in bundle at {:?}",
-                src
+                "Manager binary not found in bundle at {:?} (tried: {:?})",
+                bundle_bin, manager_names
             )));
             return Err(anyhow!("Manager binary not found in bundle"));
         }
@@ -710,27 +724,31 @@ pub fn copy_binaries_from_bundle(
 
     // Copy agent if needed
     if config.mode.includes_agent() {
-        let src = bundle_bin.join("nqrust-agent");
-        let dst = download_dir.join("agent");
-
-        if src.exists() {
+        let agent_names = ["nqrust-agent", "nqr-agent", "agent"];
+        if let Some(src) = find_binary(&bundle_bin, &agent_names) {
+            let dst = download_dir.join("agent");
             fs::copy(&src, &dst)?;
-            logs.push(LogEntry::success("Agent binary copied from bundle"));
+            logs.push(LogEntry::success(format!(
+                "Agent binary copied from bundle ({:?})",
+                src.file_name().unwrap_or_default()
+            )));
         } else {
             logs.push(LogEntry::error(format!(
-                "Agent binary not found in bundle at {:?}",
-                src
+                "Agent binary not found in bundle at {:?} (tried: {:?})",
+                bundle_bin, agent_names
             )));
             return Err(anyhow!("Agent binary not found in bundle"));
         }
 
         // Copy guest-agent
-        let src = bundle_bin.join("guest-agent");
-        let dst = download_dir.join("guest-agent");
-
-        if src.exists() {
+        let guest_agent_names = ["nqrust-guest-agent", "nqr-guest-agent", "guest-agent"];
+        if let Some(src) = find_binary(&bundle_bin, &guest_agent_names) {
+            let dst = download_dir.join("guest-agent");
             fs::copy(&src, &dst)?;
-            logs.push(LogEntry::success("Guest-agent binary copied from bundle"));
+            logs.push(LogEntry::success(format!(
+                "Guest-agent binary copied from bundle ({:?})",
+                src.file_name().unwrap_or_default()
+            )));
         } else {
             logs.push(LogEntry::warning("Guest-agent binary not found in bundle"));
         }
