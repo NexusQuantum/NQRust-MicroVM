@@ -190,10 +190,9 @@ dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
 /// Setup bridged network - VMs get IPs from router's DHCP
 ///
 /// IMPORTANT: Bridged mode is complex and can break network connectivity.
-/// This implementation takes a safer approach:
-/// 1. Creates netplan config for the bridge
-/// 2. Does NOT do live network changes (too risky)
-/// 3. Requires a reboot to apply changes safely
+/// This implementation:
+/// 1. Tries netplan if available (safer, persistent)
+/// 2. Falls back to direct `ip` commands (works on live ISO)
 fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
     logs.push(LogEntry::info(
         "Setting up bridged network (VMs will get IPs from router)...",
@@ -217,11 +216,11 @@ fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<
 
     // Check if netplan is available
     if !Path::new("/etc/netplan").exists() {
-        logs.push(LogEntry::error(
-            "Bridged mode requires netplan (Ubuntu/Debian). Falling back to NAT mode.",
+        logs.push(LogEntry::info(
+            "Netplan not available, using direct bridge setup...",
         ));
-        // Fall back to NAT for systems without netplan
-        return setup_nat_network_internal(bridge_name, logs);
+        // Use direct ip commands for bridged networking (works on live ISO)
+        return setup_bridged_with_ip_commands(bridge_name, &physical_iface, logs);
     }
 
     // Get current IP configuration for informational purposes
@@ -380,6 +379,129 @@ fn setup_nat_network_internal(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Re
     );
 
     logs.push(LogEntry::success("NAT rules configured (fallback mode)"));
+
+    Ok(())
+}
+
+/// Setup bridged network using direct ip commands (for systems without netplan, like live ISO)
+fn setup_bridged_with_ip_commands(
+    bridge_name: &str,
+    physical_iface: &str,
+    logs: &mut Vec<LogEntry>,
+) -> Result<()> {
+    // Get current IP configuration before we start
+    let current_ip = get_interface_ip(physical_iface);
+    let current_gateway = get_default_gateway();
+
+    logs.push(LogEntry::info(format!(
+        "Current IP: {}, Gateway: {}",
+        current_ip.as_deref().unwrap_or("DHCP"),
+        current_gateway.as_deref().unwrap_or("auto")
+    )));
+
+    logs.push(LogEntry::warning(
+        "Creating bridge with direct commands. Connection may briefly drop.",
+    ));
+
+    // Enable IP forwarding first
+    let _ = run_command(
+        "sh",
+        &[
+            "-c",
+            "echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward > /dev/null",
+        ],
+    );
+
+    // Create the bridge
+    logs.push(LogEntry::info(format!(
+        "Creating bridge '{}'...",
+        bridge_name
+    )));
+    let _ = run_sudo(
+        "ip",
+        &["link", "add", "name", bridge_name, "type", "bridge"],
+    );
+
+    // Disable STP for faster convergence
+    let _ = run_command(
+        "sh",
+        &[
+            "-c",
+            &format!(
+                "echo 0 | sudo tee /sys/class/net/{}/bridge/stp_state > /dev/null",
+                bridge_name
+            ),
+        ],
+    );
+
+    // Bring up the bridge first (without IP)
+    let _ = run_sudo("ip", &["link", "set", bridge_name, "up"]);
+
+    // Remove IP from physical interface and add to bridge
+    if let Some(ip) = &current_ip {
+        logs.push(LogEntry::info(format!("Moving IP {} to bridge...", ip)));
+        let _ = run_sudo("ip", &["addr", "del", ip, "dev", physical_iface]);
+        let _ = run_sudo("ip", &["addr", "add", ip, "dev", bridge_name]);
+    }
+
+    // Add physical interface to bridge
+    logs.push(LogEntry::info(format!(
+        "Adding {} to bridge {}...",
+        physical_iface, bridge_name
+    )));
+    let _ = run_sudo(
+        "ip",
+        &["link", "set", physical_iface, "master", bridge_name],
+    );
+
+    // Re-add default route if we had one
+    if let Some(gw) = &current_gateway {
+        logs.push(LogEntry::info(format!(
+            "Re-adding default route via {}...",
+            gw
+        )));
+        // Delete existing default route first (ignore errors)
+        let _ = run_sudo("ip", &["route", "del", "default"]);
+        let _ = run_sudo(
+            "ip",
+            &["route", "add", "default", "via", gw, "dev", bridge_name],
+        );
+    }
+
+    // If using DHCP, run dhclient on the bridge
+    if current_ip.is_none() {
+        logs.push(LogEntry::info("Requesting DHCP on bridge..."));
+        let _ = run_sudo("dhclient", &["-v", bridge_name]);
+    }
+
+    // Wait for network to stabilize
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Verify bridge is up and has connectivity
+    if bridge_exists(bridge_name) && is_bridge_up(bridge_name) {
+        logs.push(LogEntry::success(format!(
+            "Bridge '{}' created successfully",
+            bridge_name
+        )));
+        logs.push(LogEntry::info(
+            "VMs attached to this bridge will get IPs from your router's DHCP",
+        ));
+
+        // Show new bridge IP
+        if let Some(new_ip) = get_interface_ip(bridge_name) {
+            logs.push(LogEntry::info(format!("Bridge IP: {}", new_ip)));
+        }
+    } else {
+        logs.push(LogEntry::warning(
+            "Bridge setup completed but may not be fully active",
+        ));
+    }
+
+    // Note: This is not persistent across reboots on systems without netplan
+    // But for live ISO, that's fine
+    logs.push(LogEntry::warning(
+        "Note: Bridge config is not persistent (OK for live ISO installation)",
+    ));
 
     Ok(())
 }
