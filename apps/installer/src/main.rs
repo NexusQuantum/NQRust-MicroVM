@@ -716,7 +716,11 @@ fn run_disk_install_tui(
         // Interactive disk selection
         println!("Available disks:\n");
         for (i, disk) in disks.iter().enumerate() {
-            let removable = if disk.is_removable { " [REMOVABLE]" } else { "" };
+            let removable = if disk.is_removable {
+                " [REMOVABLE]"
+            } else {
+                ""
+            };
             println!(
                 "  [{}] {} - {} {} {}",
                 i + 1,
@@ -740,11 +744,18 @@ fn run_disk_install_tui(
         disks[selection - 1].clone()
     };
 
-    println!("\nSelected disk: {} ({})", selected_disk.path.display(), selected_disk.size_human);
+    println!(
+        "\nSelected disk: {} ({})",
+        selected_disk.path.display(),
+        selected_disk.size_human
+    );
     println!("Hostname: {}", hostname);
     println!("Bundle path: {}\n", bundle_path.display());
 
-    println!("WARNING: ALL DATA ON {} WILL BE DESTROYED!", selected_disk.path.display());
+    println!(
+        "WARNING: ALL DATA ON {} WILL BE DESTROYED!",
+        selected_disk.path.display()
+    );
     print!("Type 'yes' to continue: ");
     io::Write::flush(&mut io::stdout())?;
 
@@ -758,7 +769,7 @@ fn run_disk_install_tui(
     // Run disk installation
     println!("\nStarting installation...\n");
     let mut logs = Vec::new();
-    
+
     disk::run_disk_install(
         &selected_disk,
         &hostname,
