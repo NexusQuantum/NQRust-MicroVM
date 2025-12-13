@@ -104,7 +104,7 @@ download_binaries() {
     # Download manager
     log_info "Downloading manager..."
     download_file \
-        "${download_url}/nqrust-manager-x86_64-unknown-linux-gnu" \
+        "${download_url}/nqrust-manager-x86_64-linux-musl" \
         "/tmp/manager" \
         "Downloading manager binary"
     chmod +x /tmp/manager
@@ -112,7 +112,7 @@ download_binaries() {
     # Download agent
     log_info "Downloading agent..."
     download_file \
-        "${download_url}/nqrust-agent-x86_64-unknown-linux-gnu" \
+        "${download_url}/nqrust-agent-x86_64-linux-musl" \
         "/tmp/agent" \
         "Downloading agent binary"
     chmod +x /tmp/agent

@@ -93,14 +93,14 @@ The release workflow ([.github/workflows/release.yml](.github/workflows/release.
 Builds all Rust components:
 
 ```yaml
-- Manager binary (x86_64-unknown-linux-gnu)
-- Agent binary (x86_64-unknown-linux-gnu)
+- Manager binary (x86_64-linux-musl)
+- Agent binary (x86_64-linux-musl)
 - Guest-agent binary (x86_64-unknown-linux-musl, static)
 ```
 
 **Output files**:
-- `nqrust-manager-x86_64-unknown-linux-gnu`
-- `nqrust-agent-x86_64-unknown-linux-gnu`
+- `nqrust-manager-x86_64-linux-musl`
+- `nqrust-agent-x86_64-linux-musl`
 - `nqrust-guest-agent-x86_64-linux-musl`
 
 ### 2. Build UI Job
@@ -148,7 +148,7 @@ Generates `release-manifest.json` for the auto-updater:
   "components": {
     "manager": {
       "version": "v1.1.0",
-      "url": "https://github.com/NexusQuantum/NQRust-MicroVM/releases/download/v1.1.0/nqrust-manager-x86_64-unknown-linux-gnu",
+      "url": "https://github.com/NexusQuantum/NQRust-MicroVM/releases/download/v1.1.0/nqrust-manager-x86_64-linux-musl",
       "checksum": "abc123...",
       "size": 12345678
     },
@@ -191,8 +191,8 @@ Each release includes the following downloadable artifacts:
 
 | File | Description | Size |
 |------|-------------|------|
-| `nqrust-manager-x86_64-unknown-linux-gnu` | Manager service binary | ~20MB |
-| `nqrust-agent-x86_64-unknown-linux-gnu` | Agent service binary | ~15MB |
+| `nqrust-manager-x86_64-linux-musl` | Manager service binary | ~20MB |
+| `nqrust-agent-x86_64-linux-musl` | Agent service binary | ~15MB |
 | `nqrust-guest-agent-x86_64-linux-musl` | Guest agent (static) | ~5MB |
 | `nqrust-ui.tar.gz` | Next.js UI bundle | ~50MB |
 | `checksums.txt` | SHA256 checksums | <1KB |
@@ -211,7 +211,7 @@ Always verify checksums after downloading:
 
 ```bash
 # Download binary
-wget https://github.com/NexusQuantum/NQRust-MicroVM/releases/download/v1.1.0/nqrust-manager-x86_64-unknown-linux-gnu
+wget https://github.com/NexusQuantum/NQRust-MicroVM/releases/download/v1.1.0/nqrust-manager-x86_64-linux-musl
 
 # Download checksums
 wget https://github.com/NexusQuantum/NQRust-MicroVM/releases/download/v1.1.0/checksums.txt

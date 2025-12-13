@@ -249,7 +249,7 @@ pub fn download_binaries(config: &InstallConfig, version: &str) -> Result<Vec<Lo
     if config.mode.includes_manager() {
         logs.push(LogEntry::info("Downloading manager binary..."));
 
-        let url = format!("{}/nqrust-manager-x86_64-unknown-linux-gnu", base_url);
+        let url = format!("{}/nqrust-manager-x86_64-linux-musl", base_url);
         let output_path = format!("{}/manager", download_dir);
 
         let output = run_command("curl", &["-fsSL", "-o", &output_path, &url])?;
@@ -270,7 +270,7 @@ pub fn download_binaries(config: &InstallConfig, version: &str) -> Result<Vec<Lo
     if config.mode.includes_agent() {
         logs.push(LogEntry::info("Downloading agent binary..."));
 
-        let url = format!("{}/nqrust-agent-x86_64-unknown-linux-gnu", base_url);
+        let url = format!("{}/nqrust-agent-x86_64-linux-musl", base_url);
         let output_path = format!("{}/agent", download_dir);
 
         let output = run_command("curl", &["-fsSL", "-o", &output_path, &url])?;
