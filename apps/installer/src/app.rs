@@ -375,6 +375,19 @@ impl LogEntry {
     }
 }
 
+impl std::fmt::Display for LogEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let prefix = match self.level {
+            LogLevel::Info => "[INFO]",
+            LogLevel::Success => "[OK]",
+            LogLevel::Warning => "[WARN]",
+            LogLevel::Error => "[ERR]",
+            LogLevel::Debug => "[DBG]",
+        };
+        write!(f, "{} {}", prefix, self.message)
+    }
+}
+
 /// Application state
 pub struct App {
     /// Current screen

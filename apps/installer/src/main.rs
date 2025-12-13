@@ -126,6 +126,29 @@ enum Commands {
         #[arg(long)]
         non_interactive: bool,
     },
+    /// Full disk installation (for air-gapped ISO boot)
+    /// Installs complete OS + NQRust to a target disk
+    DiskInstall {
+        /// Target disk (e.g., /dev/sda)
+        #[arg(long)]
+        target_disk: Option<String>,
+
+        /// Hostname for the installed system
+        #[arg(long, default_value = "nqrust-node")]
+        hostname: String,
+
+        /// Root password for the installed system
+        #[arg(long, default_value = "nqrust")]
+        root_password: String,
+
+        /// Path to the pre-bundled files (default: /opt/nqrust-bundle)
+        #[arg(long, default_value = "/opt/nqrust-bundle")]
+        bundle_path: PathBuf,
+
+        /// Non-interactive mode (requires --target-disk)
+        #[arg(long)]
+        non_interactive: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -233,6 +256,28 @@ fn main() -> Result<()> {
                 run_uninstall_non_interactive(keep_data, keep_database, keep_config)
             } else {
                 run_uninstall_tui(keep_data, keep_database, keep_config)
+            }
+        }
+        Some(Commands::DiskInstall {
+            target_disk,
+            hostname,
+            root_password,
+            bundle_path,
+            non_interactive,
+        }) => {
+            if non_interactive {
+                if target_disk.is_none() {
+                    eprintln!("Error: --target-disk is required in non-interactive mode");
+                    std::process::exit(1);
+                }
+                run_disk_install_non_interactive(
+                    target_disk.unwrap(),
+                    hostname,
+                    root_password,
+                    bundle_path,
+                )
+            } else {
+                run_disk_install_tui(target_disk, hostname, root_password, bundle_path)
             }
         }
         None => {
@@ -617,5 +662,155 @@ fn run_uninstall_non_interactive(
     _keep_config: bool,
 ) -> Result<()> {
     println!("Non-interactive uninstall not yet implemented");
+    Ok(())
+}
+
+/// Run the disk install TUI
+fn run_disk_install_tui(
+    target_disk: Option<String>,
+    hostname: String,
+    root_password: String,
+    bundle_path: PathBuf,
+) -> Result<()> {
+    use crate::installer::disk;
+
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Clear screen and show header
+    terminal.clear()?;
+
+    // Restore terminal for disk selection (we need user input)
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+
+    println!("\n{}", "=".repeat(60));
+    println!("  NQRust-MicroVM Full Disk Installation");
+    println!("{}\n", "=".repeat(60));
+
+    // Get list of available disks
+    let disks = disk::list_disks()?;
+    if disks.is_empty() {
+        println!("No suitable disks found for installation.");
+        println!("Disks must be at least 8GB.");
+        return Ok(());
+    }
+
+    // Show disk selection or use provided disk
+    let selected_disk = if let Some(disk) = target_disk {
+        // Validate provided disk
+        disks
+            .iter()
+            .find(|d| d.path.to_string_lossy() == disk || d.name == disk)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Disk {} not found", disk))?
+    } else {
+        // Interactive disk selection
+        println!("Available disks:\n");
+        for (i, disk) in disks.iter().enumerate() {
+            let removable = if disk.is_removable { " [REMOVABLE]" } else { "" };
+            println!(
+                "  [{}] {} - {} {} {}",
+                i + 1,
+                disk.path.display(),
+                disk.size_human,
+                disk.model,
+                removable
+            );
+        }
+        println!();
+        print!("Select disk (1-{}): ", disks.len());
+        io::Write::flush(&mut io::stdout())?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let selection: usize = input.trim().parse().unwrap_or(0);
+        if selection == 0 || selection > disks.len() {
+            println!("Invalid selection");
+            return Ok(());
+        }
+        disks[selection - 1].clone()
+    };
+
+    println!("\nSelected disk: {} ({})", selected_disk.path.display(), selected_disk.size_human);
+    println!("Hostname: {}", hostname);
+    println!("Bundle path: {}\n", bundle_path.display());
+
+    println!("WARNING: ALL DATA ON {} WILL BE DESTROYED!", selected_disk.path.display());
+    print!("Type 'yes' to continue: ");
+    io::Write::flush(&mut io::stdout())?;
+
+    let mut confirm = String::new();
+    io::stdin().read_line(&mut confirm)?;
+    if confirm.trim() != "yes" {
+        println!("Installation cancelled.");
+        return Ok(());
+    }
+
+    // Run disk installation
+    println!("\nStarting installation...\n");
+    let mut logs = Vec::new();
+    
+    disk::run_disk_install(
+        &selected_disk,
+        &hostname,
+        &root_password,
+        &bundle_path,
+        &mut logs,
+    )?;
+
+    // Print logs
+    for log in &logs {
+        println!("{}", log);
+    }
+
+    Ok(())
+}
+
+/// Run disk install in non-interactive mode
+fn run_disk_install_non_interactive(
+    target_disk: String,
+    hostname: String,
+    root_password: String,
+    bundle_path: PathBuf,
+) -> Result<()> {
+    use crate::installer::disk;
+
+    println!("NQRust-MicroVM Full Disk Installation (Non-Interactive)");
+    println!("Target disk: {}", target_disk);
+    println!("Hostname: {}", hostname);
+    println!("Bundle path: {}\n", bundle_path.display());
+
+    // Get disk info
+    let disks = disk::list_disks()?;
+    let selected_disk = disks
+        .iter()
+        .find(|d| d.path.to_string_lossy() == target_disk || d.name == target_disk)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("Disk {} not found", target_disk))?;
+
+    // Run disk installation
+    let mut logs = Vec::new();
+    disk::run_disk_install(
+        &selected_disk,
+        &hostname,
+        &root_password,
+        &bundle_path,
+        &mut logs,
+    )?;
+
+    // Print logs
+    for log in &logs {
+        println!("{}", log);
+    }
+
     Ok(())
 }

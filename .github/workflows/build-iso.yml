@@ -554,17 +554,10 @@ jobs:
                 echo ""
                 echo "  Starting Full Disk Installation..."
                 echo ""
-                if [ -x /opt/nqrust-bundle/scripts/install-to-disk.sh ]; then
-                  echo "  Available disks:"
-                  lsblk -d -o NAME,SIZE,MODEL | grep -v "loop\|sr\|fd"
-                  echo ""
-                  read -p "  Enter target disk (e.g., /dev/sda): " TARGET_DISK
-                  read -p "  Enter hostname [nqrust-node]: " HOSTNAME
-                  HOSTNAME=${HOSTNAME:-nqrust-node}
-                  echo ""
-                  /opt/nqrust-bundle/scripts/install-to-disk.sh "$TARGET_DISK" "$HOSTNAME" "nqrust"
+                if [ -x /opt/nqrust-bundle/bin/nqr-installer ]; then
+                  /opt/nqrust-bundle/bin/nqr-installer disk-install --bundle-path /opt/nqrust-bundle
                 else
-                  echo "ERROR: install-to-disk.sh not found!"
+                  echo "ERROR: Installer binary not found!"
                   echo "Press Enter to continue to shell..."
                   read
                 fi
