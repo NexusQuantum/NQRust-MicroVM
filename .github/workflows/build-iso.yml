@@ -386,6 +386,9 @@ jobs:
           syslinux-common
           syslinux-utils
           isolinux
+          rsync
+          grub-efi-amd64
+          grub-pc-bin
           EOF
           
           # Fix bootloader symlinks - the default live-build bootloader config has broken symlinks
@@ -440,6 +443,11 @@ jobs:
           # Include bundle
           mkdir -p config/includes.chroot/opt/nqrust-bundle
           cp -r /tmp/bundle/* config/includes.chroot/opt/nqrust-bundle/
+          
+          # Copy disk installation script
+          mkdir -p config/includes.chroot/opt/nqrust-bundle/scripts
+          cp ${{ github.workspace }}/scripts/iso/install-to-disk.sh config/includes.chroot/opt/nqrust-bundle/scripts/
+          chmod +x config/includes.chroot/opt/nqrust-bundle/scripts/install-to-disk.sh
           
           # Create first-boot service
           mkdir -p config/includes.chroot/etc/systemd/system
@@ -526,22 +534,63 @@ jobs:
             echo "  ║           NQR-MicroVM Air-Gapped Installer                 ║"
             echo "  ╚════════════════════════════════════════════════════════════╝"
             echo ""
+            echo "  Please select installation type:"
+            echo ""
+            echo "  [1] Full Disk Install (recommended)"
+            echo "      - Installs complete OS + NQRust to a target disk"
+            echo "      - Survives reboot, persistent installation"
+            echo ""
+            echo "  [2] Live Environment Install"
+            echo "      - Installs NQRust to this live environment"
+            echo "      - Lost on reboot (for testing only)"
+            echo ""
+            echo "  [3] Shell only"
+            echo "      - Drop to shell without installing"
+            echo ""
+            read -p "  Enter choice [1-3]: " CHOICE
             
-            if [ -x /opt/nqrust-bundle/bin/nqr-installer ]; then
-              echo "Starting installer..."
-              sleep 2
-              /opt/nqrust-bundle/bin/nqr-installer install --iso-mode --bundle-path /opt/nqrust-bundle
-              touch /var/lib/nqrust-installed
-            else
-              echo "WARNING: Installer binary not found!"
-              echo ""
-              echo "Available files in bundle:"
-              ls -la /opt/nqrust-bundle/bin/ 2>/dev/null || echo "  (none)"
-              echo ""
-              echo "You can manually install by running the installer once it's available."
-              echo "Press Enter to continue to shell..."
-              read
-            fi
+            case "$CHOICE" in
+              1)
+                echo ""
+                echo "  Starting Full Disk Installation..."
+                echo ""
+                if [ -x /opt/nqrust-bundle/scripts/install-to-disk.sh ]; then
+                  echo "  Available disks:"
+                  lsblk -d -o NAME,SIZE,MODEL | grep -v "loop\|sr\|fd"
+                  echo ""
+                  read -p "  Enter target disk (e.g., /dev/sda): " TARGET_DISK
+                  read -p "  Enter hostname [nqrust-node]: " HOSTNAME
+                  HOSTNAME=${HOSTNAME:-nqrust-node}
+                  echo ""
+                  /opt/nqrust-bundle/scripts/install-to-disk.sh "$TARGET_DISK" "$HOSTNAME" "nqrust"
+                else
+                  echo "ERROR: install-to-disk.sh not found!"
+                  echo "Press Enter to continue to shell..."
+                  read
+                fi
+                ;;
+              2)
+                echo ""
+                echo "  Starting Live Environment Installation..."
+                echo ""
+                if [ -x /opt/nqrust-bundle/bin/nqr-installer ]; then
+                  /opt/nqrust-bundle/bin/nqr-installer install --iso-mode --bundle-path /opt/nqrust-bundle
+                  touch /var/lib/nqrust-installed
+                else
+                  echo "WARNING: Installer binary not found!"
+                  ls -la /opt/nqrust-bundle/bin/ 2>/dev/null || echo "  (none)"
+                  read -p "Press Enter to continue..."
+                fi
+                ;;
+              3|*)
+                echo ""
+                echo "  Dropping to shell..."
+                echo "  To install later, run:"
+                echo "    Full disk:  /opt/nqrust-bundle/scripts/install-to-disk.sh /dev/sdX"
+                echo "    Live mode:  /opt/nqrust-bundle/bin/nqr-installer install --iso-mode"
+                echo ""
+                ;;
+            esac
           fi
           BASHPROFILE
           
@@ -556,8 +605,9 @@ jobs:
           
              Air-Gapped Installer ${VERSION}
              
-             The installer will start automatically on first boot.
-             For manual installation, run: /opt/nqrust-bundle/bin/nqr-installer install --iso-mode
+             Installation options:
+               Full disk:  /opt/nqrust-bundle/scripts/install-to-disk.sh /dev/sdX
+               Live mode:  /opt/nqrust-bundle/bin/nqr-installer install --iso-mode
           
           EOF
           
