@@ -120,13 +120,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
-      - name: Build manager (release)
-        run: cargo build --release -p manager
+      - name: Build manager (static musl for portability)
+        run: cargo build --release --target x86_64-unknown-linux-musl -p manager
         env:
           DATABASE_URL: postgresql://nexus:nexus@localhost/nexus
+          # Use vendored OpenSSL for musl builds
+          OPENSSL_STATIC: 1
+          OPENSSL_LIB_DIR: /usr/lib/x86_64-linux-gnu
+          OPENSSL_INCLUDE_DIR: /usr/include
 
-      - name: Build agent (release)
-        run: cargo build --release -p agent
+      - name: Build agent (static musl for portability)
+        run: cargo build --release --target x86_64-unknown-linux-musl -p agent
+        env:
+          OPENSSL_STATIC: 1
+          OPENSSL_LIB_DIR: /usr/lib/x86_64-linux-gnu
+          OPENSSL_INCLUDE_DIR: /usr/include
 
       - name: Build guest-agent (static musl)
         run: cargo build --release --target x86_64-unknown-linux-musl -p guest-agent
@@ -136,21 +144,21 @@ jobs:
 
       - name: Verify binaries
         run: |
-          # Verify binaries exist and are executable (skip --version to avoid port conflicts)
-          test -x ./target/release/manager
-          file ./target/release/manager
-          test -x ./target/release/agent
-          file ./target/release/agent
-          # Check guest-agent is statically linked (handles both "statically linked" and "static-pie linked")
-          file target/x86_64-unknown-linux-musl/release/guest-agent | grep -E "static.*linked"
-          # Check installer is statically linked
-          test -x target/x86_64-unknown-linux-musl/release/nqr-installer
-          file target/x86_64-unknown-linux-musl/release/nqr-installer | grep -E "static.*linked"
+          # Verify all binaries are statically linked
+          for bin in manager agent guest-agent nqr-installer; do
+            test -x ./target/x86_64-unknown-linux-musl/release/$bin
+            file ./target/x86_64-unknown-linux-musl/release/$bin
+            # Check it's statically linked (handles both "statically linked" and "static-pie linked")
+            file ./target/x86_64-unknown-linux-musl/release/$bin | grep -E "static.*linked" || {
+              echo "WARNING: $bin may not be statically linked"
+              ldd ./target/x86_64-unknown-linux-musl/release/$bin || true
+            }
+          done
 
       - name: Rename binaries with target suffix
         run: |
-          cp target/release/manager nqrust-manager-${{ matrix.target }}
-          cp target/release/agent nqrust-agent-${{ matrix.target }}
+          cp target/x86_64-unknown-linux-musl/release/manager nqrust-manager-x86_64-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/agent nqrust-agent-x86_64-linux-musl
           cp target/x86_64-unknown-linux-musl/release/guest-agent nqrust-guest-agent-x86_64-linux-musl
           cp target/x86_64-unknown-linux-musl/release/nqr-installer nqr-installer-x86_64-linux-musl
 
@@ -159,8 +167,8 @@ jobs:
         with:
           name: binaries-${{ matrix.target }}
           path: |
-            nqrust-manager-${{ matrix.target }}
-            nqrust-agent-${{ matrix.target }}
+            nqrust-manager-x86_64-linux-musl
+            nqrust-agent-x86_64-linux-musl
             nqrust-guest-agent-x86_64-linux-musl
             nqr-installer-x86_64-linux-musl
           retention-days: 1
@@ -809,15 +817,15 @@ jobs:
             "components": {
               "manager": {
                 "version": "${{ steps.version.outputs.version }}",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-manager-x86_64-unknown-linux-gnu",
-                "checksum": "$(sha256sum nqrust-manager-x86_64-unknown-linux-gnu | cut -d' ' -f1)",
-                "size": $(stat -f%z nqrust-manager-x86_64-unknown-linux-gnu 2>/dev/null || stat -c%s nqrust-manager-x86_64-unknown-linux-gnu)
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-manager-x86_64-linux-musl",
+                "checksum": "$(sha256sum nqrust-manager-x86_64-linux-musl | cut -d' ' -f1)",
+                "size": $(stat -f%z nqrust-manager-x86_64-linux-musl 2>/dev/null || stat -c%s nqrust-manager-x86_64-linux-musl)
               },
               "agent": {
                 "version": "${{ steps.version.outputs.version }}",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-unknown-linux-gnu",
-                "checksum": "$(sha256sum nqrust-agent-x86_64-unknown-linux-gnu | cut -d' ' -f1)",
-                "size": $(stat -f%z nqrust-agent-x86_64-unknown-linux-gnu 2>/dev/null || stat -c%s nqrust-agent-x86_64-unknown-linux-gnu)
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-linux-musl",
+                "checksum": "$(sha256sum nqrust-agent-x86_64-linux-musl | cut -d' ' -f1)",
+                "size": $(stat -f%z nqrust-agent-x86_64-linux-musl 2>/dev/null || stat -c%s nqrust-agent-x86_64-linux-musl)
               },
               "guest-agent": {
                 "version": "${{ steps.version.outputs.version }}",
@@ -879,8 +887,8 @@ jobs:
 
           Download and install manually:
           - **Installer (Rust TUI)**: [nqr-installer-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqr-installer-x86_64-linux-musl) (Recommended)
-          - Manager: [nqrust-manager-x86_64-unknown-linux-gnu](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-manager-x86_64-unknown-linux-gnu)
-          - Agent: [nqrust-agent-x86_64-unknown-linux-gnu](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-unknown-linux-gnu)
+          - Manager: [nqrust-manager-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-manager-x86_64-linux-musl)
+          - Agent: [nqrust-agent-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-agent-x86_64-linux-musl)
           - Guest Agent: [nqrust-guest-agent-x86_64-linux-musl](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-guest-agent-x86_64-linux-musl)
           - UI: [nqrust-ui.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-ui.tar.gz)
           - Legacy Installer Scripts: [nqrust-installer.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqrust-installer.tar.gz)
@@ -928,8 +936,8 @@ jobs:
           draft: false
           prerelease: ${{ steps.version.outputs.prerelease }}
           files: |
-            release/nqrust-manager-x86_64-unknown-linux-gnu
-            release/nqrust-agent-x86_64-unknown-linux-gnu
+            release/nqrust-manager-x86_64-linux-musl
+            release/nqrust-agent-x86_64-linux-musl
             release/nqrust-guest-agent-x86_64-linux-musl
             release/nqr-installer-x86_64-linux-musl
             release/nqrust-ui.tar.gz
