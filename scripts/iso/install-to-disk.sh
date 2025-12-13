@@ -459,6 +459,12 @@ RestartSec=5s
 LimitNOFILE=65536
 LimitNPROC=4096
 
+# Environment variables
+Environment=DATABASE_URL=postgres://nqrust:nqrust@localhost/nqrust
+Environment=RUST_LOG=info
+Environment=MANAGER_HOST=0.0.0.0
+Environment=MANAGER_PORT=18080
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -501,9 +507,13 @@ cat > "$TARGET_MOUNT/opt/nqrust-microvm/first-boot.sh" << 'EOF'
 #!/bin/bash
 # First boot configuration for NQRust-MicroVM
 
+echo "Running NQRust first-boot configuration..."
+
 # Setup PostgreSQL database
-sudo -u postgres createuser nqrust 2>/dev/null || true
-sudo -u postgres createdb -O nqrust nqrust 2>/dev/null || true
+echo "Setting up PostgreSQL..."
+sudo -u postgres psql -c "CREATE USER nqrust WITH PASSWORD 'nqrust';" 2>/dev/null || true
+sudo -u postgres psql -c "CREATE DATABASE nqrust OWNER nqrust;" 2>/dev/null || true
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nqrust TO nqrust;" 2>/dev/null || true
 
 # Load KVM module
 modprobe kvm
