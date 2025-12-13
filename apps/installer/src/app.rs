@@ -29,6 +29,41 @@ impl InstallSource {
     }
 }
 
+/// Installation type (only relevant in ISO mode)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InstallType {
+    /// Install to current running system (live environment or regular system)
+    #[default]
+    LiveInstall,
+    /// Full disk installation - wipes target disk, installs OS + NQRust
+    DiskInstall,
+}
+
+impl InstallType {
+    pub const ALL: [InstallType; 2] = [InstallType::LiveInstall, InstallType::DiskInstall];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            InstallType::LiveInstall => "Live Environment Install",
+            InstallType::DiskInstall => "Full Disk Install",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            InstallType::LiveInstall => "Install NQRust into this running system",
+            InstallType::DiskInstall => "Install complete OS + NQRust to a target disk",
+        }
+    }
+
+    pub fn details(&self) -> &'static str {
+        match self {
+            InstallType::LiveInstall => "For testing. Changes are lost on reboot.",
+            InstallType::DiskInstall => "Persistent installation. Survives reboot.",
+        }
+    }
+}
+
 /// Installation mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InstallMode {
@@ -194,14 +229,20 @@ pub enum Screen {
     /// Welcome screen with logo
     #[default]
     Welcome,
-    /// Mode selection
+    /// Install type selection (ISO mode only: Live vs Disk)
+    InstallTypeSelect,
+    /// Disk selection (for disk install)
+    DiskSelect,
+    /// Mode selection (for live install)
     ModeSelect,
     /// Configuration input
     Config,
     /// Pre-flight check results
     Preflight,
-    /// Installation progress
+    /// Installation progress (live install)
     Progress,
+    /// Disk installation progress
+    DiskProgress,
     /// Verification results
     Verify,
     /// Installation complete
@@ -420,6 +461,22 @@ pub struct App {
     pub spinner_frame: usize,
     /// Installation message receiver (from background thread)
     pub install_rx: Option<std::sync::mpsc::Receiver<crate::installer::executor::InstallMessage>>,
+
+    // --- Disk installation fields (ISO mode only) ---
+    /// Selected install type (live vs disk)
+    pub install_type: InstallType,
+    /// Install type selection index
+    pub install_type_selection: usize,
+    /// Available disks for installation
+    pub available_disks: Vec<crate::installer::disk::DiskInfo>,
+    /// Selected disk index
+    pub disk_selection: usize,
+    /// Hostname for disk installation
+    pub disk_hostname: String,
+    /// Root password for disk installation
+    pub disk_root_password: String,
+    /// Confirmation text for disk install
+    pub disk_confirm_text: String,
 }
 
 impl Default for App {
@@ -446,6 +503,14 @@ impl App {
             editing: false,
             spinner_frame: 0,
             install_rx: None,
+            // Disk install fields
+            install_type: InstallType::default(),
+            install_type_selection: 0,
+            available_disks: Vec::new(),
+            disk_selection: 0,
+            disk_hostname: "nqrust-node".to_string(),
+            disk_root_password: "nqrust".to_string(),
+            disk_confirm_text: String::new(),
         }
     }
 
@@ -454,10 +519,32 @@ impl App {
         self
     }
 
-    /// Navigate to next screen
+    /// Check if running in ISO mode (offline bundle)
+    pub fn is_iso_mode(&self) -> bool {
+        self.config.install_source.is_offline()
+    }
+
+    /// Navigate to next screen (handles ISO mode branching)
     pub fn next_screen(&mut self) {
         self.screen = match self.screen {
-            Screen::Welcome => Screen::ModeSelect,
+            Screen::Welcome => {
+                // In ISO mode, show install type selection first
+                if self.is_iso_mode() {
+                    Screen::InstallTypeSelect
+                } else {
+                    Screen::ModeSelect
+                }
+            }
+            Screen::InstallTypeSelect => {
+                // Branch based on install type selection
+                if self.install_type == InstallType::DiskInstall {
+                    Screen::DiskSelect
+                } else {
+                    Screen::ModeSelect
+                }
+            }
+            Screen::DiskSelect => Screen::DiskProgress,
+            Screen::DiskProgress => Screen::Complete,
             Screen::ModeSelect => Screen::Config,
             Screen::Config => Screen::Preflight,
             Screen::Preflight => Screen::Progress,
@@ -472,7 +559,16 @@ impl App {
     pub fn prev_screen(&mut self) {
         self.screen = match self.screen {
             Screen::Welcome => Screen::Welcome,
-            Screen::ModeSelect => Screen::Welcome,
+            Screen::InstallTypeSelect => Screen::Welcome,
+            Screen::DiskSelect => Screen::InstallTypeSelect,
+            Screen::DiskProgress => Screen::DiskSelect,
+            Screen::ModeSelect => {
+                if self.is_iso_mode() {
+                    Screen::InstallTypeSelect
+                } else {
+                    Screen::Welcome
+                }
+            }
             Screen::Config => Screen::ModeSelect,
             Screen::Preflight => Screen::Config,
             Screen::Progress => Screen::Preflight,

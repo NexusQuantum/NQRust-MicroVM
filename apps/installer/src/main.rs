@@ -331,10 +331,13 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
                 // Handle input based on current screen
                 match app.screen {
                     Screen::Welcome => handle_welcome_input(app, key.code),
+                    Screen::InstallTypeSelect => handle_install_type_select_input(app, key.code),
+                    Screen::DiskSelect => handle_disk_select_input(app, key.code),
                     Screen::ModeSelect => handle_mode_select_input(app, key.code),
                     Screen::Config => handle_config_input(app, key.code),
                     Screen::Preflight => handle_preflight_input(app, key.code),
                     Screen::Progress => handle_progress_input(app, key.code),
+                    Screen::DiskProgress => handle_disk_progress_input(app, key.code),
                     Screen::Verify => handle_verify_input(app, key.code),
                     Screen::Complete => handle_complete_input(app, key.code),
                     Screen::Error => handle_error_input(app, key.code),
@@ -396,6 +399,159 @@ fn handle_welcome_input(app: &mut App, key: KeyCode) {
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
+}
+
+fn handle_install_type_select_input(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.install_type_selection > 0 {
+                app.install_type_selection -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.install_type_selection < app::InstallType::ALL.len() - 1 {
+                app.install_type_selection += 1;
+            }
+        }
+        KeyCode::Enter => {
+            app.install_type = app::InstallType::ALL[app.install_type_selection];
+            // If disk install, load available disks
+            if app.install_type == app::InstallType::DiskInstall {
+                if let Ok(disks) = installer::disk::list_disks() {
+                    app.available_disks = disks;
+                }
+            }
+            app.next_screen();
+        }
+        KeyCode::Esc => app.prev_screen(),
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+fn handle_disk_select_input(app: &mut App, key: KeyCode) {
+    if app.editing {
+        // Hostname editing mode
+        match key {
+            KeyCode::Enter => {
+                app.disk_hostname = app.input_buffer.clone();
+                app.editing = false;
+                app.input_buffer.clear();
+            }
+            KeyCode::Esc => {
+                app.editing = false;
+                app.input_buffer.clear();
+            }
+            KeyCode::Backspace => {
+                app.input_buffer.pop();
+            }
+            KeyCode::Char(c) => {
+                app.input_buffer.push(c);
+            }
+            _ => {}
+        }
+    } else {
+        match key {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.disk_selection > 0 {
+                    app.disk_selection -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !app.available_disks.is_empty()
+                    && app.disk_selection < app.available_disks.len() - 1
+                {
+                    app.disk_selection += 1;
+                }
+            }
+            KeyCode::Char('h') => {
+                // Edit hostname
+                app.editing = true;
+                app.input_buffer = app.disk_hostname.clone();
+            }
+            KeyCode::Enter => {
+                if !app.available_disks.is_empty() {
+                    // Start disk installation
+                    start_disk_installation(app);
+                    app.next_screen();
+                }
+            }
+            KeyCode::Esc => app.prev_screen(),
+            KeyCode::Char('q') => app.should_quit = true,
+            _ => {}
+        }
+    }
+}
+
+fn handle_disk_progress_input(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Enter => {
+            // If installation complete, go to complete screen
+            let success_count = app
+                .logs
+                .iter()
+                .filter(|l| l.level == app::LogLevel::Success)
+                .count();
+            if success_count >= 10 {
+                app.next_screen();
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.log_scroll > 0 {
+                app.log_scroll -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.log_scroll < app.logs.len().saturating_sub(1) {
+                app.log_scroll += 1;
+            }
+        }
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Start disk installation in background
+fn start_disk_installation(app: &mut App) {
+    use std::sync::mpsc;
+    use std::thread;
+
+    let (tx, _rx) = mpsc::channel();
+
+    let disk = app.available_disks[app.disk_selection].clone();
+    let hostname = app.disk_hostname.clone();
+    let root_password = app.disk_root_password.clone();
+    let bundle_path = app
+        .config
+        .install_source
+        .bundle_path()
+        .cloned()
+        .unwrap_or_else(|| std::path::PathBuf::from("/opt/nqrust-bundle"));
+
+    thread::spawn(move || {
+        let mut logs = Vec::new();
+        let result = installer::disk::run_disk_install(
+            &disk,
+            &hostname,
+            &root_password,
+            &bundle_path,
+            &mut logs,
+        );
+
+        // Send logs back
+        for log in logs {
+            let _ = tx.send(installer::executor::InstallMessage::Log(log));
+        }
+
+        if let Err(e) = result {
+            let _ = tx.send(installer::executor::InstallMessage::Error(e.to_string()));
+        }
+    });
+
+    // Store receiver - we'll use install_rx for this
+    // Note: For simplicity, we'll convert to the same message type
+    app.logs.clear();
+    app.log_scroll = 0;
 }
 
 fn handle_mode_select_input(app: &mut App, key: KeyCode) {

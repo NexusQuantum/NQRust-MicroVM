@@ -28,10 +28,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     // Render current screen
     match app.screen {
         Screen::Welcome => screens::welcome::render(frame, app, chunks[0]),
+        Screen::InstallTypeSelect => screens::install_type_select::render(frame, app, chunks[0]),
+        Screen::DiskSelect => screens::disk_select::render(frame, app, chunks[0]),
         Screen::ModeSelect => screens::mode_select::render(frame, app, chunks[0]),
         Screen::Config => screens::config::render(frame, app, chunks[0]),
         Screen::Preflight => screens::preflight::render(frame, app, chunks[0]),
         Screen::Progress => screens::progress::render(frame, app, chunks[0]),
+        Screen::DiskProgress => screens::disk_progress::render(frame, app, chunks[0]),
         Screen::Verify => screens::verify::render(frame, app, chunks[0]),
         Screen::Complete => screens::complete::render(frame, app, chunks[0]),
         Screen::Error => screens::error::render(frame, app, chunks[0]),

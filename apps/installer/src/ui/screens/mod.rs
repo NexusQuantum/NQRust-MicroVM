@@ -2,7 +2,10 @@
 
 pub mod complete;
 pub mod config;
+pub mod disk_progress;
+pub mod disk_select;
 pub mod error;
+pub mod install_type_select;
 pub mod mode_select;
 pub mod preflight;
 pub mod progress;
