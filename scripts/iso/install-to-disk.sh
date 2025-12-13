@@ -304,6 +304,22 @@ echo "root:$ROOT_PASSWORD" | chroot "$TARGET_MOUNT" chpasswd
 log_info "Creating nqrust system user..."
 chroot "$TARGET_MOUNT" useradd --system --no-create-home --shell /usr/sbin/nologin nqrust 2>/dev/null || true
 
+# CRITICAL: Ensure systemd is the init system (live ISO uses sysvinit)
+log_info "Configuring systemd as init system..."
+# Remove sysvinit if present and ensure systemd-sysv is installed
+if chroot "$TARGET_MOUNT" dpkg -l | grep -q "sysvinit-core"; then
+    log_info "Removing sysvinit, installing systemd..."
+    chroot "$TARGET_MOUNT" apt-get remove --purge -y sysvinit-core 2>/dev/null || true
+fi
+# Ensure systemd-sysv is installed (makes systemd PID 1)
+chroot "$TARGET_MOUNT" apt-get install -y --no-install-recommends systemd-sysv 2>/dev/null || {
+    log_warn "Could not install systemd-sysv via apt, trying alternative..."
+    # If apt doesn't work (no network), try to fix manually
+    # Remove sysvinit from being the default
+    rm -f "$TARGET_MOUNT/sbin/init"
+    ln -sf /lib/systemd/systemd "$TARGET_MOUNT/sbin/init"
+}
+
 # Enable systemd services (target system uses systemd, not sysvinit)
 log_info "Enabling services..."
 chroot "$TARGET_MOUNT" systemctl enable ssh 2>/dev/null || true
