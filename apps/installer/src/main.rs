@@ -14,7 +14,10 @@ use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
@@ -293,9 +296,17 @@ fn run_tui(config: InstallConfig) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        Clear(ClearType::All),
+        EnableMouseCapture
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    // Clear the terminal to prevent overlapping
+    terminal.clear()?;
 
     // Create app state
     let mut app = App::new().with_config(config);
@@ -559,7 +570,10 @@ fn start_disk_installation(app: &mut App) {
     use std::sync::mpsc;
     use std::thread;
 
-    let (tx, _rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel();
+
+    // Store the receiver so the main loop can receive messages
+    app.install_rx = Some(rx);
 
     let disk = app.available_disks[app.disk_selection].clone();
     let hostname = app.disk_hostname.clone();
@@ -571,7 +585,23 @@ fn start_disk_installation(app: &mut App) {
         .cloned()
         .unwrap_or_else(|| std::path::PathBuf::from("/opt/nqrust-bundle"));
 
+    // Clone tx for initial messages
+    let tx_clone = tx.clone();
+
+    // Send initial log immediately
+    let _ = tx_clone.send(installer::executor::InstallMessage::Log(
+        app::LogEntry::info(format!(
+            "Starting installation to {}...",
+            disk.path.display()
+        )),
+    ));
+
     thread::spawn(move || {
+        // Send progress updates at key steps
+        let _ = tx.send(installer::executor::InstallMessage::Log(
+            app::LogEntry::info("Preparing disk installation..."),
+        ));
+
         let mut logs = Vec::new();
         let result = installer::disk::run_disk_install(
             &disk,
@@ -581,7 +611,7 @@ fn start_disk_installation(app: &mut App) {
             &mut logs,
         );
 
-        // Send logs back
+        // Send logs back to the TUI
         for log in logs {
             let _ = tx.send(installer::executor::InstallMessage::Log(log));
         }
@@ -591,8 +621,7 @@ fn start_disk_installation(app: &mut App) {
         }
     });
 
-    // Store receiver - we'll use install_rx for this
-    // Note: For simplicity, we'll convert to the same message type
+    // Clear logs for fresh start (initial messages will come via channel)
     app.logs.clear();
     app.log_scroll = 0;
 }
@@ -882,9 +911,17 @@ fn run_disk_install_tui_proper(
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        Clear(ClearType::All),
+        EnableMouseCapture
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    // Clear the terminal to prevent overlapping
+    terminal.clear()?;
 
     // Create app state for disk install
     let mut app = App::new().with_config(config);
