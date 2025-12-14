@@ -233,6 +233,8 @@ pub enum Screen {
     InstallTypeSelect,
     /// Disk selection (for disk install)
     DiskSelect,
+    /// Disk configuration (for disk install)
+    DiskConfig,
     /// Mode selection (for live install)
     ModeSelect,
     /// Configuration input
@@ -477,6 +479,8 @@ pub struct App {
     pub disk_root_password: String,
     /// Confirmation text for disk install
     pub disk_confirm_text: String,
+    /// Config field index for disk config screen
+    pub disk_config_field: usize,
 }
 
 impl Default for App {
@@ -511,6 +515,7 @@ impl App {
             disk_hostname: "nqrust-node".to_string(),
             disk_root_password: "nqrust".to_string(),
             disk_confirm_text: String::new(),
+            disk_config_field: 0,
         }
     }
 
@@ -543,7 +548,8 @@ impl App {
                     Screen::ModeSelect
                 }
             }
-            Screen::DiskSelect => Screen::DiskProgress,
+            Screen::DiskSelect => Screen::DiskConfig,
+            Screen::DiskConfig => Screen::DiskProgress,
             Screen::DiskProgress => Screen::Complete,
             Screen::ModeSelect => Screen::Config,
             Screen::Config => Screen::Preflight,
@@ -561,7 +567,8 @@ impl App {
             Screen::Welcome => Screen::Welcome,
             Screen::InstallTypeSelect => Screen::Welcome,
             Screen::DiskSelect => Screen::InstallTypeSelect,
-            Screen::DiskProgress => Screen::DiskSelect,
+            Screen::DiskConfig => Screen::DiskSelect,
+            Screen::DiskProgress => Screen::DiskConfig,
             Screen::ModeSelect => {
                 if self.is_iso_mode() {
                     Screen::InstallTypeSelect

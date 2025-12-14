@@ -33,8 +33,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(3), // Header/warning
             Constraint::Length(1), // Spacing
             Constraint::Min(8),    // Disk list
-            Constraint::Length(5), // Details box
-            Constraint::Length(4), // Hostname input
+            Constraint::Length(6), // Details box
             Constraint::Length(3), // Key hints
         ])
         .split(inner);
@@ -144,47 +143,28 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(" | Model: ", styles::muted()),
                 Span::styled(&disk.model, styles::text()),
             ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press Enter to configure installation options",
+                styles::muted(),
+            )),
         ]);
 
         let details = Paragraph::new(details_text).block(details_block);
         frame.render_widget(details, chunks[3]);
     }
 
-    // Hostname input
-    let hostname_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if app.editing {
-            styles::primary()
-        } else {
-            styles::border()
-        })
-        .title(" Hostname ")
-        .title_style(styles::secondary());
-
-    let hostname_text = if app.editing {
-        Text::from(Line::from(vec![
-            Span::styled(&app.input_buffer, styles::highlight()),
-            Span::styled("▌", styles::primary()),
-        ]))
-    } else {
-        Text::from(Line::from(Span::styled(&app.disk_hostname, styles::text())))
-    };
-
-    let hostname = Paragraph::new(hostname_text).block(hostname_block);
-    frame.render_widget(hostname, chunks[4]);
-
     // Key hints
     let hints = Text::from(vec![Line::from(vec![
         Span::styled("↑/↓", styles::key_hint()),
         Span::styled(" Navigate  ", styles::muted()),
-        Span::styled("h", styles::key_hint()),
-        Span::styled(" Edit hostname  ", styles::muted()),
         Span::styled("Enter", styles::key_hint()),
-        Span::styled(" Confirm  ", styles::muted()),
+        Span::styled(" Continue  ", styles::muted()),
         Span::styled("Esc", styles::key_hint()),
-        Span::styled(" Back", styles::muted()),
+        Span::styled(" Back  ", styles::muted()),
+        Span::styled("q", styles::key_hint()),
+        Span::styled(" Quit", styles::muted()),
     ])]);
     let hints_para = Paragraph::new(hints).alignment(Alignment::Center);
-    frame.render_widget(hints_para, chunks[5]);
+    frame.render_widget(hints_para, chunks[4]);
 }

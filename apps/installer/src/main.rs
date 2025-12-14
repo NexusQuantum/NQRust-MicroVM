@@ -277,7 +277,8 @@ fn main() -> Result<()> {
                     bundle_path,
                 )
             } else {
-                run_disk_install_tui(target_disk, hostname, root_password, bundle_path)
+                // Use the proper TUI for disk install
+                run_disk_install_tui_proper(target_disk, hostname, root_password, bundle_path)
             }
         }
         None => {
@@ -333,6 +334,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
                     Screen::Welcome => handle_welcome_input(app, key.code),
                     Screen::InstallTypeSelect => handle_install_type_select_input(app, key.code),
                     Screen::DiskSelect => handle_disk_select_input(app, key.code),
+                    Screen::DiskConfig => handle_disk_config_input(app, key.code),
                     Screen::ModeSelect => handle_mode_select_input(app, key.code),
                     Screen::Config => handle_config_input(app, key.code),
                     Screen::Preflight => handle_preflight_input(app, key.code),
@@ -430,11 +432,38 @@ fn handle_install_type_select_input(app: &mut App, key: KeyCode) {
 }
 
 fn handle_disk_select_input(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.disk_selection > 0 {
+                app.disk_selection -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if !app.available_disks.is_empty() && app.disk_selection < app.available_disks.len() - 1
+            {
+                app.disk_selection += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if !app.available_disks.is_empty() {
+                // Go to disk config screen (installation starts from there)
+                app.next_screen();
+            }
+        }
+        KeyCode::Esc => app.prev_screen(),
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Handle disk config screen input
+fn handle_disk_config_input(app: &mut App, key: KeyCode) {
+    const DISK_CONFIG_FIELD_COUNT: usize = 6;
+
     if app.editing {
-        // Hostname editing mode
         match key {
             KeyCode::Enter => {
-                app.disk_hostname = app.input_buffer.clone();
+                ui::screens::disk_config::apply_disk_config_field(app);
                 app.editing = false;
                 app.input_buffer.clear();
             }
@@ -453,33 +482,47 @@ fn handle_disk_select_input(app: &mut App, key: KeyCode) {
     } else {
         match key {
             KeyCode::Up | KeyCode::Char('k') => {
-                if app.disk_selection > 0 {
-                    app.disk_selection -= 1;
+                if app.disk_config_field > 0 {
+                    app.disk_config_field -= 1;
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !app.available_disks.is_empty()
-                    && app.disk_selection < app.available_disks.len() - 1
-                {
-                    app.disk_selection += 1;
+                if app.disk_config_field < DISK_CONFIG_FIELD_COUNT - 1 {
+                    app.disk_config_field += 1;
                 }
-            }
-            KeyCode::Char('h') => {
-                // Edit hostname
-                app.editing = true;
-                app.input_buffer = app.disk_hostname.clone();
             }
             KeyCode::Enter => {
-                if !app.available_disks.is_empty() {
-                    // Start disk installation
-                    start_disk_installation(app);
-                    app.next_screen();
-                }
+                // Start editing the current field
+                app.editing = true;
+                app.input_buffer = get_disk_config_field_value(app);
+            }
+            KeyCode::Tab => {
+                // Continue to disk progress and start installation
+                start_disk_installation(app);
+                app.next_screen();
             }
             KeyCode::Esc => app.prev_screen(),
             KeyCode::Char('q') => app.should_quit = true,
             _ => {}
         }
+    }
+}
+
+/// Get current disk config field value for editing
+fn get_disk_config_field_value(app: &App) -> String {
+    match app.disk_config_field {
+        0 => app.disk_hostname.clone(),
+        1 => app.disk_root_password.clone(),
+        2 => app.config.network_mode.name().to_string(),
+        3 => app.config.bridge_name.clone(),
+        4 => if app.config.with_docker { "Yes" } else { "No" }.to_string(),
+        5 => if app.config.with_container_runtime {
+            "Yes"
+        } else {
+            "No"
+        }
+        .to_string(),
+        _ => String::new(),
     }
 }
 
@@ -821,14 +864,20 @@ fn run_uninstall_non_interactive(
     Ok(())
 }
 
-/// Run the disk install TUI
-fn run_disk_install_tui(
+/// Run the disk install with proper TUI (for disk-install command)
+fn run_disk_install_tui_proper(
     target_disk: Option<String>,
     hostname: String,
     root_password: String,
     bundle_path: PathBuf,
 ) -> Result<()> {
     use crate::installer::disk;
+
+    // Create config for disk install (treated as ISO mode for air-gapped install)
+    let config = InstallConfig {
+        install_source: InstallSource::LocalBundle(bundle_path),
+        ..InstallConfig::default()
+    };
 
     // Setup terminal
     enable_raw_mode()?;
@@ -837,109 +886,48 @@ fn run_disk_install_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Clear screen and show header
-    terminal.clear()?;
+    // Create app state for disk install
+    let mut app = App::new().with_config(config);
+    app.disk_hostname = hostname;
+    app.disk_root_password = root_password;
+    app.install_type = app::InstallType::DiskInstall;
 
-    // Restore terminal for disk selection (we need user input)
+    // Load available disks
+    if let Ok(disks) = disk::list_disks() {
+        app.available_disks = disks;
+    }
+
+    // If target disk is specified, pre-select it and go directly to config
+    if let Some(target) = target_disk {
+        if let Some(idx) = app
+            .available_disks
+            .iter()
+            .position(|d| d.path.to_string_lossy() == target || d.name == target)
+        {
+            app.disk_selection = idx;
+            app.screen = Screen::DiskConfig; // Skip disk select, go to config
+        } else {
+            // Disk not found, start from disk select
+            app.screen = Screen::DiskSelect;
+        }
+    } else {
+        // Start from disk select screen
+        app.screen = Screen::DiskSelect;
+    }
+
+    // Main loop
+    let result = run_app(&mut terminal, &mut app);
+
+    // Restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
+    terminal.show_cursor()?;
 
-    println!("\n{}", "=".repeat(60));
-    println!("  NQRust-MicroVM Full Disk Installation");
-    println!("{}\n", "=".repeat(60));
-
-    // Get list of available disks
-    let disks = disk::list_disks()?;
-    if disks.is_empty() {
-        println!("No suitable disks found for installation.");
-        println!("Disks must be at least 8GB.");
-        return Ok(());
-    }
-
-    // Show disk selection or use provided disk
-    let selected_disk = if let Some(disk) = target_disk {
-        // Validate provided disk
-        disks
-            .iter()
-            .find(|d| d.path.to_string_lossy() == disk || d.name == disk)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Disk {} not found", disk))?
-    } else {
-        // Interactive disk selection
-        println!("Available disks:\n");
-        for (i, disk) in disks.iter().enumerate() {
-            let removable = if disk.is_removable {
-                " [REMOVABLE]"
-            } else {
-                ""
-            };
-            println!(
-                "  [{}] {} - {} {} {}",
-                i + 1,
-                disk.path.display(),
-                disk.size_human,
-                disk.model,
-                removable
-            );
-        }
-        println!();
-        print!("Select disk (1-{}): ", disks.len());
-        io::Write::flush(&mut io::stdout())?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let selection: usize = input.trim().parse().unwrap_or(0);
-        if selection == 0 || selection > disks.len() {
-            println!("Invalid selection");
-            return Ok(());
-        }
-        disks[selection - 1].clone()
-    };
-
-    println!(
-        "\nSelected disk: {} ({})",
-        selected_disk.path.display(),
-        selected_disk.size_human
-    );
-    println!("Hostname: {}", hostname);
-    println!("Bundle path: {}\n", bundle_path.display());
-
-    println!(
-        "WARNING: ALL DATA ON {} WILL BE DESTROYED!",
-        selected_disk.path.display()
-    );
-    print!("Type 'yes' to continue: ");
-    io::Write::flush(&mut io::stdout())?;
-
-    let mut confirm = String::new();
-    io::stdin().read_line(&mut confirm)?;
-    if confirm.trim() != "yes" {
-        println!("Installation cancelled.");
-        return Ok(());
-    }
-
-    // Run disk installation
-    println!("\nStarting installation...\n");
-    let mut logs = Vec::new();
-
-    disk::run_disk_install(
-        &selected_disk,
-        &hostname,
-        &root_password,
-        &bundle_path,
-        &mut logs,
-    )?;
-
-    // Print logs
-    for log in &logs {
-        println!("{}", log);
-    }
-
-    Ok(())
+    result
 }
 
 /// Run disk install in non-interactive mode

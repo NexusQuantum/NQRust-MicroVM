@@ -30,6 +30,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Welcome => screens::welcome::render(frame, app, chunks[0]),
         Screen::InstallTypeSelect => screens::install_type_select::render(frame, app, chunks[0]),
         Screen::DiskSelect => screens::disk_select::render(frame, app, chunks[0]),
+        Screen::DiskConfig => screens::disk_config::render(frame, app, chunks[0]),
         Screen::ModeSelect => screens::mode_select::render(frame, app, chunks[0]),
         Screen::Config => screens::config::render(frame, app, chunks[0]),
         Screen::Preflight => screens::preflight::render(frame, app, chunks[0]),
