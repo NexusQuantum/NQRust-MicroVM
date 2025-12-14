@@ -392,6 +392,22 @@ bundle_binaries() {
         cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-manager" "${bin_dir}/" 2>/dev/null || true
     fi
     
+    # Find and download agent binary (host agent)
+    local agent_asset
+    agent_asset=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E '^nqrust-agent' | head -n1)
+    if [[ -n "${agent_asset}" ]]; then
+        log_info "Downloading agent: ${agent_asset}"
+        curl -fsSL "${download_url}/${agent_asset}" -o "${bin_dir}/nqr-agent" || {
+            log_warn "Failed to download agent, trying local build..."
+            cp "${PROJECT_ROOT}/target/release/nqr-agent" "${bin_dir}/" 2>/dev/null || \
+            cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-agent" "${bin_dir}/" 2>/dev/null || true
+        }
+    else
+        log_warn "No agent binary found in release, trying local build..."
+        cp "${PROJECT_ROOT}/target/release/nqr-agent" "${bin_dir}/" 2>/dev/null || \
+        cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-agent" "${bin_dir}/" 2>/dev/null || true
+    fi
+    
     # Find and download installer binary (exclude .tar.gz archives)
     local installer_asset
     installer_asset=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E '^(nqr-installer|nqrust-installer)' | grep -v '\.tar\.gz$' | head -n1)
@@ -409,11 +425,11 @@ bundle_binaries() {
     fi
     
     # Find and download guest-agent binary
-    local agent_asset
-    agent_asset=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E '^(nqrust-guest-agent|nqr-guest-agent)' | head -n1)
-    if [[ -n "${agent_asset}" ]]; then
-        log_info "Downloading guest-agent: ${agent_asset}"
-        curl -fsSL "${download_url}/${agent_asset}" -o "${bin_dir}/nqr-guest-agent" || {
+    local guest_agent_asset
+    guest_agent_asset=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E '^(nqrust-guest-agent|nqr-guest-agent)' | head -n1)
+    if [[ -n "${guest_agent_asset}" ]]; then
+        log_info "Downloading guest-agent: ${guest_agent_asset}"
+        curl -fsSL "${download_url}/${guest_agent_asset}" -o "${bin_dir}/nqr-guest-agent" || {
             log_warn "Failed to download guest-agent, trying local build..."
             cp "${PROJECT_ROOT}/target/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || \
             cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || true
@@ -422,6 +438,26 @@ bundle_binaries() {
         log_warn "No guest-agent binary found in release, trying local build..."
         cp "${PROJECT_ROOT}/target/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || \
         cp "${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/nqr-guest-agent" "${bin_dir}/" 2>/dev/null || true
+    fi
+    
+    # Download and extract UI from nqrust-installer.tar.gz
+    local ui_tarball
+    ui_tarball=$(echo "${assets_json}" | jq -r '.assets[].name' | grep -E 'nqrust-installer\.tar\.gz$' | head -n1)
+    if [[ -n "${ui_tarball}" ]]; then
+        log_info "Downloading UI bundle: ${ui_tarball}"
+        mkdir -p "${bundle_dir}/ui"
+        curl -fsSL "${download_url}/${ui_tarball}" -o "/tmp/${ui_tarball}" && {
+            log_info "Extracting UI bundle..."
+            tar -xzf "/tmp/${ui_tarball}" -C "${bundle_dir}/ui" --strip-components=1 2>/dev/null || \
+            tar -xzf "/tmp/${ui_tarball}" -C "${bundle_dir}/ui" 2>/dev/null || {
+                log_warn "Failed to extract UI bundle"
+            }
+            rm -f "/tmp/${ui_tarball}"
+        } || {
+            log_warn "Failed to download UI bundle - UI will not be available"
+        }
+    else
+        log_warn "No UI bundle found in release - UI will not be available"
     fi
 
     chmod +x "${bin_dir}"/* 2>/dev/null || true

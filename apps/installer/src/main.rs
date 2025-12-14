@@ -585,43 +585,36 @@ fn start_disk_installation(app: &mut App) {
         .cloned()
         .unwrap_or_else(|| std::path::PathBuf::from("/opt/nqrust-bundle"));
 
-    // Clone tx for initial messages
-    let tx_clone = tx.clone();
-
-    // Send initial log immediately
-    let _ = tx_clone.send(installer::executor::InstallMessage::Log(
-        app::LogEntry::info(format!(
-            "Starting installation to {}...",
-            disk.path.display()
-        )),
-    ));
+    // Create a sender that wraps LogEntry into InstallMessage::Log
+    let log_tx = tx.clone();
 
     thread::spawn(move || {
-        // Send progress updates at key steps
-        let _ = tx.send(installer::executor::InstallMessage::Log(
-            app::LogEntry::info("Preparing disk installation..."),
-        ));
+        // Create a channel for LogEntry that converts to InstallMessage
+        let (log_sender, log_receiver) = mpsc::channel::<app::LogEntry>();
 
-        let mut logs = Vec::new();
-        let result = installer::disk::run_disk_install(
+        // Spawn a thread to forward LogEntry to InstallMessage
+        let forward_tx = log_tx.clone();
+        thread::spawn(move || {
+            while let Ok(log) = log_receiver.recv() {
+                let _ = forward_tx.send(installer::executor::InstallMessage::Log(log));
+            }
+        });
+
+        // Run disk install with real-time logging
+        let result = installer::disk::run_disk_install_with_sender(
             &disk,
             &hostname,
             &root_password,
             &bundle_path,
-            &mut logs,
+            log_sender,
         );
 
-        // Send logs back to the TUI
-        for log in logs {
-            let _ = tx.send(installer::executor::InstallMessage::Log(log));
-        }
-
         if let Err(e) = result {
-            let _ = tx.send(installer::executor::InstallMessage::Error(e.to_string()));
+            let _ = log_tx.send(installer::executor::InstallMessage::Error(e.to_string()));
         }
     });
 
-    // Clear logs for fresh start (initial messages will come via channel)
+    // Clear logs for fresh start
     app.logs.clear();
     app.log_scroll = 0;
 }
