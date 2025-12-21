@@ -38,14 +38,9 @@ pub async fn create_container(
 
     // Check port availability BEFORE creating the container
     if !req.port_mappings.is_empty() {
-        let host_ports: Vec<u16> = req
-            .port_mappings
-            .iter()
-            .map(|p| p.host as u16)
-            .collect();
+        let host_ports: Vec<u16> = req.port_mappings.iter().map(|p| p.host as u16).collect();
 
-        let unavailable =
-            super::port_forward::check_ports_available(&host_ports).await?;
+        let unavailable = super::port_forward::check_ports_available(&host_ports).await?;
 
         if !unavailable.is_empty() {
             let port_list = unavailable
@@ -703,7 +698,7 @@ async fn register_container_volumes(
                 path = %volume_mount.host,
                 "Volume already registered, skipping creation"
             );
-            
+
             // Find and attach the existing volume
             if let Some(existing_vol) = existing.iter().find(|v| v.path == volume_mount.host) {
                 let drive_id = format!("container-vol-{}", idx);

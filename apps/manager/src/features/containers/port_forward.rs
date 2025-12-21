@@ -11,8 +11,7 @@ use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 
 /// Global set to track used ports (in-memory, cleared on restart)
-static USED_PORTS: LazyLock<Mutex<HashSet<u16>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+static USED_PORTS: LazyLock<Mutex<HashSet<u16>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Check if a host port is available
 pub async fn check_port_available(port: u16) -> Result<bool> {
@@ -96,7 +95,10 @@ pub async fn setup_port_forward(
 ) -> Result<()> {
     let protocol = protocol.to_lowercase();
     if protocol != "tcp" && protocol != "udp" {
-        return Err(anyhow!("Invalid protocol: {}. Must be tcp or udp", protocol));
+        return Err(anyhow!(
+            "Invalid protocol: {}. Must be tcp or udp",
+            protocol
+        ));
     }
 
     info!(
