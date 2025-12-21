@@ -189,14 +189,14 @@ main();
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      for (const line of chunk.split(/\\r?\\n/)) {
+      for (const line of chunk.split(/\r?\n/)) {
         if (line === "___RESULT_START___") {
           inResult = true;
           capturedJson = "";
         } else if (line === "___RESULT_END___") {
           inResult = false;
         } else if (inResult) {
-          capturedJson += line + "\\n";
+          capturedJson += line + "\n";
         } else if (line.trim()) {
           logs.push(line.trim());
         }
@@ -205,7 +205,7 @@ main();
 
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      for (const line of String(chunk).split(/\\r?\\n/)) {
+      for (const line of String(chunk).split(/\r?\n/)) {
         if (line.trim()) logs.push(line.trim());
       }
     });
@@ -225,12 +225,16 @@ main();
 
     let response: LambdaResponse;
     try {
-      response = JSON.parse(capturedJson || "{}");
-    } catch {
+      const trimmed = capturedJson.trim();
+      if (!trimmed) {
+        throw new Error("Empty response from runner");
+      }
+      response = JSON.parse(trimmed);
+    } catch (err: any) {
       response = {
         statusCode: 500,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "Invalid JSON from runner" }),
+        body: JSON.stringify({ error: `Invalid JSON from runner: ${err?.message || String(err)}` }),
       };
     }
 
@@ -354,12 +358,16 @@ if __name__ == "__main__":
 
     let response: LambdaResponse;
     try {
-      response = JSON.parse(capturedJson || "{}");
-    } catch {
+      const trimmed = capturedJson.trim();
+      if (!trimmed) {
+        throw new Error("Empty response from python runner");
+      }
+      response = JSON.parse(trimmed);
+    } catch (err: any) {
       response = {
         statusCode: 500,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "Invalid JSON from python runner" }),
+        body: JSON.stringify({ error: `Invalid JSON from python runner: ${err?.message || String(err)}` }),
       };
     }
 
@@ -374,9 +382,20 @@ function normalizeResponse(resp: any): LambdaResponse {
   const statusCode = Number(resp?.statusCode ?? 200);
   const headers = isPlainObject(resp?.headers) ? resp.headers : {};
   let body = resp?.body;
-  if (typeof body !== "string") {
-    try { body = JSON.stringify(body ?? null); } catch { body = String(body); }
+
+  // If body is explicitly provided (even if empty string), keep it as-is if it's a string
+  if (typeof body === "string") {
+    return { statusCode, headers, body };
   }
+
+  // If body is null or undefined, convert to "null" string
+  // If body is an object/array, stringify it
+  try {
+    body = JSON.stringify(body ?? null);
+  } catch {
+    body = String(body);
+  }
+
   return { statusCode, headers, body };
 }
 

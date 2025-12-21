@@ -29,12 +29,21 @@ use tokio::time::{interval, Duration};
 pub async fn create(
     Extension(st): Extension<AppState>,
     Json(req): Json<CreateContainerReq>,
-) -> Result<Json<CreateContainerResp>, StatusCode> {
+) -> Result<Json<CreateContainerResp>, (StatusCode, String)> {
     let resp = super::service::create_container(&st, req)
         .await
         .map_err(|e| {
-            eprintln!("Failed to create container: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
+            let error_msg = e.to_string();
+            eprintln!("Failed to create container: {}", error_msg);
+            // Return 400 for validation errors (port conflicts, empty name, etc.)
+            if error_msg.contains("already in use")
+                || error_msg.contains("cannot be empty")
+                || error_msg.contains("Port mapping failed")
+            {
+                (StatusCode::BAD_REQUEST, error_msg)
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, error_msg)
+            }
         })?;
     Ok(Json(resp))
 }

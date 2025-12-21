@@ -31,6 +31,10 @@ export default function CreateVMPage() {
   const [vmName, setVmName] = useState("")
 
   const handleComplete = () => {
+    // Show success toast
+    toast.success("VM Created Successfully", {
+      description: "Your virtual machine has been created and is ready to use"
+    })
     // Navigate back to VMs page after successful creation
     router.push("/vms")
   }
@@ -85,6 +89,10 @@ export default function CreateVMPage() {
       { id: selectedTemplate.id, name: vmName },
       {
         onSuccess: () => {
+          // Show success toast
+          toast.success("VM Created Successfully", {
+            description: `VM "${vmName}" has been created from template "${selectedTemplate.name}"`
+          })
           setQuickCreateOpen(false)
           setSelectedTemplate(null)
           setVmName("")

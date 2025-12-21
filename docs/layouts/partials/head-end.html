@@ -1,0 +1,10 @@
+<!-- Custom TOC Collapse functionality -->
+{{ $tocCollapseJS := resources.Get "js/toc-collapse.js" }}
+{{ with $tocCollapseJS }}
+  <script src="{{ .RelPermalink }}" defer></script>
+{{ end }}
+
+{{ $tocCollapseCSS := resources.Get "css/toc-collapse.css" }}
+{{ with $tocCollapseCSS }}
+  <link rel="stylesheet" href="{{ .RelPermalink }}">
+{{ end }}

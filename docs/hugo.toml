@@ -16,7 +16,7 @@ enableGitInfo = false
     path = "github.com/gohugoio/hugo-mod-bootstrap-scss/v5"
     disable = false
 
-# Site Description
+# Site Description and Configuration
 [params]
   description = "Modern Firecracker microVM orchestration platform"
 
@@ -30,11 +30,15 @@ enableGitInfo = false
   secondary_font = "Inter"
   mono_font = "Fira Code"
 
+  # Custom Assets
+  custom_css = ["css/toc-collapse.css", "css/nqr-orange-theme.css"]
+  custom_js = ["js/toc-collapse.js"]
+
 # Lotus Docs Settings
 [params.docs]
   title = "NQRust-MicroVM Docs"
   pathName = "docs"
-  themeColor = "cyan"
+  themeColor = "orange"
   darkMode = true
   prism = true
   prismTheme = "lotusdocs"
@@ -45,9 +49,9 @@ enableGitInfo = false
 [params.plausible]
   enable = false
 
-# Social Links
+# Social Links (removed GitHub)
 [params.social]
-  github = "yourusername/nqrust-microvm"
+  # github = "yourusername/nqrust-microvm"
 
 # Main Menu
 [menu]
@@ -77,6 +81,96 @@ enableGitInfo = false
   parent = "getting-started"
   url = "/docs/getting-started/quick-start/"
   weight = 12
+
+# Virtual Machines Section
+[[menu.sidebar]]
+  name = "Virtual Machines"
+  weight = 30
+  identifier = "vm"
+
+[[menu.sidebar]]
+  name = "Overview"
+  parent = "vm"
+  url = "/docs/vm/"
+  weight = 31
+
+[[menu.sidebar]]
+  name = "Create a VM"
+  parent = "vm"
+  url = "/docs/vm/create-vm/"
+  weight = 32
+
+[[menu.sidebar]]
+  name = "Access to the VM"
+  parent = "vm"
+  url = "/docs/vm/access-vm/"
+  weight = 33
+
+[[menu.sidebar]]
+  name = "Manage VMs"
+  parent = "vm"
+  url = "/docs/vm/manage-vm/"
+  weight = 34
+
+[[menu.sidebar]]
+  name = "Backup & Snapshot"
+  parent = "vm"
+  url = "/docs/vm/backup-snapshot/"
+  weight = 35
+
+[[menu.sidebar]]
+  name = "Monitoring"
+  parent = "vm"
+  url = "/docs/vm/monitoring/"
+  weight = 36
+
+# Sidebar Menu (User Guide)
+[[menu.sidebar]]
+  name = "User Guide"
+  weight = 20
+  identifier = "user-guide"
+
+[[menu.sidebar]]
+  name = "Virtual Machines (Old)"
+  parent = "user-guide"
+  url = "/docs/user-guide/virtual-machines/"
+  weight = 21
+
+[[menu.sidebar]]
+  name = "Containers"
+  parent = "user-guide"
+  url = "/docs/user-guide/containers/"
+  weight = 22
+
+[[menu.sidebar]]
+  name = "Functions"
+  parent = "user-guide"
+  url = "/docs/user-guide/functions/"
+  weight = 23
+
+[[menu.sidebar]]
+  name = "Templates"
+  parent = "user-guide"
+  url = "/docs/user-guide/templates/"
+  weight = 24
+
+[[menu.sidebar]]
+  name = "Image Registry"
+  parent = "user-guide"
+  url = "/docs/user-guide/registry/"
+  weight = 25
+
+[[menu.sidebar]]
+  name = "Networking"
+  parent = "user-guide"
+  url = "/docs/user-guide/networking/"
+  weight = 26
+
+[[menu.sidebar]]
+  name = "Storage"
+  parent = "user-guide"
+  url = "/docs/user-guide/storage/"
+  weight = 27
 
 # Markup Configuration
 [markup]

@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { StatusBadge } from "@/components/shared/status-badge"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Play, Square, RotateCw, FileText, Terminal, Trash2, Search } from "lucide-react"
 import { formatDuration } from "@/lib/utils/format"
 import type { Container } from "@/lib/types"
 import { useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer } from "@/lib/queries"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
+import { toast } from "sonner"
 
 interface ContainerTableProps {
   containers: Container[]
@@ -20,12 +22,35 @@ interface ContainerTableProps {
 export function ContainerTable({ containers }: ContainerTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; containerId: string; containerName: string }>({
+    open: false,
+    containerId: "",
+    containerName: "",
+  })
   const { user } = useAuthStore()
 
   const startContainer = useStartContainer()
   const stopContainer = useStopContainer()
   const restartContainer = useRestartContainer()
   const deleteContainer = useDeleteContainer()
+
+  const handleDelete = () => {
+    if (deleteDialog.containerId && deleteDialog.containerName) {
+      deleteContainer.mutate(deleteDialog.containerId, {
+        onSuccess: () => {
+          toast.success("Container Deleted", {
+            description: `${deleteDialog.containerName} has been deleted successfully`,
+          })
+          setDeleteDialog({ open: false, containerId: "", containerName: "" })
+        },
+        onError: (error) => {
+          toast.error("Delete Failed", {
+            description: `Failed to delete ${deleteDialog.containerName}: ${error.message}`,
+          })
+        }
+      })
+    }
+  }
 
   const filteredContainers = containers.filter((container) => {
     const matchesSearch =
@@ -195,12 +220,7 @@ export function ContainerTable({ containers }: ContainerTableProps) {
                             variant="ghost"
                             size="icon"
                             title="Delete"
-                            onClick={() => {
-                              if (confirm(`Are you sure you want to delete container "${container.name}"?`)) {
-                                deleteContainer.mutate(container.id)
-                              }
-                            }}
-                            disabled={deleteContainer.isPending}
+                            onClick={() => setDeleteDialog({ open: true, containerId: container.id, containerName: container.name })}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -214,6 +234,16 @@ export function ContainerTable({ containers }: ContainerTableProps) {
           </TableBody>
         </Table>
       </div>
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        title="Delete Container"
+        description={`Are you sure you want to delete "${deleteDialog.containerName}"? This action cannot be undone and will permanently remove the container and its data.`}
+        confirmText="Delete"
+        onConfirm={() => handleDelete()}
+        variant="destructive"
+      />
     </div>
   )
 }

@@ -1,0 +1,94 @@
+# Note: Template blocks require a 'weight' parameter so they're correctly ordered on the landing page
+
+# Hero
+hero:
+  enable: true
+  weight: 10
+  template: hero
+
+  # backgroundImage:
+  #   path: "images/templates/hero"
+  #   filename:
+  #     desktop: "gradient-desktop.webp"
+  #     mobile: "gradient-mobile.webp"
+
+  badge:
+    text: v0.1.0
+    color: warning # orange-like color
+    pill: false
+    soft: true
+
+  # Logo displayed next to title (small)
+  # titleLogo:
+  #   path: "images/logos"
+  #   filename: "logo.png"
+  #   alt: "NQRust-MicroVM Logo"
+  #   height: 80px
+
+  title: "NQRust-MicroVM"
+  subtitle: Modern **Firecracker microVM orchestration** platform. Deploy secure, isolated workloads with **container-like simplicity** and **<125ms boot time**.
+
+  # Large logo/image displayed on the RIGHT side of hero
+  image:
+    path: "images/logos"
+    filename: "hero-logo.png"
+    alt: "NQRust-MicroVM Logo"
+    boxShadow: false
+    rounded: false
+
+  ctaButton:
+    icon: rocket_launch
+    btnText: "Get Started"
+    url: "/docs/getting-started/installation/"
+  cta2Button:
+    icon: home
+    btnText: "Nexus Quantum"
+    url: "https://nexusquantum.id"
+
+  info: "**Fast & Private** • Built with Rust 🦀"
+
+# Feature Grid
+featureGrid:
+  enable: true
+  weight: 20
+  template: feature grid
+
+  title: Why NQRust-MicroVM?
+  subtitle: A complete microVM orchestration platform built in Rust. Combines the speed and security of Firecracker microVMs with an intuitive developer experience.
+
+  items:
+    - title: Lightning Fast
+      icon: speed
+      description: Boot microVMs in <125ms with instant network and storage attachment. Start VMs as fast as containers.
+
+    - title: Container Simple
+      icon: deployed_code
+      description: Container-like UX with full VM isolation. Use familiar workflows to manage microVMs, containers, and functions.
+
+    - title: KVM Secure
+      icon: security
+      description: Hardware-level security via KVM virtualization. Each workload runs in its own isolated kernel.
+
+    - title: Serverless Functions
+      icon: functions
+      description: Deploy serverless functions that run in isolated microVMs. Sub-second cold starts with full isolation.
+
+    - title: Hot Snapshots
+      icon: backup
+      description: Save and restore VM state instantly. Configurable snapshot policies for fast recovery.
+
+    - title: Live Metrics
+      icon: monitoring
+      description: Built-in Prometheus-compatible monitoring. Real-time CPU, memory, network, and disk metrics.
+
+    - title: Multi-Runtime
+      icon: layers
+      description: Run containers via containerd, microVMs via Firecracker, and serverless functions—all from one platform.
+
+    - title: REST API
+      icon: api
+      description: Full-featured REST API with Swagger documentation. Integrate microVM management into your workflows.
+
+    - title: Dark Mode
+      icon: dark_mode
+      description: Beautiful dark mode UI for comfortable monitoring. Designed for 24/7 operations visibility.

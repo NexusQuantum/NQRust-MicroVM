@@ -129,11 +129,16 @@ export default function VMsPage() {
       { id: selectedTemplate.id, name: vmName },
       {
         onSuccess: () => {
+          // Show success toast
+          toast.success("VM Created Successfully", {
+            description: `VM "${vmName}" has been created from template "${selectedTemplate.name}"`
+          })
           setQuickCreateOpen(false)
           setSelectedTemplate(null)
           setVmName("")
         },
         onError: () => {
+          // Error toast is already shown by useInstantiateTemplate hook
         }
       }
     )

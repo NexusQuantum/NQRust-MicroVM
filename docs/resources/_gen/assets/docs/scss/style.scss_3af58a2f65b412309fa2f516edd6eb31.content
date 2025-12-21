@@ -14,19 +14,34 @@
   src: local("Material Symbols Outlined"), local("Material Icons"), local("MaterialIcons-Outlined"), url("../fonts/material-symbols-outlined.woff2") format("woff2"); }
 
 :root {
-  --primary: var(--cyan);
-  --primary-50: var(--cyan-50);
-  --primary-100: var(--cyan-100);
-  --primary-200: var(--cyan-200);
-  --primary-300: var(--cyan-300);
-  --primary-400: var(--cyan-400);
-  --primary-800: var(--cyan-800);
-  --primary-hsl: var(--cyan-500-hsl);
-  --primary-50-hsl: var(--cyan-50-hsl);
-  --primary-100-hsl: var(--cyan-100-hsl);
-  --primary-200-hsl: var(--cyan-200-hsl);
-  --primary-300-hsl: var(--cyan-300-hsl);
-  --primary-800-hsl: var(--cyan-800-hsl); }
+  --orange: #FF5001;
+  --orange-50: #fff7ed;
+  --orange-100: #ffedd5;
+  --orange-200: #fed7aa;
+  --orange-300: #fdba74;
+  --orange-400: #fb923c;
+  --orange-500: #FF5001;
+  --orange-800: #9a2e00;
+  --orange-50-hsl: 24, 100%, 96%;
+  --orange-100-hsl: 27, 100%, 91%;
+  --orange-200-hsl: 31, 98%, 83%;
+  --orange-300-hsl: 32, 98%, 72%;
+  --orange-400-hsl: 27, 96%, 61%;
+  --orange-500-hsl: 19, 100%, 50%;
+  --orange-800-hsl: 19, 100%, 30%;
+  --primary: var(--orange);
+  --primary-50: var(--orange-50);
+  --primary-100: var(--orange-100);
+  --primary-200: var(--orange-200);
+  --primary-300: var(--orange-300);
+  --primary-400: var(--orange-400);
+  --primary-800: var(--orange-800);
+  --primary-hsl: var(--orange-500-hsl);
+  --primary-50-hsl: var(--orange-50-hsl);
+  --primary-100-hsl: var(--orange-100-hsl);
+  --primary-200-hsl: var(--orange-200-hsl);
+  --primary-300-hsl: var(--orange-300-hsl);
+  --primary-800-hsl: var(--orange-800-hsl); }
 
 /*!
    * Bootstrap  v5.3.3 (https://getbootstrap.com/)

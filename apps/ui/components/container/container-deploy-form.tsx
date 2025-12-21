@@ -9,8 +9,21 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Plus, X, Loader2, Archive, Upload as UploadIcon } from "lucide-react"
-import { useCreateContainer, useRegistryImages, useUploadImage } from "@/lib/queries"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Plus, X, Loader2, Archive, Upload as UploadIcon, HardDrive, Trash2 } from "lucide-react"
+import { useCreateContainer, useRegistryImages, useUploadImage, useVolumes } from "@/lib/queries"
+import { parseFacadeError } from "@/lib/api/http"
+import { toast } from "sonner"
 import type { CreateContainerReq } from "@/lib/types"
 
 export function ContainerDeployForm() {
@@ -27,7 +40,27 @@ export function ContainerDeployForm() {
   const [memoryLimit, setMemoryLimit] = useState(512)
   const [ports, setPorts] = useState<Array<{ host: string; container: string; protocol: string }>>([])
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([])
-  const [volumes, setVolumes] = useState<Array<{ host: string; container: string }>>([])
+  // Volume with extended fields for better UX
+  interface ContainerVolume {
+    id: string
+    name: string
+    hostPath: string
+    containerPath: string
+    sizeMb: number
+    readOnly: boolean
+    source: "new" | "existing"
+  }
+
+  const [volumes, setVolumes] = useState<ContainerVolume[]>([])
+  const [showVolumeDialog, setShowVolumeDialog] = useState(false)
+  const [volumeFormData, setVolumeFormData] = useState({
+    name: "",
+    hostPath: "",
+    containerPath: "",
+    sizeMb: "1024",
+    readOnly: false,
+    source: "new" as "new" | "existing",
+  })
 
   // Registry auth fields
   const [usePrivateRegistry, setUsePrivateRegistry] = useState(false)
@@ -40,6 +73,9 @@ export function ContainerDeployForm() {
     registryImages.filter((img) => img.kind === "docker"),
     [registryImages]
   )
+
+  // Fetch available volumes for picker
+  const { data: availableVolumes = [] } = useVolumes()
 
   const addPort = () => {
     setPorts([...ports, { host: "", container: "", protocol: "tcp" }])
@@ -58,11 +94,35 @@ export function ContainerDeployForm() {
   }
 
   const addVolume = () => {
-    setVolumes([...volumes, { host: "", container: "" }])
+    setVolumeFormData({
+      name: "",
+      hostPath: "",
+      containerPath: "",
+      sizeMb: "1024",
+      readOnly: false,
+      source: "new",
+    })
+    setShowVolumeDialog(true)
   }
 
-  const removeVolume = (index: number) => {
-    setVolumes(volumes.filter((_, i) => i !== index))
+  const handleAddVolume = () => {
+    const newVolume: ContainerVolume = {
+      id: crypto.randomUUID(),
+      name: volumeFormData.name || `volume-${volumes.length + 1}`,
+      hostPath: volumeFormData.source === "existing"
+        ? volumeFormData.hostPath
+        : `/srv/container-data/${volumeFormData.name || `volume-${volumes.length + 1}`}`,
+      containerPath: volumeFormData.containerPath,
+      sizeMb: parseInt(volumeFormData.sizeMb) || 1024,
+      readOnly: volumeFormData.readOnly,
+      source: volumeFormData.source,
+    }
+    setVolumes([...volumes, newVolume])
+    setShowVolumeDialog(false)
+  }
+
+  const removeVolume = (id: string) => {
+    setVolumes(volumes.filter(v => v.id !== id))
   }
 
   const handleSubmit = async () => {
@@ -109,19 +169,19 @@ export function ContainerDeployForm() {
       .reduce((acc, e) => ({ ...acc, [e.key]: e.value }), {})
 
     const volumeMounts = volumes
-      .filter((v) => v.host && v.container)
+      .filter((v) => v.hostPath && v.containerPath)
       .map((v) => ({
-        host: v.host,
-        container: v.container,
-        read_only: false,
+        host: v.hostPath,
+        container: v.containerPath,
+        read_only: v.readOnly,
       }))
 
     const registryAuth = usePrivateRegistry && registryUsername && registryPassword
       ? {
-          username: registryUsername,
-          password: registryPassword,
-          server_address: registryServer || undefined,
-        }
+        username: registryUsername,
+        password: registryPassword,
+        server_address: registryServer || undefined,
+      }
       : undefined
 
     const params: CreateContainerReq = {
@@ -139,6 +199,24 @@ export function ContainerDeployForm() {
     createContainer.mutate(params, {
       onSuccess: (data) => {
         router.push(`/containers/${data.id}`)
+      },
+      onError: (error: any) => {
+        // Parse the facade error to get a user-friendly message
+        const facadeError = parseFacadeError(error)
+        let errorMessage = "Failed to create container"
+
+        if (facadeError) {
+          // Use the error message from the backend
+          errorMessage = facadeError.error || facadeError.fault_message || errorMessage
+        } else if (error?.message) {
+          // Try to extract message directly
+          errorMessage = error.message
+        }
+
+        toast.error("Container Creation Failed", {
+          description: errorMessage,
+          duration: 5000,
+        })
       },
     })
   }
@@ -365,45 +443,189 @@ export function ContainerDeployForm() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Volumes</CardTitle>
+          <div className="flex items-center gap-2">
+            <HardDrive className="h-5 w-5" />
+            <CardTitle>Volume Mounts</CardTitle>
+          </div>
           <Button onClick={addVolume} size="sm">
             <Plus className="mr-2 h-4 w-4" />
             Add Volume
           </Button>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent>
           {volumes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No volumes configured</p>
+            <p className="text-sm text-muted-foreground">No volumes configured. Click "Add Volume" to mount storage into the container.</p>
           ) : (
-            volumes.map((volume, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <Input
-                  placeholder="Host path"
-                  value={volume.host}
-                  onChange={(e) => {
-                    const newVolumes = [...volumes]
-                    newVolumes[i].host = e.target.value
-                    setVolumes(newVolumes)
-                  }}
-                />
-                <span>→</span>
-                <Input
-                  placeholder="Container path"
-                  value={volume.container}
-                  onChange={(e) => {
-                    const newVolumes = [...volumes]
-                    newVolumes[i].container = e.target.value
-                    setVolumes(newVolumes)
-                  }}
-                />
-                <Button variant="ghost" size="icon" onClick={() => removeVolume(i)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            ))
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Host Path</TableHead>
+                  <TableHead>Container Path</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Read Only</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {volumes.map((volume) => (
+                  <TableRow key={volume.id}>
+                    <TableCell className="font-medium">
+                      {volume.name}
+                      {volume.source === "new" && (
+                        <Badge variant="outline" className="ml-2 bg-green-100 text-green-700 border-green-200">
+                          New
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">{volume.hostPath}</TableCell>
+                    <TableCell className="font-mono text-sm">{volume.containerPath}</TableCell>
+                    <TableCell>{volume.sizeMb} MB</TableCell>
+                    <TableCell>
+                      {volume.readOnly ? (
+                        <Badge variant="outline" className="bg-yellow-100 text-yellow-700 border-yellow-200">
+                          Yes
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">No</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeVolume(volume.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>
+
+      {/* Add Volume Dialog */}
+      <Dialog open={showVolumeDialog} onOpenChange={setShowVolumeDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add New Volume</DialogTitle>
+            <DialogDescription>
+              Mount a volume into the container. You can create a new volume or use an existing one.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Volume Source</Label>
+              <Select
+                value={volumeFormData.source}
+                onValueChange={(value: "new" | "existing") =>
+                  setVolumeFormData({ ...volumeFormData, source: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">Create New Volume</SelectItem>
+                  <SelectItem value="existing">Use Existing Volume</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {volumeFormData.source === "new" ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="volume_name">Volume Name *</Label>
+                  <Input
+                    id="volume_name"
+                    placeholder="e.g., data, logs, config"
+                    value={volumeFormData.name}
+                    onChange={(e) => setVolumeFormData({ ...volumeFormData, name: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Unique identifier for this volume</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="volume_size">Size (MB) *</Label>
+                  <Input
+                    id="volume_size"
+                    type="number"
+                    placeholder="1024"
+                    value={volumeFormData.sizeMb}
+                    onChange={(e) => setVolumeFormData({ ...volumeFormData, sizeMb: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Size for the volume in megabytes</p>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <Label>Select Existing Volume</Label>
+                <Select
+                  value={volumeFormData.hostPath}
+                  onValueChange={(value) =>
+                    setVolumeFormData({
+                      ...volumeFormData,
+                      hostPath: value,
+                      name: availableVolumes.find(v => v.path === value)?.name || "existing-volume"
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a volume" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableVolumes.length === 0 ? (
+                      <SelectItem value="" disabled>No volumes available</SelectItem>
+                    ) : (
+                      availableVolumes.map((vol) => (
+                        <SelectItem key={vol.id} value={vol.path}>
+                          {vol.name} ({Math.round(vol.size_bytes / 1024 / 1024)} MB)
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="container_path">Container Path *</Label>
+              <Input
+                id="container_path"
+                placeholder="e.g., /data, /var/log, /app/config"
+                value={volumeFormData.containerPath}
+                onChange={(e) => setVolumeFormData({ ...volumeFormData, containerPath: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">Path where the volume will be mounted inside the container</p>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="read_only"
+                checked={volumeFormData.readOnly}
+                onCheckedChange={(checked) =>
+                  setVolumeFormData({ ...volumeFormData, readOnly: checked as boolean })
+                }
+              />
+              <Label htmlFor="read_only" className="cursor-pointer">Read-only</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowVolumeDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddVolume}
+              disabled={!volumeFormData.containerPath || (volumeFormData.source === "new" && !volumeFormData.name)}
+            >
+              Add Volume
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>

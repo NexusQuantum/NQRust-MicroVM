@@ -36,6 +36,35 @@ pub async fn create_container(
         return Err(anyhow!("Container image cannot be empty"));
     }
 
+    // Check port availability BEFORE creating the container
+    if !req.port_mappings.is_empty() {
+        let host_ports: Vec<u16> = req
+            .port_mappings
+            .iter()
+            .map(|p| p.host as u16)
+            .collect();
+
+        let unavailable =
+            super::port_forward::check_ports_available(&host_ports).await?;
+
+        if !unavailable.is_empty() {
+            let port_list = unavailable
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(anyhow!(
+                "Port mapping failed: port(s) {} are already in use",
+                port_list
+            ));
+        }
+
+        // Reserve ports immediately to prevent race conditions
+        for port in &host_ports {
+            super::port_forward::reserve_port(*port);
+        }
+    }
+
     // Determine resource allocations (use defaults if not specified)
     let vcpu = req.cpu_limit.map(|c| c.ceil() as u8).unwrap_or(1);
     let memory_mb = req.memory_limit_mb.unwrap_or(512) as u32;
@@ -60,6 +89,10 @@ pub async fn create_container(
         {
             eprintln!("[Container {}] Failed to provision: {}", container_id, e);
             let error_msg = format!("Failed to provision container VM: {}", e);
+            // Release reserved ports on failure
+            for mapping in &req.port_mappings {
+                super::port_forward::release_port(mapping.host as u16);
+            }
             let _ = ContainerRepository::new(st_clone.db.clone())
                 .update_state(container_id, "error", Some(error_msg))
                 .await;
@@ -240,9 +273,61 @@ async fn provision_container_vm(
     // Update container state to running
     repo.set_started(container_id).await?;
 
+    // Set up port forwarding from host to container VM
+    // The Docker container inside the VM has already been started with port mappings
+    // Now we need to forward from host -> VM
+    for mapping in &req.port_mappings {
+        // The Docker container inside VM exposes on mapping.host (which Docker maps to container port)
+        // We forward host:mapping.host -> vm_ip:mapping.host
+        if let Err(e) = super::port_forward::setup_port_forward(
+            mapping.host as u16,
+            &guest_ip,
+            mapping.host as u16, // Docker inside VM maps to the same port
+            &mapping.protocol,
+        )
+        .await
+        {
+            eprintln!(
+                "[Container {}] Warning: Failed to setup port forward for {}: {}",
+                container_id, mapping.host, e
+            );
+        }
+    }
+
+    // Register container volumes in the volume registry so they appear on the Volumes page
+    if !req.volumes.is_empty() {
+        // Get host_id from the VM
+        let vm = crate::features::vms::repo::get(&st.db, vm_id).await?;
+        let host_id = vm.host_id;
+
+        if let Err(e) = register_container_volumes(
+            st,
+            container_id,
+            container_name,
+            vm_id,
+            &req.volumes,
+            host_id,
+        )
+        .await
+        {
+            eprintln!(
+                "[Container {}] Warning: Failed to register volumes: {}",
+                container_id, e
+            );
+        } else {
+            eprintln!(
+                "[Container {}] Registered {} volume(s) in volume registry",
+                container_id,
+                req.volumes.len()
+            );
+        }
+    }
+
     eprintln!(
-        "[Container {}] Container running successfully",
-        container_id
+        "[Container {}] Container running successfully with {} port mappings and {} volumes",
+        container_id,
+        req.port_mappings.len(),
+        req.volumes.len()
     );
 
     Ok(())
@@ -306,6 +391,22 @@ pub async fn delete_container(st: &AppState, id: Uuid) -> Result<OkResponse> {
     let repo = ContainerRepository::new(st.db.clone());
 
     let container = repo.get(id).await?;
+
+    // Clean up port forwarding rules first
+    if !container.port_mappings.is_empty() {
+        if let Some(guest_ip) = &container.guest_ip {
+            if let Err(e) =
+                super::port_forward::cleanup_port_forwards(&container.port_mappings, guest_ip).await
+            {
+                eprintln!("[Container {}] Failed to cleanup port forwards: {}", id, e);
+            }
+        } else {
+            // Just release the ports from our registry
+            for mapping in &container.port_mappings {
+                super::port_forward::release_port(mapping.host as u16);
+            }
+        }
+    }
 
     // Extract VM ID from runtime_id (format: "vm-<uuid>")
     if let Some(runtime_id) = &container.container_runtime_id {
@@ -570,4 +671,110 @@ fn extract_docker_container_id(container: &nexus_types::Container) -> Result<Str
 
     // Placeholder: use container name as Docker container name
     Ok(container.name.clone())
+}
+
+/// Register container volumes in the volume registry
+/// This creates volume records so they appear on the Volumes page and can be tracked
+async fn register_container_volumes(
+    st: &AppState,
+    container_id: Uuid,
+    container_name: &str,
+    vm_id: Uuid,
+    volumes: &[nexus_types::VolumeMount],
+    host_id: Uuid,
+) -> Result<()> {
+    use crate::features::volumes::repo::VolumeRepository;
+    use tracing::info;
+
+    if volumes.is_empty() {
+        return Ok(());
+    }
+
+    let volume_repo = VolumeRepository::new(st.db.clone());
+
+    for (idx, volume_mount) in volumes.iter().enumerate() {
+        // Check if volume with this path already exists
+        let existing = volume_repo.list_by_host(host_id).await?;
+        let already_exists = existing.iter().any(|v| v.path == volume_mount.host);
+
+        if already_exists {
+            info!(
+                container_id = %container_id,
+                path = %volume_mount.host,
+                "Volume already registered, skipping creation"
+            );
+            
+            // Find and attach the existing volume
+            if let Some(existing_vol) = existing.iter().find(|v| v.path == volume_mount.host) {
+                let drive_id = format!("container-vol-{}", idx);
+                if let Err(e) = volume_repo.attach(existing_vol.id, vm_id, &drive_id).await {
+                    tracing::warn!(
+                        container_id = %container_id,
+                        volume_id = %existing_vol.id,
+                        error = %e,
+                        "Failed to attach existing volume"
+                    );
+                }
+            }
+            continue;
+        }
+
+        // Create new volume record
+        let volume_name = format!("{} - Volume {}", container_name, idx + 1);
+        let description = format!(
+            "Container volume mounted at {} (container: {})",
+            volume_mount.container, container_name
+        );
+
+        // Get size from filesystem if possible, otherwise use 0
+        let size_bytes = std::fs::metadata(&volume_mount.host)
+            .ok()
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+
+        let volume_type = "container-bind";
+
+        match volume_repo
+            .create(
+                &volume_name,
+                Some(&description),
+                &volume_mount.host,
+                size_bytes,
+                volume_type,
+                host_id,
+            )
+            .await
+        {
+            Ok(volume) => {
+                info!(
+                    container_id = %container_id,
+                    volume_id = %volume.id,
+                    name = %volume_name,
+                    path = %volume_mount.host,
+                    "Container volume registered"
+                );
+
+                // Attach volume to the container's VM
+                let drive_id = format!("container-vol-{}", idx);
+                if let Err(e) = volume_repo.attach(volume.id, vm_id, &drive_id).await {
+                    tracing::warn!(
+                        container_id = %container_id,
+                        volume_id = %volume.id,
+                        error = %e,
+                        "Failed to attach volume to VM"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    container_id = %container_id,
+                    path = %volume_mount.host,
+                    error = %e,
+                    "Failed to register container volume"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }

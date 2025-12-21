@@ -2,14 +2,13 @@
 
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { useToast } from "@/components/ui/use-toast"
+import { toast } from "sonner"
 import { FunctionEditor } from "@/components/function/function-editor"
 
 type Draft = { runtime?: "python" | "javascript" | "typescript"; code?: string; event?: string }
 
 export default function NewFunctionPage() {
   const router = useRouter()
-  const { toast } = useToast()
   const [initial, setInitial] = useState<Draft | null>(null)
 
   useEffect(() => {
@@ -26,12 +25,9 @@ export default function NewFunctionPage() {
 
 
   const handleComplete = (p?: { name?: string }) => {
-    // Navigate back to VMs page after successful creation
-    toast({
-      title: "Function created",
-      description: `Function "${p?.name ?? "untitled"}" successfully created.`,
-      variant: "success",
-      duration: 2000,
+    // Show success toast
+    toast.success("Function Created Successfully", {
+      description: `Function "${p?.name ?? "untitled"}" has been created and is ready to use`
     })
     router.push("/functions")
   }

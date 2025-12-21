@@ -5,12 +5,20 @@ Dokumentasi ini menggunakan [Hugo](https://gohugo.io/) dengan [Lotus Docs](https
 ## Quick Start
 
 ### Development Server
-Jalankan server development:
+Jalankan server development dari direktori docs:
 ```bash
-./serve.sh
+cd docs
+bash serve.sh
+```
+
+Atau dengan path absolut:
+```bash
+bash /home/shiro/nexus/nqrust-microvm/docs/serve.sh
 ```
 
 Dokumentasi akan tersedia di: http://localhost:1313/
+
+**Catatan**: Script akan otomatis set Go environment yang dibutuhkan Hugo modules.
 
 ### Build Production
 Build dokumentasi untuk production:

@@ -82,7 +82,7 @@ export function HostTable({ hosts }: HostTableProps) {
               <TableHead>Address</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Resources</TableHead>
-              <TableHead>VMs</TableHead>
+              <TableHead>Source Count</TableHead>
               <TableHead>Last Seen</TableHead>
               <TableHead className="w-20">Actions</TableHead>
             </TableRow>
@@ -134,7 +134,7 @@ export function HostTable({ hosts }: HostTableProps) {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{host.vm_count} VMs</Badge>
+                      <Badge variant="secondary">{host.vm_count} Source</Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {formatDistanceToNow(new Date(host.last_seen_at), { addSuffix: true })}

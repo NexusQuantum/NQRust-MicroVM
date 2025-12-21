@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Trash2, FileText, Code, FileText as FileTextIcon, BarChart, Calendar, Terminal } from "lucide-react"
 import Link from "next/link"
-import { use, useState, useMemo } from "react"
+import { use, useState, useMemo, useCallback } from "react"
 import { useDeleteFunction, useFunction } from "@/lib/queries"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { useAuthStore, canDeleteResource } from "@/lib/auth/store"
 import { useSearchParams } from "next/navigation"
+import { toast } from "sonner"
 
 
 const getStatusColor = (state: string) => {
@@ -42,10 +43,25 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
   const handleDelete = () => {
     deleteFunction.mutate(id, {
       onSuccess: () => {
+        toast.success("Function Deleted", {
+          description: `Function "${functions?.name ?? 'untitled'}" has been deleted successfully`
+        })
         window.location.href = '/functions'
+      },
+      onError: (error) => {
+        toast.error("Delete Failed", {
+          description: `Failed to delete function: ${error.message}`
+        })
       }
     })
   }
+
+  const handleUpdateComplete = useCallback((p?: { name?: string }) => {
+    toast.success("Function Updated Successfully", {
+      description: `Function "${p?.name ?? functions?.name ?? 'untitled'}" has been updated`
+    })
+    setTimeout(() => location.reload(), 500)
+  }, [functions?.name])
 
   // Define tabs dengan icon
   const tabs: TabItem[] = useMemo(() => [
@@ -65,7 +81,7 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
           functionData={functions}
           mode="update"
           functionId={id}
-          onComplete={() => location.reload()}
+          onComplete={handleUpdateComplete}
         />
       ),
     },
@@ -85,7 +101,7 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
       value: "logs",
       content: <FunctionLogs functionId={id} />,
     },
-  ], [functions, id])
+  ], [functions, id, handleUpdateComplete])
 
   if (isLoading) {
     return (

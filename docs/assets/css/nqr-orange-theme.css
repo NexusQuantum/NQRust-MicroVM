@@ -1,0 +1,250 @@
+/* NQRust-MicroVM Brand Orange Theme
+ * Primary color: #FF5001 (from apps/installer/src/theme.rs)
+ */
+
+:root {
+  --nqr-orange: #FF5001;
+  --nqr-orange-light: #FF7A33;
+  --nqr-orange-dark: #CC4001;
+  --nqr-orange-subtle: rgba(255, 80, 1, 0.1);
+
+  /* Background colors from installer theme */
+  --nqr-bg-dark: #1A1A1A;
+  --nqr-card-dark: #353535;
+  --nqr-border-dark: #4A4A4A;
+}
+
+/* =====================================================
+   LOGO SIZING FIXES
+   ===================================================== */
+
+/* Sidebar brand logo - force square */
+.sidebar-brand>a {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-grow: 0 !important;
+}
+
+.sidebar-brand svg,
+.sidebar-brand img {
+  width: 40px !important;
+  height: 40px !important;
+  max-width: 40px !important;
+  max-height: 40px !important;
+  object-fit: contain !important;
+}
+
+/* Top header logo container */
+.logo-icon {
+  display: flex !important;
+  align-items: center !important;
+}
+
+.logo-icon>a {
+  flex-grow: 0 !important;
+}
+
+/* Top header logo - small version (mobile) */
+.logo-icon .small svg,
+.logo-icon .small img {
+  width: 28px !important;
+  height: 28px !important;
+  max-width: 28px !important;
+  max-height: 28px !important;
+  object-fit: contain !important;
+}
+
+/* Top header logo - big version (desktop) */
+.logo-icon .big svg,
+.logo-icon .big img {
+  width: 32px !important;
+  height: 32px !important;
+  max-width: 32px !important;
+  max-height: 32px !important;
+  object-fit: contain !important;
+}
+
+/* Landing page navbar logo */
+header#topnav .logo svg,
+header#topnav .logo img {
+  width: 36px !important;
+  height: 36px !important;
+  max-width: 36px !important;
+  max-height: 36px !important;
+  object-fit: contain !important;
+}
+
+/* Override primary color - this works with Lotus Docs orange theme */
+.btn-primary,
+.bg-primary {
+  background-color: var(--nqr-orange) !important;
+  border-color: var(--nqr-orange) !important;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: var(--nqr-orange-dark) !important;
+  border-color: var(--nqr-orange-dark) !important;
+}
+
+.btn-outline-primary {
+  color: var(--nqr-orange) !important;
+  border-color: var(--nqr-orange) !important;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus {
+  background-color: var(--nqr-orange) !important;
+  color: white !important;
+}
+
+.text-primary {
+  color: var(--nqr-orange) !important;
+}
+
+/* Feature grid icon styling */
+.features .icon {
+  background-color: var(--nqr-orange-subtle) !important;
+}
+
+.features .icon i,
+.features .text-primary {
+  color: var(--nqr-orange) !important;
+}
+
+/* Links */
+a.text-primary:hover {
+  color: var(--nqr-orange-dark) !important;
+}
+
+/* Hero section enhancements */
+.hero {
+  background: linear-gradient(135deg,
+      var(--nqr-orange-subtle) 0%,
+      transparent 50%,
+      transparent 100%) !important;
+}
+
+/* Badge styling for orange */
+.bg-soft-warning,
+.badge.bg-soft-warning {
+  background-color: var(--nqr-orange-subtle) !important;
+  color: var(--nqr-orange) !important;
+}
+
+/* Navigation active states */
+.nav-link.active,
+.sidebar-link.active {
+  color: var(--nqr-orange) !important;
+}
+
+/* Dark mode specific overrides */
+[data-theme="dark"] {
+  .hero {
+    background: linear-gradient(135deg,
+        rgba(255, 80, 1, 0.15) 0%,
+        var(--nqr-bg-dark) 100%) !important;
+  }
+
+  .features .icon {
+    background-color: rgba(255, 80, 1, 0.2) !important;
+  }
+}
+
+/* Focus states for accessibility */
+.btn-primary:focus,
+.btn-outline-primary:focus {
+  box-shadow: 0 0 0 0.25rem rgba(255, 80, 1, 0.25) !important;
+}
+
+/* Active/selected states */
+.active>.nav-link,
+.nav-link.active {
+  border-color: var(--nqr-orange) !important;
+}
+
+/* Scrollspy active indicator */
+.td-toc a.active {
+  color: var(--nqr-orange) !important;
+  border-left-color: var(--nqr-orange) !important;
+}
+
+/* =====================================================
+   LANDING PAGE SPECIFIC OVERRIDES
+   Higher specificity for hero section buttons
+   ===================================================== */
+
+/* Hero section buttons - Force orange */
+section.hero .btn-primary,
+section.hero .btn.btn-primary,
+section.hero .btn.btn-lg.btn-primary,
+.hero .btn-primary,
+#hero .btn-primary,
+section#hero .btn-primary {
+  background-color: #FF5001 !important;
+  border-color: #FF5001 !important;
+  color: #ffffff !important;
+}
+
+section.hero .btn-primary:hover,
+section.hero .btn.btn-primary:hover,
+.hero .btn-primary:hover,
+#hero .btn-primary:hover {
+  background-color: #CC4001 !important;
+  border-color: #CC4001 !important;
+}
+
+section.hero .btn-outline-primary,
+section.hero .btn.btn-outline-primary,
+.hero .btn-outline-primary,
+#hero .btn-outline-primary {
+  color: #FF5001 !important;
+  border-color: #FF5001 !important;
+  background-color: transparent !important;
+}
+
+section.hero .btn-outline-primary:hover,
+.hero .btn-outline-primary:hover,
+#hero .btn-outline-primary:hover {
+  background-color: #FF5001 !important;
+  color: #ffffff !important;
+  border-color: #FF5001 !important;
+}
+
+/* Feature grid icons - use orange background */
+.features .icon,
+.feature-primary .icon,
+section#featureGrid .icon,
+.d-flex.features .icon {
+  background-color: rgba(255, 80, 1, 0.15) !important;
+}
+
+.features .icon i,
+.feature-primary .icon i,
+section#featureGrid .icon i {
+  color: #FF5001 !important;
+}
+
+/* Feature grid text-primary links */
+.features .text-primary,
+.features a.text-primary,
+.feature-primary .text-primary {
+  color: #FF5001 !important;
+}
+
+/* Hero logo/image should be larger */
+.hero .classic-hero-image img,
+section.hero .classic-hero-image img,
+#hero .classic-hero-image img {
+  max-width: 100%;
+  height: auto;
+  min-width: 300px;
+}
+
+/* Badge in hero */
+section.hero .badge,
+.hero .badge {
+  background-color: rgba(255, 80, 1, 0.15) !important;
+  color: #FF5001 !important;
+}

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Hugo build script
 
-export PATH=/tmp/go/bin:$PATH
+export PATH=/home/shiro/go-binary/bin:$PATH
 export GOPATH=/home/shiro/go
 
 cd "$(dirname "$0")"
