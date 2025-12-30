@@ -1,4 +1,4 @@
-baseURL = 'http://localhost:1313'
+baseURL = 'https://nexusquantum.github.io/NQRust-MicroVM/'
 languageCode = 'en-us'
 title = 'NQRust-MicroVM Documentation'
 enableEmoji = true
