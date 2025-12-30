@@ -273,36 +273,6 @@ Shows the function's return value:
 
 ---
 
-### Logs Panel
-
-Shows console output and errors:
-
-![Image: Logs panel with console output](/images/functions/playground-logs.png)
-
-**Python logs**:
-```
-print("Processing event: ", event)
-```
-
-**JavaScript/TypeScript logs**:
-```javascript
-console.log("Processing event:", event);
-```
-
-**Example log output**:
-```
-Processing event: { key1: 10, key2: 5 }
-Calculating sum...
-Result: 15
-```
-
-**Error logs**:
-```
-Error: event.key1 is undefined
-    at handler (index.ts:5:15)
-```
-
----
 
 ## Step 6: Iterate and Improve
 
