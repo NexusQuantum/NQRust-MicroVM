@@ -509,14 +509,14 @@ export function ContainerDeployForm() {
 
       {/* Add Volume Dialog */}
       <Dialog open={showVolumeDialog} onOpenChange={setShowVolumeDialog}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>Add New Volume</DialogTitle>
             <DialogDescription>
               Mount a volume into the container. You can create a new volume or use an existing one.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-4 overflow-y-auto flex-1">
             <div className="space-y-2">
               <Label>Volume Source</Label>
               <Select
@@ -576,13 +576,18 @@ export function ContainerDeployForm() {
                   <SelectTrigger>
                     <SelectValue placeholder="Select a volume" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-[200px]" position="popper" sideOffset={4}>
                     {availableVolumes.length === 0 ? (
                       <SelectItem value="" disabled>No volumes available</SelectItem>
                     ) : (
                       availableVolumes.map((vol) => (
                         <SelectItem key={vol.id} value={vol.path}>
-                          {vol.name} ({Math.round(vol.size_bytes / 1024 / 1024)} MB)
+                          <div className="flex flex-col">
+                            <span className="font-medium">{vol.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {vol.path} • {Math.round(vol.size_bytes / 1024 / 1024)} MB
+                            </span>
+                          </div>
                         </SelectItem>
                       ))
                     )}
@@ -613,7 +618,7 @@ export function ContainerDeployForm() {
               <Label htmlFor="read_only" className="cursor-pointer">Read-only</Label>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="mt-auto pt-4 border-t">
             <Button variant="outline" onClick={() => setShowVolumeDialog(false)}>
               Cancel
             </Button>

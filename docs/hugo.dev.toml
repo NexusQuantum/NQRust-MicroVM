@@ -1,0 +1,184 @@
+# Hugo Development Configuration
+# Use this for local development: hugo serve --config hugo.dev.toml
+
+baseURL = '/NQRust-MicroVM/'  # No subdirectory for local development
+languageCode = 'en-us'
+title = 'NQRust-MicroVM Documentation'
+enableEmoji = true
+enableGitInfo = false
+
+# Hugo Modules
+[module]
+  [module.hugoVersion]
+    extended = true
+    min = "0.100.0"
+  [[module.imports]]
+    path = "github.com/colinwilson/lotusdocs"
+    disable = false
+  [[module.imports]]
+    path = "github.com/gohugoio/hugo-mod-bootstrap-scss/v5"
+    disable = false
+
+# Site Description and Configuration
+[params]
+  description = "Modern Firecracker microVM orchestration platform"
+
+  # Google Fonts
+  google_fonts = [
+    ["Inter", "300, 400, 600, 700"],
+    ["Fira Code", "500, 700"]
+  ]
+
+  sans_serif_font = "Inter"
+  secondary_font = "Inter"
+  mono_font = "Fira Code"
+
+  # Custom Assets
+  custom_css = ["css/toc-collapse.css", "css/nqr-orange-theme.css"]
+  custom_js = ["js/toc-collapse.js"]
+
+# Lotus Docs Settings
+[params.docs]
+  title = "NQRust-MicroVM Docs"
+  pathName = "docs"
+  themeColor = "orange"
+  darkMode = true
+  prism = true
+  prismTheme = "lotusdocs"
+  tableOfContents = true
+  scrollSpy = true
+
+# Navigation
+[params.plausible]
+  enable = false
+
+# Social Links (removed GitHub)
+[params.social]
+  # github = "yourusername/nqrust-microvm"
+
+# Main Menu
+[menu]
+  [[menu.primary]]
+    name = "Docs"
+    url = "/docs"
+    weight = 10
+  [[menu.primary]]
+    name = "API"
+    url = "http://localhost:18080/swagger-ui/"
+    weight = 20
+
+# Sidebar Menu (Getting Started)
+[[menu.sidebar]]
+  name = "Getting Started"
+  weight = 10
+  identifier = "getting-started"
+
+[[menu.sidebar]]
+  name = "Installation"
+  parent = "getting-started"
+  url = "/docs/getting-started/installation/"
+  weight = 11
+
+[[menu.sidebar]]
+  name = "Quick Start"
+  parent = "getting-started"
+  url = "/docs/getting-started/quick-start/"
+  weight = 12
+
+# Virtual Machines Section
+[[menu.sidebar]]
+  name = "Virtual Machines"
+  weight = 30
+  identifier = "vm"
+
+[[menu.sidebar]]
+  name = "Overview"
+  parent = "vm"
+  url = "/docs/vm/"
+  weight = 31
+
+[[menu.sidebar]]
+  name = "Create a VM"
+  parent = "vm"
+  url = "/docs/vm/create-vm/"
+  weight = 32
+
+[[menu.sidebar]]
+  name = "Access to the VM"
+  parent = "vm"
+  url = "/docs/vm/access-vm/"
+  weight = 33
+
+[[menu.sidebar]]
+  name = "Manage VMs"
+  parent = "vm"
+  url = "/docs/vm/manage-vm/"
+  weight = 34
+
+[[menu.sidebar]]
+  name = "Backup & Snapshot"
+  parent = "vm"
+  url = "/docs/vm/backup-snapshot/"
+  weight = 35
+
+[[menu.sidebar]]
+  name = "Monitoring"
+  parent = "vm"
+  url = "/docs/vm/monitoring/"
+  weight = 36
+
+# Sidebar Menu (User Guide)
+[[menu.sidebar]]
+  name = "User Guide"
+  weight = 20
+  identifier = "user-guide"
+
+[[menu.sidebar]]
+  name = "Virtual Machines (Old)"
+  parent = "user-guide"
+  url = "/docs/user-guide/virtual-machines/"
+  weight = 21
+
+[[menu.sidebar]]
+  name = "Containers"
+  parent = "user-guide"
+  url = "/docs/user-guide/containers/"
+  weight = 22
+
+[[menu.sidebar]]
+  name = "Functions"
+  parent = "user-guide"
+  url = "/docs/user-guide/functions/"
+  weight = 23
+
+[[menu.sidebar]]
+  name = "Templates"
+  parent = "user-guide"
+  url = "/docs/user-guide/templates/"
+  weight = 24
+
+[[menu.sidebar]]
+  name = "Image Registry"
+  parent = "user-guide"
+  url = "/docs/user-guide/registry/"
+  weight = 25
+
+[[menu.sidebar]]
+  name = "Networking"
+  parent = "user-guide"
+  url = "/docs/user-guide/networking/"
+  weight = 26
+
+[[menu.sidebar]]
+  name = "Storage"
+  parent = "user-guide"
+  url = "/docs/user-guide/storage/"
+  weight = 27
+
+# Markup Configuration
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+  [markup.highlight]
+    style = 'monokai'

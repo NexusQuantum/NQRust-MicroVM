@@ -620,24 +620,33 @@ After clicking deploy, you'll be redirected to the container detail page:
 
 Watch the container state transition:
 
-**Creating** (1-2 seconds):
+**Creating** 🟡 (1-2 seconds):
 ```
 Creating Firecracker microVM...
 ```
 ![Image: Creating state badge](/images/containers/deploy-step9-creating.png)
 
-**Booting** (2-3 seconds):
+- **Badge Color**: Yellow (kuning)
+- **Status**: Initial VM creation process
+
+**Booting** ⚪ (2-3 seconds):
 ```
 Booting microVM with container runtime...
 ```
 ![Image: Booting state badge](/images/containers/deploy-step9-booting.png)
 
-**Initializing** (2-5 seconds):
+- **Badge Color**: Gray (abu-abu)
+- **Status**: MicroVM is starting up
+
+**Initializing** 🔵 (2-5 seconds):
 ```
 Starting Docker daemon...
 Preparing container environment...
 ```
 ![Image: Initializing state badge](/images/containers/deploy-step9-initializing.png)
+
+- **Badge Color**: Cyan (tosca/biru muda)
+- **Status**: Docker daemon starting, preparing container runtime
 
 **Pulling image** (10-60 seconds, varies by image size):
 ```
@@ -645,11 +654,14 @@ Pulling alpine/nginx:latest...
 Download in progress...
 ```
 
-**Running** - Deployment complete!
+**Running** 🟢 - Deployment complete!
 ```
 Container is now running
 ```
 ![Image: Running state badge](/images/containers/deploy-step9-running.png)
+
+- **Badge Color**: Green (hijau)
+- **Status**: Container is active and operational
 
 ---
 
@@ -1176,6 +1188,56 @@ postgres:15-alpine (230 MB) vs  postgres:15  (420 MB)
 | Pull large image | 30-120 seconds |
 | **Total (Alpine)** | **~15-30 seconds** |
 | **Total (Standard)** | **~30-90 seconds** |
+
+---
+
+## Container States Reference
+
+### All Possible States
+
+| State | Badge Color | Emoji | Description |
+|-------|-------------|-------|-------------|
+| **Creating** | Yellow (kuning) | 🟡 | Initial VM creation, starting Firecracker |
+| **Booting** | Gray (abu-abu) | ⚪ | MicroVM is booting up |
+| **Initializing** | Cyan (tosca) | 🔵 | Docker daemon starting, preparing runtime |
+| **Running** | Green (hijau) | 🟢 | Container is active and operational |
+| **Stopped** | Red (merah) | 🔴 | Container has been stopped |
+| **Error** | Red (merah) | ❌ | Container encountered an error |
+| **Paused** | Amber (kuning tua) | 🟠 | Container is paused/suspended |
+
+### State Lifecycle
+
+**Normal Deployment Flow**:
+```
+Creating (🟡) → Booting (⚪) → Initializing (🔵) → Running (🟢)
+```
+
+**Stop Flow**:
+```
+Running (🟢) → Stopped (🔴)
+```
+
+**Error Flow**:
+```
+Any State → Error (❌)
+```
+
+**Resume Flow**:
+```
+Paused (🟠) → Running (🟢)
+```
+
+### State Indicators in UI
+
+Each state is displayed with:
+- **Color-coded badge** - Easy visual identification
+- **Emoji indicator** - Quick status recognition (🟢🔴🟡🔵)
+- **Status text** - Clear state name
+
+**Example in table**:
+- Creating: Yellow badge with "Creating" text
+- Running: Green badge with "Running" text
+- Error: Red badge with "Error" text
 
 ---
 

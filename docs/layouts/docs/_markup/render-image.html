@@ -1,37 +1,27 @@
+{{- /*
+  Custom image render hook for docs section
+  This ensures baseURL is properly included in ALL image paths
+  Overrides theme's default render hook
+*/ -}}
 {{ $dest := .Destination }}
 {{ $text := .PlainText }}
+{{ $title := .Title }}
 {{ $url := urls.Parse $dest }}
 
-{{ $image := newScratch }}
-{{ with $url.Scheme }}
-  {{  $image.Set "resource" (resources.GetRemote $dest) }}
-{{ else }}
-  {{  $image.Set "resource" (resources.Get $dest) }}
+{{- /* Check if it's an external URL (has scheme like http://, https://) */ -}}
+{{ $isExternal := $url.Scheme }}
+
+{{- /* For external URLs, keep as-is. For local paths, use relURL */ -}}
+{{ $imageSrc := $dest }}
+{{ if not $isExternal }}
+  {{ $imageSrc = $dest | relURL }}
 {{ end }}
 
-{{ $resource := $image.Get "resource" }}
-
-{{ if .Title }}
+{{ if $title }}
   <figure>
-    {{ with $resource }}
-      {{ if eq .MediaType.SubType "svg" }}
-        {{ .Content | safeHTML }}
-      {{ else }}
-        <img src="{{ .RelPermalink | safeURL }}" alt="{{ $text }}" width="{{ .Width }}" height="{{ .Height }}" loading="lazy">
-      {{ end }}
-    {{ else }}
-      <img src="{{ .Destination | safeURL }}" alt="{{ $text }}" width="{{ .Width }}" height="{{ .Height }}" loading="lazy">
-    {{ end }}
-    <figcaption>{{ .Title | markdownify }}</figcaption>
+    <img src="{{ $imageSrc | safeURL }}" alt="{{ $text }}" loading="lazy">
+    <figcaption>{{ $title | markdownify }}</figcaption>
   </figure>
 {{ else }}
-  {{ with $resource }}
-    {{ if eq .MediaType.SubType "svg" }}
-      {{ .Content | safeHTML }}
-    {{ else }}
-      <img src="{{ .RelPermalink | safeURL }}" alt="{{ $text }}" width="{{ .Width }}" height="{{ .Height }}" loading="lazy">
-    {{ end }}
-  {{ else }}
-    <img src="{{ .Destination | safeURL }}" alt="{{ $text }}" loading="lazy">
-  {{ end }}
+  <img src="{{ $imageSrc | safeURL }}" alt="{{ $text }}" loading="lazy">
 {{ end }}

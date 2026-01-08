@@ -1,4 +1,8 @@
-baseURL = 'https://nexusquantum.github.io/NQRust-MicroVM/'
+# Development: Use baseURL = '/' for local development
+# Production: Uncomment line below before deploying to GitHub Pages
+# baseURL = 'https://nexusquantum.github.io/NQRust-MicroVM/'
+baseURL = '/'
+
 languageCode = 'en-us'
 title = 'NQRust-MicroVM Documentation'
 enableEmoji = true

@@ -79,7 +79,7 @@ Logs don't stream automatically. You must start streaming:
 
 When you first open the Logs tab:
 
-![Image: Logs initial state](/images/containers/logs-initial-state.png)
+<!-- ![Image: Logs initial state](/images/containers/logs-initial-state.png) -->
 
 You'll see:
 ```
@@ -106,11 +106,11 @@ Click the **"Start Stream"** button:
 
 ### Connection States
 
-**Connecting**:
+<!-- **Connecting**:
 ```
 [Connecting...] (spinner icon)
 ```
-![Image: Connecting state](/images/containers/logs-connecting.png)
+![Image: Connecting state](/images/containers/logs-connecting.png) -->
 
 **Connected and Streaming**:
 ```

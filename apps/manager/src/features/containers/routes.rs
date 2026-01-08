@@ -13,7 +13,15 @@ use nexus_types::{
     CreateContainerReq, CreateContainerResp, ExecCommandReq, ExecCommandResp, GetContainerResp,
     ListContainersParams, ListContainersResp, OkResponse, UpdateContainerReq,
 };
+use serde::Serialize;
 use tokio::time::{interval, Duration};
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fault_message: Option<String>,
+}
 
 #[utoipa::path(
     post,
@@ -171,18 +179,27 @@ pub async fn delete(
 pub async fn start(
     Extension(st): Extension<AppState>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
-) -> Result<Json<OkResponse>, StatusCode> {
-    super::service::start_container(&st, id)
-        .await
-        .map_err(|e| {
+) -> impl IntoResponse {
+    match super::service::start_container(&st, id).await {
+        Ok(_) => (StatusCode::OK, Json(OkResponse::default())).into_response(),
+        Err(e) => {
             eprintln!("Failed to start container: {}", e);
-            if e.to_string().contains("already running") {
+            let error_msg = e.to_string();
+            let status = if error_msg.contains("already running") {
                 StatusCode::BAD_REQUEST
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
-            }
-        })?;
-    Ok(Json(OkResponse::default()))
+            };
+            (
+                status,
+                Json(ErrorResponse {
+                    error: "Failed to start container".to_string(),
+                    fault_message: Some(error_msg),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 #[utoipa::path(
@@ -200,16 +217,27 @@ pub async fn start(
 pub async fn stop(
     Extension(st): Extension<AppState>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
-) -> Result<Json<OkResponse>, StatusCode> {
-    super::service::stop_container(&st, id).await.map_err(|e| {
-        eprintln!("Failed to stop container: {}", e);
-        if e.to_string().contains("not running") {
-            StatusCode::BAD_REQUEST
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
+) -> impl IntoResponse {
+    match super::service::stop_container(&st, id).await {
+        Ok(_) => (StatusCode::OK, Json(OkResponse::default())).into_response(),
+        Err(e) => {
+            eprintln!("Failed to stop container: {}", e);
+            let error_msg = e.to_string();
+            let status = if error_msg.contains("not running") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (
+                status,
+                Json(ErrorResponse {
+                    error: "Failed to stop container".to_string(),
+                    fault_message: Some(error_msg),
+                }),
+            )
+                .into_response()
         }
-    })?;
-    Ok(Json(OkResponse::default()))
+    }
 }
 
 #[utoipa::path(
@@ -226,14 +254,21 @@ pub async fn stop(
 pub async fn restart(
     Extension(st): Extension<AppState>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
-) -> Result<Json<OkResponse>, StatusCode> {
-    super::service::restart_container(&st, id)
-        .await
-        .map_err(|e| {
+) -> impl IntoResponse {
+    match super::service::restart_container(&st, id).await {
+        Ok(_) => (StatusCode::OK, Json(OkResponse::default())).into_response(),
+        Err(e) => {
             eprintln!("Failed to restart container: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    Ok(Json(OkResponse::default()))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to restart container".to_string(),
+                    fault_message: Some(e.to_string()),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 #[utoipa::path(

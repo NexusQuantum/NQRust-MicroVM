@@ -715,7 +715,21 @@ export function useStartContainer() {
     mutationFn: (id: string) => facadeApi.startContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    },
+    onError: (error: any) => {
+      console.error("Start container error:", error);
+      try {
+        const parsedError = JSON.parse(error.message);
+        toast.error("Failed to start container", {
+          description: parsedError.fault_message || parsedError.error || "Unknown error occurred"
+        });
+      } catch {
+        toast.error("Failed to start container", {
+          description: error?.message || "Unknown error occurred"
+        });
+      }
+    }
   });
 }
 
@@ -726,7 +740,21 @@ export function useStopContainer() {
     mutationFn: (id: string) => facadeApi.stopContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    },
+    onError: (error: any) => {
+      console.error("Stop container error:", error);
+      try {
+        const parsedError = JSON.parse(error.message);
+        toast.error("Failed to stop container", {
+          description: parsedError.fault_message || parsedError.error || "Unknown error occurred"
+        });
+      } catch {
+        toast.error("Failed to stop container", {
+          description: error?.message || "Unknown error occurred"
+        });
+      }
+    }
   });
 }
 
@@ -737,7 +765,21 @@ export function useRestartContainer() {
     mutationFn: (id: string) => facadeApi.restartContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    },
+    onError: (error: any) => {
+      console.error("Restart container error:", error);
+      try {
+        const parsedError = JSON.parse(error.message);
+        toast.error("Failed to restart container", {
+          description: parsedError.fault_message || parsedError.error || "Unknown error occurred"
+        });
+      } catch {
+        toast.error("Failed to restart container", {
+          description: error?.message || "Unknown error occurred"
+        });
+      }
+    }
   });
 }
 

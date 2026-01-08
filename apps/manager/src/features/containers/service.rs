@@ -432,6 +432,63 @@ pub async fn start_container(st: &AppState, id: Uuid) -> Result<OkResponse> {
         return Err(anyhow!("Container is already running"));
     }
 
+    // Extract VM ID from runtime_id
+    let runtime_id = container
+        .container_runtime_id
+        .as_ref()
+        .ok_or_else(|| anyhow!("Container has no runtime ID"))?;
+
+    let vm_id_str = runtime_id
+        .strip_prefix("vm-")
+        .ok_or_else(|| anyhow!("Invalid runtime ID format"))?;
+
+    let vm_id = Uuid::parse_str(vm_id_str)?;
+
+    // Get VM
+    let vm = crate::features::vms::repo::get(&st.db, vm_id).await?;
+
+    // Check if VM needs to be started
+    if vm.state != "running" || vm.guest_ip.is_none() {
+        tracing::info!(
+            container_id = %id,
+            vm_id = %vm_id,
+            vm_state = %vm.state,
+            has_guest_ip = vm.guest_ip.is_some(),
+            "VM not ready, starting VM first"
+        );
+
+        // Start the VM if it's not running
+        crate::features::vms::service::start_vm_by_id(st, vm_id).await?;
+
+        // Wait for guest IP to be available (up to 60 seconds)
+        let mut guest_ip: Option<String> = None;
+        for attempt in 1..=60 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+            if let Ok(vm) = crate::features::vms::repo::get(&st.db, vm_id).await {
+                if let Some(ip) = vm.guest_ip {
+                    guest_ip = Some(ip);
+                    break;
+                }
+            }
+
+            if attempt % 10 == 0 {
+                tracing::info!(
+                    container_id = %id,
+                    vm_id = %vm_id,
+                    attempt = attempt,
+                    "Still waiting for VM guest IP..."
+                );
+            }
+        }
+
+        if guest_ip.is_none() {
+            return Err(anyhow!(
+                "Timed out waiting for VM guest IP. VM may not have started properly."
+            ));
+        }
+    }
+
     // Get guest IP from VM
     let guest_ip = get_guest_ip_from_container(&st.db, &container).await?;
 
@@ -459,20 +516,40 @@ pub async fn stop_container(st: &AppState, id: Uuid) -> Result<OkResponse> {
         return Err(anyhow!("Container is not running"));
     }
 
-    // Get guest IP
-    let guest_ip = get_guest_ip_from_container(&st.db, &container).await?;
+    // Try to get guest IP, but handle the case where VM might be stopped
+    let guest_ip_result = get_guest_ip_from_container(&st.db, &container).await;
 
-    // Connect to Docker
-    let docker = DockerClient::new(&guest_ip)?;
+    match guest_ip_result {
+        Ok(guest_ip) => {
+            // VM is running, try to stop container gracefully via Docker
+            let docker = DockerClient::new(&guest_ip)?;
+            let docker_container_id = extract_docker_container_id(&container)?;
 
-    let docker_container_id = extract_docker_container_id(&container)?;
+            match docker.stop_container(&docker_container_id, Some(10)).await {
+                Ok(_) => {
+                    tracing::info!(container_id = %id, "Container stopped via Docker");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        container_id = %id,
+                        error = %e,
+                        "Failed to stop container via Docker, will mark as stopped anyway"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                container_id = %id,
+                error = %e,
+                "VM guest IP not available, marking container as stopped"
+            );
+            // VM is not reachable, but we can still update the database state
+        }
+    }
 
-    docker
-        .stop_container(&docker_container_id, Some(10))
-        .await?;
     repo.set_stopped(id).await?;
-
-    tracing::info!(container_id = %id, "Container stopped");
+    tracing::info!(container_id = %id, "Container marked as stopped");
 
     Ok(OkResponse::default())
 }

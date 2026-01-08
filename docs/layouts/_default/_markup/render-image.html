@@ -1,0 +1,14 @@
+{{- /*
+  Custom image render hook
+  This automatically converts image paths to use relURL for correct baseURL handling
+*/ -}}
+{{- $src := .Destination -}}
+{{- $alt := .Text -}}
+{{- $title := .Title -}}
+
+{{- /* Convert absolute paths starting with / to use relURL */ -}}
+{{- if hasPrefix $src "/" -}}
+  <img src="{{ $src | relURL }}" alt="{{ $alt }}" {{ with $title }}title="{{ . }}"{{ end }} loading="lazy">
+{{- else -}}
+  <img src="{{ $src }}" alt="{{ $alt }}" {{ with $title }}title="{{ . }}"{{ end }} loading="lazy">
+{{- end -}}

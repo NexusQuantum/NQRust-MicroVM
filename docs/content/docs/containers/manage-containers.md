@@ -24,18 +24,18 @@ Navigate to the main containers page:
 
 ## Container States
 
-Containers can be in different states:
+Containers can be in different states with color-coded badges:
 
 ![Image: Container states badges](/images/containers/manage-states-badges.png)
 
-| State | Color | Description | Available Actions |
-|-------|-------|-------------|-------------------|
-| **Creating** | Blue | VM being created | Wait |
-| **Booting** | Blue | VM booting up | Wait |
-| **Initializing** | Blue | Docker daemon starting | Wait |
+| State | Badge Color | Description | Available Actions |
+|-------|-------------|-------------|-------------------|
+| **Creating** | Yellow | VM being created | Wait |
+| **Booting** | Gray | VM booting up | Wait |
+| **Initializing** | Cyan | Docker daemon starting | Wait |
 | **Running** | Green | Container active | Stop, Restart, Pause, Logs, Shell |
-| **Stopped** | Gray | Container stopped | Start, Delete |
-| **Paused** | Yellow | Container paused | Resume, Stop |
+| **Stopped** | Red | Container stopped | Start, Delete |
+| **Paused** | Amber | Container paused | Resume, Stop |
 | **Error** | Red | Deployment/runtime error | View logs, Delete, Retry |
 
 **State transitions**:
@@ -44,7 +44,7 @@ Creating → Booting → Initializing → Running
 Running → Stopped (via Stop)
 Running → Paused (via Pause)
 Paused → Running (via Resume)
-Any → Error (if failure occurs)
+Any State → Error (if failure occurs)
 ```
 
 ---
@@ -117,7 +117,7 @@ The container table shows detailed information:
 
 **3. Status**
 - Current state with colored badge
-- Green (Running), Gray (Stopped), Blue (Creating), Red (Error)
+- Colors: Green (Running), Red (Stopped/Error), Yellow (Creating), Gray (Booting), Cyan (Initializing), Amber (Paused)
 
 ![Image: Status column](/images/containers/manage-column-status.png)
 
@@ -278,52 +278,6 @@ Available when: **Container is Running**
 
 ---
 
-### Pause Container
-
-Available when: **Container is Running**
-
-![Image: Pause button](/images/containers/manage-action-pause.png)
-
-**How to pause**:
-1. Go to container detail page
-2. Click **"Pause"** button in header
-3. Container freezes in current state
-4. State changes to "Paused"
-
-**What happens**:
-- Container process is frozen (SIGSTOP)
-- CPU usage drops to 0%
-- Memory state is preserved
-- Network connections maintained
-
-**Use cases**:
-- Temporarily free up CPU
-- Debug at specific point
-- Save resources during idle periods
-
-**Note**: Container does not respond to requests while paused.
-
----
-
-### Resume Container
-
-Available when: **Container is Paused**
-
-![Image: Resume button](/images/containers/manage-action-resume.png)
-
-**How to resume**:
-1. Go to container detail page
-2. Click **"Resume"** button
-3. Container continues from paused state
-4. State changes back to "Running"
-
-**What happens**:
-- Container process is resumed (SIGCONT)
-- Continues from exact point where paused
-- Network connections restored
-- CPU usage resumes
-
----
 
 ### Delete Container
 
@@ -545,14 +499,14 @@ Click **"Edit"** button to open the edit dialog:
 
 ![Image: Edit resources](/images/containers/manage-edit-resources.png)
 
-**2. Port Mappings**:
+<!-- **2. Port Mappings**:
 - Add new port mappings
 - Remove existing mappings
 - Change host ports (not container ports)
 
-![Image: Edit ports](/images/containers/manage-edit-ports.png)
+![Image: Edit ports](/images/containers/manage-edit-ports.png) -->
 
-**3. Environment Variables**:
+**2. Environment Variables**:
 - Add new variables
 - Modify existing variables
 - Remove variables
