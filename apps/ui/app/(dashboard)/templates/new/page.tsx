@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, Save, Loader2 } from "lucide-react"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { ArrowLeft, Save, Loader2, Cpu, HardDrive, FileCode, Folder } from "lucide-react"
 import Link from "next/link"
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
@@ -35,6 +36,7 @@ export default function NewTemplatePage() {
 
   const [useImageIds, setUseImageIds] = useState(true)
   const [showCancelDialog, setShowCancelDialog] = useState(false)
+  const [showReviewDialog, setShowReviewDialog] = useState(false)
 
   // Filter images by type
   const kernelImages = images?.filter(img => img.kind === "kernel") || []
@@ -148,6 +150,12 @@ export default function NewTemplatePage() {
       }
     }
 
+    // Show review dialog instead of creating immediately
+    setShowReviewDialog(true)
+  }
+
+  const handleConfirmCreate = () => {
+    setShowReviewDialog(false)
     createMutation.mutate()
   }
 
@@ -417,6 +425,143 @@ export default function NewTemplatePage() {
         cancelText="Continue Editing"
         variant="default"
       />
+
+      {/* Review Template Dialog */}
+      <Dialog open={showReviewDialog} onOpenChange={setShowReviewDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review Template Configuration</DialogTitle>
+            <DialogDescription>
+              Please review the template configuration before creating. Make sure all settings are correct.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {/* Template Name */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Template Name</h3>
+              <p className="text-lg font-medium">{formData.name}</p>
+            </div>
+
+            {/* Resource Configuration */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Resource Configuration</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center gap-3 rounded-lg border p-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <Cpu className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">vCPU Cores</p>
+                    <p className="text-xl font-semibold">{formData.vcpu}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-lg border p-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <HardDrive className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Memory</p>
+                    <p className="text-xl font-semibold">{formData.mem_mib} MiB</p>
+                    <p className="text-xs text-muted-foreground">({(formData.mem_mib / 1024).toFixed(1)} GB)</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Image Configuration */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Boot Images</h3>
+              <div className="space-y-3">
+                {/* Kernel */}
+                <div className="rounded-lg border p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <FileCode className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Kernel Image</span>
+                  </div>
+                  {formData.kernel_image_id ? (
+                    <div className="space-y-1 pl-6">
+                      <p className="text-sm">
+                        <span className="text-muted-foreground">Registry:</span>{" "}
+                        <span className="font-mono text-xs">{kernelImage?.name || formData.kernel_image_id}</span>
+                      </p>
+                      <p className="text-sm">
+                        <span className="text-muted-foreground">Path:</span>{" "}
+                        <span className="font-mono text-xs">{formData.kernel_path || "Loading..."}</span>
+                      </p>
+                    </div>
+                  ) : formData.kernel_path ? (
+                    <p className="text-sm font-mono text-xs pl-6">{formData.kernel_path}</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground pl-6">Not configured</p>
+                  )}
+                </div>
+
+                {/* Rootfs */}
+                <div className="rounded-lg border p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Folder className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Rootfs Image</span>
+                  </div>
+                  {formData.rootfs_image_id ? (
+                    <div className="space-y-1 pl-6">
+                      <p className="text-sm">
+                        <span className="text-muted-foreground">Registry:</span>{" "}
+                        <span className="font-mono text-xs">{rootfsImage?.name || formData.rootfs_image_id}</span>
+                      </p>
+                      <p className="text-sm">
+                        <span className="text-muted-foreground">Path:</span>{" "}
+                        <span className="font-mono text-xs">{formData.rootfs_path || "Loading..."}</span>
+                      </p>
+                    </div>
+                  ) : formData.rootfs_path ? (
+                    <p className="text-sm font-mono text-xs pl-6">{formData.rootfs_path}</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground pl-6">Not configured</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Warning if incomplete */}
+            {(!formData.kernel_path && !formData.rootfs_path) && (
+              <div className="rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900 p-4">
+                <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                  <strong>Warning:</strong> Neither kernel nor rootfs is configured. VMs created from this template may not boot properly.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowReviewDialog(false)}
+              disabled={createMutation.isPending}
+            >
+              Back to Edit
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmCreate}
+              disabled={createMutation.isPending}
+            >
+              {createMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Confirm & Create
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   )
 }

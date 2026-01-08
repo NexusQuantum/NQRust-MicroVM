@@ -117,6 +117,7 @@ The deploy dialog opens:
 Before deploying, check the template configuration:
 
 ![Image: Configuration summary](/images/templates/deploy-config.png)
+![Image: Configuration summary](/images/templates/deploy-config-2.png)
 
 **Verify**:
 - vCPU count is correct

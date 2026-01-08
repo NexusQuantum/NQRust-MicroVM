@@ -5,7 +5,7 @@ import Link from "next/link"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Play, Trash2, Search, Server, Cpu, HardDrive } from "lucide-react"
+import { Play, Trash2, Search, Server, Cpu, HardDrive, FileCode, Folder, Info } from "lucide-react"
 import type { Template } from "@/lib/types"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -55,6 +55,9 @@ export function TemplateList({ templates }: TemplateListProps) {
     template: null,
   })
   const [vmName, setVmName] = useState("")
+
+  // Configuration detail dialog state
+  const [showConfigDialog, setShowConfigDialog] = useState(false)
 
   const instantiateMutation = useMutation({
     mutationFn: ({ templateId, name }: { templateId: string; name: string }) =>
@@ -276,8 +279,20 @@ export function TemplateList({ templates }: TemplateListProps) {
             </div>
 
             {deployDialog.template && (
-              <div className="rounded-lg border p-4 space-y-2 text-sm">
-                <h4 className="font-medium">Template Configuration</h4>
+              <div className="rounded-lg border p-4 space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium">Template Configuration</h4>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowConfigDialog(true)}
+                    className="h-7"
+                  >
+                    <Info className="mr-1.5 h-3.5 w-3.5" />
+                    View Details
+                  </Button>
+                </div>
                 <div className="grid grid-cols-2 gap-2 text-muted-foreground">
                   <div>
                     vCPU: <span className="text-foreground font-mono">{deployDialog.template.spec.vcpu}</span>
@@ -300,6 +315,124 @@ export function TemplateList({ templates }: TemplateListProps) {
             </Button>
             <Button onClick={handleDeploy} disabled={instantiateMutation.isPending}>
               {instantiateMutation.isPending ? "Deploying..." : "Deploy VM"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Template Configuration Detail Dialog */}
+      <Dialog open={showConfigDialog} onOpenChange={setShowConfigDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Template Configuration Details</DialogTitle>
+            <DialogDescription>
+              Complete configuration for "{deployDialog.template?.name}"
+            </DialogDescription>
+          </DialogHeader>
+
+          {deployDialog.template && (
+            <div className="space-y-6 py-4">
+              {/* Template Name */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Template Name</h3>
+                <p className="text-lg font-medium">{deployDialog.template.name}</p>
+              </div>
+
+              {/* Resource Configuration */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Resource Configuration</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center gap-3 rounded-lg border p-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                      <Cpu className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">vCPU Cores</p>
+                      <p className="text-xl font-semibold">{deployDialog.template.spec.vcpu}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 rounded-lg border p-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                      <HardDrive className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Memory</p>
+                      <p className="text-xl font-semibold">{deployDialog.template.spec.mem_mib} MiB</p>
+                      <p className="text-xs text-muted-foreground">
+                        ({(deployDialog.template.spec.mem_mib / 1024).toFixed(1)} GB)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Image Configuration */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Boot Images</h3>
+                <div className="space-y-3">
+                  {/* Kernel */}
+                  <div className="rounded-lg border p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <FileCode className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Kernel Image</span>
+                    </div>
+                    {deployDialog.template.spec.kernel_image_id && (
+                      <div className="space-y-1 pl-6">
+                        <p className="text-sm">
+                          <span className="text-muted-foreground">Registry ID:</span>{" "}
+                          <span className="font-mono text-xs">{deployDialog.template.spec.kernel_image_id}</span>
+                        </p>
+                      </div>
+                    )}
+                    {deployDialog.template.spec.kernel_path ? (
+                      <p className="text-sm font-mono text-xs pl-6">{deployDialog.template.spec.kernel_path}</p>
+                    ) : (
+                      !deployDialog.template.spec.kernel_image_id && (
+                        <p className="text-sm text-muted-foreground pl-6">Not configured</p>
+                      )
+                    )}
+                  </div>
+
+                  {/* Rootfs */}
+                  <div className="rounded-lg border p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Folder className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Rootfs Image</span>
+                    </div>
+                    {deployDialog.template.spec.rootfs_image_id && (
+                      <div className="space-y-1 pl-6">
+                        <p className="text-sm">
+                          <span className="text-muted-foreground">Registry ID:</span>{" "}
+                          <span className="font-mono text-xs">{deployDialog.template.spec.rootfs_image_id}</span>
+                        </p>
+                      </div>
+                    )}
+                    {deployDialog.template.spec.rootfs_path ? (
+                      <p className="text-sm font-mono text-xs pl-6">{deployDialog.template.spec.rootfs_path}</p>
+                    ) : (
+                      !deployDialog.template.spec.rootfs_image_id && (
+                        <p className="text-sm text-muted-foreground pl-6">Not configured</p>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Creation Date */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Created</h3>
+                <p className="text-sm">{dateFormat.formatDate(deployDialog.template.created_at)}</p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowConfigDialog(false)}
+            >
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
