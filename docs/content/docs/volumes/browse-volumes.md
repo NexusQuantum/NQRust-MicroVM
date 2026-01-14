@@ -15,24 +15,13 @@ Learn how to browse and search through available volumes in the registry to find
 
 Navigate to the Volumes page:
 
-![Image: Volumes page](/images/volumes/browse-main.png)
+![Image: Volumes page](/images/volumes/browse-main-volumes.png)
 
-1. Click **"Volumes"** in the sidebar (under Operations)
+1. Click **"Volumes"** in the sidebar (under Networks)
 2. View all available volumes in the table
 
 ---
 
-### From VM Creation
-
-When creating a VM, you can browse volumes:
-
-![Image: Browse from VM](/images/volumes/browse-from-vm.png)
-
-1. In VM creation wizard, select "Browse Volumes"
-2. Opens volume browser modal
-3. Select volume from available list
-
----
 
 ## Volume Table Layout
 
@@ -57,7 +46,7 @@ The volume table displays key information:
 
 Use the search bar to find volumes:
 
-![Image: Search bar](/images/volumes/search-bar.png)
+![Image: Search bar](/images/volumes/search-bar-volumes.png)
 
 **Search by**:
 - Volume name
@@ -112,18 +101,13 @@ Search: "data"
 
 Use the type filter dropdown:
 
-![Image: Type filter](/images/volumes/filter-type.png)
+![Image: Type filter](/images/volumes/filter-type-volumes.png)
 
 **Filter options**:
-- **All** - Show all volume types
-- **Data** - Show only data volumes
-- **Rootfs** - Show only root filesystem volumes
-- **Scratch** - Show only temporary volumes
-
-**Use cases**:
-- Filter to "Data" when looking for application storage
-- Filter to "Rootfs" when checking VM root filesystems
-- Use "All" to see everything
+- **All** - Show all types
+- **ext4** - Only ext4 volumes
+- **qcow2** - Only qcow2 volumes
+- **raw** - Only raw volumes
 
 ---
 
@@ -145,17 +129,6 @@ Filter volumes by attachment status:
 
 ---
 
-### Filter by Format
-
-Filter by storage format:
-
-**Filter options**:
-- **All** - Show all formats
-- **ext4** - Only ext4 volumes
-- **qcow2** - Only qcow2 volumes
-- **raw** - Only raw volumes
-
----
 
 ### Combined Filtering
 
@@ -165,14 +138,14 @@ Combine search and filters:
 
 **Example 1**: Find available data volumes
 ```
-1. Set type filter to "Data"
+1. Set type filter to "EXT4"
 2. Set status filter to "Available"
 Result: Only unattached data volumes
 ```
 
 **Example 2**: Find postgres volumes
 ```
-1. Set type filter to "Data"
+1. Set type filter to "EXT4"
 2. Search for "postgres"
 Result: Only data volumes with "postgres" in name
 ```
@@ -219,62 +192,7 @@ Sizes are formatted for readability:
 
 ---
 
-### Usage Indicators
 
-**VM count badge**:
-
-![Image: VM count badge](/images/volumes/vm-count.png)
-
-Shows how many VMs use this volume:
-- `0 VMs` - Not in use, available
-- `1 VM` - Attached to one VM
-- `Multiple VMs` - Shared volume (read-only)
-
-**Click VM count** to see which VMs use it:
-- View list of VMs
-- See attachment details
-- Check mount points
-
----
-
-## Selecting Volumes
-
-### Selecting from Browser Modal
-
-When browsing in VM creation:
-
-![Image: Select volume modal](/images/volumes/select-volume.png)
-
-**Steps**:
-1. Search or filter to find volume
-2. Click volume row to select
-3. Volume name appears in VM creation form
-4. Continue with VM creation
-
-**Visual feedback**:
-- Selected volume is highlighted
-- Selection confirmed with checkmark
-- Modal closes automatically
-
----
-
-### Using Volume Path
-
-Copy volume paths for reference:
-
-![Image: Copy path](/images/volumes/copy-path.png)
-
-1. Click **Copy** icon in Actions column
-2. Path copied to clipboard
-3. Confirmation notification appears
-
-**Use path for**:
-- Documentation
-- Scripts
-- Manual operations
-- Backup references
-
----
 
 ## Volume Categories
 
@@ -380,7 +298,7 @@ old-logs (Last month)
 
 When no volumes match your search:
 
-![Image: No results](/images/volumes/no-results.png)
+![Image: No results](/images/volumes/no-results-volumes.png)
 
 **Message**: "No volumes found"
 
@@ -392,21 +310,6 @@ When no volumes match your search:
 
 ---
 
-### Registry Empty
-
-When registry has no volumes:
-
-![Image: Empty registry](/images/volumes/empty-registry.png)
-
-**Message**: "No volumes in registry"
-
-**Actions**:
-1. Create your first volume
-2. Import existing volumes
-3. Create VMs to auto-register rootfs volumes
-4. Contact administrator if expected volumes are missing
-
----
 
 ## Performance Tips
 
