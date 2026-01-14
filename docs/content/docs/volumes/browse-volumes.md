@@ -481,5 +481,6 @@ Log archive: logs-archive-2025
 
 - **[Create Volumes](create-volumes/)** - Add new volumes to the registry
 - **[Manage Volumes](manage-volumes/)** - Attach, detach, and organize volumes
+- **[Users](/docs/users/)** - Manage user accounts and access control
 - **[Volumes Overview](../)** - Learn about volume types
 - **[Create VM](/docs/vm/create-vm/)** - Use volumes when creating VMs

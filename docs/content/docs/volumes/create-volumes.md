@@ -664,5 +664,6 @@ Retention: 30 days
 
 - **[Browse Volumes](browse-volumes/)** - Find created volumes
 - **[Manage Volumes](manage-volumes/)** - Attach volumes to VMs
+- **[Users](/docs/users/)** - Manage user accounts and access control
 - **[Volumes Overview](../)** - Learn about volume types
 - **[Create VM](/docs/vm/create-vm/)** - Create VMs with volumes

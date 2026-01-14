@@ -803,4 +803,5 @@ ls -ld /mnt/data
 - **[Browse Volumes](browse-volumes/)** - Find volumes to manage
 - **[Create Volumes](create-volumes/)** - Add new storage
 - **[Volumes Overview](../)** - Learn about volume types
+- **[Users](/docs/users/)** - Manage user accounts and access control
 - **[VM Management](/docs/vm/manage-vm/)** - Manage VM storage settings

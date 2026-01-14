@@ -630,9 +630,10 @@ VLAN 100+:  Customer/tenant isolation
 ## Next Steps
 
 - **[Manage Networks](manage-networks/)** - View, register, and delete networks
+- **[Volumes](/docs/volumes/)** - Manage VM storage volumes
+- **[Users](/docs/users/)** - Manage user accounts and access control
 - **[Create VM](/docs/vm/create-vm/)** - Create VMs with network configuration
 - **[VM Management](/docs/vm/manage-vm/)** - Manage VM network settings
-- **[Volumes](/docs/operations/volumes/)** - Manage VM storage volumes
 
 ---
 

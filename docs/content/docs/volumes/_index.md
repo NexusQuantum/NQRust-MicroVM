@@ -536,6 +536,7 @@ VM: web-server
 - **[Browse Volumes](browse-volumes/)** - Search and explore available volumes
 - **[Create Volumes](create-volumes/)** - Create and import volumes
 - **[Manage Volumes](manage-volumes/)** - Attach, detach, and organize volumes
+- **[Users](/docs/users/)** - Manage user accounts and access control
 - **[Create VM](/docs/vm/create-vm/)** - Use volumes when creating VMs
 
 ---
