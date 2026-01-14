@@ -1,7 +1,7 @@
 +++
 title = "Virtual Machines"
 description = "Create and manage lightweight Firecracker microVMs"
-weight = 30
+weight = 40
 date = 2025-12-16
 +++
 

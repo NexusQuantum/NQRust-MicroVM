@@ -1,7 +1,7 @@
 +++
 title = "Access to the VM"
 description = "Connect to your VM via web console or SSH"
-weight = 32
+weight = 42
 date = 2025-12-16
 +++
 

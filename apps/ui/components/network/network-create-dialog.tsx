@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle, Info } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useCreateNetwork, useHosts, useHost } from "@/lib/queries"
+import { toast } from "sonner"
 
 interface NetworkCreateDialogProps {
   open: boolean
@@ -38,6 +39,30 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
 
   // Fetch selected host details for smart defaults
   const { data: selectedHost } = useHost(formData.host_id)
+
+  // Close dialog and reset form after successful creation
+  useEffect(() => {
+    if (createNetwork.isSuccess) {
+      toast.success("Network created successfully", {
+        description: `Network "${formData.name}" has been created.`
+      })
+      resetForm()
+      onOpenChange(false)
+      createNetwork.reset() // Reset mutation state
+    }
+  }, [createNetwork.isSuccess])
+
+  // Show error toast when creation fails
+  useEffect(() => {
+    if (createNetwork.isError) {
+      const errorMessage = createNetwork.error instanceof Error
+        ? createNetwork.error.message
+        : "An unexpected error occurred"
+      toast.error("Failed to create network", {
+        description: errorMessage
+      })
+    }
+  }, [createNetwork.isError])
 
   // Auto-select defaults when dialog opens: host (port 19090) and bridge (fcbr0)
   useEffect(() => {
@@ -129,12 +154,7 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
       payload.vlan_id = null
     }
 
-    createNetwork.mutate(payload, {
-      onSuccess: () => {
-        resetForm()
-        onOpenChange(false)
-      },
-    })
+    createNetwork.mutate(payload)
   }
 
   // Common bridge names for dropdown

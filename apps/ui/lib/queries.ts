@@ -902,8 +902,26 @@ export function useCreateNetwork() {
 
   return useMutation({
     mutationFn: (network: any) => facadeApi.createNetwork(network),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.networks });    }
+    onSuccess: (response, network) => {
+      console.log("Network created successfully:", response, network);
+      queryClient.invalidateQueries({ queryKey: queryKeys.networks });
+      toast.success("Network Created", {
+        description: `Network "${network.name}" has been created successfully`
+      });
+    },
+    onError: (error: any) => {
+      console.error("Failed to create network:", error);
+      try {
+        const parsedError = JSON.parse(error.message);
+        toast.error("Failed to create network", {
+          description: parsedError.fault_message || parsedError.error || "An error occurred while creating the network"
+        });
+      } catch (e) {
+        toast.error("Failed to create network", {
+          description: error.message || "An error occurred while creating the network"
+        });
+      }
+    }
   });
 }
 

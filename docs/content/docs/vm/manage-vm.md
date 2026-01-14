@@ -1,7 +1,7 @@
 +++
 title = "Manage VMs"
 description = "Start, stop, pause, resume, and delete virtual machines"
-weight = 33
+weight = 43
 date = 2025-12-16
 +++
 

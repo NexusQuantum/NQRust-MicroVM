@@ -1,7 +1,7 @@
 +++
 title = "Backup & Snapshot"
 description = "Create backups and restore VMs using snapshots"
-weight = 34
+weight = 44
 date = 2025-12-16
 +++
 

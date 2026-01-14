@@ -1,7 +1,7 @@
 +++
 title = "Create a VM"
 description = "Step-by-step guide to create your first virtual machine"
-weight = 31
+weight = 41
 date = 2025-12-16
 +++
 

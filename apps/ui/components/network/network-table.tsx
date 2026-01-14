@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,6 +10,8 @@ import { Search, Trash2, Tag } from "lucide-react"
 import type { Network } from "@/lib/types"
 import { useDeleteNetwork } from "@/lib/queries"
 import { formatDistanceToNow } from "date-fns"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { toast } from "sonner"
 
 interface NetworkTableProps {
   networks: Network[]
@@ -18,8 +20,51 @@ interface NetworkTableProps {
 export function NetworkTable({ networks }: NetworkTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>("all")
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [networkToDelete, setNetworkToDelete] = useState<Network | null>(null)
 
   const deleteNetwork = useDeleteNetwork()
+
+  // Handle successful deletion
+  useEffect(() => {
+    if (deleteNetwork.isSuccess) {
+      toast.success("Network deleted successfully", {
+        description: `Network "${networkToDelete?.name}" has been deleted.`
+      })
+      setDeleteDialogOpen(false)
+      setNetworkToDelete(null)
+      deleteNetwork.reset()
+    }
+  }, [deleteNetwork.isSuccess])
+
+  // Handle deletion error
+  useEffect(() => {
+    if (deleteNetwork.isError) {
+      const errorMessage = deleteNetwork.error instanceof Error
+        ? deleteNetwork.error.message
+        : "An unexpected error occurred"
+      toast.error("Failed to delete network", {
+        description: errorMessage
+      })
+    }
+  }, [deleteNetwork.isError])
+
+  const handleDeleteClick = (network: Network) => {
+    if (network.vm_count > 0) {
+      toast.error("Cannot delete network", {
+        description: "This network has active VMs attached to it."
+      })
+      return
+    }
+    setNetworkToDelete(network)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleDeleteConfirm = () => {
+    if (networkToDelete) {
+      deleteNetwork.mutate(networkToDelete.id)
+    }
+  }
 
   const filteredNetworks = networks.filter((network) => {
     const matchesSearch =
@@ -116,16 +161,8 @@ export function NetworkTable({ networks }: NetworkTableProps) {
                       variant="ghost"
                       size="icon"
                       title="Delete"
-                      onClick={() => {
-                        if (network.vm_count > 0) {
-                          alert("Cannot delete network with active VMs")
-                          return
-                        }
-                        if (confirm(`Are you sure you want to delete network "${network.name}"?`)) {
-                          deleteNetwork.mutate(network.id)
-                        }
-                      }}
-                      disabled={deleteNetwork.isPending || network.vm_count > 0}
+                      onClick={() => handleDeleteClick(network)}
+                      disabled={deleteNetwork.isPending}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -136,6 +173,18 @@ export function NetworkTable({ networks }: NetworkTableProps) {
           </TableBody>
         </Table>
       </div>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="Delete Network"
+        description={`Are you sure you want to delete "${networkToDelete?.name}"? This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={handleDeleteConfirm}
+        variant="destructive"
+        isLoading={deleteNetwork.isPending}
+      />
     </div>
   )
 }

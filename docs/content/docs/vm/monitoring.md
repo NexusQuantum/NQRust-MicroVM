@@ -1,7 +1,7 @@
 +++
 title = "Monitoring"
 description = "Monitor VM performance and resource usage"
-weight = 35
+weight = 45
 date = 2025-12-16
 +++
 

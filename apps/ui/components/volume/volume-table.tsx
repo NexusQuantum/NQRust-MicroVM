@@ -62,6 +62,7 @@ function getActualStatus(volume: Volume): string {
 export function VolumeTable({ volumes }: VolumeTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [typeFilter, setTypeFilter] = useState<string>("all")
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
 
@@ -72,7 +73,8 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
     // Use actualStatus for filtering to match the displayed status
     const actualStatus = getActualStatus(volume)
     const matchesStatus = statusFilter === "all" || actualStatus === statusFilter
-    return matchesSearch && matchesStatus
+    const matchesType = typeFilter === "all" || volume.type.toLowerCase() === typeFilter.toLowerCase()
+    return matchesSearch && matchesStatus && matchesType
   })
 
   // Calculate pagination
@@ -89,6 +91,11 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value)
+    setCurrentPage(1)
+  }
+
+  const handleTypeChange = (value: string) => {
+    setTypeFilter(value)
     setCurrentPage(1)
   }
 
@@ -115,10 +122,19 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="available">Available</SelectItem>
             <SelectItem value="attached">Attached</SelectItem>
-            <SelectItem value="creating">Creating</SelectItem>
-            <SelectItem value="error">Error</SelectItem>
+            <SelectItem value="available">Available</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={typeFilter} onValueChange={handleTypeChange}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Type</SelectItem>
+            <SelectItem value="ext4">EXT4</SelectItem>
+            <SelectItem value="qcow2">QCOW2</SelectItem>
+            <SelectItem value="raw">RAW</SelectItem>
           </SelectContent>
         </Select>
         <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>

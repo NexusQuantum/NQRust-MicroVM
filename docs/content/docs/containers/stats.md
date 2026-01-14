@@ -959,7 +959,7 @@ Last optimized: 2025-12-18
 
 ## Next Steps
 
-- **[View Logs](logs/)** - Debug issues identified in stats
-- **[Manage Containers](manage-containers/)** - Adjust resources based on stats
-- **[Deploy a Container](deploy-container/)** - Apply lessons learned
-- **[Container Overview](./)** - Learn more about containers
+- **[View Logs](../logs/)** - Debug issues identified in stats
+- **[Manage Containers](../manage-containers/)** - Adjust resources based on stats
+- **[Deploy a Container](../deploy-container/)** - Apply lessons learned
+- **[Container Overview](../)** - Learn more about containers
