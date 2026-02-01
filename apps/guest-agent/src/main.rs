@@ -161,6 +161,19 @@ fn count_processes() -> Option<u32> {
     Some(count as u32)
 }
 
+/// Drop the kernel page cache so subsequent file reads hit disk.
+/// This is critical after snapshot restore: the rootfs was modified on the host
+/// before the snapshot was loaded, but the VM's page cache (from snapshot memory)
+/// still has the old data. Dropping caches forces a fresh read from disk.
+fn drop_page_caches() {
+    // sync first to flush any dirty pages
+    let _ = std::process::Command::new("/bin/sync").output();
+    // Drop page cache (3 = free pagecache + dentries + inodes)
+    if let Err(e) = fs::write("/proc/sys/vm/drop_caches", "3") {
+        eprintln!("Failed to drop page caches: {} (may need root)", e);
+    }
+}
+
 /// Read guest agent configuration from /etc/guest-agent.conf
 fn read_config() -> Option<AgentConfig> {
     let config_content = fs::read_to_string("/etc/guest-agent.conf").ok()?;
@@ -189,10 +202,64 @@ fn read_config() -> Option<AgentConfig> {
     })
 }
 
+/// Check if eth0 interface is UP
+fn is_eth0_up() -> bool {
+    let output = std::process::Command::new("/sbin/ip")
+        .args(["link", "show", "eth0"])
+        .output();
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            stdout.contains("state UP") || stdout.contains(",UP,") || stdout.contains("<UP,")
+        }
+        Err(e) => {
+            eprintln!("Failed to check eth0 status: {}", e);
+            false
+        }
+    }
+}
+
+/// Bring up eth0 and run DHCP if the interface is down or has no IP.
+/// This handles warm boot from snapshot where eth0 was flushed before snapshotting.
+fn ensure_network_up() {
+    if !is_eth0_up() {
+        eprintln!("eth0 is DOWN, bringing it up...");
+        let result = std::process::Command::new("/sbin/ip")
+            .args(["link", "set", "eth0", "up"])
+            .output();
+        match &result {
+            Ok(o) if o.status.success() => eprintln!("eth0 brought UP"),
+            Ok(o) => eprintln!("ip link set eth0 up failed: {}", String::from_utf8_lossy(&o.stderr)),
+            Err(e) => eprintln!("Failed to run /sbin/ip: {}", e),
+        }
+        // Give the interface a moment to come up
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    // Check if eth0 has an IP — if not, run DHCP
+    if detect_ip().is_none() {
+        eprintln!("No IP on eth0, running DHCP...");
+        let result = std::process::Command::new("/sbin/udhcpc")
+            .args(["-i", "eth0", "-n", "-q", "-T", "3", "-t", "5"])
+            .output();
+        match result {
+            Ok(o) if o.status.success() => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                eprintln!("DHCP completed successfully: {}", stdout.trim());
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                eprintln!("DHCP failed (exit {}): stdout={} stderr={}", o.status, stdout.trim(), stderr.trim());
+            }
+            Err(e) => eprintln!("Failed to run /sbin/udhcpc: {}", e),
+        }
+    }
+}
+
 /// Detect the VM's IP address from eth0
 fn detect_ip() -> Option<String> {
-    // Try reading from /sys/class/net/eth0/address first
-    let output = std::process::Command::new("ip")
+    let output = std::process::Command::new("/sbin/ip")
         .args(["addr", "show", "eth0"])
         .output()
         .ok()?;
@@ -338,7 +405,7 @@ async fn configure_interface(
     eprintln!("Configuring network interface: {}", req.interface);
 
     // Step 1: Bring up the interface
-    let link_up = std::process::Command::new("ip")
+    let link_up = std::process::Command::new("/sbin/ip")
         .args(["link", "set", &req.interface, "up"])
         .output();
 
@@ -486,6 +553,14 @@ async fn main() {
     // Initialize logging to stderr (works everywhere)
     eprintln!("Guest agent v{} starting...", env!("CARGO_PKG_VERSION"));
 
+    // Drop page caches immediately on startup.
+    // After snapshot restore, the rootfs was modified on the host (new VM ID in config)
+    // but the VM's page cache still has stale data. This ensures we read fresh data.
+    drop_page_caches();
+
+    // Also ensure network is up — after snapshot restore, eth0 may have no IP
+    ensure_network_up();
+
     // Read configuration
     let config = read_config();
     if let Some(ref cfg) = config {
@@ -520,16 +595,39 @@ async fn main() {
     });
 
     // Start IP reporting task if config is available
-    if let Some(config) = config {
+    if config.is_some() {
         tokio::spawn(async move {
             // Wait a bit for network to be ready
             tokio::time::sleep(Duration::from_secs(3)).await;
 
             let mut reported = false;
+            // Re-read config each iteration so we pick up changes from snapshot restore
+            // (the agent writes a new VM ID to /etc/guest-agent.conf before loading snapshot)
+            let mut current_config = read_config().unwrap();
+            let mut last_vm_id = current_config.vm_id.clone();
 
             loop {
+                // Drop page caches then re-read config to detect VM ID changes.
+                // After snapshot restore, the rootfs was modified on the host but
+                // the VM's page cache still has stale data from the snapshot memory.
+                drop_page_caches();
+                if let Some(new_config) = read_config() {
+                    if new_config.vm_id != last_vm_id {
+                        eprintln!(
+                            "VM ID changed: {} -> {} (snapshot restore detected)",
+                            last_vm_id, new_config.vm_id
+                        );
+                        last_vm_id = new_config.vm_id.clone();
+                        current_config = new_config;
+                        reported = false; // Force re-report with new VM ID
+                    }
+                }
+
+                // Self-heal: bring up eth0 + DHCP if network is down
+                ensure_network_up();
+
                 if let Some(ip) = detect_ip() {
-                    match report_ip_to_manager(&config, &ip).await {
+                    match report_ip_to_manager(&current_config, &ip).await {
                         Ok(_) => {
                             if !reported {
                                 eprintln!("Initial IP report successful");

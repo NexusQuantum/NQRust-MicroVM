@@ -420,6 +420,57 @@ pub struct InstantiateSnapshotResp {
     pub name: String,
 }
 
+// ========================================
+// Runtime Snapshots (Container warm boot)
+// ========================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeSnapshot {
+    pub id: uuid::Uuid,
+    pub runtime_image_id: uuid::Uuid,
+    pub snapshot_path: String,
+    pub state: String, // 'creating', 'ready', 'unhealthy', 'deleted'
+    pub fc_version: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub success_count: i32,
+    pub failure_count: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateRuntimeSnapshotReq {
+    pub runtime_image_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+pub struct CreateRuntimeSnapshotResp {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListRuntimeSnapshotsResp {
+    pub items: Vec<RuntimeSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GetRuntimeSnapshotResp {
+    pub item: RuntimeSnapshot,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct RuntimeSnapshotPathParams {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RebuildRuntimeSnapshotResp {
+    pub id: uuid::Uuid,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Image {
     pub id: uuid::Uuid,
@@ -777,6 +828,8 @@ pub struct Container {
     pub memory_used_mb: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_method: Option<String>, // 'warm' or 'cold'
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

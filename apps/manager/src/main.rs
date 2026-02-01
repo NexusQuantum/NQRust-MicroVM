@@ -45,7 +45,11 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,manager=info")
+            .add_directive("hyper_util=warn".parse().unwrap())
+            .add_directive("sqlx=warn".parse().unwrap())
+    });
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let db = PgPool::connect(&std::env::var("DATABASE_URL")?).await?;

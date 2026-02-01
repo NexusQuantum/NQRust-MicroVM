@@ -598,9 +598,12 @@ fn find_guest_agent_binary() -> Option<String> {
         "/opt/nqrust-microvm/bin/guest-agent",
         // Image directory (common for installed systems)
         "/srv/images/guest-agent",
-        // Development locations
+        // Development locations (release builds preferred)
         "target/x86_64-unknown-linux-musl/release/guest-agent",
         "target/release/guest-agent",
+        // Development debug builds (fallback for dev convenience)
+        "target/x86_64-unknown-linux-musl/debug/guest-agent",
+        "target/debug/guest-agent",
         // Alternative installed locations
         "/usr/local/bin/guest-agent",
         "/usr/bin/guest-agent",

@@ -9,6 +9,7 @@ pub mod images;
 pub mod logs; // A3 starter
 pub mod networks;
 pub mod reconciler;
+pub mod runtime_snapshots;
 pub mod snapshots;
 pub mod storage;
 pub mod templates;
@@ -51,6 +52,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/v1/hosts", hosts::router())
         .nest("/v1/images", images::router())
         .nest("/v1/networks", networks::router())
+        .nest("/v1/runtime-snapshots", runtime_snapshots::runtime_snapshot_routes())
         .nest("/v1/templates", templates::router())
         .nest("/v1/vms", vms::router())
         .nest("/v1/snapshots", snapshots::router())

@@ -6,6 +6,580 @@ info:
     name: ''
   version: 0.1.0
 paths:
+  /v1/auth/login:
+    post:
+      tags:
+      - Auth
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+        '500':
+          description: Failed to authenticate
+  /v1/auth/me:
+    get:
+      tags:
+      - Auth
+      operationId: me
+      responses:
+        '200':
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Failed to fetch user
+  /v1/containers:
+    get:
+      tags:
+      - Containers
+      operationId: list
+      parameters:
+      - name: state
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: host_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          nullable: true
+      responses:
+        '200':
+          description: Containers listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListContainersResp'
+        '500':
+          description: Failed to list containers
+    post:
+      tags:
+      - Containers
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContainerReq'
+        required: true
+      responses:
+        '200':
+          description: Container created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateContainerResp'
+        '400':
+          description: Invalid request
+        '500':
+          description: Failed to create container
+  /v1/containers/{id}:
+    get:
+      tags:
+      - Containers
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetContainerResp'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to fetch container
+    put:
+      tags:
+      - Containers
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContainerReq'
+        required: true
+      responses:
+        '200':
+          description: Container updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetContainerResp'
+        '400':
+          description: Invalid request
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to update container
+    delete:
+      tags:
+      - Containers
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to delete container
+  /v1/containers/{id}/exec:
+    post:
+      tags:
+      - Containers
+      operationId: exec
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecCommandReq'
+        required: true
+      responses:
+        '200':
+          description: Command executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecCommandResp'
+        '400':
+          description: Container not running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to execute command
+  /v1/containers/{id}/logs:
+    get:
+      tags:
+      - Containers
+      operationId: logs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: since
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: until
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: tail
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          nullable: true
+      - name: follow
+        in: path
+        required: true
+        schema:
+          type: boolean
+          nullable: true
+      responses:
+        '200':
+          description: Container logs fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerLogsResp'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to fetch logs
+  /v1/containers/{id}/pause:
+    post:
+      tags:
+      - Containers
+      operationId: pause
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container not running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to pause container
+  /v1/containers/{id}/restart:
+    post:
+      tags:
+      - Containers
+      operationId: restart
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container restarted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to restart container
+  /v1/containers/{id}/resume:
+    post:
+      tags:
+      - Containers
+      operationId: resume
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container not paused
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to resume container
+  /v1/containers/{id}/start:
+    post:
+      tags:
+      - Containers
+      operationId: start
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container already running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to start container
+  /v1/containers/{id}/stats:
+    get:
+      tags:
+      - Containers
+      operationId: stats
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container stats fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerStatsResp'
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to fetch stats
+  /v1/containers/{id}/stop:
+    post:
+      tags:
+      - Containers
+      operationId: stop
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Container stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Container not running
+        '404':
+          description: Container not found
+        '500':
+          description: Failed to stop container
+  /v1/functions:
+    get:
+      tags:
+      - Functions
+      operationId: list
+      responses:
+        '200':
+          description: Functions listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListFunctionsResp'
+        '500':
+          description: Failed to list functions
+    post:
+      tags:
+      - Functions
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFunctionReq'
+        required: true
+      responses:
+        '200':
+          description: Function created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateFunctionResp'
+        '400':
+          description: Invalid request
+        '500':
+          description: Failed to create function
+  /v1/functions/{id}:
+    get:
+      tags:
+      - Functions
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Function fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetFunctionResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to fetch function
+    put:
+      tags:
+      - Functions
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFunctionReq'
+        required: true
+      responses:
+        '200':
+          description: Function updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetFunctionResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to update function
+    delete:
+      tags:
+      - Functions
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Function deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to delete function
+  /v1/functions/{id}/invoke:
+    post:
+      tags:
+      - Functions
+      operationId: invoke
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvokeFunctionReq'
+        required: true
+      responses:
+        '200':
+          description: Function invoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvokeFunctionResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to invoke function
+  /v1/functions/{id}/logs:
+    get:
+      tags:
+      - Functions
+      operationId: logs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: path
+        required: true
+        schema:
+          type: string
+          nullable: true
+      - name: limit
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          nullable: true
+      responses:
+        '200':
+          description: Invocation logs fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListInvocationsResp'
+        '404':
+          description: Function not found
+        '500':
+          description: Failed to fetch logs
+  /v1/hosts:
+    get:
+      tags:
+      - Hosts
+      operationId: list
+      responses:
+        '200':
+          description: List of all hosts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostListResponse'
+        '500':
+          description: Failed to list hosts
   /v1/hosts/register:
     post:
       tags:
@@ -26,6 +600,53 @@ paths:
                 $ref: '#/components/schemas/RegisterHostResponse'
         '500':
           description: Failed to register host
+  /v1/hosts/{id}:
+    get:
+      tags:
+      - Hosts
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Host details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostDetailResponse'
+        '404':
+          description: Host not found
+        '500':
+          description: Failed to get host
+    delete:
+      tags:
+      - Hosts
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Host deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Cannot delete alive host
+        '404':
+          description: Host not found
+        '500':
+          description: Failed to delete host
   /v1/hosts/{id}/heartbeat:
     post:
       tags:
@@ -173,6 +794,109 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TailLogResponse'
+  /v1/runtime-snapshots:
+    get:
+      tags:
+      - Runtime Snapshots
+      operationId: list
+      responses:
+        '200':
+          description: List of runtime snapshots
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRuntimeSnapshotsResp'
+        '500':
+          description: Failed to list runtime snapshots
+    post:
+      tags:
+      - Runtime Snapshots
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRuntimeSnapshotReq'
+        required: true
+      responses:
+        '200':
+          description: Runtime snapshot creation initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateRuntimeSnapshotResp'
+        '404':
+          description: Runtime image not found
+        '500':
+          description: Failed to create runtime snapshot
+  /v1/runtime-snapshots/{id}:
+    get:
+      tags:
+      - Runtime Snapshots
+      operationId: get_one
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Runtime snapshot details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetRuntimeSnapshotResp'
+        '404':
+          description: Runtime snapshot not found
+        '500':
+          description: Failed to get runtime snapshot
+    delete:
+      tags:
+      - Runtime Snapshots
+      operationId: delete_one
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Runtime snapshot deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Runtime snapshot not found
+        '500':
+          description: Failed to delete runtime snapshot
+  /v1/runtime-snapshots/{id}/rebuild:
+    post:
+      tags:
+      - Runtime Snapshots
+      operationId: rebuild
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Snapshot rebuild initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebuildRuntimeSnapshotResp'
+        '404':
+          description: Runtime snapshot not found
+        '500':
+          description: Failed to rebuild runtime snapshot
   /v1/snapshots/{id}:
     get:
       tags:
@@ -280,6 +1004,56 @@ paths:
           description: Template not found
         '500':
           description: Failed to fetch template
+    put:
+      tags:
+      - Templates
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateReq'
+        required: true
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateTemplateResp'
+        '404':
+          description: Template not found
+        '500':
+          description: Failed to update template
+    delete:
+      tags:
+      - Templates
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Template deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Template not found
+        '500':
+          description: Failed to delete template
   /v1/templates/{id}/instantiate:
     post:
       tags:
@@ -309,6 +1083,126 @@ paths:
           description: Template not found
         '500':
           description: Failed to instantiate template
+  /v1/users:
+    get:
+      tags:
+      - Users
+      operationId: list
+      responses:
+        '200':
+          description: Users listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListUsersResponse'
+        '403':
+          description: Forbidden - admin only
+        '500':
+          description: Failed to list users
+    post:
+      tags:
+      - Users
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+        required: true
+      responses:
+        '200':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid request
+        '403':
+          description: Forbidden - admin only
+        '500':
+          description: Failed to create user
+  /v1/users/{id}:
+    get:
+      tags:
+      - Users
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: User fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetUserResponse'
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: User not found
+        '500':
+          description: Failed to fetch user
+    delete:
+      tags:
+      - Users
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/nexus_types.OkResponse'
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: User not found
+        '500':
+          description: Failed to delete user
+    patch:
+      tags:
+      - Users
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+        required: true
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid request
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: User not found
+        '500':
+          description: Failed to update user
   /v1/vms:
     get:
       tags:
@@ -1024,6 +1918,244 @@ components:
           format: int64
           nullable: true
           minimum: 0
+    Container:
+      type: object
+      required:
+      - id
+      - name
+      - image
+      - restart_policy
+      - state
+      - created_at
+      - updated_at
+      properties:
+        args:
+          type: array
+          items:
+            type: string
+        boot_method:
+          type: string
+          nullable: true
+        command:
+          type: string
+          nullable: true
+        container_runtime_id:
+          type: string
+          nullable: true
+        cpu_limit:
+          type: number
+          format: float
+          nullable: true
+        cpu_percent:
+          type: number
+          format: float
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+        error_message:
+          type: string
+          nullable: true
+        guest_ip:
+          type: string
+          nullable: true
+        host_id:
+          type: string
+          format: uuid
+          nullable: true
+        id:
+          type: string
+          format: uuid
+        image:
+          type: string
+        memory_limit_mb:
+          type: integer
+          format: int32
+          nullable: true
+        memory_used_mb:
+          type: integer
+          format: int64
+          nullable: true
+        name:
+          type: string
+        port_mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortMapping'
+        restart_policy:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        state:
+          type: string
+        stopped_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+          format: int64
+          nullable: true
+        volumes:
+          type: array
+          items:
+            $ref: '#/components/schemas/VolumeMount'
+    ContainerLog:
+      type: object
+      required:
+      - id
+      - container_id
+      - timestamp
+      - stream
+      - message
+      - created_at
+      properties:
+        container_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        message:
+          type: string
+        stream:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ContainerLogsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContainerLog'
+    ContainerStats:
+      type: object
+      required:
+      - id
+      - container_id
+      - recorded_at
+      properties:
+        block_read_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        block_write_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        container_id:
+          type: string
+          format: uuid
+        cpu_percent:
+          type: number
+          format: float
+          nullable: true
+        id:
+          type: string
+          format: uuid
+        memory_limit_mb:
+          type: integer
+          format: int64
+          nullable: true
+        memory_used_mb:
+          type: integer
+          format: int64
+          nullable: true
+        network_rx_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        network_tx_bytes:
+          type: integer
+          format: int64
+          nullable: true
+        pids:
+          type: integer
+          format: int32
+          nullable: true
+        recorded_at:
+          type: string
+          format: date-time
+    ContainerStatsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContainerStats'
+    CreateContainerReq:
+      type: object
+      required:
+      - name
+      - image
+      properties:
+        args:
+          type: array
+          items:
+            type: string
+        command:
+          type: string
+          nullable: true
+        cpu_limit:
+          type: number
+          format: float
+          nullable: true
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+        image:
+          type: string
+        memory_limit_mb:
+          type: integer
+          format: int32
+          nullable: true
+        name:
+          type: string
+        port_mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortMapping'
+        registry_auth:
+          allOf:
+          - $ref: '#/components/schemas/RegistryAuth'
+          nullable: true
+        restart_policy:
+          type: string
+        volumes:
+          type: array
+          items:
+            $ref: '#/components/schemas/VolumeMount'
+    CreateContainerResp:
+      type: object
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          format: uuid
     CreateDriveReq:
       type: object
       required:
@@ -1051,6 +2183,41 @@ components:
           format: int64
           nullable: true
           minimum: 0
+    CreateFunctionReq:
+      type: object
+      required:
+      - name
+      - runtime
+      - code
+      - handler
+      properties:
+        code:
+          type: string
+        env_vars:
+          nullable: true
+        handler:
+          type: string
+        memory_mb:
+          type: integer
+          format: int32
+        name:
+          type: string
+        runtime:
+          type: string
+        timeout_seconds:
+          type: integer
+          format: int32
+        vcpu:
+          type: integer
+          format: int32
+    CreateFunctionResp:
+      type: object
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          format: uuid
     CreateImageReq:
       type: object
       required:
@@ -1085,20 +2252,38 @@ components:
     CreateNicReq:
       type: object
       required:
-      - iface_id
-      - host_dev_name
+      - network_id
       properties:
         guest_mac:
           type: string
           nullable: true
-        host_dev_name:
-          type: string
         iface_id:
           type: string
+          description: Optional interface ID (e.g., "eth1"). If not provided, will auto-assign next sequential interface (eth1, eth2, eth3, etc.)
+          nullable: true
+        network_id:
+          type: string
+          format: uuid
         rx_rate_limiter:
           nullable: true
         tx_rate_limiter:
           nullable: true
+    CreateRuntimeSnapshotReq:
+      type: object
+      required:
+      - runtime_image_id
+      properties:
+        runtime_image_id:
+          type: string
+          format: uuid
+    CreateRuntimeSnapshotResp:
+      type: object
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          format: uuid
     CreateSnapshotRequest:
       type: object
       properties:
@@ -1144,6 +2329,19 @@ components:
         id:
           type: string
           format: uuid
+    CreateUserRequest:
+      type: object
+      required:
+      - username
+      - password
+      - role
+      properties:
+        password:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        username:
+          type: string
     CreateVmReq:
       type: object
       required:
@@ -1178,6 +2376,10 @@ components:
           type: string
           format: uuid
           nullable: true
+        tags:
+          type: array
+          items:
+            type: string
         username:
           type: string
           nullable: true
@@ -1193,6 +2395,156 @@ components:
         id:
           type: string
           format: uuid
+    ExecCommandReq:
+      type: object
+      required:
+      - command
+      properties:
+        attach_stderr:
+          type: boolean
+        attach_stdin:
+          type: boolean
+        attach_stdout:
+          type: boolean
+        command:
+          type: array
+          items:
+            type: string
+        tty:
+          type: boolean
+    ExecCommandResp:
+      type: object
+      required:
+      - exec_id
+      properties:
+        exec_id:
+          type: string
+        exit_code:
+          type: integer
+          format: int32
+          nullable: true
+        output:
+          type: string
+          nullable: true
+    Function:
+      type: object
+      required:
+      - id
+      - name
+      - runtime
+      - code
+      - handler
+      - timeout_seconds
+      - memory_mb
+      - vcpu
+      - port
+      - state
+      - created_at
+      - updated_at
+      properties:
+        code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        env_vars:
+          nullable: true
+        guest_ip:
+          type: string
+          nullable: true
+        handler:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_invoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        memory_mb:
+          type: integer
+          format: int32
+        name:
+          type: string
+        port:
+          type: integer
+          format: int32
+        runtime:
+          type: string
+        state:
+          type: string
+        timeout_seconds:
+          type: integer
+          format: int32
+        updated_at:
+          type: string
+          format: date-time
+        vcpu:
+          type: integer
+          format: int32
+        vm_id:
+          type: string
+          format: uuid
+          nullable: true
+    FunctionInvocation:
+      type: object
+      required:
+      - id
+      - function_id
+      - status
+      - duration_ms
+      - request_id
+      - event
+      - invoked_at
+      properties:
+        duration_ms:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+        event: {}
+        function_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        invoked_at:
+          type: string
+          format: date-time
+        logs:
+          type: array
+          items:
+            type: string
+        memory_used_mb:
+          type: integer
+          format: int32
+          nullable: true
+        request_id:
+          type: string
+        response:
+          nullable: true
+        status:
+          type: string
+    GetContainerResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/Container'
+    GetFunctionResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/Function'
     GetImageResp:
       type: object
       required:
@@ -1200,6 +2552,13 @@ components:
       properties:
         item:
           $ref: '#/components/schemas/Image'
+    GetRuntimeSnapshotResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/RuntimeSnapshot'
     GetSnapshotResponse:
       type: object
       required:
@@ -1214,6 +2573,13 @@ components:
       properties:
         item:
           $ref: '#/components/schemas/Template'
+    GetUserResponse:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/User'
     GetVmResponse:
       type: object
       required:
@@ -1293,6 +2659,44 @@ components:
         id:
           type: string
           format: uuid
+    InvokeFunctionReq:
+      type: object
+      required:
+      - event
+      properties:
+        event: {}
+    InvokeFunctionResp:
+      type: object
+      required:
+      - request_id
+      - status
+      - duration_ms
+      properties:
+        duration_ms:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+        logs:
+          type: array
+          items:
+            type: string
+        request_id:
+          type: string
+        response:
+          nullable: true
+        status:
+          type: string
+    ListContainersResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Container'
     ListDrivesResponse:
       type: object
       required:
@@ -1302,6 +2706,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/VmDrive'
+    ListFunctionsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Function'
     ListImagesResp:
       type: object
       required:
@@ -1311,6 +2724,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Image'
+    ListInvocationsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FunctionInvocation'
     ListNicsResponse:
       type: object
       required:
@@ -1320,6 +2742,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/VmNic'
+    ListRuntimeSnapshotsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimeSnapshot'
     ListSnapshotsResponse:
       type: object
       required:
@@ -1338,6 +2769,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Template'
+    ListUsersResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
     ListVmsResponse:
       type: object
       required:
@@ -1365,6 +2805,26 @@ components:
         show_log_origin:
           type: boolean
           nullable: true
+    LoginRequest:
+      type: object
+      required:
+      - username
+      - password
+      properties:
+        password:
+          type: string
+        username:
+          type: string
+    LoginResponse:
+      type: object
+      required:
+      - token
+      - user
+      properties:
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
     OkResponse:
       type: object
       required:
@@ -1372,6 +2832,32 @@ components:
       properties:
         ok:
           type: boolean
+    PortMapping:
+      type: object
+      required:
+      - host
+      - container
+      - protocol
+      properties:
+        container:
+          type: integer
+          format: int32
+        host:
+          type: integer
+          format: int32
+        protocol:
+          type: string
+    RebuildRuntimeSnapshotResp:
+      type: object
+      required:
+      - id
+      - message
+      properties:
+        id:
+          type: string
+          format: uuid
+        message:
+          type: string
     RegisterHostRequest:
       type: object
       required:
@@ -1391,6 +2877,44 @@ components:
         id:
           type: string
           format: uuid
+    RuntimeSnapshot:
+      type: object
+      required:
+      - id
+      - runtime_image_id
+      - snapshot_path
+      - state
+      - fc_version
+      - created_at
+      - success_count
+      - failure_count
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        failure_count:
+          type: integer
+          format: int32
+        fc_version:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata: {}
+        runtime_image_id:
+          type: string
+          format: uuid
+        snapshot_path:
+          type: string
+        state:
+          type: string
+        success_count:
+          type: integer
+          format: int32
     Snapshot:
       type: object
       required:
@@ -1471,6 +2995,28 @@ components:
           type: integer
           format: int32
           minimum: 0
+    UpdateContainerReq:
+      type: object
+      properties:
+        cpu_limit:
+          type: number
+          format: float
+          nullable: true
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+        memory_limit_mb:
+          type: integer
+          format: int32
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        restart_policy:
+          type: string
+          nullable: true
     UpdateDriveReq:
       type: object
       properties:
@@ -1479,6 +3025,31 @@ components:
           nullable: true
         rate_limiter:
           nullable: true
+    UpdateFunctionReq:
+      type: object
+      properties:
+        code:
+          type: string
+          nullable: true
+        env_vars:
+          nullable: true
+        handler:
+          type: string
+          nullable: true
+        memory_mb:
+          type: integer
+          format: int32
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        runtime:
+          type: string
+          nullable: true
+        timeout_seconds:
+          type: integer
+          format: int32
+          nullable: true
     UpdateNicReq:
       type: object
       properties:
@@ -1486,6 +3057,67 @@ components:
           nullable: true
         tx_rate_limiter:
           nullable: true
+    UpdateTemplateReq:
+      type: object
+      required:
+      - name
+      - spec
+      properties:
+        name:
+          type: string
+        spec:
+          $ref: '#/components/schemas/TemplateSpec'
+    UpdateTemplateResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/Template'
+    UpdateUserRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          nullable: true
+        role:
+          allOf:
+          - $ref: '#/components/schemas/Role'
+          nullable: true
+        username:
+          type: string
+          nullable: true
+    User:
+      type: object
+      required:
+      - id
+      - username
+      - role
+      - created_at
+      properties:
+        avatar_path:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        role:
+          $ref: '#/components/schemas/Role'
+        theme:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        username:
+          type: string
     Vm:
       type: object
       required:
@@ -1511,8 +3143,15 @@ components:
         created_at:
           type: string
           format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
         fc_unit:
           type: string
+        guest_ip:
+          type: string
+          nullable: true
         host_addr:
           type: string
         host_id:
@@ -1541,6 +3180,10 @@ components:
           nullable: true
         state:
           type: string
+        tags:
+          type: array
+          items:
+            type: string
         tap:
           type: string
         template_id:
@@ -1607,6 +3250,9 @@ components:
       - created_at
       - updated_at
       properties:
+        assigned_ip:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -1620,6 +3266,10 @@ components:
           format: uuid
         iface_id:
           type: string
+        network_id:
+          type: string
+          format: uuid
+          nullable: true
         rx_rate_limiter:
           nullable: true
         tx_rate_limiter:
@@ -1630,6 +3280,26 @@ components:
         vm_id:
           type: string
           format: uuid
+    VolumeMount:
+      type: object
+      required:
+      - host
+      - container
+      properties:
+        container:
+          type: string
+        host:
+          type: string
+        read_only:
+          type: boolean
+  securitySchemes:
+    bearer_auth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter your Bearer token from /v1/auth/login
+security:
+- bearer_auth: []
 tags:
 - name: Hosts
   description: Host lifecycle operations.
@@ -1641,7 +3311,17 @@ tags:
   description: Image registry APIs.
 - name: Snapshots
   description: Snapshot management APIs.
+- name: Runtime Snapshots
+  description: Container runtime warm boot snapshot APIs.
+- name: Functions
+  description: Serverless function management APIs.
+- name: Containers
+  description: Docker container orchestration APIs.
 - name: Logs
   description: Development log utilities.
 - name: VM devices
   description: Block and network device management.
+- name: Auth
+  description: Authentication APIs.
+- name: Users
+  description: User management APIs.

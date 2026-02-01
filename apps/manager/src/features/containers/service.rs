@@ -133,18 +133,43 @@ async fn provision_container_vm(
     memory_mb: u32,
 ) -> Result<()> {
     let repo = ContainerRepository::new(st.db.clone());
+    let provision_start = std::time::Instant::now();
 
     eprintln!("[Container {}] Starting VM provisioning", container_id);
 
-    // Create dedicated microVM with Docker runtime
-    let vm_id =
+    // Create dedicated microVM with Docker runtime (supports warm boot)
+    let (vm_id, boot_method) =
         super::vm::create_container_vm(st, container_id, container_name, vcpu, memory_mb).await?;
 
-    eprintln!("[Container {}] VM created: {}", container_id, vm_id);
+    let vm_create_time = provision_start.elapsed();
 
-    // Update container with VM ID
+    tracing::info!(
+        "Container {} VM created: {} via {} boot in {:.2}s",
+        container_id,
+        vm_id,
+        boot_method,
+        vm_create_time.as_secs_f64()
+    );
+
+    eprintln!(
+        "[Container {}] VM created: {} (boot: {})",
+        container_id, vm_id, boot_method
+    );
+
+    // Update container with VM ID and boot method
     repo.update_runtime_id(container_id, format!("vm-{}", vm_id))
         .await?;
+
+    // Store boot method in database
+    if let Err(e) = sqlx::query("UPDATE containers SET boot_method = $1 WHERE id = $2")
+        .bind(&boot_method)
+        .bind(container_id)
+        .execute(&st.db)
+        .await
+    {
+        tracing::warn!("Failed to store boot method for container {}: {}", container_id, e);
+    }
+
     repo.update_state(container_id, "booting", None).await?;
 
     // Wait for guest IP to be available (up to 60 seconds)
@@ -267,6 +292,28 @@ async fn provision_container_vm(
 
     // Update container state to running
     repo.set_started(container_id).await?;
+
+    let total_time = provision_start.elapsed();
+    let time_saved = if boot_method == "warm" {
+        // Estimate: cold boot typically takes 60-120s for Docker daemon startup
+        // Warm boot typically takes 5-10s
+        // Conservative estimate: saved ~60s
+        60.0 - total_time.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    tracing::info!(
+        "Container {} fully provisioned in {:.2}s via {} boot{}",
+        container_id,
+        total_time.as_secs_f64(),
+        boot_method,
+        if time_saved > 0.0 {
+            format!(" (saved ~{:.0}s)", time_saved)
+        } else {
+            String::new()
+        }
+    );
 
     // Set up port forwarding from host to container VM
     // The Docker container inside the VM has already been started with port mappings

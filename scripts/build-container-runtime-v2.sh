@@ -156,6 +156,25 @@ echo "container-runtime" > rootfs/etc/hostname
 # Enable root login without password (for debugging)
 sed -i 's/root:!:/root::/' rootfs/etc/shadow
 
+# Configure inittab to start OpenRC
+print_step "Configuring init system..."
+cat > rootfs/etc/inittab << 'EOF'
+# /etc/inittab
+
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+
+# Set up a couple of getty's
+ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100
+
+# Stuff to do for the 3-finger salute
+::ctrlaltdel:/sbin/reboot
+
+# Stuff to do before rebooting
+::shutdown:/sbin/openrc shutdown
+EOF
+
 # Create ext4 filesystem
 print_step "Creating ext4 filesystem (${IMAGE_SIZE})..."
 mkfs.ext4 -L container-runtime -d rootfs -E lazy_itable_init=0,lazy_journal_init=0 container-runtime.ext4 "$IMAGE_SIZE"

@@ -794,6 +794,109 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TailLogResponse'
+  /v1/runtime-snapshots:
+    get:
+      tags:
+      - Runtime Snapshots
+      operationId: list
+      responses:
+        '200':
+          description: List of runtime snapshots
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRuntimeSnapshotsResp'
+        '500':
+          description: Failed to list runtime snapshots
+    post:
+      tags:
+      - Runtime Snapshots
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRuntimeSnapshotReq'
+        required: true
+      responses:
+        '200':
+          description: Runtime snapshot creation initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateRuntimeSnapshotResp'
+        '404':
+          description: Runtime image not found
+        '500':
+          description: Failed to create runtime snapshot
+  /v1/runtime-snapshots/{id}:
+    get:
+      tags:
+      - Runtime Snapshots
+      operationId: get_one
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Runtime snapshot details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetRuntimeSnapshotResp'
+        '404':
+          description: Runtime snapshot not found
+        '500':
+          description: Failed to get runtime snapshot
+    delete:
+      tags:
+      - Runtime Snapshots
+      operationId: delete_one
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Runtime snapshot deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          description: Runtime snapshot not found
+        '500':
+          description: Failed to delete runtime snapshot
+  /v1/runtime-snapshots/{id}/rebuild:
+    post:
+      tags:
+      - Runtime Snapshots
+      operationId: rebuild
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Snapshot rebuild initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebuildRuntimeSnapshotResp'
+        '404':
+          description: Runtime snapshot not found
+        '500':
+          description: Failed to rebuild runtime snapshot
   /v1/snapshots/{id}:
     get:
       tags:
@@ -1830,6 +1933,9 @@ components:
           type: array
           items:
             type: string
+        boot_method:
+          type: string
+          nullable: true
         command:
           type: string
           nullable: true
@@ -2162,6 +2268,22 @@ components:
           nullable: true
         tx_rate_limiter:
           nullable: true
+    CreateRuntimeSnapshotReq:
+      type: object
+      required:
+      - runtime_image_id
+      properties:
+        runtime_image_id:
+          type: string
+          format: uuid
+    CreateRuntimeSnapshotResp:
+      type: object
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          format: uuid
     CreateSnapshotRequest:
       type: object
       properties:
@@ -2430,6 +2552,13 @@ components:
       properties:
         item:
           $ref: '#/components/schemas/Image'
+    GetRuntimeSnapshotResp:
+      type: object
+      required:
+      - item
+      properties:
+        item:
+          $ref: '#/components/schemas/RuntimeSnapshot'
     GetSnapshotResponse:
       type: object
       required:
@@ -2613,6 +2742,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/VmNic'
+    ListRuntimeSnapshotsResp:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimeSnapshot'
     ListSnapshotsResponse:
       type: object
       required:
@@ -2709,6 +2847,17 @@ components:
           format: int32
         protocol:
           type: string
+    RebuildRuntimeSnapshotResp:
+      type: object
+      required:
+      - id
+      - message
+      properties:
+        id:
+          type: string
+          format: uuid
+        message:
+          type: string
     RegisterHostRequest:
       type: object
       required:
@@ -2728,6 +2877,44 @@ components:
         id:
           type: string
           format: uuid
+    RuntimeSnapshot:
+      type: object
+      required:
+      - id
+      - runtime_image_id
+      - snapshot_path
+      - state
+      - fc_version
+      - created_at
+      - success_count
+      - failure_count
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        failure_count:
+          type: integer
+          format: int32
+        fc_version:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata: {}
+        runtime_image_id:
+          type: string
+          format: uuid
+        snapshot_path:
+          type: string
+        state:
+          type: string
+        success_count:
+          type: integer
+          format: int32
     Snapshot:
       type: object
       required:
@@ -3124,6 +3311,8 @@ tags:
   description: Image registry APIs.
 - name: Snapshots
   description: Snapshot management APIs.
+- name: Runtime Snapshots
+  description: Container runtime warm boot snapshot APIs.
 - name: Functions
   description: Serverless function management APIs.
 - name: Containers

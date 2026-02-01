@@ -30,8 +30,8 @@ impl ContainerRepository {
             INSERT INTO containers (
                 id, name, image, command, args, env_vars, volumes, port_mappings,
                 cpu_limit, memory_limit_mb, restart_policy, state, host_id,
-                created_by_user_id, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                created_by_user_id, created_at, updated_at, boot_method
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             "#,
         )
         .bind(id)
@@ -50,6 +50,7 @@ impl ContainerRepository {
         .bind(None::<Option<Uuid>>) // created_by_user_id - TODO: Set from authenticated user context
         .bind(now)
         .bind(now)
+        .bind(None::<Option<String>>) // boot_method - Will be updated after VM creation
         .execute(&self.db)
         .await
         .context("failed to insert container")?;
@@ -65,7 +66,8 @@ impl ContainerRepository {
                 c.cpu_limit, c.memory_limit_mb, c.restart_policy, c.state, c.host_id,
                 c.container_runtime_id, c.error_message, c.created_by_user_id, c.created_at, c.updated_at,
                 c.started_at, c.stopped_at,
-                v.guest_ip
+                v.guest_ip,
+                c.boot_method
             FROM containers c
             LEFT JOIN vm v ON c.container_runtime_id = 'vm-' || v.id::text
             WHERE c.id = $1
@@ -117,6 +119,7 @@ impl ContainerRepository {
             cpu_percent: None,
             memory_used_mb: None,
             guest_ip: row.guest_ip,
+            boot_method: row.boot_method,
         })
     }
 
@@ -132,7 +135,8 @@ impl ContainerRepository {
                 c.cpu_limit, c.memory_limit_mb, c.restart_policy, c.state, c.host_id,
                 c.container_runtime_id, c.error_message, c.created_by_user_id, c.created_at, c.updated_at,
                 c.started_at, c.stopped_at,
-                v.guest_ip
+                v.guest_ip,
+                c.boot_method
             FROM containers c
             LEFT JOIN vm v ON c.container_runtime_id = 'vm-' || v.id::text
             WHERE 1=1
@@ -205,6 +209,7 @@ impl ContainerRepository {
                     cpu_percent: None,
                     memory_used_mb: None,
                     guest_ip: row.guest_ip,
+                    boot_method: row.boot_method,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -489,6 +494,7 @@ struct ContainerRow {
     started_at: Option<chrono::DateTime<Utc>>,
     stopped_at: Option<chrono::DateTime<Utc>>,
     guest_ip: Option<String>,
+    boot_method: Option<String>,
 }
 
 // Helper structs for query results
