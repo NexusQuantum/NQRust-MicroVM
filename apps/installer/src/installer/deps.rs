@@ -399,9 +399,7 @@ pub fn install_docker_from_bundle() -> Result<Vec<LogEntry>> {
 
     // Add nqrust user to docker group
     let _ = run_sudo("usermod", &["-aG", "docker", "nqrust"]);
-    logs.push(LogEntry::info(
-        "Added 'nqrust' user to docker group",
-    ));
+    logs.push(LogEntry::info("Added 'nqrust' user to docker group"));
 
     // Also add the installing user if running with sudo
     if let Ok(user) = std::env::var("SUDO_USER").or_else(|_| std::env::var("USER")) {
@@ -479,7 +477,7 @@ pub fn install_bundled_packages(bundle_path: &Path) -> Result<Vec<LogEntry>> {
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
-                .any(|e| e.path().extension().map_or(false, |ext| ext == "deb"))
+                .any(|e| e.path().extension().is_some_and(|ext| ext == "deb"))
         })
         .unwrap_or(false);
 
@@ -542,7 +540,7 @@ pub fn install_nodejs_from_bundle(bundle_path: &Path) -> Result<Vec<LogEntry>> {
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .find(|p| {
-            p.file_name().map_or(false, |n| {
+            p.file_name().is_some_and(|n| {
                 let name = n.to_string_lossy();
                 name.starts_with("node-v") && name.ends_with("-linux-x64.tar.xz")
             })

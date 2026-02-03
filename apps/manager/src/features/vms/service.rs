@@ -157,10 +157,34 @@ pub async fn create_and_start(
         eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} ===", id);
         eprintln!("Error: {:?}", e);
         warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
-        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(id), Some(json!({"event": "guest_agent_install_failed", "error": e.to_string()})), None, false, Some("guest agent installation failed")).await;
+        let _ = audit::log_action(
+            &st.db,
+            None,
+            "system",
+            AuditAction::SystemEvent,
+            Some("vm"),
+            Some(id),
+            Some(json!({"event": "guest_agent_install_failed", "error": e.to_string()})),
+            None,
+            false,
+            Some("guest agent installation failed"),
+        )
+        .await;
     } else {
         eprintln!("=== GUEST AGENT INSTALLATION SUCCESS for VM {} ===", id);
-        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(id), Some(json!({"event": "guest_agent_installed"})), None, true, None).await;
+        let _ = audit::log_action(
+            &st.db,
+            None,
+            "system",
+            AuditAction::SystemEvent,
+            Some("vm"),
+            Some(id),
+            Some(json!({"event": "guest_agent_installed"})),
+            None,
+            true,
+            None,
+        )
+        .await;
     }
 
     create_tap(&host.addr, id, &network.bridge).await?;
@@ -267,7 +291,19 @@ pub async fn create_and_start(
         warn!(vm_id = %id, error = ?e, "cloud-init configuration failed (not critical if image lacks cloud-init)");
     }
 
-    let _ = audit::log_action(&st.db, user_id, audit_username, AuditAction::CreateVm, Some("vm"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        audit_username,
+        AuditAction::CreateVm,
+        Some("vm"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -380,7 +416,19 @@ pub async fn create_from_snapshot(
             "=== GUEST AGENT INSTALLATION SUCCESS for VM {} (from snapshot) ===",
             id
         );
-        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(id), Some(json!({"event": "guest_agent_installed", "source": "snapshot"})), None, true, None).await;
+        let _ = audit::log_action(
+            &st.db,
+            None,
+            "system",
+            AuditAction::SystemEvent,
+            Some("vm"),
+            Some(id),
+            Some(json!({"event": "guest_agent_installed", "source": "snapshot"})),
+            None,
+            true,
+            None,
+        )
+        .await;
     }
 
     create_tap(&host.addr, id, &network.bridge).await?;
@@ -513,7 +561,19 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
                     let guest_ip = vm.guest_ip.as_deref().unwrap_or("unknown");
                     info!(vm_id=%vm_id, attempt=%attempt, guest_ip=%guest_ip,
                           "guest IP detected, waiting for it to stabilize...");
-                    let _ = audit::log_action(&st_clone.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(vm_id), Some(json!({"event": "guest_ip_assigned", "ip": guest_ip})), None, true, None).await;
+                    let _ = audit::log_action(
+                        &st_clone.db,
+                        None,
+                        "system",
+                        AuditAction::SystemEvent,
+                        Some("vm"),
+                        Some(vm_id),
+                        Some(json!({"event": "guest_ip_assigned", "ip": guest_ip})),
+                        None,
+                        true,
+                        None,
+                    )
+                    .await;
 
                     // Wait a bit for IP to stabilize (DHCP might reassign)
                     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -539,7 +599,12 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     Ok(())
 }
 
-pub async fn stop_only(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
+pub async fn stop_only(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
     super::repo::update_state(&st.db, id, "stopping").await?;
 
@@ -556,7 +621,19 @@ pub async fn stop_only(st: &AppState, id: Uuid, user_id: Option<Uuid>, username:
 
     response.error_for_status()?;
     super::repo::update_state(&st.db, id, "stopped").await?;
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::StopVm, Some("vm"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::StopVm,
+        Some("vm"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -564,7 +641,12 @@ pub async fn stop_and_delete(st: &AppState, id: Uuid) -> Result<()> {
     stop_and_delete_with_user(st, id, None, "system").await
 }
 
-pub async fn stop_and_delete_with_user(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
+pub async fn stop_and_delete_with_user(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<()> {
     if let Err(err) = stop_only(st, id, None, "system").await {
         tracing::warn!(vm_id = %id, error = ?err, "failed to stop vm before deletion");
     }
@@ -580,7 +662,19 @@ pub async fn stop_and_delete_with_user(st: &AppState, id: Uuid, user_id: Option<
 
     // Delete from database (this cascades to vm_drive and vm_network_interface)
     super::repo::delete_row(&st.db, id).await?;
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::DeleteVm, Some("vm"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::DeleteVm,
+        Some("vm"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -588,7 +682,12 @@ pub async fn start_vm_by_id(st: &AppState, id: Uuid) -> Result<()> {
     start_vm_by_id_with_user(st, id, None, "system").await
 }
 
-pub async fn start_vm_by_id_with_user(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
+pub async fn start_vm_by_id_with_user(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
 
     if vm.state == "running" {
@@ -596,11 +695,28 @@ pub async fn start_vm_by_id_with_user(st: &AppState, id: Uuid, user_id: Option<U
     }
 
     restart_vm(st, &vm).await?;
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::StartVm, Some("vm"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::StartVm,
+        Some("vm"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
     Ok(())
 }
 
-pub async fn pause_vm(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
+pub async fn pause_vm(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
 
     if vm.state != "running" {
@@ -627,11 +743,28 @@ pub async fn pause_vm(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: 
 
     response.error_for_status()?;
     super::repo::update_state(&st.db, id, "paused").await?;
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::PauseVm, Some("vm"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::PauseVm,
+        Some("vm"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
     Ok(())
 }
 
-pub async fn resume_vm(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
+pub async fn resume_vm(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
 
     if vm.state != "paused" {
@@ -658,7 +791,19 @@ pub async fn resume_vm(st: &AppState, id: Uuid, user_id: Option<Uuid>, username:
 
     response.error_for_status()?;
     super::repo::update_state(&st.db, id, "running").await?;
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::ResumeVm, Some("vm"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::ResumeVm,
+        Some("vm"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -822,15 +967,21 @@ struct ResolvedVmSpec {
     mem_mib: u32,
     kernel_path: String,
     rootfs_path: String,
+    #[allow(dead_code)]
     rootfs_size_bytes: Option<u64>,
 }
 
 async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
-    let (rootfs_path, rootfs_size_bytes) =
-        provision_rootfs(st, req.rootfs_image_id, req.rootfs_path, vm_id, req.rootfs_size_mb)
-            .await?;
+    let (rootfs_path, rootfs_size_bytes) = provision_rootfs(
+        st,
+        req.rootfs_image_id,
+        req.rootfs_path,
+        vm_id,
+        req.rootfs_size_mb,
+    )
+    .await?;
 
     Ok(ResolvedVmSpec {
         name: req.name,
@@ -2207,6 +2358,7 @@ mod tests {
                 username: None,
                 password: None,
                 tags: vec![],
+                rootfs_size_mb: None,
             },
             None,
             None,
@@ -2266,6 +2418,7 @@ mod tests {
                 username: None,
                 password: None,
                 tags: vec![],
+                rootfs_size_mb: None,
             },
             None,
             None,

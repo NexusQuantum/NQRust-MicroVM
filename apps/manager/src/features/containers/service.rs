@@ -73,7 +73,19 @@ pub async fn create_container(
     // Create container record in database (state: creating)
     let container_id = repo.create(req.clone(), None).await?;
 
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::CreateContainer, Some("container"), Some(container_id), Some(json!({"event": "creation_started", "name": &req.name, "image": &req.image})), None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::CreateContainer,
+        Some("container"),
+        Some(container_id),
+        Some(json!({"event": "creation_started", "name": &req.name, "image": &req.image})),
+        None,
+        true,
+        None,
+    )
+    .await;
 
     // Spawn dedicated MicroVM for this container in the background
     let st_clone = st.clone();
@@ -94,7 +106,19 @@ pub async fn create_container(
         {
             eprintln!("[Container {}] Failed to provision: {}", container_id, e);
             let error_msg = format!("Failed to provision container VM: {}", e);
-            let _ = audit::log_action(&st_clone.db, spawn_user_id, &spawn_username, AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "provisioning_failed", "error": &error_msg})), None, false, Some(&error_msg)).await;
+            let _ = audit::log_action(
+                &st_clone.db,
+                spawn_user_id,
+                &spawn_username,
+                AuditAction::SystemEvent,
+                Some("container"),
+                Some(container_id),
+                Some(json!({"event": "provisioning_failed", "error": &error_msg})),
+                None,
+                false,
+                Some(&error_msg),
+            )
+            .await;
             // Release reserved ports on failure
             for mapping in &req.port_mappings {
                 super::port_forward::release_port(mapping.host as u16);
@@ -191,7 +215,19 @@ async fn provision_container_vm(
     };
 
     eprintln!("[Container {}] Got guest IP: {}", container_id, guest_ip);
-    let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "guest_ip_assigned", "ip": &guest_ip})), None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        None,
+        "system",
+        AuditAction::SystemEvent,
+        Some("container"),
+        Some(container_id),
+        Some(json!({"event": "guest_ip_assigned", "ip": &guest_ip})),
+        None,
+        true,
+        None,
+    )
+    .await;
 
     // Wait for Docker daemon to be ready inside VM
     repo.update_state(container_id, "initializing", None)
@@ -199,14 +235,38 @@ async fn provision_container_vm(
 
     if let Err(e) = super::vm::wait_for_docker_ready(&guest_ip, 240).await {
         let error_msg = format!("Docker daemon not ready: {}", e);
-        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "docker_daemon_failed", "error": &error_msg})), None, false, Some(&error_msg)).await;
+        let _ = audit::log_action(
+            &st.db,
+            None,
+            "system",
+            AuditAction::SystemEvent,
+            Some("container"),
+            Some(container_id),
+            Some(json!({"event": "docker_daemon_failed", "error": &error_msg})),
+            None,
+            false,
+            Some(&error_msg),
+        )
+        .await;
         repo.update_state(container_id, "error", Some(error_msg.clone()))
             .await?;
         anyhow::bail!(error_msg);
     }
 
     eprintln!("[Container {}] Docker daemon ready", container_id);
-    let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "docker_daemon_ready"})), None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        None,
+        "system",
+        AuditAction::SystemEvent,
+        Some("container"),
+        Some(container_id),
+        Some(json!({"event": "docker_daemon_ready"})),
+        None,
+        true,
+        None,
+    )
+    .await;
 
     // Connect to Docker inside the VM
     let docker = DockerClient::new(&guest_ip)?;
@@ -255,7 +315,19 @@ async fn provision_container_vm(
         }
     }
 
-    let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "image_ready", "image": &req.image})), None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        None,
+        "system",
+        AuditAction::SystemEvent,
+        Some("container"),
+        Some(container_id),
+        Some(json!({"event": "image_ready", "image": &req.image})),
+        None,
+        true,
+        None,
+    )
+    .await;
 
     // Create Docker container inside the VM
     let docker_container_id = match docker.create_container(req).await {
@@ -307,7 +379,19 @@ async fn provision_container_vm(
 
     if !req.port_mappings.is_empty() {
         let ports: Vec<_> = req.port_mappings.iter().map(|p| p.host).collect();
-        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "port_forwarding_configured", "ports": ports})), None, true, None).await;
+        let _ = audit::log_action(
+            &st.db,
+            None,
+            "system",
+            AuditAction::SystemEvent,
+            Some("container"),
+            Some(container_id),
+            Some(json!({"event": "port_forwarding_configured", "ports": ports})),
+            None,
+            true,
+            None,
+        )
+        .await;
     }
 
     // Register container volumes in the volume registry so they appear on the Volumes page
@@ -403,7 +487,12 @@ pub async fn update_container(
 }
 
 /// Delete a container (stops VM and removes all resources)
-pub async fn delete_container(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<OkResponse> {
+pub async fn delete_container(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<OkResponse> {
     let repo = ContainerRepository::new(st.db.clone());
 
     let container = repo.get(id).await?;
@@ -440,12 +529,29 @@ pub async fn delete_container(st: &AppState, id: Uuid, user_id: Option<Uuid>, us
     // Delete from database
     repo.delete(id).await?;
 
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::DeleteContainer, Some("container"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::DeleteContainer,
+        Some("container"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
     Ok(OkResponse::default())
 }
 
 /// Start a container (VM should already be running, just start Docker container)
-pub async fn start_container(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<OkResponse> {
+pub async fn start_container(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<OkResponse> {
     let repo = ContainerRepository::new(st.db.clone());
 
     let container = repo.get(id).await?;
@@ -524,13 +630,30 @@ pub async fn start_container(st: &AppState, id: Uuid, user_id: Option<Uuid>, use
     repo.set_started(id).await?;
 
     tracing::info!(container_id = %id, "Container started");
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::StartContainer, Some("container"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::StartContainer,
+        Some("container"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
 
     Ok(OkResponse::default())
 }
 
 /// Stop a container
-pub async fn stop_container(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<OkResponse> {
+pub async fn stop_container(
+    st: &AppState,
+    id: Uuid,
+    user_id: Option<Uuid>,
+    username: &str,
+) -> Result<OkResponse> {
     let repo = ContainerRepository::new(st.db.clone());
 
     let container = repo.get(id).await?;
@@ -573,7 +696,19 @@ pub async fn stop_container(st: &AppState, id: Uuid, user_id: Option<Uuid>, user
 
     repo.set_stopped(id).await?;
     tracing::info!(container_id = %id, "Container marked as stopped");
-    let _ = audit::log_action(&st.db, user_id, username, AuditAction::StopContainer, Some("container"), Some(id), None, None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        username,
+        AuditAction::StopContainer,
+        Some("container"),
+        Some(id),
+        None,
+        None,
+        true,
+        None,
+    )
+    .await;
 
     Ok(OkResponse::default())
 }

@@ -1268,7 +1268,7 @@ mod tests {
             download_progress,
         };
 
-        let Json(body) = super::delete(Extension(state), Path(VmPathParams { id }))
+        let Json(body) = super::delete(Extension(state), None, Path(VmPathParams { id }))
             .await
             .unwrap();
         assert_eq!(body, OkResponse::default());
@@ -1301,9 +1301,13 @@ mod tests {
             storage,
             download_progress,
         };
-        let Json(body) = super::delete(Extension(state), Path(VmPathParams { id: Uuid::new_v4() }))
-            .await
-            .unwrap();
+        let Json(body) = super::delete(
+            Extension(state),
+            None,
+            Path(VmPathParams { id: Uuid::new_v4() }),
+        )
+        .await
+        .unwrap();
         assert_eq!(body, OkResponse::default());
     }
 }

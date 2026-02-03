@@ -68,20 +68,18 @@ async fn collect_host_metrics(state: &AppState) -> anyhow::Result<()> {
         });
         let _ = cpu; // suppress unused
 
-        let memory_used = match (host.total_memory_mb, host.used_disk_gb) {
-            // We don't have memory_used from heartbeat — only totals.
-            // Store totals so dashboards can at least show capacity.
-            _ => None,
-        };
+        // We don't have memory_used from heartbeat — only totals.
+        // Store totals so dashboards can at least show capacity.
+        let memory_used: Option<f64> = None;
 
         repo::insert_host_metric(
             &state.db,
             host.id,
-            None,                                     // cpu_usage_percent (not in heartbeat)
-            memory_used,                              // memory_used_mb
-            host.total_memory_mb.map(|v| v as f64),   // memory_total_mb
-            host.used_disk_gb.map(|v| v as f64),       // disk_used_gb
-            host.total_disk_gb.map(|v| v as f64),      // disk_total_gb
+            None,                                   // cpu_usage_percent (not in heartbeat)
+            memory_used,                            // memory_used_mb
+            host.total_memory_mb.map(|v| v as f64), // memory_total_mb
+            host.used_disk_gb.map(|v| v as f64),    // disk_used_gb
+            host.total_disk_gb.map(|v| v as f64),   // disk_total_gb
         )
         .await?;
     }
@@ -134,28 +132,26 @@ async fn collect_vm_metrics(
             let url = format!("http://{}:9000/metrics", guest_ip);
 
             match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<GuestMetrics>().await {
-                        Ok(m) => {
-                            if let Err(e) = repo::insert_vm_metric(
-                                &pool,
-                                vm.id,
-                                Some(m.cpu_usage_percent),
-                                Some(m.memory_usage_percent),
-                                Some(m.memory_used_kb as i64),
-                                Some(m.memory_total_kb as i64),
-                                m.load_average,
-                            )
-                            .await
-                            {
-                                warn!(vm_id = %vm.id, error = ?e, "failed to insert vm metric");
-                            }
-                        }
-                        Err(e) => {
-                            debug!(vm_id = %vm.id, error = ?e, "failed to parse guest metrics");
+                Ok(resp) if resp.status().is_success() => match resp.json::<GuestMetrics>().await {
+                    Ok(m) => {
+                        if let Err(e) = repo::insert_vm_metric(
+                            &pool,
+                            vm.id,
+                            Some(m.cpu_usage_percent),
+                            Some(m.memory_usage_percent),
+                            Some(m.memory_used_kb as i64),
+                            Some(m.memory_total_kb as i64),
+                            m.load_average,
+                        )
+                        .await
+                        {
+                            warn!(vm_id = %vm.id, error = ?e, "failed to insert vm metric");
                         }
                     }
-                }
+                    Err(e) => {
+                        debug!(vm_id = %vm.id, error = ?e, "failed to parse guest metrics");
+                    }
+                },
                 Ok(resp) => {
                     debug!(vm_id = %vm.id, status = %resp.status(), "guest agent returned error");
                 }
@@ -257,10 +253,10 @@ async fn collect_container_metrics(
                         match resp.json::<DockerStatsRaw>().await {
                             Ok(stats) => {
                                 let cpu = calculate_cpu_percent(&stats);
-                                let mem_used = stats.memory_stats.usage
-                                    .map(|u| u as f64 / 1024.0 / 1024.0);
-                                let mem_limit = stats.memory_stats.limit
-                                    .map(|l| l as f64 / 1024.0 / 1024.0);
+                                let mem_used =
+                                    stats.memory_stats.usage.map(|u| u as f64 / 1024.0 / 1024.0);
+                                let mem_limit =
+                                    stats.memory_stats.limit.map(|l| l as f64 / 1024.0 / 1024.0);
                                 let (rx, tx) = extract_network(&stats);
                                 let (br, bw) = extract_block_io(&stats);
 
@@ -363,8 +359,8 @@ struct PidsStats {
 }
 
 fn calculate_cpu_percent(stats: &DockerStatsRaw) -> f64 {
-    let cpu_delta =
-        stats.cpu_stats.cpu_usage.total_usage as f64 - stats.precpu_stats.cpu_usage.total_usage as f64;
+    let cpu_delta = stats.cpu_stats.cpu_usage.total_usage as f64
+        - stats.precpu_stats.cpu_usage.total_usage as f64;
     let sys_delta = stats.cpu_stats.system_cpu_usage.unwrap_or(0) as f64
         - stats.precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
     if sys_delta > 0.0 && cpu_delta > 0.0 {

@@ -89,14 +89,27 @@ pub async fn create_container_vm(
     };
 
     // Create and start VM
-    crate::features::vms::service::create_and_start(st, vm_id, vm_req, None, None, "system").await?;
+    crate::features::vms::service::create_and_start(st, vm_id, vm_req, None, None, "system")
+        .await?;
 
     eprintln!(
         "[Container {}] VM {} created and starting",
         container_id, vm_id
     );
 
-    let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "container_vm_created", "vm_id": vm_id.to_string()})), None, true, None).await;
+    let _ = audit::log_action(
+        &st.db,
+        None,
+        "system",
+        AuditAction::SystemEvent,
+        Some("container"),
+        Some(container_id),
+        Some(json!({"event": "container_vm_created", "vm_id": vm_id.to_string()})),
+        None,
+        true,
+        None,
+    )
+    .await;
 
     Ok(vm_id)
 }

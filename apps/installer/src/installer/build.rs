@@ -457,29 +457,24 @@ pub fn install_binaries(
             }
         } else {
             // Try pre-extracted UI directory from air-gapped bundle
-            let bundle_ui = config
-                .install_source
-                .bundle_path()
-                .map(|p| p.join("ui"));
+            let bundle_ui = config.install_source.bundle_path().map(|p| p.join("ui"));
 
             let copied = if let Some(ref bundle_ui_dir) = bundle_ui {
                 // Support both standalone (server.js) and traditional (package.json) layouts
                 let has_ui = bundle_ui_dir.join("server.js").exists()
                     || bundle_ui_dir.join("package.json").exists();
-                let not_installed = !ui_dir.join("server.js").exists()
-                    && !ui_dir.join("package.json").exists();
+                let not_installed =
+                    !ui_dir.join("server.js").exists() && !ui_dir.join("package.json").exists();
                 if has_ui && not_installed {
-                    logs.push(LogEntry::info("Installing UI from pre-built bundle directory..."));
+                    logs.push(LogEntry::info(
+                        "Installing UI from pre-built bundle directory...",
+                    ));
                     let _ = run_sudo("mkdir", &["-p", &ui_dir.display().to_string()]);
                     let output = run_sudo(
                         "sh",
                         &[
                             "-c",
-                            &format!(
-                                "cp -a {}/. {}/",
-                                bundle_ui_dir.display(),
-                                ui_dir.display()
-                            ),
+                            &format!("cp -a {}/. {}/", bundle_ui_dir.display(), ui_dir.display()),
                         ],
                     );
                     match output {

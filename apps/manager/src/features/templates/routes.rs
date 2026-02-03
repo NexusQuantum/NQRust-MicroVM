@@ -146,9 +146,16 @@ pub async fn instantiate(
     let vm_id = Uuid::new_v4();
     let vm_req = template.spec.into_vm_req(req.name);
 
-    super::super::vms::service::create_and_start(&st, vm_id, vm_req, Some(template.id), None, "system")
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    super::super::vms::service::create_and_start(
+        &st,
+        vm_id,
+        vm_req,
+        Some(template.id),
+        None,
+        "system",
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(InstantiateTemplateResp { id: vm_id }))
 }
@@ -202,6 +209,7 @@ mod tests {
                 rootfs_image_id: None,
                 kernel_path: Some("/tmp/kernel".into()),
                 rootfs_path: Some("/tmp/rootfs".into()),
+                rootfs_size_mb: None,
             },
         };
         let spec = create_req.spec.clone();

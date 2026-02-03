@@ -108,17 +108,30 @@ pub async fn get_system_stats(
     let db = &st.db;
 
     let total_hosts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM host")
-        .fetch_one(db).await.unwrap_or(0);
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
     let total_vms: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vm")
-        .fetch_one(db).await.unwrap_or(0);
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
     let running_vms: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vm WHERE state = 'running'")
-        .fetch_one(db).await.unwrap_or(0);
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
     let total_functions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM function")
-        .fetch_one(db).await.unwrap_or(0);
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
     let total_containers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM containers")
-        .fetch_one(db).await.unwrap_or(0);
-    let running_containers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM containers WHERE state = 'running'")
-        .fetch_one(db).await.unwrap_or(0);
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
+    let running_containers: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM containers WHERE state = 'running'")
+            .fetch_one(db)
+            .await
+            .unwrap_or(0);
 
     Ok(Json(SystemStatsResponse {
         total_hosts,
@@ -171,7 +184,10 @@ fn parse_database_url(url: &str) -> (String, String, String, String, String) {
         None => (host_port, "5432"),
     };
 
-    let masked = format!("{}://{}:****@{}:{}/{}", scheme, username, host, port, database);
+    let masked = format!(
+        "{}://{}:****@{}:{}/{}",
+        scheme, username, host, port, database
+    );
 
     (
         host.to_string(),
