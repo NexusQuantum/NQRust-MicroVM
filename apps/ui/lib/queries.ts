@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
-import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq } from "@/lib/types"
+import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams } from "@/lib/types"
 import { useNotificationStore } from "@/lib/stores/notification-store"
 import { toast } from "sonner"
 
@@ -101,6 +101,16 @@ export const queryKeys = {
   // user preferences
   preferences: ["auth", "me", "preferences"] as const,
   profile: ["auth", "me", "profile"] as const,
+
+  // audit logs
+  auditLogs: ["audit-logs"] as const,
+  dbInfo: ["db-info"] as const,
+  systemStats: ["system-stats"] as const,
+
+  // time-series metrics
+  hostMetrics: (id: string) => ["metrics", "hosts", id] as const,
+  vmTimeMetrics: (id: string) => ["metrics", "vms", id] as const,
+  containerTimeMetrics: (id: string) => ["metrics", "containers", id] as const,
 }
 
 // Function Query
@@ -1134,5 +1144,67 @@ export function useDeleteAvatar() {
     mutationFn: () => facadeApi.deleteAvatar(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.profile });    }
+  });
+}
+
+// ==============
+// Audit Logs
+// ==============
+
+export function useAuditLogs(params?: AuditLogQueryParams, refetchInterval?: number) {
+  return useQuery({
+    queryKey: [...queryKeys.auditLogs, params],
+    queryFn: () => facadeApi.getAuditLogs(params),
+    staleTime: 10 * 1000,
+    refetchInterval,
+  });
+}
+
+export function useDbInfo() {
+  return useQuery({
+    queryKey: queryKeys.dbInfo,
+    queryFn: () => facadeApi.getDbInfo(),
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useSystemStats(refetchInterval?: number) {
+  return useQuery({
+    queryKey: queryKeys.systemStats,
+    queryFn: () => facadeApi.getSystemStats(),
+    staleTime: 30 * 1000,
+    refetchInterval,
+  });
+}
+
+// ── Time-Series Metrics Hooks ─────────────────────────────────────
+
+export function useHostMetrics(hostId: string, params?: MetricsQueryParams) {
+  return useQuery({
+    queryKey: [...queryKeys.hostMetrics(hostId), params],
+    queryFn: () => facadeApi.getHostMetrics(hostId, params),
+    staleTime: 10 * 1000,
+    refetchInterval: 10_000,
+    enabled: !!hostId,
+  });
+}
+
+export function useVmMetrics(vmId: string, params?: MetricsQueryParams) {
+  return useQuery({
+    queryKey: [...queryKeys.vmTimeMetrics(vmId), params],
+    queryFn: () => facadeApi.getVmMetrics(vmId, params),
+    staleTime: 10 * 1000,
+    refetchInterval: 10_000,
+    enabled: !!vmId,
+  });
+}
+
+export function useContainerMetrics(containerId: string, params?: MetricsQueryParams) {
+  return useQuery({
+    queryKey: [...queryKeys.containerTimeMetrics(containerId), params],
+    queryFn: () => facadeApi.getContainerMetrics(containerId, params),
+    staleTime: 10 * 1000,
+    refetchInterval: 10_000,
+    enabled: !!containerId,
   });
 }

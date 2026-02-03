@@ -1,9 +1,9 @@
 use crate::{features::snapshots::repo::SnapshotRow, AppState};
 use anyhow::{anyhow, bail, Context, Result};
 use nexus_types::{
-    BalloonConfig, BalloonStatsConfig, CpuConfigReq, CreateDriveReq, CreateNicReq, CreateVmReq,
-    EntropyConfigReq, LoggerUpdateReq, MachineConfigPatchReq, MmdsConfigReq, MmdsDataReq,
-    SerialConfigReq, UpdateDriveReq, UpdateNicReq, VsockConfigReq,
+    AuditAction, BalloonConfig, BalloonStatsConfig, CpuConfigReq, CreateDriveReq, CreateNicReq,
+    CreateVmReq, EntropyConfigReq, LoggerUpdateReq, MachineConfigPatchReq, MmdsConfigReq,
+    MmdsDataReq, SerialConfigReq, UpdateDriveReq, UpdateNicReq, VsockConfigReq,
 };
 use reqwest::Client;
 use serde::Deserialize;
@@ -14,6 +14,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
+
+use crate::features::users::audit;
 
 struct NetworkSelection {
     bridge: String,
@@ -71,6 +73,8 @@ pub async fn create_and_start(
     id: Uuid,
     mut req: CreateVmReq,
     template_id: Option<Uuid>,
+    user_id: Option<Uuid>,
+    audit_username: &str,
 ) -> Result<()> {
     if let Some(snapshot_id) = req.source_snapshot_id.take() {
         let name = req.name.clone();
@@ -153,8 +157,10 @@ pub async fn create_and_start(
         eprintln!("=== GUEST AGENT INSTALLATION FAILED for VM {} ===", id);
         eprintln!("Error: {:?}", e);
         warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
+        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(id), Some(json!({"event": "guest_agent_install_failed", "error": e.to_string()})), None, false, Some("guest agent installation failed")).await;
     } else {
         eprintln!("=== GUEST AGENT INSTALLATION SUCCESS for VM {} ===", id);
+        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(id), Some(json!({"event": "guest_agent_installed"})), None, true, None).await;
     }
 
     create_tap(&host.addr, id, &network.bridge).await?;
@@ -261,6 +267,7 @@ pub async fn create_and_start(
         warn!(vm_id = %id, error = ?e, "cloud-init configuration failed (not critical if image lacks cloud-init)");
     }
 
+    let _ = audit::log_action(&st.db, user_id, audit_username, AuditAction::CreateVm, Some("vm"), Some(id), None, None, true, None).await;
     Ok(())
 }
 
@@ -306,6 +313,7 @@ pub async fn create_from_snapshot(
             .context("stored mem_mib negative")?,
         kernel_path: source_vm.kernel_path.clone(),
         rootfs_path: source_vm.rootfs_path.clone(),
+        rootfs_size_bytes: None,
     };
 
     let paths = VmPaths::new(id, &st.storage)
@@ -366,11 +374,13 @@ pub async fn create_from_snapshot(
         );
         eprintln!("Error: {:?}", e);
         warn!(vm_id = %id, error = ?e, "failed to install guest agent (continuing without it)");
+        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(id), Some(json!({"event": "guest_agent_install_failed", "source": "snapshot", "error": e.to_string()})), None, false, Some("guest agent installation failed")).await;
     } else {
         eprintln!(
             "=== GUEST AGENT INSTALLATION SUCCESS for VM {} (from snapshot) ===",
             id
         );
+        let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(id), Some(json!({"event": "guest_agent_installed", "source": "snapshot"})), None, true, None).await;
     }
 
     create_tap(&host.addr, id, &network.bridge).await?;
@@ -476,6 +486,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
         mem_mib: vm.mem_mib.try_into().context("stored mem_mib negative")?,
         kernel_path: vm.kernel_path.clone(),
         rootfs_path: vm.rootfs_path.clone(),
+        rootfs_size_bytes: None,
     };
 
     let network = select_network(&host.capabilities_json)?;
@@ -502,6 +513,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
                     let guest_ip = vm.guest_ip.as_deref().unwrap_or("unknown");
                     info!(vm_id=%vm_id, attempt=%attempt, guest_ip=%guest_ip,
                           "guest IP detected, waiting for it to stabilize...");
+                    let _ = audit::log_action(&st_clone.db, None, "system", AuditAction::SystemEvent, Some("vm"), Some(vm_id), Some(json!({"event": "guest_ip_assigned", "ip": guest_ip})), None, true, None).await;
 
                     // Wait a bit for IP to stabilize (DHCP might reassign)
                     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -527,7 +539,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     Ok(())
 }
 
-pub async fn stop_only(st: &AppState, id: Uuid) -> Result<()> {
+pub async fn stop_only(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
     super::repo::update_state(&st.db, id, "stopping").await?;
 
@@ -544,11 +556,16 @@ pub async fn stop_only(st: &AppState, id: Uuid) -> Result<()> {
 
     response.error_for_status()?;
     super::repo::update_state(&st.db, id, "stopped").await?;
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::StopVm, Some("vm"), Some(id), None, None, true, None).await;
     Ok(())
 }
 
 pub async fn stop_and_delete(st: &AppState, id: Uuid) -> Result<()> {
-    if let Err(err) = stop_only(st, id).await {
+    stop_and_delete_with_user(st, id, None, "system").await
+}
+
+pub async fn stop_and_delete_with_user(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
+    if let Err(err) = stop_only(st, id, None, "system").await {
         tracing::warn!(vm_id = %id, error = ?err, "failed to stop vm before deletion");
     }
 
@@ -563,10 +580,15 @@ pub async fn stop_and_delete(st: &AppState, id: Uuid) -> Result<()> {
 
     // Delete from database (this cascades to vm_drive and vm_network_interface)
     super::repo::delete_row(&st.db, id).await?;
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::DeleteVm, Some("vm"), Some(id), None, None, true, None).await;
     Ok(())
 }
 
 pub async fn start_vm_by_id(st: &AppState, id: Uuid) -> Result<()> {
+    start_vm_by_id_with_user(st, id, None, "system").await
+}
+
+pub async fn start_vm_by_id_with_user(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
 
     if vm.state == "running" {
@@ -574,10 +596,11 @@ pub async fn start_vm_by_id(st: &AppState, id: Uuid) -> Result<()> {
     }
 
     restart_vm(st, &vm).await?;
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::StartVm, Some("vm"), Some(id), None, None, true, None).await;
     Ok(())
 }
 
-pub async fn pause_vm(st: &AppState, id: Uuid) -> Result<()> {
+pub async fn pause_vm(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
 
     if vm.state != "running" {
@@ -604,10 +627,11 @@ pub async fn pause_vm(st: &AppState, id: Uuid) -> Result<()> {
 
     response.error_for_status()?;
     super::repo::update_state(&st.db, id, "paused").await?;
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::PauseVm, Some("vm"), Some(id), None, None, true, None).await;
     Ok(())
 }
 
-pub async fn resume_vm(st: &AppState, id: Uuid) -> Result<()> {
+pub async fn resume_vm(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
 
     if vm.state != "paused" {
@@ -634,6 +658,7 @@ pub async fn resume_vm(st: &AppState, id: Uuid) -> Result<()> {
 
     response.error_for_status()?;
     super::repo::update_state(&st.db, id, "running").await?;
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::ResumeVm, Some("vm"), Some(id), None, None, true, None).await;
     Ok(())
 }
 
@@ -797,12 +822,15 @@ struct ResolvedVmSpec {
     mem_mib: u32,
     kernel_path: String,
     rootfs_path: String,
+    rootfs_size_bytes: Option<u64>,
 }
 
 async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
-    let rootfs_path = provision_rootfs(st, req.rootfs_image_id, req.rootfs_path, vm_id).await?;
+    let (rootfs_path, rootfs_size_bytes) =
+        provision_rootfs(st, req.rootfs_image_id, req.rootfs_path, vm_id, req.rootfs_size_mb)
+            .await?;
 
     Ok(ResolvedVmSpec {
         name: req.name,
@@ -810,6 +838,7 @@ async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result
         mem_mib: req.mem_mib,
         kernel_path,
         rootfs_path,
+        rootfs_size_bytes,
     })
 }
 
@@ -845,7 +874,8 @@ async fn provision_rootfs(
     image_id: Option<Uuid>,
     direct_path: Option<String>,
     vm_id: Uuid,
-) -> Result<String> {
+    rootfs_size_mb: Option<u32>,
+) -> Result<(String, Option<u64>)> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
         let image = st
@@ -875,18 +905,18 @@ async fn provision_rootfs(
     if is_already_vm_copy {
         // Already a per-VM copy from container/function feature, use it directly
         info!(vm_id = %vm_id, source = %source_path, "using pre-copied rootfs from container/function feature");
-        return Ok(source_path);
+        return Ok((source_path, None));
     }
 
     // For regular VMs: ALWAYS copy the rootfs to VM-specific storage
     // This prevents VMs from sharing the same rootfs file and corrupting each other
-    let vm_root = st
+    let (vm_root, size_bytes) = st
         .storage
-        .alloc_rootfs(vm_id, Path::new(&source_path))
+        .alloc_rootfs(vm_id, Path::new(&source_path), rootfs_size_mb)
         .await
         .context("failed to provision rootfs")?;
 
-    Ok(vm_root)
+    Ok((vm_root, Some(size_bytes)))
 }
 
 fn ensure_allowed_path(st: &AppState, path: &str) -> Result<()> {
@@ -2179,6 +2209,8 @@ mod tests {
                 tags: vec![],
             },
             None,
+            None,
+            "test",
         )
         .await
         .unwrap();
@@ -2236,6 +2268,8 @@ mod tests {
                 tags: vec![],
             },
             None,
+            None,
+            "test",
         )
         .await
         .unwrap_err();

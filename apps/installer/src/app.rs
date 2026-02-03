@@ -529,25 +529,13 @@ impl App {
         self.config.install_source.is_offline()
     }
 
-    /// Navigate to next screen (handles ISO mode branching)
+    /// Navigate to next screen
+    /// Air-gapped mode follows the same flow as online mode:
+    /// Welcome → ModeSelect → Config → Preflight → Progress → Verify → Complete
     pub fn next_screen(&mut self) {
         self.screen = match self.screen {
-            Screen::Welcome => {
-                // In ISO mode, show install type selection first
-                if self.is_iso_mode() {
-                    Screen::InstallTypeSelect
-                } else {
-                    Screen::ModeSelect
-                }
-            }
-            Screen::InstallTypeSelect => {
-                // Branch based on install type selection
-                if self.install_type == InstallType::DiskInstall {
-                    Screen::DiskSelect
-                } else {
-                    Screen::ModeSelect
-                }
-            }
+            Screen::Welcome => Screen::ModeSelect,
+            Screen::InstallTypeSelect => Screen::ModeSelect,
             Screen::DiskSelect => Screen::DiskConfig,
             Screen::DiskConfig => Screen::DiskProgress,
             Screen::DiskProgress => Screen::Complete,
@@ -569,13 +557,7 @@ impl App {
             Screen::DiskSelect => Screen::InstallTypeSelect,
             Screen::DiskConfig => Screen::DiskSelect,
             Screen::DiskProgress => Screen::DiskConfig,
-            Screen::ModeSelect => {
-                if self.is_iso_mode() {
-                    Screen::InstallTypeSelect
-                } else {
-                    Screen::Welcome
-                }
-            }
+            Screen::ModeSelect => Screen::Welcome,
             Screen::Config => Screen::ModeSelect,
             Screen::Preflight => Screen::Config,
             Screen::Progress => Screen::Preflight,

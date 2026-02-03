@@ -359,6 +359,64 @@ pub fn install_docker() -> Result<Vec<LogEntry>> {
     Ok(logs)
 }
 
+/// Install Docker from bundled .deb packages (for air-gapped/offline mode)
+///
+/// Docker debs (docker-ce, docker-ce-cli, containerd.io, etc.) are included
+/// in the same debs/ directory as system packages. Since install_bundled_packages()
+/// already installed them via dpkg, this function just enables and starts the service.
+pub fn install_docker_from_bundle() -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+
+    // Check if Docker was installed by the bundled debs
+    if let Ok(output) = run_command("docker", &["--version"]) {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout);
+            logs.push(LogEntry::info(format!(
+                "Docker installed from bundle: {}",
+                version.trim()
+            )));
+        } else {
+            logs.push(LogEntry::warning(
+                "Docker binary found but version check failed",
+            ));
+        }
+    } else {
+        logs.push(LogEntry::warning(
+            "Docker not found after installing bundled packages - container features may not work",
+        ));
+        return Ok(logs);
+    }
+
+    // Enable and start Docker service
+    logs.push(LogEntry::info("Enabling Docker service..."));
+    let _ = run_sudo("systemctl", &["enable", "docker"]);
+    let _ = run_sudo("systemctl", &["start", "docker"]);
+    logs.push(LogEntry::success("Docker service enabled and started"));
+
+    // Enable and start containerd
+    let _ = run_sudo("systemctl", &["enable", "containerd"]);
+    let _ = run_sudo("systemctl", &["start", "containerd"]);
+
+    // Add nqrust user to docker group
+    let _ = run_sudo("usermod", &["-aG", "docker", "nqrust"]);
+    logs.push(LogEntry::info(
+        "Added 'nqrust' user to docker group",
+    ));
+
+    // Also add the installing user if running with sudo
+    if let Ok(user) = std::env::var("SUDO_USER").or_else(|_| std::env::var("USER")) {
+        if user != "root" && user != "nqrust" {
+            let _ = run_sudo("usermod", &["-aG", "docker", &user]);
+            logs.push(LogEntry::info(format!(
+                "Added user '{}' to docker group (re-login required)",
+                user
+            )));
+        }
+    }
+
+    Ok(logs)
+}
+
 /// Install SQLx CLI
 pub fn install_sqlx_cli() -> Result<Vec<LogEntry>> {
     let mut logs = Vec::new();
@@ -387,14 +445,47 @@ pub fn install_sqlx_cli() -> Result<Vec<LogEntry>> {
     Ok(logs)
 }
 
-/// Install packages from bundled .deb files (for ISO/offline mode)
+/// Install packages from bundled .deb files (for air-gapped/offline mode)
+///
+/// Detects the Ubuntu version and selects the correct subdirectory of .deb packages.
+/// Uses a two-pass approach: dpkg -i (may fail on deps), then apt-get install -f --no-download.
 pub fn install_bundled_packages(bundle_path: &Path) -> Result<Vec<LogEntry>> {
     let mut logs = Vec::new();
-    let debs_dir = bundle_path.join("debs");
 
-    if !debs_dir.exists() {
+    // Detect Ubuntu version for correct deb selection
+    let ubuntu_codename = super::preflight::detect_ubuntu_codename();
+    let versioned_dir = bundle_path.join("debs").join(&ubuntu_codename);
+    let flat_dir = bundle_path.join("debs");
+
+    let debs_dir = if versioned_dir.exists() {
+        logs.push(LogEntry::info(format!(
+            "Using version-specific packages for {}",
+            ubuntu_codename
+        )));
+        versioned_dir
+    } else if flat_dir.exists() {
         logs.push(LogEntry::warning(format!(
-            "No bundled packages found at {:?}",
+            "No packages for {}, using generic debs/",
+            ubuntu_codename
+        )));
+        flat_dir
+    } else {
+        logs.push(LogEntry::warning("No bundled packages found"));
+        return Ok(logs);
+    };
+
+    // Check that there are actually .deb files
+    let has_debs = fs::read_dir(&debs_dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .any(|e| e.path().extension().map_or(false, |ext| ext == "deb"))
+        })
+        .unwrap_or(false);
+
+    if !has_debs {
+        logs.push(LogEntry::warning(format!(
+            "No .deb files found in {:?}",
             debs_dir
         )));
         return Ok(logs);
@@ -405,16 +496,19 @@ pub fn install_bundled_packages(bundle_path: &Path) -> Result<Vec<LogEntry>> {
         debs_dir
     )));
 
-    // Install all .deb files in the directory
-    let output = run_sudo(
+    // Pass 1: dpkg -i (install all debs, may fail on dependency ordering)
+    let _ = run_sudo(
         "sh",
         &[
             "-c",
-            &format!(
-                "dpkg -i {}/*.deb 2>/dev/null || apt-get install -f -y",
-                debs_dir.display()
-            ),
+            &format!("dpkg -i {}/*.deb 2>&1 || true", debs_dir.display()),
         ],
+    );
+
+    // Pass 2: fix broken dependencies using only local packages (no download)
+    let output = run_sudo(
+        "sh",
+        &["-c", "apt-get install -f -y --no-download 2>&1 || true"],
     )?;
 
     if output.status.success() {
@@ -423,6 +517,99 @@ pub fn install_bundled_packages(bundle_path: &Path) -> Result<Vec<LogEntry>> {
         logs.push(LogEntry::warning(
             "Some bundled packages may have failed to install",
         ));
+    }
+
+    Ok(logs)
+}
+
+/// Install Node.js from bundled binary tarball (for air-gapped/offline mode)
+///
+/// Extracts the official Node.js binary distribution to /usr/local and
+/// installs the bundled pnpm standalone binary.
+pub fn install_nodejs_from_bundle(bundle_path: &Path) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+    let node_dir = bundle_path.join("node");
+
+    if !node_dir.exists() {
+        return Err(anyhow!(
+            "Node.js bundle directory not found at {:?}",
+            node_dir
+        ));
+    }
+
+    // Find node tarball (node-v*-linux-x64.tar.xz)
+    let tarball = fs::read_dir(&node_dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name().map_or(false, |n| {
+                let name = n.to_string_lossy();
+                name.starts_with("node-v") && name.ends_with("-linux-x64.tar.xz")
+            })
+        });
+
+    let tarball = match tarball {
+        Some(t) => t,
+        None => return Err(anyhow!("No Node.js tarball found in {:?}", node_dir)),
+    };
+
+    logs.push(LogEntry::info(format!(
+        "Installing Node.js from {:?}...",
+        tarball.file_name().unwrap_or_default()
+    )));
+
+    // Extract to /usr/local (adds bin/node, bin/npm, bin/npx, include/, lib/, share/)
+    let output = run_sudo(
+        "tar",
+        &[
+            "-xJf",
+            &tarball.display().to_string(),
+            "-C",
+            "/usr/local",
+            "--strip-components=1",
+        ],
+    )?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to extract Node.js: {}", stderr));
+    }
+
+    // Verify node works
+    if let Ok(output) = run_command("node", &["--version"]) {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout);
+            logs.push(LogEntry::success(format!(
+                "Node.js {} installed",
+                version.trim()
+            )));
+        }
+    }
+
+    // Install pnpm from bundle
+    let pnpm_src = node_dir.join("pnpm");
+    if pnpm_src.exists() {
+        let _ = run_sudo(
+            "cp",
+            &[&pnpm_src.display().to_string(), "/usr/local/bin/pnpm"],
+        );
+        let _ = run_sudo("chmod", &["+x", "/usr/local/bin/pnpm"]);
+        logs.push(LogEntry::success("pnpm installed from bundle"));
+    } else {
+        // Try installing pnpm via npm (which we just installed)
+        logs.push(LogEntry::info(
+            "pnpm binary not in bundle, installing via npm...",
+        ));
+        match run_command("npm", &["install", "-g", "pnpm"]) {
+            Ok(o) if o.status.success() => {
+                logs.push(LogEntry::success("pnpm installed via npm"));
+            }
+            _ => {
+                logs.push(LogEntry::warning(
+                    "Failed to install pnpm - UI service may not work",
+                ));
+            }
+        }
     }
 
     Ok(logs)

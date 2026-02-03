@@ -34,12 +34,11 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         "Running preflight checks...",
     )))?;
 
-    // In ISO mode, run modified preflight checks (skip network)
     let checks = if is_offline {
         tx.send(InstallMessage::Log(LogEntry::info(
-            "ISO mode: Skipping network connectivity checks",
+            "Air-gapped mode: Running preflight checks...",
         )))?;
-        preflight::run_preflight_checks_offline()
+        preflight::run_preflight_checks()
     } else {
         preflight::run_preflight_checks()
     };
@@ -72,10 +71,25 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         "Installing system dependencies...",
     )))?;
 
-    // In ISO mode, install from bundled packages
+    // Detect package manager (required for both online and air-gapped)
+    let pm = match deps::PackageManager::detect() {
+        Some(pm) => pm,
+        None => {
+            tx.send(InstallMessage::PhaseComplete(
+                Phase::Dependencies,
+                Status::Error,
+            ))?;
+            tx.send(InstallMessage::Error(
+                "No supported package manager found (apt, dnf, yum)".to_string(),
+            ))?;
+            return Ok(());
+        }
+    };
+
     if is_offline {
+        // Air-gapped mode: install system packages from bundled .deb files
         tx.send(InstallMessage::Log(LogEntry::info(
-            "ISO mode: Installing from bundled packages",
+            "Air-gapped mode: Installing system packages from bundle...",
         )))?;
         match deps::install_bundled_packages(config.install_source.bundle_path().unwrap()) {
             Ok(logs) => {
@@ -84,29 +98,28 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
                 }
             }
             Err(e) => {
-                tx.send(InstallMessage::Log(LogEntry::warning(format!(
-                    "Failed to install bundled packages: {} - continuing with system packages",
-                    e
-                ))))?;
-            }
-        }
-    } else {
-        // Detect package manager
-        let pm = match deps::PackageManager::detect() {
-            Some(pm) => pm,
-            None => {
                 tx.send(InstallMessage::PhaseComplete(
                     Phase::Dependencies,
                     Status::Error,
                 ))?;
-                tx.send(InstallMessage::Error(
-                    "No supported package manager found (apt, dnf, yum)".to_string(),
-                ))?;
+                tx.send(InstallMessage::Error(format!(
+                    "Failed to install bundled packages: {}",
+                    e
+                )))?;
                 return Ok(());
             }
-        };
+        }
+        tx.send(InstallMessage::Log(LogEntry::success(
+            "System packages installed from bundle",
+        )))?;
 
-        // Update package manager
+        if config.mode.includes_manager() {
+            tx.send(InstallMessage::Log(LogEntry::success(
+                "PostgreSQL installed from bundle",
+            )))?;
+        }
+    } else {
+        // Online mode: install from package repositories
         tx.send(InstallMessage::Log(LogEntry::info(
             "Updating package manager...",
         )))?;
@@ -161,7 +174,7 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
-    // Install Firecracker v1.13.1 (from bundle in ISO mode, or download)
+    // Install Firecracker v1.13.1 (from bundle in air-gapped mode, or download)
     tx.send(InstallMessage::Log(LogEntry::info(
         "Installing Firecracker v1.13.1...",
     )))?;
@@ -189,42 +202,84 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         }
     }
 
-    // Install Node.js if UI is included (skip in ISO mode - pre-bundled)
-    if config.with_ui && !is_offline {
-        tx.send(InstallMessage::Log(LogEntry::info(
-            "Installing Node.js for UI...",
-        )))?;
-        match deps::install_nodejs() {
-            Ok(logs) => {
-                for log in logs {
-                    tx.send(InstallMessage::Log(log))?;
+    // Install Node.js if UI is included
+    if config.with_ui {
+        if is_offline {
+            // Air-gapped mode: install Node.js from bundled binary tarball
+            tx.send(InstallMessage::Log(LogEntry::info(
+                "Air-gapped mode: Installing Node.js from bundle...",
+            )))?;
+            match deps::install_nodejs_from_bundle(config.install_source.bundle_path().unwrap()) {
+                Ok(logs) => {
+                    for log in logs {
+                        tx.send(InstallMessage::Log(log))?;
+                    }
+                }
+                Err(e) => {
+                    tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                        "Failed to install Node.js from bundle: {} - UI may not work",
+                        e
+                    ))))?;
                 }
             }
-            Err(e) => {
-                tx.send(InstallMessage::Log(LogEntry::warning(format!(
-                    "Failed to install Node.js: {} - UI may not work",
-                    e
-                ))))?;
+        } else {
+            tx.send(InstallMessage::Log(LogEntry::info(
+                "Installing Node.js for UI...",
+            )))?;
+            match deps::install_nodejs() {
+                Ok(logs) => {
+                    for log in logs {
+                        tx.send(InstallMessage::Log(log))?;
+                    }
+                }
+                Err(e) => {
+                    tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                        "Failed to install Node.js: {} - UI may not work",
+                        e
+                    ))))?;
+                }
             }
         }
     }
 
-    // Install Docker if requested (skip in ISO mode - use bundled Docker images)
-    if config.with_docker && !is_offline {
-        tx.send(InstallMessage::Log(LogEntry::info(
-            "Installing Docker for container features...",
-        )))?;
-        match deps::install_docker() {
-            Ok(logs) => {
-                for log in logs {
-                    tx.send(InstallMessage::Log(log))?;
+    // Install Docker if requested
+    if config.with_docker {
+        if is_offline {
+            // Air-gapped: Docker debs were installed by install_bundled_packages()
+            // Just enable and start the Docker service
+            tx.send(InstallMessage::Log(LogEntry::info(
+                "Enabling Docker service (installed from bundled packages)...",
+            )))?;
+            match deps::install_docker_from_bundle() {
+                Ok(logs) => {
+                    for log in logs {
+                        tx.send(InstallMessage::Log(log))?;
+                    }
+                }
+                Err(e) => {
+                    tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                        "Failed to enable Docker: {} - container features may not work",
+                        e
+                    ))))?;
                 }
             }
-            Err(e) => {
-                tx.send(InstallMessage::Log(LogEntry::warning(format!(
-                    "Failed to install Docker: {} - DockerHub image pulling may not work",
-                    e
-                ))))?;
+        } else {
+            // Online: download and install Docker from the internet
+            tx.send(InstallMessage::Log(LogEntry::info(
+                "Installing Docker for container features...",
+            )))?;
+            match deps::install_docker() {
+                Ok(logs) => {
+                    for log in logs {
+                        tx.send(InstallMessage::Log(log))?;
+                    }
+                }
+                Err(e) => {
+                    tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                        "Failed to install Docker: {} - DockerHub image pulling may not work",
+                        e
+                    ))))?;
+                }
             }
         }
     }
@@ -348,7 +403,7 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
 
     if is_offline {
         tx.send(InstallMessage::Log(LogEntry::info(
-            "ISO mode: Copying binaries from bundle...",
+            "Air-gapped mode: Copying binaries from bundle...",
         )))?;
 
         // Copy binaries from bundle
@@ -438,7 +493,7 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
 
     if is_offline {
         tx.send(InstallMessage::Log(LogEntry::info(
-            "ISO mode: Copying images from bundle (kernels, rootfs, docker images)...",
+            "Air-gapped mode: Copying images from bundle (kernels, rootfs, docker images)...",
         )))?;
 
         match build::copy_images_from_bundle(&config, config.install_source.bundle_path().unwrap())

@@ -2250,6 +2250,11 @@ components:
         rootfs_path:
           type: string
           nullable: true
+        rootfs_size_mb:
+          type: integer
+          format: int32
+          nullable: true
+          minimum: 0
         source_snapshot_id:
           type: string
           format: uuid
@@ -2804,6 +2809,11 @@ components:
         rootfs_path:
           type: string
           nullable: true
+        rootfs_size_mb:
+          type: integer
+          format: int32
+          nullable: true
+          minimum: 0
         vcpu:
           type: integer
           format: int32

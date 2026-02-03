@@ -421,7 +421,7 @@ pub fn install_binaries(
         let ui_dir = install_dir.join("ui");
 
         if ui_tarball.exists() {
-            logs.push(LogEntry::info("Installing UI..."));
+            logs.push(LogEntry::info("Installing UI from tarball..."));
 
             // Create UI directory
             let _ = run_sudo("mkdir", &["-p", &ui_dir.display().to_string()]);
@@ -438,7 +438,7 @@ pub fn install_binaries(
             )?;
 
             if output.status.success() {
-                logs.push(LogEntry::success("UI installed"));
+                logs.push(LogEntry::success("UI installed from tarball"));
 
                 // Install Node.js dependencies if needed
                 logs.push(LogEntry::info("Installing UI dependencies..."));
@@ -453,12 +453,57 @@ pub fn install_binaries(
                     ],
                 );
             } else {
-                logs.push(LogEntry::warning("Failed to extract UI"));
+                logs.push(LogEntry::warning("Failed to extract UI tarball"));
             }
         } else {
-            logs.push(LogEntry::warning(
-                "UI tarball not found - skipping UI installation",
-            ));
+            // Try pre-extracted UI directory from air-gapped bundle
+            let bundle_ui = config
+                .install_source
+                .bundle_path()
+                .map(|p| p.join("ui"));
+
+            let copied = if let Some(ref bundle_ui_dir) = bundle_ui {
+                // Support both standalone (server.js) and traditional (package.json) layouts
+                let has_ui = bundle_ui_dir.join("server.js").exists()
+                    || bundle_ui_dir.join("package.json").exists();
+                let not_installed = !ui_dir.join("server.js").exists()
+                    && !ui_dir.join("package.json").exists();
+                if has_ui && not_installed {
+                    logs.push(LogEntry::info("Installing UI from pre-built bundle directory..."));
+                    let _ = run_sudo("mkdir", &["-p", &ui_dir.display().to_string()]);
+                    let output = run_sudo(
+                        "sh",
+                        &[
+                            "-c",
+                            &format!(
+                                "cp -a {}/. {}/",
+                                bundle_ui_dir.display(),
+                                ui_dir.display()
+                            ),
+                        ],
+                    );
+                    match output {
+                        Ok(o) if o.status.success() => {
+                            logs.push(LogEntry::success("UI installed from bundle directory"));
+                            true
+                        }
+                        _ => {
+                            logs.push(LogEntry::warning("Failed to copy UI from bundle directory"));
+                            false
+                        }
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !copied {
+                logs.push(LogEntry::warning(
+                    "UI not found in bundle - skipping UI installation",
+                ));
+            }
         }
     }
 
@@ -754,16 +799,22 @@ pub fn copy_binaries_from_bundle(
         }
     }
 
-    // Copy UI if available
+    // Copy UI if available (support both tarball and pre-extracted directory)
     if config.with_ui {
-        let src = bundle_path.join("ui").join("nqrust-ui.tar.gz");
-        let dst = download_dir.join("nqrust-ui.tar.gz");
+        let tarball_src = bundle_path.join("ui").join("nqrust-ui.tar.gz");
+        let dir_src = bundle_path.join("ui");
 
-        if src.exists() {
-            fs::copy(&src, &dst)?;
-            logs.push(LogEntry::success("UI package copied from bundle"));
+        if tarball_src.exists() {
+            let dst = download_dir.join("nqrust-ui.tar.gz");
+            fs::copy(&tarball_src, &dst)?;
+            logs.push(LogEntry::success("UI package (tarball) copied from bundle"));
+        } else if dir_src.join("server.js").exists() || dir_src.join("package.json").exists() {
+            // UI is pre-extracted in bundle (standalone or traditional) - copy directly during install
+            logs.push(LogEntry::success(
+                "UI found as pre-built directory in bundle (will copy directly)",
+            ));
         } else {
-            logs.push(LogEntry::warning("UI package not found in bundle"));
+            logs.push(LogEntry::warning("UI not found in bundle"));
         }
     }
 
@@ -866,8 +917,8 @@ pub fn copy_images_from_bundle(
             }
         }
 
-        // Copy individual .ext4 files from images root
-        logs.push(LogEntry::info("Copying additional image files..."));
+        // Copy individual .ext4 files from images root (flat layout used by air-gapped bundle)
+        logs.push(LogEntry::info("Copying image files from flat layout..."));
         let output = run_sudo(
             "sh",
             &[
@@ -881,7 +932,24 @@ pub fn copy_images_from_bundle(
         )?;
 
         if output.status.success() {
-            logs.push(LogEntry::success("Image files copied"));
+            logs.push(LogEntry::success("Rootfs/runtime image files copied"));
+        }
+
+        // Copy kernel .bin files from flat layout (air-gapped bundle stores kernels alongside rootfs)
+        let output = run_sudo(
+            "sh",
+            &[
+                "-c",
+                &format!(
+                    "find {} -maxdepth 1 -name '*.bin' -exec cp {{}} {} \\; 2>/dev/null || true",
+                    bundle_images.display(),
+                    image_dir_str
+                ),
+            ],
+        )?;
+
+        if output.status.success() {
+            logs.push(LogEntry::success("Kernel image files copied"));
         }
     } else {
         logs.push(LogEntry::warning(format!(

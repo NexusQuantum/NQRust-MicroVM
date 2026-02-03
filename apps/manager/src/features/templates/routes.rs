@@ -146,7 +146,7 @@ pub async fn instantiate(
     let vm_id = Uuid::new_v4();
     let vm_req = template.spec.into_vm_req(req.name);
 
-    super::super::vms::service::create_and_start(&st, vm_id, vm_req, Some(template.id))
+    super::super::vms::service::create_and_start(&st, vm_id, vm_req, Some(template.id), None, "system")
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

@@ -43,71 +43,127 @@ const fnCreationSchema = z.object({
 
 type FnCreationForm = z.infer<typeof fnCreationSchema>
 
-const DEFAULT_CODE_PY = `# index.py  (Python 3.11)
-def handler(event):
-    try:
-        a = float(event.get("key1"))
-        b = float(event.get("key2"))
-    except Exception:
-        return {
-            "statusCode": 400,
-            "headers": {"content-type": "application/json"},
-            "body": '{"error":"key1 and key2 must be numbers"}',
-        }
+const DEFAULT_CODE_PY = `# index.py — Python 3.11 Function
+#
+# How it works:
+#   1. Your function receives an "event" dict from the request body.
+#   2. Return a dict with: statusCode, headers, and body.
+#   3. "body" must be a JSON string (use json.dumps).
+#
+# Invoke example (curl):
+#   curl -X POST http://<manager>/v1/functions/<id>/invoke \\
+#        -H "Content-Type: application/json" \\
+#        -d '{"event": {"name": "World"}}'
+#
+# Tips:
+#   - Use event.get("key", default) to safely read fields.
+#   - Any print() output appears in the function logs.
+#   - The handler name must match the "Handler" field in the config panel.
 
+import json
+
+def handler(event):
+    """Main entry point — receives the JSON event payload as a dict."""
+
+    # Read input from the event (sent via the "Test Event" panel or API)
+    name = event.get("name", "World")
+
+    # You can log to stdout; output shows up in the Logs tab
+    print(f"Received request with name={name}")
+
+    # Return a response — must include statusCode, headers, and body
     return {
         "statusCode": 200,
         "headers": {"content-type": "application/json"},
-        "body": '{"result": %s}' % (a + b),
+        "body": json.dumps({
+            "message": f"Hello, {name}!",
+        }),
     }`;
 
-const DEFAULT_CODE_JS = `// index.js (JavaScript)
+const DEFAULT_CODE_JS = `// index.js — JavaScript Function (runs on Bun)
+//
+// How it works:
+//   1. Export an async "handler" function (must match the Handler config).
+//   2. It receives an "event" object from the request body.
+//   3. Return an object with: statusCode, headers, and body.
+//   4. "body" must be a JSON string (use JSON.stringify).
+//
+// Invoke example (curl):
+//   curl -X POST http://<manager>/v1/functions/<id>/invoke \\
+//        -H "Content-Type: application/json" \\
+//        -d '{"event": {"name": "World"}}'
+//
+// Tips:
+//   - Use optional chaining (event?.key) to safely read fields.
+//   - console.log() output appears in the function logs.
+//   - You can use top-level await and ES module imports.
+
 export async function handler(event) {
-  const a = Number(event?.key1);
-  const b = Number(event?.key2);
-  
-  if (!Number.isFinite(a) || !Number.isFinite(b)) {
-    return {
-      statusCode: 400,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
-    };
-  }
-  
+  // Read input from the event (sent via the "Test Event" panel or API)
+  const name = event?.name ?? "World";
+
+  // You can log to stdout; output shows up in the Logs tab
+  console.log("Received request with name:", name);
+
+  // Return a response — must include statusCode, headers, and body
   return {
     statusCode: 200,
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ result: a + b }),
+    body: JSON.stringify({
+      message: \`Hello, \${name}!\`,
+    }),
   };
 }`;
 
-const DEFAULT_CODE_TS = `// index.ts (TypeScript)
-interface Event {
-  key1?: number | string;
-  key2?: number | string;
+const DEFAULT_CODE_TS = `// index.ts — TypeScript Function (runs on Bun)
+//
+// How it works:
+//   1. Export an async "handler" function (must match the Handler config).
+//   2. It receives a typed "event" object from the request body.
+//   3. Return an object with: statusCode, headers, and body.
+//   4. "body" must be a JSON string (use JSON.stringify).
+//
+// Invoke example (curl):
+//   curl -X POST http://<manager>/v1/functions/<id>/invoke \\
+//        -H "Content-Type: application/json" \\
+//        -d '{"event": {"name": "World"}}'
+//
+// Tips:
+//   - Define an interface for your event to get type safety.
+//   - console.log() output appears in the function logs.
+//   - You can use top-level await and ES module imports.
+
+// Define the shape of your event payload for type safety
+interface FnEvent {
+  name?: string;
 }
 
-export async function handler(event: Event) {
-  const a = Number(event?.key1);
-  const b = Number(event?.key2);
-  
-  if (!Number.isFinite(a) || !Number.isFinite(b)) {
-    return {
-      statusCode: 400,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ error: "key1 and key2 must be numbers" }),
-    };
-  }
-  
+// Response shape returned by the handler
+interface FnResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export async function handler(event: FnEvent): Promise<FnResponse> {
+  // Read input from the event (sent via the "Test Event" panel or API)
+  const name = event?.name ?? "World";
+
+  // You can log to stdout; output shows up in the Logs tab
+  console.log("Received request with name:", name);
+
+  // Return a response — must include statusCode, headers, and body
   return {
     statusCode: 200,
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ result: a + b }),
+    body: JSON.stringify({
+      message: \`Hello, \${name}!\`,
+    }),
   };
 }`;
 
 const DEFAULT_PAYLOAD = `{
-  // Test event payload
+  "name": "World"
 }`
 
 function getDefaultCodeForRuntime(runtime: string): string {
@@ -246,6 +302,20 @@ export function FunctionEditor({
         return "javascript"
       default:
         return "javascript"
+    }
+  }
+
+  // Monaco uses the path extension for diagnostics (e.g. .ts enables TS-only syntax)
+  const getEditorPath = () => {
+    switch (runtime) {
+      case 'python':
+        return "index.py"
+      case 'typescript':
+        return "index.ts"
+      case 'javascript':
+        return "index.js"
+      default:
+        return "index.js"
     }
   }
 
@@ -416,6 +486,7 @@ export function FunctionEditor({
                     <Editor
                       height="500px"
                       language={getLanguage()}
+                      path={getEditorPath()}
                       value={field.value}
                       onChange={(value, ev) => {
                         field.onChange(value ?? "")
@@ -490,42 +561,70 @@ export function FunctionEditor({
               </CardHeader>
               <CardContent className="space-y-4">
                 {typeof testOutput === 'string' ? (
-                  <pre className="bg-muted p-3 rounded text-xs overflow-auto max-h-[200px]">{testOutput}</pre>
+                  <pre className="bg-muted p-3 rounded text-xs overflow-auto max-h-[200px] font-mono">{testOutput}</pre>
                 ) : testOutput.error ? (
                   <div>
                     <div className="text-sm font-medium mb-1 text-destructive">Error</div>
-                    <div className="bg-destructive/10 text-destructive p-3 rounded text-xs">{testOutput.error}</div>
+                    <div className="bg-destructive/10 text-destructive p-3 rounded text-xs font-mono whitespace-pre-wrap">{testOutput.error}</div>
                   </div>
                 ) : (
                   <>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-6">
                       <div>
-                        <div className="text-sm text-muted-foreground">Status</div>
-                        <div className={`font-medium capitalize ${testOutput.status === 'success' ? 'text-green-600' : 'text-red-600'}`} >
+                        <div className="text-xs text-muted-foreground uppercase tracking-wide">Status</div>
+                        <div className={`text-sm font-semibold capitalize ${testOutput.status === 'success' ? 'text-green-500' : 'text-red-500'}`}>
                           {testOutput.status}
                         </div>
                       </div>
-                      <div>
-                        <div className="text-sm text-muted-foreground">Duration</div>
-                        <div className="font-medium">{testOutput.duration_ms ?? 'N/A'}ms</div>
-                      </div>
+                      {testOutput.duration_ms != null && (
+                        <div>
+                          <div className="text-xs text-muted-foreground uppercase tracking-wide">Duration</div>
+                          <div className="text-sm font-semibold">{testOutput.duration_ms}ms</div>
+                        </div>
+                      )}
+                      {testOutput.response?.statusCode != null && (
+                        <div>
+                          <div className="text-xs text-muted-foreground uppercase tracking-wide">HTTP Status</div>
+                          <div className={`text-sm font-semibold ${testOutput.response.statusCode >= 200 && testOutput.response.statusCode < 300 ? 'text-green-500' : 'text-yellow-500'}`}>
+                            {testOutput.response.statusCode}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    <div>
-                      <div className="text-sm font-medium mb-2">Response</div>
-                      <pre className="bg-muted p-3 rounded text-xs overflow-auto max-h-[200px]">
-                        {JSON.stringify(testOutput.response, null, 2)}
-                      </pre>
-                    </div>
+                    {testOutput.response && (() => {
+                      // Try to parse body as JSON for pretty display
+                      const resp = testOutput.response;
+                      let bodyParsed: unknown = null;
+                      if (typeof resp.body === 'string') {
+                        try { bodyParsed = JSON.parse(resp.body); } catch { /* not JSON */ }
+                      }
 
+                      // Build a clean display object: show parsed body if possible
+                      const display = bodyParsed != null
+                        ? { statusCode: resp.statusCode, headers: resp.headers, body: bodyParsed }
+                        : resp;
+
+                      return (
+                        <div>
+                          <div className="text-sm font-medium mb-2">Response</div>
+                          <pre className="bg-muted p-4 rounded-lg text-xs overflow-auto max-h-[250px] font-mono leading-relaxed">
+                            {JSON.stringify(display, null, 2)}
+                          </pre>
+                        </div>
+                      );
+                    })()}
+
+                    {testLogs.length > 0 && (
                     <div>
                       <div className="text-sm font-medium mb-2">Logs</div>
-                      <div className="bg-black text-green-400 p-3 rounded text-xs space-y-1 font-mono max-h-[200px] overflow-auto">
+                      <div className="bg-black text-green-400 p-4 rounded-lg text-xs space-y-0.5 font-mono max-h-[200px] overflow-auto leading-relaxed">
                         {testLogs.map((log: string, i: number) => (
                           <div key={i}>{log}</div>
                         ))}
                       </div>
                     </div>
+                    )}
                   </>
                 )}
               </CardContent>

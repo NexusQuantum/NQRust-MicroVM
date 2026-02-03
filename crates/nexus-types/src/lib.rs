@@ -75,6 +75,8 @@ pub struct CreateVmReq {
     pub password: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_size_mb: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -89,6 +91,8 @@ pub struct TemplateSpec {
     pub kernel_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rootfs_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_size_mb: Option<u32>,
 }
 
 impl TemplateSpec {
@@ -104,7 +108,8 @@ impl TemplateSpec {
             source_snapshot_id: None,
             username: None,
             password: None,
-            tags: vec![], // Templates don't have tags, user VMs get no tags by default
+            tags: vec![],
+            rootfs_size_mb: self.rootfs_size_mb,
         }
     }
 }
@@ -1041,6 +1046,9 @@ pub enum AuditAction {
     AttachVolume,
     DetachVolume,
     DeleteVolume,
+
+    // System/lifecycle events
+    SystemEvent,
 }
 
 impl AuditAction {
@@ -1078,6 +1086,7 @@ impl AuditAction {
             AuditAction::AttachVolume => "attach_volume",
             AuditAction::DetachVolume => "detach_volume",
             AuditAction::DeleteVolume => "delete_volume",
+            AuditAction::SystemEvent => "system_event",
         }
     }
 }
@@ -1252,4 +1261,59 @@ pub struct AuditLogQueryParams {
     pub limit: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<i64>,
+}
+
+// ========================================
+// Time-Series Metrics
+// ========================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct HostMetric {
+    pub host_id: uuid::Uuid,
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
+    pub cpu_usage_percent: Option<f64>,
+    pub memory_used_mb: Option<f64>,
+    pub memory_total_mb: Option<f64>,
+    pub disk_used_gb: Option<f64>,
+    pub disk_total_gb: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct VmMetric {
+    pub vm_id: uuid::Uuid,
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
+    pub cpu_usage_percent: Option<f64>,
+    pub memory_usage_percent: Option<f64>,
+    pub memory_used_kb: Option<i64>,
+    pub memory_total_kb: Option<i64>,
+    pub load_average: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContainerMetric {
+    pub container_id: uuid::Uuid,
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
+    pub cpu_percent: Option<f64>,
+    pub memory_used_mb: Option<f64>,
+    pub memory_limit_mb: Option<f64>,
+    pub network_rx_bytes: Option<i64>,
+    pub network_tx_bytes: Option<i64>,
+    pub block_read_bytes: Option<i64>,
+    pub block_write_bytes: Option<i64>,
+    pub pids: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListMetricsResponse<T: Serialize> {
+    pub items: Vec<T>,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct MetricsQueryParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
 }

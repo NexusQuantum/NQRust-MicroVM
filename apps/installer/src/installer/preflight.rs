@@ -27,11 +27,12 @@ pub fn run_preflight_checks() -> Vec<CheckItem> {
     ]
 }
 
-/// Run pre-flight checks for offline/ISO mode (skip network-related checks, lenient on systemd/disk)
+/// Run pre-flight checks for offline/air-gapped mode
 pub fn run_preflight_checks_offline() -> Vec<CheckItem> {
     vec![
         check_architecture(),
         check_os(),
+        check_ubuntu_airgap(),
         check_kernel(),
         check_systemd_offline(), // Lenient - live ISO uses sysvinit
         check_kvm_support(),
@@ -43,6 +44,32 @@ pub fn run_preflight_checks_offline() -> Vec<CheckItem> {
         check_port_available(3000, "Web UI"),
         check_port_available(5432, "PostgreSQL"),
     ]
+}
+
+/// Check that we're on a supported Ubuntu version for air-gapped install
+fn check_ubuntu_airgap() -> CheckItem {
+    let info = get_os_info();
+    if info.id != "ubuntu" {
+        return CheckItem::new("Ubuntu Version", "Ubuntu 24.04 for air-gapped")
+            .with_status(Status::Warning)
+            .with_message(format!(
+                "Detected {} {} (bundled .debs are for Ubuntu 24.04)",
+                info.name, info.version
+            ));
+    }
+    let (major, minor) = parse_version(&info.version);
+    if major == 24 && minor == 4 {
+        CheckItem::new("Ubuntu Version", "Ubuntu 24.04 for air-gapped")
+            .with_status(Status::Success)
+            .with_message(format!("Ubuntu {}", info.version))
+    } else {
+        CheckItem::new("Ubuntu Version", "Ubuntu 24.04 for air-gapped")
+            .with_status(Status::Warning)
+            .with_message(format!(
+                "Ubuntu {} (untested, bundled .debs are for 24.04)",
+                info.version
+            ))
+    }
 }
 
 /// Check for systemd in offline mode (warning only, not error)
@@ -317,10 +344,28 @@ fn check_port_available(port: u16, name: &str) -> CheckItem {
 
 // Helper structs and functions
 
-struct OsInfo {
-    id: String,
-    name: String,
-    version: String,
+pub struct OsInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+}
+
+/// Detect the Ubuntu version if running on Ubuntu.
+/// Returns the VERSION_ID string (e.g., "22.04", "24.04") or None.
+pub fn detect_ubuntu_version() -> Option<String> {
+    let info = get_os_info();
+    if info.id == "ubuntu" {
+        Some(info.version.clone())
+    } else {
+        None
+    }
+}
+
+/// Get the Ubuntu codename for selecting the correct deb packages directory.
+/// Returns "ubuntu-22.04", "ubuntu-24.04", etc.
+pub fn detect_ubuntu_codename() -> String {
+    let info = get_os_info();
+    format!("{}-{}", info.id, info.version)
 }
 
 fn get_os_info() -> OsInfo {

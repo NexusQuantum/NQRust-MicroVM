@@ -5,14 +5,13 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import {
   Settings2,
   Palette,
-  Bell,
+  ScrollText,
   Server,
   Info,
   Globe,
@@ -25,7 +24,17 @@ import {
   Lock,
   Trash2,
   Eye,
-  EyeOff
+  EyeOff,
+  Copy,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+  CheckCircle,
+  XCircle,
+  Monitor,
+  Code,
+  Box
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import {
@@ -39,13 +48,337 @@ import {
   useUpdateProfile,
   useChangePassword,
   useUploadAvatar,
-  useDeleteAvatar
+  useDeleteAvatar,
+  useAuditLogs,
+  useDbInfo,
+  useSystemStats
 } from "@/lib/queries"
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { toast } from "sonner"
 import { AvatarUpload } from "@/components/user"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
 import { useAuthStore } from "@/lib/auth/store"
+import type { AuditLogQueryParams } from "@/lib/types"
+
+const ACTION_GROUPS: Record<string, string[]> = {
+  "All": [],
+  "Auth": ["login", "logout", "login_failed"],
+  "VM": ["create_vm", "start_vm", "stop_vm", "pause_vm", "resume_vm", "delete_vm", "update_vm"],
+  "Container": ["create_container", "start_container", "stop_container", "delete_container"],
+  "Function": ["create_function", "invoke_function", "update_function", "delete_function"],
+  "System": ["system_event"],
+}
+
+function formatAction(action: string): string {
+  return action.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+}
+
+function LoggingTabContent() {
+  const dateFormat = useDateFormat()
+  const [actionFilter, setActionFilter] = useState("All")
+  const [page, setPage] = useState(0)
+  const [copied, setCopied] = useState(false)
+  const pageSize = 15
+
+  const params: AuditLogQueryParams = useMemo(() => {
+    const p: AuditLogQueryParams = { limit: pageSize, offset: page * pageSize }
+    const group = ACTION_GROUPS[actionFilter]
+    if (group && group.length === 1) {
+      p.action = group[0]
+    }
+    // For multi-action groups, we filter client-side from a larger fetch
+    if (group && group.length > 1) {
+      p.limit = 200
+      p.offset = 0
+    }
+    return p
+  }, [actionFilter, page])
+
+  const { data: logsData, isLoading: logsLoading, refetch: refetchLogs } = useAuditLogs(params, 15000)
+  const { data: dbInfo } = useDbInfo()
+  const { data: stats } = useSystemStats(15000)
+
+  // Client-side filter for multi-action groups, then paginate
+  const filteredItems = useMemo(() => {
+    if (!logsData?.items) return []
+    const group = ACTION_GROUPS[actionFilter]
+    if (!group || group.length <= 1) return logsData.items
+    return group.length > 0
+      ? logsData.items.filter(item => group.includes(item.action))
+      : logsData.items
+  }, [logsData, actionFilter])
+
+  const paginatedItems = useMemo(() => {
+    const group = ACTION_GROUPS[actionFilter]
+    if (group && group.length > 1) {
+      return filteredItems.slice(page * pageSize, (page + 1) * pageSize)
+    }
+    return filteredItems
+  }, [filteredItems, actionFilter, page])
+
+  const totalCount = useMemo(() => {
+    const group = ACTION_GROUPS[actionFilter]
+    if (group && group.length > 1) return filteredItems.length
+    return logsData?.total ?? 0
+  }, [logsData, filteredItems, actionFilter])
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+
+  const handleCopy = useCallback((text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    toast.success("Copied to clipboard")
+    setTimeout(() => setCopied(false), 2000)
+  }, [])
+
+  return (
+    <>
+      {/* System Overview Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg bg-blue-500/10 p-2">
+              <Server className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <CardTitle>System Overview</CardTitle>
+              <CardDescription>Current resource counts across the platform</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <Server className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="text-2xl font-bold">{stats?.total_hosts ?? "—"}</p>
+                <p className="text-xs text-muted-foreground">Hosts</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <Monitor className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="text-2xl font-bold">
+                  {stats ? `${stats.running_vms}/${stats.total_vms}` : "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">VMs (running/total)</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <Code className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="text-2xl font-bold">{stats?.total_functions ?? "—"}</p>
+                <p className="text-xs text-muted-foreground">Functions</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <Box className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="text-2xl font-bold">
+                  {stats ? `${stats.running_containers}/${stats.total_containers}` : "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">Containers (running/total)</p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Activity Logs Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-purple-500/10 p-2">
+                <ScrollText className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+              </div>
+              <div>
+                <CardTitle>Activity Logs</CardTitle>
+                <CardDescription>Audit trail of all system operations</CardDescription>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => refetchLogs()}>
+              <RefreshCw className="mr-2 h-3 w-3" />
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Filters */}
+          <div className="flex items-center gap-3">
+            <Select value={actionFilter} onValueChange={(val) => { setActionFilter(val); setPage(0) }}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.keys(ACTION_GROUPS).map(group => (
+                  <SelectItem key={group} value={group}>{group}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-sm text-muted-foreground">
+              {totalCount} {totalCount === 1 ? "entry" : "entries"}
+            </span>
+          </div>
+
+          {/* Log Table */}
+          <div className="rounded-md border">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-4 py-2 text-left font-medium">Time</th>
+                    <th className="px-4 py-2 text-left font-medium">User</th>
+                    <th className="px-4 py-2 text-left font-medium">Action</th>
+                    <th className="px-4 py-2 text-left font-medium">Resource</th>
+                    <th className="px-4 py-2 text-left font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logsLoading ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                        Loading...
+                      </td>
+                    </tr>
+                  ) : paginatedItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                        No audit logs found. Operations like creating VMs, containers, and functions will appear here.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedItems.map((log) => (
+                      <tr key={log.id} className="border-b last:border-0 hover:bg-muted/30">
+                        <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                          {dateFormat.formatRelative(log.created_at)}
+                        </td>
+                        <td className="px-4 py-2 font-medium">{log.username}</td>
+                        <td className="px-4 py-2">
+                          <Badge variant="outline" className="text-xs font-mono">
+                            {formatAction(log.action)}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">
+                          {log.resource_type && (
+                            <span className="capitalize">{log.resource_type}</span>
+                          )}
+                          {log.resource_id && (
+                            <span className="ml-1 font-mono text-[10px]">
+                              {log.resource_id.slice(0, 8)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          {log.success ? (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <XCircle className="h-4 w-4 text-red-500" />
+                              {log.error_message && (
+                                <span className="text-xs text-red-500 truncate max-w-[120px]" title={log.error_message}>
+                                  {log.error_message}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                Page {page + 1} of {totalPages}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Database Connection Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg bg-blue-500/10 p-2">
+              <Database className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <CardTitle>Database Connection</CardTitle>
+              <CardDescription>Connect with external tools (psql, pgAdmin, DBeaver)</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {dbInfo ? (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Host</Label>
+                  <p className="text-sm font-mono">{dbInfo.host}</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Port</Label>
+                  <p className="text-sm font-mono">{dbInfo.port}</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Database</Label>
+                  <p className="text-sm font-mono">{dbInfo.database}</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Username</Label>
+                  <p className="text-sm font-mono">{dbInfo.username}</p>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Connection String (password masked)</Label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 rounded bg-muted px-3 py-2 text-xs font-mono break-all">
+                    {dbInfo.connection_string_masked}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => handleCopy(dbInfo.connection_string_masked)}
+                  >
+                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-md bg-muted/50 border p-3">
+                <p className="text-xs text-muted-foreground">
+                  Query the <code className="font-mono bg-muted px-1 rounded">audit.audit_logs</code> table to view all activity.
+                  Example: <code className="font-mono bg-muted px-1 rounded">SELECT * FROM audit.audit_logs ORDER BY created_at DESC LIMIT 50;</code>
+                </p>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Loading connection info...</p>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  )
+}
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
@@ -71,11 +404,6 @@ export default function SettingsPage() {
   // Local state for form inputs (synced with backend)
   const [localTimezone, setLocalTimezone] = useState("UTC")
   const [localDateFormat, setLocalDateFormat] = useState("iso")
-  const [localNotifications, setLocalNotifications] = useState({
-    email: true,
-    browser: true,
-    desktop: false
-  })
   const [localVmDefaults, setLocalVmDefaults] = useState({
     vcpu: 2,
     mem_mib: 2048,
@@ -152,7 +480,6 @@ export default function SettingsPage() {
     if (preferences) {
       setLocalTimezone(preferences.timezone || "UTC")
       setLocalDateFormat(preferences.date_format || "iso")
-      setLocalNotifications(preferences.notifications)
       setLocalVmDefaults(preferences.vm_defaults)
       setLocalAutoRefresh(preferences.auto_refresh)
       setLocalMetricsRetention(preferences.metrics_retention)
@@ -326,9 +653,9 @@ export default function SettingsPage() {
             <Palette className="mr-2 h-4 w-4" />
             Appearance
           </TabsTrigger>
-          <TabsTrigger value="notifications">
-            <Bell className="mr-2 h-4 w-4" />
-            Notifications
+          <TabsTrigger value="logging">
+            <ScrollText className="mr-2 h-4 w-4" />
+            Logging
           </TabsTrigger>
           <TabsTrigger value="defaults">
             <Server className="mr-2 h-4 w-4" />
@@ -630,100 +957,9 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Notifications Tab */}
-        {/* TODO: Notification system not yet implemented. Uncomment when notification system is ready. */}
-        {/*
-        <TabsContent value="notifications" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <div className="rounded-lg bg-blue-500/10 p-2">
-                  <Bell className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                </div>
-                <div>
-                  <CardTitle>Notification Preferences</CardTitle>
-                  <CardDescription>Control when and how you receive notifications</CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Email Notifications</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Receive notifications via email
-                  </p>
-                </div>
-                <Switch
-                  checked={localNotifications.email}
-                  onCheckedChange={(val) =>
-                    setLocalNotifications({...localNotifications, email: val})
-                  }
-                  disabled={isLoading}
-                />
-              </div>
-
-              <Separator />
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Browser Notifications</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Show browser push notifications
-                  </p>
-                </div>
-                <Switch
-                  checked={localNotifications.browser}
-                  onCheckedChange={(val) =>
-                    setLocalNotifications({...localNotifications, browser: val})
-                  }
-                  disabled={isLoading}
-                />
-              </div>
-
-              <Separator />
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Desktop Notifications</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Send desktop notifications (requires permission)
-                  </p>
-                </div>
-                <Switch
-                  checked={localNotifications.desktop}
-                  onCheckedChange={(val) =>
-                    setLocalNotifications({...localNotifications, desktop: val})
-                  }
-                  disabled={isLoading}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-        */}
-        <TabsContent value="notifications" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <div className="rounded-lg bg-blue-500/10 p-2">
-                  <Bell className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                </div>
-                <div>
-                  <CardTitle>Notification Preferences</CardTitle>
-                  <CardDescription>Coming Soon</CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-md bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 p-4">
-                <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                  <strong>Feature Under Development:</strong> The notification system is currently being developed.
-                  Check back soon for email, browser, and desktop notification preferences.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+        {/* Logging Tab */}
+        <TabsContent value="logging" className="space-y-6">
+          <LoggingTabContent />
         </TabsContent>
 
         {/* Defaults Tab */}

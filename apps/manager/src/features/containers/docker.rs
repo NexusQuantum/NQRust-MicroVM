@@ -13,7 +13,7 @@ impl DockerClient {
     pub fn new(guest_ip: &str) -> Result<Self> {
         let base_url = format!("http://{}:2375", guest_ip);
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(60))
             .build()?;
 
         Ok(Self { base_url, client })

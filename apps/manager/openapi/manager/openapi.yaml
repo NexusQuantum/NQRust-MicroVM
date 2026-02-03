@@ -1174,6 +1174,12 @@ components:
         rootfs_path:
           type: string
           nullable: true
+        rootfs_size_mb:
+          type: integer
+          format: int32
+          minimum: 0
+          nullable: true
+          description: Optional rootfs size in MB. Must be >= source image size. If omitted, uses source image size.
         source_snapshot_id:
           type: string
           format: uuid

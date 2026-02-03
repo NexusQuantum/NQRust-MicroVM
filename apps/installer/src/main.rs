@@ -98,10 +98,11 @@ enum Commands {
         #[arg(long)]
         debug: bool,
 
-        /// ISO mode: use pre-bundled files from local path (for air-gapped/offline installation)
-        /// When enabled, skips all downloads and uses files from the bundle directory
-        #[arg(long)]
-        iso_mode: bool,
+        /// Air-gapped mode: use pre-bundled files from local path (for offline installation)
+        /// When enabled, skips all downloads and uses files from the bundle directory.
+        /// Alias: --iso-mode (for backward compatibility)
+        #[arg(long, alias = "iso-mode")]
+        airgap: bool,
 
         /// Path to the pre-bundled files for ISO mode (default: /opt/nqrust-bundle)
         #[arg(long, default_value = "/opt/nqrust-bundle")]
@@ -210,11 +211,11 @@ fn main() -> Result<()> {
             non_interactive,
             config: _config_file,
             debug: _debug,
-            iso_mode,
+            airgap,
             bundle_path,
         }) => {
             // Determine installation source
-            let install_source = if iso_mode {
+            let install_source = if airgap {
                 InstallSource::LocalBundle(bundle_path)
             } else if mode == CliInstallMode::Dev {
                 InstallSource::BuildFromSource
@@ -761,8 +762,7 @@ fn handle_verify_input(app: &mut App, key: KeyCode) {
 }
 
 fn handle_complete_input(app: &mut App, key: KeyCode) {
-    let needs_reboot =
-        app.config.network_mode == NetworkMode::Bridged || app.config.install_source.is_offline();
+    let needs_reboot = app.config.network_mode == NetworkMode::Bridged;
 
     match key {
         KeyCode::Char('r') if needs_reboot => {
@@ -858,12 +858,8 @@ fn apply_config_field(app: &mut App) {
 fn run_preflight_checks(app: &mut App) {
     use installer::preflight;
 
-    // Run actual preflight checks - use offline version for ISO mode
-    app.preflight_checks = if app.config.install_source.is_offline() {
-        preflight::run_preflight_checks_offline()
-    } else {
-        preflight::run_preflight_checks()
-    };
+    // Run the same preflight checks for both online and air-gapped mode
+    app.preflight_checks = preflight::run_preflight_checks();
 }
 
 fn run_non_interactive(_config: InstallConfig) -> Result<()> {

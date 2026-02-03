@@ -42,6 +42,32 @@ pub async fn auth_middleware(
     Ok(next.run(req).await)
 }
 
+/// Optional auth middleware — extracts user if a valid token is present,
+/// but does NOT reject requests without authentication.
+/// Use this on routes where user context is desired for audit logging
+/// but authentication is not required.
+pub async fn optional_auth_middleware(
+    Extension(st): Extension<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if let Some(auth_header) = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+    {
+        if let Some(token) = auth_header.strip_prefix("Bearer ") {
+            let token = token.trim();
+            if !token.is_empty() {
+                if let Ok(user) = st.users.validate_token(token).await {
+                    req.extensions_mut().insert(user);
+                }
+            }
+        }
+    }
+    next.run(req).await
+}
+
 /// Middleware to require admin role
 pub async fn require_admin(
     Extension(user): Extension<AuthenticatedUser>,

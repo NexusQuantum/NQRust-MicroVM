@@ -1,7 +1,10 @@
 use crate::AppState;
 use anyhow::{Context, Result};
-use nexus_types::CreateVmReq;
+use nexus_types::{AuditAction, CreateVmReq};
+use serde_json::json;
 use uuid::Uuid;
+
+use crate::features::users::audit;
 
 /// Create a dedicated MicroVM for running a Docker container
 ///
@@ -82,15 +85,18 @@ pub async fn create_container_vm(
         username: Some("root".to_string()),
         password: Some("container".to_string()),
         tags: vec!["type:container".to_string()],
+        rootfs_size_mb: None,
     };
 
     // Create and start VM
-    crate::features::vms::service::create_and_start(st, vm_id, vm_req, None).await?;
+    crate::features::vms::service::create_and_start(st, vm_id, vm_req, None, None, "system").await?;
 
     eprintln!(
         "[Container {}] VM {} created and starting",
         container_id, vm_id
     );
+
+    let _ = audit::log_action(&st.db, None, "system", AuditAction::SystemEvent, Some("container"), Some(container_id), Some(json!({"event": "container_vm_created", "vm_id": vm_id.to_string()})), None, true, None).await;
 
     Ok(vm_id)
 }

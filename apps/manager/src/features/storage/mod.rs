@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
@@ -40,7 +40,12 @@ impl LocalStorage {
         Ok(())
     }
 
-    pub async fn alloc_rootfs(&self, vm_id: Uuid, src: &Path) -> Result<String> {
+    pub async fn alloc_rootfs(
+        &self,
+        vm_id: Uuid,
+        src: &Path,
+        target_size_mb: Option<u32>,
+    ) -> Result<(String, u64)> {
         let target_dir = self.vm_dir(vm_id).join("storage");
         fs::create_dir_all(&target_dir).await?;
         let ext = src
@@ -52,7 +57,57 @@ impl LocalStorage {
         fs::copy(src, &target)
             .await
             .with_context(|| format!("failed to copy rootfs {:?} -> {:?}", src, target))?;
-        Ok(target.display().to_string())
+
+        let source_size = fs::metadata(&target).await?.len();
+
+        if let Some(size_mb) = target_size_mb {
+            let target_bytes = size_mb as u64 * 1024 * 1024;
+            let source_mb = source_size / (1024 * 1024);
+            if target_bytes < source_size {
+                bail!(
+                    "requested rootfs size ({size_mb} MB) is smaller than source image ({source_mb} MB)"
+                );
+            }
+            if target_bytes > source_size {
+                // Extend the file to the requested size
+                let file = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&target)
+                    .await
+                    .with_context(|| format!("failed to open rootfs for resize {:?}", target))?;
+                file.set_len(target_bytes)
+                    .await
+                    .with_context(|| format!("failed to extend rootfs to {size_mb} MB"))?;
+                drop(file);
+
+                // Run e2fsck before resize
+                let fsck = tokio::process::Command::new("e2fsck")
+                    .args(["-f", "-y"])
+                    .arg(&target)
+                    .output()
+                    .await
+                    .context("failed to run e2fsck")?;
+                if !fsck.status.success() {
+                    let stderr = String::from_utf8_lossy(&fsck.stderr);
+                    tracing::warn!("e2fsck returned non-zero (may be ok): {}", stderr);
+                }
+
+                // Resize the ext4 filesystem to fill the new space
+                let resize = tokio::process::Command::new("resize2fs")
+                    .arg(&target)
+                    .output()
+                    .await
+                    .context("failed to run resize2fs")?;
+                if !resize.status.success() {
+                    let stderr = String::from_utf8_lossy(&resize.stderr);
+                    bail!("resize2fs failed: {}", stderr);
+                }
+
+                return Ok((target.display().to_string(), target_bytes));
+            }
+        }
+
+        Ok((target.display().to_string(), source_size))
     }
 
     pub async fn alloc_data_disk(&self, vm_id: Uuid, size_bytes: u64) -> Result<String> {

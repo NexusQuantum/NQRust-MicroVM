@@ -65,6 +65,7 @@ export interface CreateVmReq {
   source_snapshot_id?: string;
   username?: string;
   password?: string;
+  rootfs_size_mb?: number;
 }
 
 export interface TemplateSpec {
@@ -222,6 +223,50 @@ export interface HostHeartbeatRequest {
 
 export interface TailLogResponse {
   text: string;
+}
+
+// Audit Logs
+export interface AuditLog {
+  id: string;
+  user_id: string | null;
+  username: string;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  details: Record<string, unknown> | null;
+  ip_address: string | null;
+  success: boolean;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface ListAuditLogsResponse {
+  items: AuditLog[];
+  total: number;
+}
+
+export interface AuditLogQueryParams {
+  action?: string;
+  resource_type?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface DbConnectionInfo {
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  connection_string_masked: string;
+}
+
+export interface SystemStats {
+  total_hosts: number;
+  total_vms: number;
+  running_vms: number;
+  total_functions: number;
+  total_containers: number;
+  running_containers: number;
 }
 
 // Path parameters for API routes
@@ -848,4 +893,44 @@ export interface UpdateProfileRequest {
 export interface ChangePasswordRequest {
   current_password: string;
   new_password: string;
+}
+
+// Time-Series Metrics Types
+export interface HostMetric {
+  host_id: string;
+  recorded_at: string;
+  cpu_usage_percent: number | null;
+  memory_used_mb: number | null;
+  memory_total_mb: number | null;
+  disk_used_gb: number | null;
+  disk_total_gb: number | null;
+}
+
+export interface VmMetric {
+  vm_id: string;
+  recorded_at: string;
+  cpu_usage_percent: number | null;
+  memory_usage_percent: number | null;
+  memory_used_kb: number | null;
+  memory_total_kb: number | null;
+  load_average: number | null;
+}
+
+export interface ContainerMetric {
+  container_id: string;
+  recorded_at: string;
+  cpu_percent: number | null;
+  memory_used_mb: number | null;
+  memory_limit_mb: number | null;
+  network_rx_bytes: number | null;
+  network_tx_bytes: number | null;
+  block_read_bytes: number | null;
+  block_write_bytes: number | null;
+  pids: number | null;
+}
+
+export interface MetricsQueryParams {
+  from?: string;
+  to?: string;
+  limit?: number;
 }

@@ -46,6 +46,7 @@ const vmCreationSchema = z.object({
   // Boot source
   kernelPath: z.string().min(1, "Kernel image is required"),
   rootfsPath: z.string().min(1, "Rootfs image is required"),
+  rootfsSizeMb: z.union([z.number().min(256, "Minimum 256 MB").max(102400, "Maximum 100 GB"), z.nan()]).optional(),
   initrdPath: z.string().optional(),
   bootArgs: z.string().optional(),
 
@@ -96,6 +97,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
       trackDirtyPages: false,
       kernelPath: "",
       rootfsPath: "",
+      rootfsSizeMb: undefined,
       initrdPath: "",
       bootArgs: "",
       enableNetwork: true,
@@ -336,6 +338,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         rootfs_path: data.rootfsPath,
         username: data.username,
         password: data.password,
+        rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
       }
 
       console.log('Submitting VM creation request:', vmReq)
@@ -572,6 +575,19 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                 {errors.rootfsPath && <p className="text-sm text-red-600">{errors.rootfsPath.message}</p>}
               </div>
               <div className="space-y-2">
+                <Label htmlFor="rootfs-size">Rootfs Size in MB (Optional)</Label>
+                <Input
+                  id="rootfs-size"
+                  type="number"
+                  placeholder="Leave empty to use image default size"
+                  {...register("rootfsSizeMb", { valueAsNumber: true })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Must be larger than or equal to the source image size. Leave empty to keep the original size.
+                </p>
+                {errors.rootfsSizeMb && <p className="text-sm text-red-600">{errors.rootfsSizeMb.message}</p>}
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="initrd">Initrd Path (Optional)</Label>
                 <Input id="initrd" {...register("initrdPath")} />
               </div>
@@ -663,6 +679,8 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                   <dd className="font-mono text-xs">{formData.kernelPath || "—"}</dd>
                   <dt className="text-muted-foreground">Rootfs:</dt>
                   <dd className="font-mono text-xs">{formData.rootfsPath || "—"}</dd>
+                  <dt className="text-muted-foreground">Rootfs Size:</dt>
+                  <dd>{formData.rootfsSizeMb && !isNaN(formData.rootfsSizeMb) ? `${formData.rootfsSizeMb} MB` : "Default (image size)"}</dd>
                 </dl>
               </div>
 

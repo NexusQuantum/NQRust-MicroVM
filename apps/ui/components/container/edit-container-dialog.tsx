@@ -96,7 +96,7 @@ export function EditContainerDialog({ container, open, onOpenChange }: EditConta
 
             <div className="space-y-2">
               <Label>Memory Limit: {memoryLimit} MB</Label>
-              <Slider value={[memoryLimit]} onValueChange={(v) => setMemoryLimit(v[0])} min={64} max={32768} step={64} />
+              <Slider value={[memoryLimit]} onValueChange={(v) => setMemoryLimit(v[0])} min={512} max={32768} step={64} />
             </div>
           </div>
 

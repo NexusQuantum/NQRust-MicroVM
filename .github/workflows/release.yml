@@ -905,6 +905,18 @@ jobs:
           - **Bun Runtime**: [bun-runtime.ext4](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/bun-runtime.ext4) - For serverless functions (TypeScript/JS)
           - **Container Runtime**: [container-runtime.ext4.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/container-runtime.ext4.gz) - Docker-in-VM (~2.2GB, gzipped)
 
+          ### Air-Gapped Installation
+
+          For servers without internet access, download the self-extracting bundle (built automatically after release):
+          - **Air-Gapped Bundle**: `nqr-microvm-airgap-${{ steps.version.outputs.version }}.run` (~3-5GB)
+
+          ```bash
+          # Transfer to air-gapped Ubuntu 24.04 server, then:
+          sudo ./nqr-microvm-airgap-${{ steps.version.outputs.version }}.run
+          ```
+
+          The bundle includes all binaries, images, .deb packages, Node.js, and the web UI.
+
           ### Checksums
           ```
           $(cat release/checksums.txt)

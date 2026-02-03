@@ -1,21 +1,23 @@
+use crate::features::users::audit;
 use crate::AppState;
 use anyhow::{Context, Result};
+use nexus_types::{
+    AuditAction, CreateFunctionReq, CreateFunctionResp, Function, FunctionInvocation,
+    GetFunctionResp, InvokeFunctionReq, InvokeFunctionResp, ListFunctionsResp,
+    ListInvocationsResp, UpdateFunctionReq,
+};
+use serde_json::json;
 use sqlx::PgPool;
 use std::time::Instant;
 use uuid::Uuid;
 
 use super::repo::{FunctionInvocationRow, FunctionRow};
-use nexus_types::{
-    CreateFunctionReq, CreateFunctionResp, Function, FunctionInvocation, GetFunctionResp,
-    InvokeFunctionReq, InvokeFunctionResp, ListFunctionsResp, ListInvocationsResp,
-    UpdateFunctionReq,
-};
 
 // ========================================
 // Function CRUD
 // ========================================
 
-pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<CreateFunctionResp> {
+pub async fn create_function(st: &AppState, req: CreateFunctionReq, user_id: Option<uuid::Uuid>, username: &str) -> Result<CreateFunctionResp> {
     // Validate runtime
     validate_runtime(&req.runtime)?;
 
@@ -42,6 +44,8 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
 
     super::repo::insert(&st.db, &row).await?;
 
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::CreateFunction, Some("function"), Some(id), Some(json!({"event": "creation_started", "name": &req.name, "runtime": &req.runtime})), None, true, None).await;
+
     // Spawn dedicated MicroVM for this function in the background
     let st_clone = st.clone();
     let function_id = id;
@@ -52,6 +56,8 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
     let vcpu = req.vcpu as u8;
     let memory_mb = req.memory_mb as u32;
     let env_vars = req.env_vars.clone();
+    let spawn_username = username.to_string();
+    let spawn_user_id = user_id;
 
     tokio::spawn(async move {
         match super::vm::create_function_vm(
@@ -75,6 +81,7 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
                     super::repo::update_vm_info(&st_clone.db, function_id, vm_id, None).await
                 {
                     eprintln!("[Function {}] Failed to update VM info: {}", function_id, e);
+                    let _ = audit::log_action(&st_clone.db, spawn_user_id, &spawn_username, AuditAction::SystemEvent, Some("function"), Some(function_id), Some(json!({"event": "vm_info_update_failed", "error": e.to_string()})), None, false, Some("failed to update VM info")).await;
                     let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
                     return;
                 }
@@ -106,12 +113,14 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
                     Some(ip) => ip,
                     None => {
                         eprintln!("[Function {}] Timeout waiting for guest IP", function_id);
+                        let _ = audit::log_action(&st_clone.db, spawn_user_id, &spawn_username, AuditAction::SystemEvent, Some("function"), Some(function_id), Some(json!({"event": "guest_ip_timeout"})), None, false, Some("timeout waiting for guest IP")).await;
                         let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
                         return;
                     }
                 };
 
                 eprintln!("[Function {}] Got guest IP: {}", function_id, guest_ip);
+                let _ = audit::log_action(&st_clone.db, spawn_user_id, &spawn_username, AuditAction::SystemEvent, Some("function"), Some(function_id), Some(json!({"event": "guest_ip_assigned", "ip": &guest_ip})), None, true, None).await;
 
                 // Update function with guest IP and state
                 let _ =
@@ -124,16 +133,19 @@ pub async fn create_function(st: &AppState, req: CreateFunctionReq) -> Result<Cr
                 match super::vm::update_function_code(&guest_ip, &runtime, &code, &handler).await {
                     Ok(_) => {
                         eprintln!("[Function {}] Code injection successful", function_id);
+                        let _ = audit::log_action(&st_clone.db, spawn_user_id, &spawn_username, AuditAction::SystemEvent, Some("function"), Some(function_id), Some(json!({"event": "code_injected", "runtime": &runtime})), None, true, None).await;
                         let _ = super::repo::update_state(&st_clone.db, function_id, "ready").await;
                     }
                     Err(e) => {
                         eprintln!("[Function {}] Code injection failed: {}", function_id, e);
+                        let _ = audit::log_action(&st_clone.db, spawn_user_id, &spawn_username, AuditAction::SystemEvent, Some("function"), Some(function_id), Some(json!({"event": "code_injection_failed", "error": e.to_string()})), None, false, Some("code injection failed")).await;
                         let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
                     }
                 }
             }
             Err(e) => {
                 eprintln!("[Function {}] Failed to create VM: {}", function_id, e);
+                let _ = audit::log_action(&st_clone.db, spawn_user_id, &spawn_username, AuditAction::SystemEvent, Some("function"), Some(function_id), Some(json!({"event": "vm_creation_failed", "error": e.to_string()})), None, false, Some("VM creation failed")).await;
                 let _ = super::repo::update_state(&st_clone.db, function_id, "error").await;
             }
         }
@@ -218,7 +230,7 @@ pub async fn update_function(
     get_function(&st.db, id).await
 }
 
-pub async fn delete_function(st: &AppState, id: Uuid) -> Result<()> {
+pub async fn delete_function(st: &AppState, id: Uuid, user_id: Option<Uuid>, username: &str) -> Result<()> {
     // Get function to find VM ID
     let func = super::repo::get(&st.db, id)
         .await?
@@ -250,6 +262,7 @@ pub async fn delete_function(st: &AppState, id: Uuid) -> Result<()> {
 
     // Delete function record
     super::repo::delete(&st.db, id).await?;
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::DeleteFunction, Some("function"), Some(id), None, None, true, None).await;
     Ok(())
 }
 
@@ -261,6 +274,8 @@ pub async fn invoke_function(
     st: &AppState,
     id: Uuid,
     req: InvokeFunctionReq,
+    user_id: Option<Uuid>,
+    username: &str,
 ) -> Result<InvokeFunctionResp> {
     // Get function
     let func = super::repo::get(&st.db, id)
@@ -368,6 +383,8 @@ pub async fn invoke_function(
 
     // Update last invoked timestamp
     super::repo::update_last_invoked(&st.db, id).await?;
+
+    let _ = audit::log_action(&st.db, user_id, username, AuditAction::InvokeFunction, Some("function"), Some(id), None, None, status != "error", error.as_deref()).await;
 
     Ok(InvokeFunctionResp {
         request_id,

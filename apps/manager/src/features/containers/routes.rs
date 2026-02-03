@@ -1,3 +1,4 @@
+use crate::features::users::repo::AuthenticatedUser;
 use crate::AppState;
 use axum::{
     extract::{
@@ -15,6 +16,13 @@ use nexus_types::{
 };
 use serde::Serialize;
 use tokio::time::{interval, Duration};
+
+fn extract_user_info(user: Option<Extension<AuthenticatedUser>>) -> (Option<uuid::Uuid>, String) {
+    match user {
+        Some(Extension(u)) => (Some(u.id), u.username),
+        None => (None, "system".to_string()),
+    }
+}
 
 #[derive(Serialize)]
 struct ErrorResponse {
@@ -36,9 +44,11 @@ struct ErrorResponse {
 )]
 pub async fn create(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Json(req): Json<CreateContainerReq>,
 ) -> Result<Json<CreateContainerResp>, (StatusCode, String)> {
-    let resp = super::service::create_container(&st, req)
+    let (user_id, username) = extract_user_info(user);
+    let resp = super::service::create_container(&st, req, user_id, &username)
         .await
         .map_err(|e| {
             let error_msg = e.to_string();
@@ -153,9 +163,11 @@ pub async fn update(
 )]
 pub async fn delete(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
 ) -> Result<Json<OkResponse>, StatusCode> {
-    super::service::delete_container(&st, id)
+    let (user_id, username) = extract_user_info(user);
+    super::service::delete_container(&st, id, user_id, &username)
         .await
         .map_err(|e| {
             eprintln!("Failed to delete container: {}", e);
@@ -178,9 +190,11 @@ pub async fn delete(
 )]
 pub async fn start(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
 ) -> impl IntoResponse {
-    match super::service::start_container(&st, id).await {
+    let (user_id, username) = extract_user_info(user);
+    match super::service::start_container(&st, id, user_id, &username).await {
         Ok(_) => (StatusCode::OK, Json(OkResponse::default())).into_response(),
         Err(e) => {
             eprintln!("Failed to start container: {}", e);
@@ -216,9 +230,11 @@ pub async fn start(
 )]
 pub async fn stop(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(ContainerPathParams { id }): Path<ContainerPathParams>,
 ) -> impl IntoResponse {
-    match super::service::stop_container(&st, id).await {
+    let (user_id, username) = extract_user_info(user);
+    match super::service::stop_container(&st, id, user_id, &username).await {
         Ok(_) => (StatusCode::OK, Json(OkResponse::default())).into_response(),
         Err(e) => {
             eprintln!("Failed to stop container: {}", e);

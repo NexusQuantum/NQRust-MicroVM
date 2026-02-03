@@ -128,9 +128,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let steps = Paragraph::new(steps_lines).block(steps_block);
     frame.render_widget(steps, chunks[4]);
 
-    // Key hints - show reboot option for bridged mode or ISO mode
-    let needs_reboot =
-        app.config.network_mode == NetworkMode::Bridged || app.config.install_source.is_offline();
+    // Key hints - show reboot option for bridged mode (network changes need reboot)
+    let needs_reboot = app.config.network_mode == NetworkMode::Bridged;
 
     let hints = if needs_reboot {
         Text::from(vec![

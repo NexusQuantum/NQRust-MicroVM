@@ -7,6 +7,7 @@ pub mod functions;
 pub mod hosts;
 pub mod images;
 pub mod logs; // A3 starter
+pub mod metrics;
 pub mod networks;
 pub mod reconciler;
 pub mod snapshots;
@@ -52,15 +53,34 @@ pub fn router(state: AppState) -> Router {
         .nest("/v1/images", images::router())
         .nest("/v1/networks", networks::router())
         .nest("/v1/templates", templates::router())
-        .nest("/v1/vms", vms::router())
+        .nest(
+            "/v1/vms",
+            vms::router().layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                users::middleware::optional_auth_middleware,
+            )),
+        )
         .nest("/v1/snapshots", snapshots::router())
         .route(
             "/v1/vms/:id/snapshots",
             axum::routing::post(snapshots::routes::create).get(snapshots::routes::list_for_vm),
         )
-        .nest("/v1/functions", functions::router())
-        .nest("/v1/containers", containers::router())
+        .nest(
+            "/v1/functions",
+            functions::router().layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                users::middleware::optional_auth_middleware,
+            )),
+        )
+        .nest(
+            "/v1/containers",
+            containers::router().layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                users::middleware::optional_auth_middleware,
+            )),
+        )
         .nest("/v1/logs", logs::router())
+        .nest("/v1/metrics", metrics::router())
         .nest("/v1/volumes", volumes::router())
         .layer(Extension(state))
 }

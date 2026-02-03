@@ -1,18 +1,16 @@
 # =============================================================================
-# NQR-MicroVM Air-Gapped ISO Build Workflow
+# NQR-MicroVM Air-Gapped ISO Build Workflow (DEPRECATED)
 # =============================================================================
-# This workflow builds the air-gapped ISO for offline installation.
-# It is triggered after a release is published.
+# DEPRECATED: This workflow has been replaced by build-airgap-bundle.yml
+# which produces a self-extracting .run file instead of a live-build ISO.
 #
-# The ISO includes:
-#   - NQR-MicroVM binaries (manager, guest-agent, installer)
-#   - Firecracker
-#   - Kernel and rootfs images
-#   - Docker container images
-#   - Required Debian packages
+# The new approach is simpler, more reliable, and installs on existing
+# Ubuntu 24.04 servers instead of requiring a bootable ISO.
+#
+# This workflow is kept for reference but is no longer triggered automatically.
 # =============================================================================
 
-name: Build Air-Gapped ISO
+name: "[DEPRECATED] Build Air-Gapped ISO"
 
 on:
   workflow_dispatch:
@@ -21,10 +19,11 @@ on:
         description: 'Release version to bundle (e.g., v0.1.64)'
         required: false
         default: 'latest'
-  workflow_run:
-    workflows: ["Release"]
-    types:
-      - completed
+  # No longer triggered automatically - replaced by build-airgap-bundle.yml
+  # workflow_run:
+  #   workflows: ["Release"]
+  #   types:
+  #     - completed
 
 concurrency:
   group: iso-build-${{ github.ref }}
@@ -37,7 +36,7 @@ jobs:
   build-iso:
     name: Build Air-Gapped ISO
     runs-on: ubuntu-24.04
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     
     steps:
       - name: Checkout repository

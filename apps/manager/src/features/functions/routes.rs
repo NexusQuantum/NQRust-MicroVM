@@ -1,3 +1,4 @@
+use crate::features::users::repo::AuthenticatedUser;
 use crate::AppState;
 use axum::{
     extract::{Path, Query},
@@ -23,9 +24,11 @@ use nexus_types::{
 )]
 pub async fn create(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Json(req): Json<CreateFunctionReq>,
 ) -> Result<Json<CreateFunctionResp>, StatusCode> {
-    let resp = super::service::create_function(&st, req)
+    let (user_id, username) = extract_user_info(user);
+    let resp = super::service::create_function(&st, req, user_id, &username)
         .await
         .map_err(|e| {
             eprintln!("Failed to create function: {}", e);
@@ -124,9 +127,11 @@ pub async fn update(
 )]
 pub async fn delete(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(FunctionPathParams { id }): Path<FunctionPathParams>,
 ) -> Result<Json<OkResponse>, StatusCode> {
-    super::service::delete_function(&st, id)
+    let (user_id, username) = extract_user_info(user);
+    super::service::delete_function(&st, id, user_id, &username)
         .await
         .map_err(|e| {
             eprintln!("Failed to delete function: {}", e);
@@ -149,10 +154,12 @@ pub async fn delete(
 )]
 pub async fn invoke(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(FunctionPathParams { id }): Path<FunctionPathParams>,
     Json(req): Json<InvokeFunctionReq>,
 ) -> Result<Json<InvokeFunctionResp>, StatusCode> {
-    let resp = super::service::invoke_function(&st, id, req)
+    let (user_id, username) = extract_user_info(user);
+    let resp = super::service::invoke_function(&st, id, req, user_id, &username)
         .await
         .map_err(|e| {
             eprintln!("Failed to invoke function: {}", e);
@@ -188,4 +195,11 @@ pub async fn logs(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     Ok(Json(resp))
+}
+
+fn extract_user_info(user: Option<Extension<AuthenticatedUser>>) -> (Option<uuid::Uuid>, String) {
+    match user {
+        Some(Extension(u)) => (Some(u.id), u.username),
+        None => (None, "system".to_string()),
+    }
 }

@@ -149,6 +149,13 @@ pub fn setup_database(db_name: &str, db_user: &str, db_password: &str) -> Result
         );
         let _ = run_command("sudo", &["-u", "postgres", "psql", "-c", &grant_sql]);
 
+        // Grant CREATEROLE so migrations can create roles (e.g. audit_reader)
+        let grant_createrole_sql = format!("ALTER USER {} CREATEROLE;", db_user);
+        let _ = run_command(
+            "sudo",
+            &["-u", "postgres", "psql", "-c", &grant_createrole_sql],
+        );
+
         // Grant schema permissions for SQLx
         let grant_schema_sql = format!("GRANT ALL ON SCHEMA public TO {};", db_user);
         let _ = run_command(

@@ -83,10 +83,11 @@ pub async fn create_function_vm(
         username: Some("root".to_string()),
         password: Some("function".to_string()),
         tags: vec!["type:function".to_string()],
+        rootfs_size_mb: None,
     };
 
     // Create and start VM
-    crate::features::vms::service::create_and_start(st, vm_id, vm_req, None).await?;
+    crate::features::vms::service::create_and_start(st, vm_id, vm_req, None, None, "system").await?;
 
     // Note: Function code will be injected after VM boots and guest IP is available
     // This is done in the service layer via the update_function_code() function

@@ -86,7 +86,15 @@ import type {
   DetachVolumeRequest,
   CreateVolumeResponse,
   ListVolumesResponse,
-  GetVolumeResponse
+  GetVolumeResponse,
+  ListAuditLogsResponse,
+  AuditLogQueryParams,
+  DbConnectionInfo,
+  SystemStats,
+  HostMetric,
+  VmMetric,
+  ContainerMetric,
+  MetricsQueryParams,
 } from "@/lib/types"
 
 /**
@@ -774,6 +782,67 @@ export class FacadeApi {
 
   async deleteAvatar(): Promise<void> {
     await apiClient.delete<OkResponse>("/auth/me/avatar");
+  }
+
+  // ==============
+  // Audit Logs
+  // ==============
+
+  async getAuditLogs(params?: AuditLogQueryParams): Promise<ListAuditLogsResponse> {
+    let url = "/logs/audit";
+    if (params) {
+      const qp = new URLSearchParams();
+      if (params.action) qp.append("action", params.action);
+      if (params.resource_type) qp.append("resource_type", params.resource_type);
+      if (params.limit != null) qp.append("limit", String(params.limit));
+      if (params.offset != null) qp.append("offset", String(params.offset));
+      const qs = qp.toString();
+      if (qs) url += `?${qs}`;
+    }
+    return apiClient.get<ListAuditLogsResponse>(url);
+  }
+
+  async getDbInfo(): Promise<DbConnectionInfo> {
+    return apiClient.get<DbConnectionInfo>("/logs/db-info");
+  }
+
+  async getSystemStats(): Promise<SystemStats> {
+    return apiClient.get<SystemStats>("/logs/stats");
+  }
+
+  // ── Time-Series Metrics ─────────────────────────────────────────
+
+  async getHostMetrics(hostId: string, params?: MetricsQueryParams): Promise<HostMetric[]> {
+    let url = `/metrics/hosts/${hostId}`;
+    const qp = new URLSearchParams();
+    if (params?.from) qp.append("from", params.from);
+    if (params?.to) qp.append("to", params.to);
+    if (params?.limit != null) qp.append("limit", String(params.limit));
+    const qs = qp.toString();
+    if (qs) url += `?${qs}`;
+    return apiClient.get<HostMetric[]>(url);
+  }
+
+  async getVmMetrics(vmId: string, params?: MetricsQueryParams): Promise<VmMetric[]> {
+    let url = `/metrics/vms/${vmId}`;
+    const qp = new URLSearchParams();
+    if (params?.from) qp.append("from", params.from);
+    if (params?.to) qp.append("to", params.to);
+    if (params?.limit != null) qp.append("limit", String(params.limit));
+    const qs = qp.toString();
+    if (qs) url += `?${qs}`;
+    return apiClient.get<VmMetric[]>(url);
+  }
+
+  async getContainerMetrics(containerId: string, params?: MetricsQueryParams): Promise<ContainerMetric[]> {
+    let url = `/metrics/containers/${containerId}`;
+    const qp = new URLSearchParams();
+    if (params?.from) qp.append("from", params.from);
+    if (params?.to) qp.append("to", params.to);
+    if (params?.limit != null) qp.append("limit", String(params.limit));
+    const qs = qp.toString();
+    if (qs) url += `?${qs}`;
+    return apiClient.get<ContainerMetric[]>(url);
   }
 }
 

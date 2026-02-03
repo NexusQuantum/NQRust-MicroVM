@@ -1,3 +1,4 @@
+use crate::features::users::repo::AuthenticatedUser;
 use crate::AppState;
 use axum::{
     extract::{
@@ -19,6 +20,13 @@ use reqwest::StatusCode;
 use serde::Serialize;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
 use uuid::Uuid;
+
+fn extract_user_info(user: Option<Extension<AuthenticatedUser>>) -> (Option<Uuid>, String) {
+    match user {
+        Some(Extension(u)) => (Some(u.id), u.username),
+        None => (None, "system".to_string()),
+    }
+}
 
 #[utoipa::path(
     get,
@@ -409,10 +417,12 @@ fn simplify_firecracker_metrics(
 )]
 pub async fn create(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Json(req): Json<CreateVmReq>,
 ) -> Result<Json<CreateVmResponse>, axum::http::StatusCode> {
+    let (user_id, username) = extract_user_info(user);
     let id = Uuid::new_v4();
-    super::service::create_and_start(&st, id, req, None)
+    super::service::create_and_start(&st, id, req, None, user_id, &username)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(CreateVmResponse { id }))
@@ -471,9 +481,11 @@ pub async fn get(
 )]
 pub async fn start(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
 ) -> Result<Json<OkResponse>, axum::http::StatusCode> {
-    super::service::start_vm_by_id(&st, id)
+    let (user_id, username) = extract_user_info(user);
+    super::service::start_vm_by_id_with_user(&st, id, user_id, &username)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(OkResponse::default()))
@@ -491,9 +503,11 @@ pub async fn start(
 )]
 pub async fn stop(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
 ) -> Result<Json<OkResponse>, axum::http::StatusCode> {
-    super::service::stop_only(&st, id)
+    let (user_id, username) = extract_user_info(user);
+    super::service::stop_only(&st, id, user_id, &username)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(OkResponse::default()))
@@ -513,9 +527,11 @@ pub async fn stop(
 )]
 pub async fn pause(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
 ) -> Result<Json<OkResponse>, axum::http::StatusCode> {
-    super::service::pause_vm(&st, id)
+    let (user_id, username) = extract_user_info(user);
+    super::service::pause_vm(&st, id, user_id, &username)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(OkResponse::default()))
@@ -535,9 +551,11 @@ pub async fn pause(
 )]
 pub async fn resume(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
 ) -> Result<Json<OkResponse>, axum::http::StatusCode> {
-    super::service::resume_vm(&st, id)
+    let (user_id, username) = extract_user_info(user);
+    super::service::resume_vm(&st, id, user_id, &username)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(OkResponse::default()))
@@ -555,9 +573,11 @@ pub async fn resume(
 )]
 pub async fn delete(
     Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
 ) -> Result<Json<OkResponse>, axum::http::StatusCode> {
-    super::service::stop_and_delete(&st, id)
+    let (user_id, username) = extract_user_info(user);
+    super::service::stop_and_delete_with_user(&st, id, user_id, &username)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(OkResponse::default()))

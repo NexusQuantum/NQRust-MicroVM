@@ -44,6 +44,13 @@ fn install_manager_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
     let bin_path = config.install_dir.join("bin/nqrust-manager");
     let env_file = config.config_dir.join("manager.env");
 
+    // Only add docker supplementary group if the docker group exists on the system
+    let docker_group_line = if docker_group_exists() {
+        "SupplementaryGroups=docker"
+    } else {
+        "# SupplementaryGroups=docker  (docker not installed)"
+    };
+
     let service_content = format!(
         r#"[Unit]
 Description=NQR-MicroVM Manager Service
@@ -56,11 +63,10 @@ Requires=postgresql.service
 Type=simple
 User=nqrust
 Group=nqrust
-# Add docker group for container feature (pull/manage Docker images)
-SupplementaryGroups=docker
-WorkingDirectory={}
-EnvironmentFile={}
-ExecStart={}
+{docker_group}
+WorkingDirectory={work_dir}
+EnvironmentFile={env_file}
+ExecStart={exec_start}
 Restart=on-failure
 RestartSec=5s
 StartLimitInterval=60s
@@ -81,9 +87,10 @@ LimitNPROC=4096
 [Install]
 WantedBy=multi-user.target
 "#,
-        config.install_dir.display(),
-        env_file.display(),
-        bin_path.display()
+        docker_group = docker_group_line,
+        work_dir = config.install_dir.display(),
+        env_file = env_file.display(),
+        exec_start = bin_path.display()
     );
 
     write_service_file("nqrust-manager.service", &service_content)?;
@@ -152,6 +159,30 @@ fn install_ui_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
     let ui_dir = config.install_dir.join("ui");
     let env_file = config.config_dir.join("ui.env");
 
+    // Detect whether this is a Next.js standalone build (server.js) or traditional (pnpm start)
+    let is_standalone = ui_dir.join("server.js").exists();
+
+    let exec_start = if is_standalone {
+        // Standalone mode: Next.js produces a self-contained server.js
+        // Detect node location
+        let node_path = if Path::new("/usr/local/bin/node").exists() {
+            "/usr/local/bin/node"
+        } else {
+            "/usr/bin/node"
+        };
+        format!("{} server.js", node_path)
+    } else {
+        // Traditional mode: use pnpm start
+        let pnpm_path = if Path::new("/usr/local/bin/pnpm").exists() {
+            "/usr/local/bin/pnpm"
+        } else if Path::new("/usr/bin/pnpm").exists() {
+            "/usr/bin/pnpm"
+        } else {
+            "/usr/local/bin/pnpm"
+        };
+        format!("{} start", pnpm_path)
+    };
+
     let service_content = format!(
         r#"[Unit]
 Description=NQR-MicroVM Web UI Service
@@ -166,7 +197,9 @@ User=nqrust
 Group=nqrust
 WorkingDirectory={}
 EnvironmentFile={}
-ExecStart=/usr/bin/pnpm start
+# Ensure /usr/local/bin is in PATH for Node.js and pnpm (air-gapped installs)
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart={}
 Restart=on-failure
 RestartSec=5s
 StartLimitInterval=60s
@@ -190,6 +223,7 @@ WantedBy=multi-user.target
 "#,
         ui_dir.display(),
         env_file.display(),
+        exec_start,
         ui_dir.display()
     );
 
@@ -197,6 +231,14 @@ WantedBy=multi-user.target
     logs.push(LogEntry::success("UI service file created"));
 
     Ok(logs)
+}
+
+/// Check if the 'docker' group exists on the system
+fn docker_group_exists() -> bool {
+    if let Ok(output) = run_command("getent", &["group", "docker"]) {
+        return output.status.success();
+    }
+    false
 }
 
 /// Write a systemd service file

@@ -35,7 +35,7 @@ pub async fn log_action(
 ) -> Result<()> {
     sqlx::query(
         r#"
-        INSERT INTO audit_logs (
+        INSERT INTO audit.audit_logs (
             user_id, username, action, resource_type, resource_id,
             details, ip_address, success, error_message
         )
@@ -144,71 +144,54 @@ pub async fn log_login(
 }
 
 /// Query audit logs with filters and pagination
-#[allow(dead_code)]
+///
+/// Uses a fixed query with optional WHERE conditions.
+/// All filter params are always bound (using NULL when not provided),
+/// so parameter indices are stable.
 pub async fn list_audit_logs(
     pool: &PgPool,
     params: AuditLogQueryParams,
 ) -> Result<ListAuditLogsResponse> {
-    let limit = params.limit.unwrap_or(50).min(500); // Max 500 logs per request
+    let limit = params.limit.unwrap_or(50).min(500);
     let offset = params.offset.unwrap_or(0);
 
-    // Build WHERE clause dynamically based on filters
-    let mut conditions = Vec::new();
-    let mut bindings: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>> = Vec::new();
-    let mut param_index = 1;
+    // Count query — always bind all 3 filter params (NULL = no filter)
+    let total: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM audit.audit_logs
+        WHERE ($1::uuid IS NULL OR user_id = $1)
+          AND ($2::text  IS NULL OR action = $2)
+          AND ($3::text  IS NULL OR resource_type = $3)
+        "#,
+    )
+    .bind(params.user_id)
+    .bind(&params.action)
+    .bind(&params.resource_type)
+    .fetch_one(pool)
+    .await?;
 
-    if let Some(user_id) = params.user_id {
-        conditions.push(format!("user_id = ${}", param_index));
-        bindings.push(Box::new(user_id));
-        param_index += 1;
-    }
-
-    if let Some(action) = params.action {
-        conditions.push(format!("action = ${}", param_index));
-        bindings.push(Box::new(action));
-        param_index += 1;
-    }
-
-    if let Some(resource_type) = params.resource_type {
-        conditions.push(format!("resource_type = ${}", param_index));
-        bindings.push(Box::new(resource_type));
-        param_index += 1;
-    }
-
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    // Get total count
-    let count_query = format!("SELECT COUNT(*) FROM audit_logs {}", where_clause);
-    let total: i64 = sqlx::query_scalar(&count_query).fetch_one(pool).await?;
-
-    // Get paginated results
-    let logs_query = format!(
+    let rows = sqlx::query_as::<_, AuditLogRow>(
         r#"
         SELECT id, user_id, username, action, resource_type, resource_id,
                details, ip_address, success, error_message, created_at
-        FROM audit_logs
-        {}
+        FROM audit.audit_logs
+        WHERE ($1::uuid IS NULL OR user_id = $1)
+          AND ($2::text  IS NULL OR action = $2)
+          AND ($3::text  IS NULL OR resource_type = $3)
         ORDER BY created_at DESC
-        LIMIT ${}
-        OFFSET ${}
+        LIMIT $4
+        OFFSET $5
         "#,
-        where_clause,
-        param_index,
-        param_index + 1
-    );
-
-    let rows = sqlx::query_as::<_, AuditLogRow>(&logs_query)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    )
+    .bind(params.user_id)
+    .bind(&params.action)
+    .bind(&params.resource_type)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
 
     let items = rows.into_iter().map(Into::into).collect();
-
     Ok(ListAuditLogsResponse { items, total })
 }
 

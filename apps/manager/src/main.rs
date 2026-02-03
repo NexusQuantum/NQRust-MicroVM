@@ -116,6 +116,15 @@ async fn main() -> anyhow::Result<()> {
         warn!("reconciler disabled by MANAGER_RECONCILER_DISABLED");
     }
 
+    let metrics_disabled = std::env::var("MANAGER_METRICS_DISABLED")
+        .map(|v| matches_ignore_case(v.trim()))
+        .unwrap_or(false);
+    if !metrics_disabled {
+        let _metrics_handle = features::metrics::spawn_collector(state.clone());
+    } else {
+        warn!("metrics collector disabled by MANAGER_METRICS_DISABLED");
+    }
+
     let openapi = docs::ApiDoc::openapi();
     if let Err(err) = docs::write_openapi_yaml(&openapi).await {
         warn!(error = ?err, "failed to write OpenAPI specification to disk");

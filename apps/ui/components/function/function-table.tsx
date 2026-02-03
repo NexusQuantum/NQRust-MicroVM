@@ -42,7 +42,7 @@ interface FunctionTableProps {
 
 const ITEMS_PER_PAGE = 10
 const DEFAULT_PAYLOAD = `{
-// Test event payload
+  "name": "World"
 }`
 
 export function FunctionTable({ functions }: FunctionTableProps) {

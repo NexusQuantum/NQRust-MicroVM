@@ -1,0 +1,183 @@
+# =============================================================================
+# NQR-MicroVM Air-Gapped Bundle Build Workflow
+# =============================================================================
+# Builds the self-extracting air-gapped installer bundle (.run file).
+# Triggered after a release is published, or manually via workflow_dispatch.
+#
+# The bundle includes:
+#   - NQR-MicroVM binaries (manager, agent, guest-agent, installer)
+#   - Firecracker + jailer
+#   - Kernel and rootfs images (including container-runtime.ext4)
+#   - Ubuntu 24.04 .deb packages (with Docker)
+#   - Node.js + pnpm
+#   - Pre-built Next.js UI (standalone mode)
+#
+# Output: nqr-microvm-airgap-<version>.run (~3-5GB)
+# =============================================================================
+
+name: Build Air-Gapped Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version to bundle (e.g., v0.1.64)'
+        required: false
+        default: 'latest'
+      no_container_runtime:
+        description: 'Skip container-runtime.ext4 (~2GB savings)'
+        required: false
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+
+concurrency:
+  group: airgap-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-bundle:
+    name: Build Air-Gapped Bundle
+    runs-on: self-hosted
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine release version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.release_version }}"
+          else
+            # Get the latest release tag
+            VERSION=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name')
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+
+      - name: Clean up previous builds
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h /tmp
+          df -h .
+
+          # Clean up previous airgap builds
+          sudo rm -rf /tmp/nqr-airgap-build-* 2>/dev/null || true
+          sudo rm -rf scripts/airgap/output 2>/dev/null || true
+
+          echo "=== Disk space after cleanup ==="
+          df -h /tmp
+          df -h .
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq gzip tar
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Verify Docker is available
+        run: |
+          docker --version
+          docker info || true
+
+      - name: Build air-gapped bundle
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          EXTRA_FLAGS=""
+
+          # Check if container runtime should be skipped
+          if [[ "${{ github.event.inputs.no_container_runtime }}" == "true" ]]; then
+            EXTRA_FLAGS="--no-container-runtime"
+          fi
+
+          cd scripts/airgap
+          chmod +x build-bundle.sh bundle-debs-ubuntu.sh bundle-node.sh
+
+          # Run the bundle builder
+          # It downloads binaries/images from the GitHub release,
+          # bundles Ubuntu debs via Docker, downloads Node.js,
+          # and builds the UI from source in standalone mode.
+          ./build-bundle.sh \
+            --release "${VERSION}" \
+            --output "$(pwd)/output" \
+            ${EXTRA_FLAGS}
+        env:
+          # Ensure pnpm is available for UI build
+          PATH: /usr/local/bin:/usr/bin:/bin:${{ github.workspace }}/node_modules/.bin
+
+      - name: Identify bundle file
+        id: bundle
+        run: |
+          # Find the .run file
+          BUNDLE_FILE=$(find scripts/airgap/output -name "*.run" -type f | head -n1)
+          if [[ -z "${BUNDLE_FILE}" ]]; then
+            echo "ERROR: No .run bundle file found!"
+            ls -la scripts/airgap/output/ 2>/dev/null || echo "Output directory not found"
+            exit 1
+          fi
+
+          BUNDLE_NAME=$(basename "${BUNDLE_FILE}")
+          BUNDLE_SIZE=$(du -h "${BUNDLE_FILE}" | cut -f1)
+
+          echo "bundle_file=${BUNDLE_FILE}" >> $GITHUB_OUTPUT
+          echo "bundle_name=${BUNDLE_NAME}" >> $GITHUB_OUTPUT
+
+          echo "Bundle: ${BUNDLE_NAME} (${BUNDLE_SIZE})"
+          ls -lh "${BUNDLE_FILE}"
+
+          # Verify checksum file exists
+          if [[ -f "${BUNDLE_FILE}.sha256" ]]; then
+            echo "sha256_file=${BUNDLE_FILE}.sha256" >> $GITHUB_OUTPUT
+            cat "${BUNDLE_FILE}.sha256"
+          fi
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nqr-microvm-airgap-bundle
+          path: |
+            ${{ steps.bundle.outputs.bundle_file }}
+            ${{ steps.bundle.outputs.sha256_file }}
+          retention-days: 30
+
+      - name: Upload to release
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_version != 'latest')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          files: |
+            ${{ steps.bundle.outputs.bundle_file }}
+            ${{ steps.bundle.outputs.sha256_file }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean up build artifacts
+        if: always()
+        run: |
+          sudo rm -rf /tmp/nqr-airgap-build-* 2>/dev/null || true
+          echo "Cleanup complete"
+
+      - name: Summary
+        run: |
+          echo "## Air-Gapped Bundle Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bundle**: \`${{ steps.bundle.outputs.bundle_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Transfer to air-gapped Ubuntu 24.04 server, then:" >> $GITHUB_STEP_SUMMARY
+          echo "sudo ./${{ steps.bundle.outputs.bundle_name }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
