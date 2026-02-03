@@ -43,6 +43,8 @@ jobs:
     name: Build Air-Gapped Bundle
     runs-on: self-hosted
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
