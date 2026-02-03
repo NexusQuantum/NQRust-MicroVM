@@ -73,6 +73,8 @@ jobs:
           # Grant privileges (idempotent - safe to run multiple times)
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
+          # CREATEROLE needed for migration 23 (audit schema creates audit_reader role)
+          sudo -u postgres psql -c "ALTER USER nexus CREATEROLE;" || true
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -133,6 +135,8 @@ jobs:
 
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
+          # CREATEROLE needed for migration 23 (audit schema creates audit_reader role)
+          sudo -u postgres psql -c "ALTER USER nexus CREATEROLE;" || true
 
       - name: Setup sccache (local)
         run: |
@@ -379,6 +383,8 @@ jobs:
           # Grant privileges (idempotent - safe to run multiple times)
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
+          # CREATEROLE needed for migration 23 (audit schema creates audit_reader role)
+          sudo -u postgres psql -c "ALTER USER nexus CREATEROLE;" || true
 
           # Verify connection with nexus user via TCP using detected port
           echo "Verifying database connection via TCP on port ${PG_PORT}..."

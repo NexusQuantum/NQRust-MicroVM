@@ -97,6 +97,8 @@ jobs:
 
           sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus;" || true
           sudo -u postgres psql -d nexus -c "GRANT ALL ON SCHEMA public TO nexus;" || true
+          # CREATEROLE needed for migration 23 (audit schema creates audit_reader role)
+          sudo -u postgres psql -c "ALTER USER nexus CREATEROLE;" || true
 
       - name: Setup sccache (local)
         run: |
