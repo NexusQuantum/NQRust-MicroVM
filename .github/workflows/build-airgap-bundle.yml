@@ -56,8 +56,15 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="${{ github.event.inputs.release_version }}"
           else
-            # Get the latest release tag
-            VERSION=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name')
+            # When triggered by workflow_run, get the tag from the triggering workflow's head branch
+            # The Release workflow runs on tag pushes, so head_branch contains the tag name
+            VERSION="${{ github.event.workflow_run.head_branch }}"
+
+            # Fallback to latest release if head_branch is empty
+            if [[ -z "${VERSION}" || "${VERSION}" == "null" ]]; then
+              echo "Warning: Could not get tag from workflow_run, falling back to latest release"
+              VERSION=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name')
+            fi
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Release version: ${VERSION}"
@@ -145,6 +152,52 @@ jobs:
             cat "${BUNDLE_FILE}.sha256"
           fi
 
+      - name: Create data ISO
+        id: iso
+        run: |
+          sudo apt-get update && sudo apt-get install -y genisoimage
+
+          VERSION="${{ steps.version.outputs.version }}"
+          BUNDLE_FILE="${{ steps.bundle.outputs.bundle_file }}"
+          ISO_NAME="nqr-microvm-airgap-${VERSION}.iso"
+          ISO_DIR="/tmp/iso-contents"
+
+          # Create ISO directory structure
+          mkdir -p "${ISO_DIR}"
+          cp "${BUNDLE_FILE}" "${ISO_DIR}/"
+          cp "${BUNDLE_FILE}.sha256" "${ISO_DIR}/" 2>/dev/null || true
+
+          # Add a README for the ISO
+          cat > "${ISO_DIR}/README.txt" << 'EOF'
+          NQR-MicroVM Air-Gapped Installer
+          ================================
+
+          1. Mount this ISO on your Ubuntu 24.04 server
+          2. Copy the .run file to the server:
+             cp /media/cdrom/*.run /tmp/
+          3. Make it executable and run:
+             chmod +x /tmp/*.run
+             sudo /tmp/*.run
+
+          The installer will guide you through the setup.
+          EOF
+
+          # Create ISO image
+          genisoimage -o "scripts/airgap/output/${ISO_NAME}" \
+            -V "NQR-MICROVM" \
+            -R -J \
+            "${ISO_DIR}"
+
+          # Generate checksum
+          (cd scripts/airgap/output && sha256sum "${ISO_NAME}" > "${ISO_NAME}.sha256")
+
+          echo "iso_file=scripts/airgap/output/${ISO_NAME}" >> $GITHUB_OUTPUT
+          echo "iso_sha256=scripts/airgap/output/${ISO_NAME}.sha256" >> $GITHUB_OUTPUT
+          echo "iso_name=${ISO_NAME}" >> $GITHUB_OUTPUT
+
+          echo "ISO created: ${ISO_NAME}"
+          ls -lh "scripts/airgap/output/${ISO_NAME}"
+
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:
@@ -152,6 +205,8 @@ jobs:
           path: |
             ${{ steps.bundle.outputs.bundle_file }}
             ${{ steps.bundle.outputs.sha256_file }}
+            ${{ steps.iso.outputs.iso_file }}
+            ${{ steps.iso.outputs.iso_sha256 }}
           retention-days: 30
 
       - name: Upload to release
@@ -162,6 +217,8 @@ jobs:
           files: |
             ${{ steps.bundle.outputs.bundle_file }}
             ${{ steps.bundle.outputs.sha256_file }}
+            ${{ steps.iso.outputs.iso_file }}
+            ${{ steps.iso.outputs.iso_sha256 }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -176,10 +233,18 @@ jobs:
           echo "## Air-Gapped Bundle Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Bundle**: \`${{ steps.bundle.outputs.bundle_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **ISO**: \`${{ steps.iso.outputs.iso_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Usage" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage (Direct .run)" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "# Transfer to air-gapped Ubuntu 24.04 server, then:" >> $GITHUB_STEP_SUMMARY
           echo "sudo ./${{ steps.bundle.outputs.bundle_name }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage (ISO via iDRAC/Harvester)" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Mount the ISO, then copy and run:" >> $GITHUB_STEP_SUMMARY
+          echo "cp /media/cdrom/*.run /tmp/" >> $GITHUB_STEP_SUMMARY
+          echo "chmod +x /tmp/*.run && sudo /tmp/*.run" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
