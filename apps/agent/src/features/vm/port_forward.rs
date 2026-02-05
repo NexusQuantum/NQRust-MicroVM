@@ -1,6 +1,10 @@
 use crate::core::net;
 use axum::http::StatusCode;
-use axum::{extract::Path, routing::{delete, post}, Json, Router};
+use axum::{
+    extract::Path,
+    routing::{delete, post},
+    Json, Router,
+};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

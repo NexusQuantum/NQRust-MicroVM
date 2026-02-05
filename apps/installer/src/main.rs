@@ -365,9 +365,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
                             Screen::DiskSelect => handle_disk_select_input(app, key.code),
                             Screen::DiskConfig => handle_disk_config_input(app, key.code),
                             Screen::ModeSelect => handle_mode_select_input(app, key.code),
-                            Screen::NetworkConfig => {
-                                handle_network_config_input(app, key.code)
-                            }
+                            Screen::NetworkConfig => handle_network_config_input(app, key.code),
                             Screen::Config => handle_config_input(app, key.code),
                             Screen::Preflight => handle_preflight_input(app, key.code),
                             Screen::Progress => handle_progress_input(app, key.code),

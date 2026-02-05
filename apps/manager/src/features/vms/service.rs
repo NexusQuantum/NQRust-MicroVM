@@ -585,7 +585,9 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
                     }
 
                     // Apply port forwards now that guest IP is known
-                    if let Err(e) = super::port_forwards::service::apply_forwards(&st_clone, vm_id).await {
+                    if let Err(e) =
+                        super::port_forwards::service::apply_forwards(&st_clone, vm_id).await
+                    {
                         warn!(vm_id=%vm_id, error=?e, "failed to apply port forwards");
                     }
 

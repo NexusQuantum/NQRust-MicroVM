@@ -35,8 +35,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Length(1),  // Spacing
+            Constraint::Length(3), // Header
+            Constraint::Length(1), // Spacing
             Constraint::Min(8),    // Network mode list + optional interface list
             Constraint::Length(6), // Description box
             Constraint::Length(3), // Key hints
@@ -200,15 +200,9 @@ fn render_interface_list(frame: &mut Frame, app: &App, area: Rect) {
 
             let type_label = if iface.is_wireless { "wifi" } else { "eth" };
 
-            let ip_str = iface
-                .ip
-                .as_deref()
-                .unwrap_or("no IP");
+            let ip_str = iface.ip.as_deref().unwrap_or("no IP");
 
-            let speed_str = iface
-                .speed
-                .as_deref()
-                .unwrap_or("");
+            let speed_str = iface.speed.as_deref().unwrap_or("");
 
             let default_marker = if iface.is_default { " *" } else { "" };
 
@@ -219,10 +213,7 @@ fn render_interface_list(frame: &mut Frame, app: &App, area: Rect) {
                     format!(" [{}]", type_label),
                     if selected { style } else { styles::muted() },
                 ),
-                Span::styled(
-                    if iface.is_up { " UP" } else { " DOWN" },
-                    status_style,
-                ),
+                Span::styled(if iface.is_up { " UP" } else { " DOWN" }, status_style),
             ];
 
             if !ip_str.is_empty() && ip_str != "no IP" {
@@ -240,10 +231,7 @@ fn render_interface_list(frame: &mut Frame, app: &App, area: Rect) {
             }
 
             if !default_marker.is_empty() {
-                spans.push(Span::styled(
-                    default_marker.to_string(),
-                    styles::primary(),
-                ));
+                spans.push(Span::styled(default_marker.to_string(), styles::primary()));
             }
 
             ListItem::new(Line::from(spans))

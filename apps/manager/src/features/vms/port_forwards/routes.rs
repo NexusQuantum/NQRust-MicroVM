@@ -62,7 +62,10 @@ pub async fn create(
         if e.to_string().contains("unique_host_port_protocol") {
             (
                 StatusCode::CONFLICT,
-                format!("Port {} ({}) is already in use", req.host_port, req.protocol),
+                format!(
+                    "Port {} ({}) is already in use",
+                    req.host_port, req.protocol
+                ),
             )
         } else {
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())

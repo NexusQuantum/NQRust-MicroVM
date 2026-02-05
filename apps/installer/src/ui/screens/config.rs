@@ -42,7 +42,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(2), // Header
             Constraint::Length(5), // Network info
-            Constraint::Min(15),  // Config fields
+            Constraint::Min(15),   // Config fields
             Constraint::Length(3), // Summary
             Constraint::Length(3), // Key hints
         ])
@@ -65,14 +65,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .title_style(styles::info());
 
     let iface = app.detected_interface.as_deref().unwrap_or("unknown");
-    let ip = app
-        .detected_ip
-        .as_deref()
-        .unwrap_or("not detected");
-    let gateway = app
-        .detected_gateway
-        .as_deref()
-        .unwrap_or("not detected");
+    let ip = app.detected_ip.as_deref().unwrap_or("not detected");
+    let gateway = app.detected_gateway.as_deref().unwrap_or("not detected");
 
     let net_lines = vec![
         Line::from(""),

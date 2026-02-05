@@ -220,9 +220,20 @@ pub async fn add_port_forward(
     // Check if DNAT rule already exists
     let check = Command::new("sudo")
         .args([
-            "-n", "iptables", "-t", "nat", "-C", "PREROUTING",
-            "-p", protocol, "--dport", &hp,
-            "-j", "DNAT", "--to-destination", &dest,
+            "-n",
+            "iptables",
+            "-t",
+            "nat",
+            "-C",
+            "PREROUTING",
+            "-p",
+            protocol,
+            "--dport",
+            &hp,
+            "-j",
+            "DNAT",
+            "--to-destination",
+            &dest,
         ])
         .status()
         .await?;
@@ -230,9 +241,20 @@ pub async fn add_port_forward(
     if !check.success() {
         let status = Command::new("sudo")
             .args([
-                "-n", "iptables", "-t", "nat", "-A", "PREROUTING",
-                "-p", protocol, "--dport", &hp,
-                "-j", "DNAT", "--to-destination", &dest,
+                "-n",
+                "iptables",
+                "-t",
+                "nat",
+                "-A",
+                "PREROUTING",
+                "-p",
+                protocol,
+                "--dport",
+                &hp,
+                "-j",
+                "DNAT",
+                "--to-destination",
+                &dest,
             ])
             .status()
             .await?;
@@ -244,9 +266,18 @@ pub async fn add_port_forward(
     // Add FORWARD rule to allow traffic to the guest
     let fwd_check = Command::new("sudo")
         .args([
-            "-n", "iptables", "-C", "FORWARD",
-            "-p", protocol, "-d", guest_ip, "--dport", &guest_port.to_string(),
-            "-j", "ACCEPT",
+            "-n",
+            "iptables",
+            "-C",
+            "FORWARD",
+            "-p",
+            protocol,
+            "-d",
+            guest_ip,
+            "--dport",
+            &guest_port.to_string(),
+            "-j",
+            "ACCEPT",
         ])
         .status()
         .await?;
@@ -254,9 +285,18 @@ pub async fn add_port_forward(
     if !fwd_check.success() {
         let _ = Command::new("sudo")
             .args([
-                "-n", "iptables", "-A", "FORWARD",
-                "-p", protocol, "-d", guest_ip, "--dport", &guest_port.to_string(),
-                "-j", "ACCEPT",
+                "-n",
+                "iptables",
+                "-A",
+                "FORWARD",
+                "-p",
+                protocol,
+                "-d",
+                guest_ip,
+                "--dport",
+                &guest_port.to_string(),
+                "-j",
+                "ACCEPT",
             ])
             .status()
             .await?;
@@ -278,9 +318,20 @@ pub async fn remove_port_forward(
     // Remove DNAT rule (ignore errors if rule doesn't exist)
     let _ = Command::new("sudo")
         .args([
-            "-n", "iptables", "-t", "nat", "-D", "PREROUTING",
-            "-p", protocol, "--dport", &hp,
-            "-j", "DNAT", "--to-destination", &dest,
+            "-n",
+            "iptables",
+            "-t",
+            "nat",
+            "-D",
+            "PREROUTING",
+            "-p",
+            protocol,
+            "--dport",
+            &hp,
+            "-j",
+            "DNAT",
+            "--to-destination",
+            &dest,
         ])
         .status()
         .await;
@@ -288,9 +339,18 @@ pub async fn remove_port_forward(
     // Remove FORWARD rule
     let _ = Command::new("sudo")
         .args([
-            "-n", "iptables", "-D", "FORWARD",
-            "-p", protocol, "-d", guest_ip, "--dport", &guest_port.to_string(),
-            "-j", "ACCEPT",
+            "-n",
+            "iptables",
+            "-D",
+            "FORWARD",
+            "-p",
+            protocol,
+            "-d",
+            guest_ip,
+            "--dport",
+            &guest_port.to_string(),
+            "-j",
+            "ACCEPT",
         ])
         .status()
         .await;
