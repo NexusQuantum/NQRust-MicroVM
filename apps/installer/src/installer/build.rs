@@ -502,11 +502,14 @@ pub fn install_binaries(
         }
     }
 
-    // Set ownership
+    // Set ownership to nqrust user (services run as nqrust, not root)
     let _ = run_sudo(
         "chown",
-        &["-R", "root:root", &install_dir.display().to_string()],
+        &["-R", "nqrust:nqrust", &install_dir.display().to_string()],
     );
+
+    // Ensure binaries are readable
+    let _ = run_sudo("chmod", &["-R", "755", &install_dir.display().to_string()]);
 
     logs.push(LogEntry::success("Binary installation complete"));
 
