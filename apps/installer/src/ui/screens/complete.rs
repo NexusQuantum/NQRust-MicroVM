@@ -60,29 +60,31 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .title(" Access URLs ")
         .title_style(styles::info());
 
+    let host = app.display_host();
+
     let mut url_lines = Vec::new();
     url_lines.push(Line::from(""));
 
     if app.config.mode.includes_ui() {
         url_lines.push(Line::from(vec![
             Span::styled("  Web UI:      ", styles::muted()),
-            Span::styled("http://localhost:3000", styles::info()),
+            Span::styled(format!("http://{}:3000", host), styles::info()),
         ]));
     }
     if app.config.mode.includes_manager() {
         url_lines.push(Line::from(vec![
             Span::styled("  Manager API: ", styles::muted()),
-            Span::styled("http://localhost:18080", styles::info()),
+            Span::styled(format!("http://{}:18080", host), styles::info()),
         ]));
         url_lines.push(Line::from(vec![
             Span::styled("  API Docs:    ", styles::muted()),
-            Span::styled("http://localhost:18080/swagger-ui/", styles::info()),
+            Span::styled(format!("http://{}:18080/swagger-ui/", host), styles::info()),
         ]));
     }
     if app.config.mode.includes_agent() {
         url_lines.push(Line::from(vec![
             Span::styled("  Agent API:   ", styles::muted()),
-            Span::styled("http://localhost:9090", styles::info()),
+            Span::styled(format!("http://{}:9090", host), styles::info()),
         ]));
     }
     url_lines.push(Line::from(""));
@@ -113,14 +115,6 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("  3. ", styles::primary()),
             Span::styled("Create your first VM via the Web UI or API", styles::text()),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Documentation: ", styles::muted()),
-            Span::styled(
-                format!("{}/etc/nqrust-microvm/", app.config.install_dir.display()),
-                styles::info(),
-            ),
         ]),
         Line::from(""),
     ];

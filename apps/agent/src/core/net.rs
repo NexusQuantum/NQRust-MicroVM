@@ -206,3 +206,94 @@ pub async fn delete_tap(name: &str) -> Result<()> {
 
     Err(anyhow!("failed to delete tap {name}: {stderr_trimmed}"))
 }
+
+/// Add a DNAT port forward rule: host_port on the host maps to guest_ip:guest_port
+pub async fn add_port_forward(
+    host_port: u16,
+    guest_ip: &str,
+    guest_port: u16,
+    protocol: &str,
+) -> Result<()> {
+    let dest = format!("{}:{}", guest_ip, guest_port);
+    let hp = host_port.to_string();
+
+    // Check if DNAT rule already exists
+    let check = Command::new("sudo")
+        .args([
+            "-n", "iptables", "-t", "nat", "-C", "PREROUTING",
+            "-p", protocol, "--dport", &hp,
+            "-j", "DNAT", "--to-destination", &dest,
+        ])
+        .status()
+        .await?;
+
+    if !check.success() {
+        let status = Command::new("sudo")
+            .args([
+                "-n", "iptables", "-t", "nat", "-A", "PREROUTING",
+                "-p", protocol, "--dport", &hp,
+                "-j", "DNAT", "--to-destination", &dest,
+            ])
+            .status()
+            .await?;
+        if !status.success() {
+            bail!("failed to add DNAT rule for port {}", host_port);
+        }
+    }
+
+    // Add FORWARD rule to allow traffic to the guest
+    let fwd_check = Command::new("sudo")
+        .args([
+            "-n", "iptables", "-C", "FORWARD",
+            "-p", protocol, "-d", guest_ip, "--dport", &guest_port.to_string(),
+            "-j", "ACCEPT",
+        ])
+        .status()
+        .await?;
+
+    if !fwd_check.success() {
+        let _ = Command::new("sudo")
+            .args([
+                "-n", "iptables", "-A", "FORWARD",
+                "-p", protocol, "-d", guest_ip, "--dport", &guest_port.to_string(),
+                "-j", "ACCEPT",
+            ])
+            .status()
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Remove a DNAT port forward rule
+pub async fn remove_port_forward(
+    host_port: u16,
+    guest_ip: &str,
+    guest_port: u16,
+    protocol: &str,
+) -> Result<()> {
+    let dest = format!("{}:{}", guest_ip, guest_port);
+    let hp = host_port.to_string();
+
+    // Remove DNAT rule (ignore errors if rule doesn't exist)
+    let _ = Command::new("sudo")
+        .args([
+            "-n", "iptables", "-t", "nat", "-D", "PREROUTING",
+            "-p", protocol, "--dport", &hp,
+            "-j", "DNAT", "--to-destination", &dest,
+        ])
+        .status()
+        .await;
+
+    // Remove FORWARD rule
+    let _ = Command::new("sudo")
+        .args([
+            "-n", "iptables", "-D", "FORWARD",
+            "-p", protocol, "-d", guest_ip, "--dport", &guest_port.to_string(),
+            "-j", "ACCEPT",
+        ])
+        .status()
+        .await;
+
+    Ok(())
+}

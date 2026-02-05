@@ -583,6 +583,12 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
                     {
                         warn!(vm_id=%vm_id, error=?e, "failed to configure secondary NICs via guest agent");
                     }
+
+                    // Apply port forwards now that guest IP is known
+                    if let Err(e) = super::port_forwards::service::apply_forwards(&st_clone, vm_id).await {
+                        warn!(vm_id=%vm_id, error=?e, "failed to apply port forwards");
+                    }
+
                     return;
                 }
                 _ => {
@@ -607,6 +613,11 @@ pub async fn stop_only(
 ) -> Result<()> {
     let vm = super::repo::get(&st.db, id).await?;
     super::repo::update_state(&st.db, id, "stopping").await?;
+
+    // Clean up port forwards before stopping
+    if let Err(e) = super::port_forwards::service::cleanup_forwards(st, id).await {
+        tracing::warn!(vm_id=%id, error=?e, "failed to cleanup port forwards");
+    }
 
     let response = reqwest::Client::new()
         .post(format!("{}/agent/v1/vms/{}/stop", vm.host_addr, vm.id))

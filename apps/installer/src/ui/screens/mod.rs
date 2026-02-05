@@ -8,6 +8,7 @@ pub mod disk_select;
 pub mod error;
 pub mod install_type_select;
 pub mod mode_select;
+pub mod network_config;
 pub mod preflight;
 pub mod progress;
 pub mod verify;

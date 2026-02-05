@@ -371,6 +371,29 @@ export interface ListNicsResponse {
   items: VmNic[];
 }
 
+// Port Forwarding types
+export interface PortForward {
+  id: string;
+  vm_id: string;
+  host_port: number;
+  guest_port: number;
+  protocol: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreatePortForwardReq {
+  host_port: number;
+  guest_port: number;
+  protocol?: string;
+  description?: string;
+}
+
+export interface ListPortForwardsResponse {
+  items: PortForward[];
+}
+
 // Balloon device types
 export interface BalloonConfig {
   amount_mib: number;

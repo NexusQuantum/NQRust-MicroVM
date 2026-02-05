@@ -49,6 +49,9 @@ import type {
   CreateNicReq,
   UpdateNicReq,
   ListNicsResponse,
+  PortForward,
+  CreatePortForwardReq,
+  ListPortForwardsResponse,
   Function as Fn,
   CreateFunction,
   UpdateFunction,
@@ -463,6 +466,22 @@ export class FacadeApi {
 
   async deleteVMNic(vmId: string, nicId: string): Promise<void> {
     await apiClient.delete<OkResponse>(`/vms/${vmId}/nics/${nicId}`);
+  }
+
+  /**
+   * Port Forward Management - VM port forwarding rules
+   */
+  async getVMPortForwards(vmId: string): Promise<PortForward[]> {
+    const res = await apiClient.get<ListPortForwardsResponse>(`/vms/${vmId}/port-forwards`);
+    return res.items;
+  }
+
+  async createVMPortForward(vmId: string, portForward: CreatePortForwardReq): Promise<PortForward> {
+    return apiClient.post<PortForward>(`/vms/${vmId}/port-forwards`, portForward);
+  }
+
+  async deleteVMPortForward(vmId: string, forwardId: string): Promise<void> {
+    await apiClient.delete<OkResponse>(`/vms/${vmId}/port-forwards/${forwardId}`);
   }
 
   /**

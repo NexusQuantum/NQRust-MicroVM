@@ -19,6 +19,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Screen::DiskSelect => "Disk Selection",
         Screen::DiskConfig => "Disk Configuration",
         Screen::ModeSelect => "Mode Selection",
+        Screen::NetworkConfig => "Network Config",
         Screen::Config => "Configuration",
         Screen::Preflight => "Pre-flight Checks",
         Screen::Progress => "Installation",
@@ -34,16 +35,17 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Screen::DiskSelect => 3,
         Screen::DiskConfig => 4,
         Screen::ModeSelect => 2,
-        Screen::Config => 3,
-        Screen::Preflight => 4,
-        Screen::Progress => 5,
+        Screen::NetworkConfig => 3,
+        Screen::Config => 4,
+        Screen::Preflight => 5,
+        Screen::Progress => 6,
         Screen::DiskProgress => 5,
-        Screen::Verify => 6,
-        Screen::Complete => 7,
+        Screen::Verify => 7,
+        Screen::Complete => 8,
         Screen::Error => 0,
     };
 
-    let total_steps = 7;
+    let total_steps = 8;
 
     let status_line = Line::from(vec![
         Span::styled(format!(" {} ", PRODUCT_NAME), styles::primary()),

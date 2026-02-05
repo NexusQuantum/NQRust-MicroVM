@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
-import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams } from "@/lib/types"
+import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams, CreatePortForwardReq } from "@/lib/types"
 import { useNotificationStore } from "@/lib/stores/notification-store"
 import { toast } from "sonner"
 
@@ -56,6 +56,7 @@ export const queryKeys = {
   vmMetrics: (id: string) => ["vms", id, "metrics"] as const,
   vmDrives: (vmId: string) => ["vms", vmId, "drives"] as const,
   vmNics: (vmId: string) => ["vms", vmId, "nics"] as const,
+  vmPortForwards: (vmId: string) => ["vms", vmId, "port-forwards"] as const,
   snapshots: (vmId: string) => ["vms", vmId, "snapshots"] as const,
   registryImages: ["registry", "images"] as const,
   registryVolumes: ["registry", "volumes"] as const,
@@ -663,6 +664,42 @@ export function useDeleteVMNic() {
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
+  });
+}
+
+// Port Forward Management Queries and Mutations
+export function useVMPortForwards(vmId: string) {
+  return useQuery({
+    queryKey: queryKeys.vmPortForwards(vmId),
+    queryFn: () => facadeApi.getVMPortForwards(vmId),
+    enabled: !!vmId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useCreateVMPortForward() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ vmId, portForward }: { vmId: string; portForward: CreatePortForwardReq }) =>
+      facadeApi.createVMPortForward(vmId, portForward),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmPortForwards(vmId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    },
+  });
+}
+
+export function useDeleteVMPortForward() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ vmId, forwardId }: { vmId: string; forwardId: string }) =>
+      facadeApi.deleteVMPortForward(vmId, forwardId),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmPortForwards(vmId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    },
   });
 }
 

@@ -142,22 +142,43 @@ pub enum NetworkMode {
     /// Bridged mode connecting to external network
     #[default]
     Bridged,
+    /// Isolated mode - bridge only, no external connectivity
+    Isolated,
 }
 
 impl NetworkMode {
+    pub const ALL: [NetworkMode; 3] = [
+        NetworkMode::Bridged,
+        NetworkMode::Nat,
+        NetworkMode::Isolated,
+    ];
+
     pub fn name(&self) -> &'static str {
         match self {
             NetworkMode::Nat => "NAT",
             NetworkMode::Bridged => "Bridged",
+            NetworkMode::Isolated => "Isolated",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            NetworkMode::Nat => "Isolated network with NAT (10.0.0.0/24)",
-            NetworkMode::Bridged => "VMs get IPs from router (DHCP from external network)",
+            NetworkMode::Nat => "Isolated network with NAT (10.0.0.0/24). VMs can reach the internet but are not directly reachable from the LAN.",
+            NetworkMode::Bridged => "VMs get IPs from router (DHCP from external network). VMs are visible on the LAN and reachable from other machines.",
+            NetworkMode::Isolated => "Internal bridge only, no external connectivity. VMs can communicate with each other but have no internet access.",
         }
     }
+}
+
+/// Information about a detected network interface
+#[derive(Debug, Clone)]
+pub struct InterfaceInfo {
+    pub name: String,
+    pub ip: Option<String>,
+    pub speed: Option<String>,
+    pub is_up: bool,
+    pub is_default: bool,
+    pub is_wireless: bool,
 }
 
 /// Installation configuration
@@ -237,6 +258,8 @@ pub enum Screen {
     DiskConfig,
     /// Mode selection (for live install)
     ModeSelect,
+    /// Network configuration
+    NetworkConfig,
     /// Configuration input
     Config,
     /// Pre-flight check results
@@ -481,6 +504,30 @@ pub struct App {
     pub disk_confirm_text: String,
     /// Config field index for disk config screen
     pub disk_config_field: usize,
+
+    // --- Network config screen fields ---
+    /// Selected network mode index (for network config screen)
+    pub network_mode_selection: usize,
+    /// Available network interfaces detected on the system
+    pub available_interfaces: Vec<InterfaceInfo>,
+    /// Selected interface index (for network config screen)
+    pub interface_selection: usize,
+
+    // --- Detected network info ---
+    /// Detected default network interface
+    pub detected_interface: Option<String>,
+    /// Detected IP address of the default interface
+    pub detected_ip: Option<String>,
+    /// Detected default gateway
+    pub detected_gateway: Option<String>,
+
+    // --- Terminal size tracking ---
+    /// Whether the terminal is currently too small
+    pub terminal_too_small: bool,
+    /// Current terminal columns
+    pub terminal_cols: u16,
+    /// Current terminal rows
+    pub terminal_rows: u16,
 }
 
 impl Default for App {
@@ -516,7 +563,66 @@ impl App {
             disk_root_password: "nqrust".to_string(),
             disk_confirm_text: String::new(),
             disk_config_field: 0,
+            // Network config screen fields
+            network_mode_selection: 0,
+            available_interfaces: Vec::new(),
+            interface_selection: 0,
+            // Detected network info
+            detected_interface: None,
+            detected_ip: None,
+            detected_gateway: None,
+            // Terminal size tracking
+            terminal_too_small: false,
+            terminal_cols: 0,
+            terminal_rows: 0,
         }
+    }
+
+    /// Detect and cache current network configuration
+    pub fn detect_network_info(&mut self) {
+        use crate::installer::network;
+        self.detected_interface = network::get_default_interface();
+        if let Some(ref iface) = self.detected_interface {
+            self.detected_ip = network::get_interface_ip(iface);
+        }
+        self.detected_gateway = network::get_default_gateway();
+    }
+
+    /// Get the display host for URLs.
+    /// NAT/Isolated mode returns "localhost". Bridged mode returns the detected IP (without CIDR mask).
+    pub fn display_host(&self) -> String {
+        if self.config.network_mode == NetworkMode::Nat
+            || self.config.network_mode == NetworkMode::Isolated
+        {
+            return "localhost".to_string();
+        }
+        // For Bridged mode, use detected IP stripped of CIDR mask
+        if let Some(ref ip) = self.detected_ip {
+            if let Some(host) = ip.split('/').next() {
+                if !host.is_empty() {
+                    return host.to_string();
+                }
+            }
+        }
+        // Fallback: try live detection
+        use crate::installer::network;
+        if let Some(iface) = network::get_default_interface() {
+            if let Some(ip) = network::get_interface_ip(&iface) {
+                if let Some(host) = ip.split('/').next() {
+                    if !host.is_empty() {
+                        return host.to_string();
+                    }
+                }
+            }
+        }
+        "localhost".to_string()
+    }
+
+    /// Update terminal size and check if it meets minimum requirements
+    pub fn update_terminal_size(&mut self, cols: u16, rows: u16) {
+        self.terminal_cols = cols;
+        self.terminal_rows = rows;
+        self.terminal_too_small = cols < 80 || rows < 24;
     }
 
     pub fn with_config(mut self, config: InstallConfig) -> Self {
@@ -539,7 +645,8 @@ impl App {
             Screen::DiskSelect => Screen::DiskConfig,
             Screen::DiskConfig => Screen::DiskProgress,
             Screen::DiskProgress => Screen::Complete,
-            Screen::ModeSelect => Screen::Config,
+            Screen::ModeSelect => Screen::NetworkConfig,
+            Screen::NetworkConfig => Screen::Config,
             Screen::Config => Screen::Preflight,
             Screen::Preflight => Screen::Progress,
             Screen::Progress => Screen::Verify,
@@ -558,7 +665,8 @@ impl App {
             Screen::DiskConfig => Screen::DiskSelect,
             Screen::DiskProgress => Screen::DiskConfig,
             Screen::ModeSelect => Screen::Welcome,
-            Screen::Config => Screen::ModeSelect,
+            Screen::NetworkConfig => Screen::ModeSelect,
+            Screen::Config => Screen::NetworkConfig,
             Screen::Preflight => Screen::Config,
             Screen::Progress => Screen::Preflight,
             Screen::Verify => Screen::Progress,

@@ -4,6 +4,7 @@ use axum::{
 };
 
 pub mod guest_agent;
+pub mod port_forwards;
 pub mod repo; // db
 pub mod routes; // handlers
 pub mod service; // orchestration
@@ -57,6 +58,14 @@ pub fn router() -> Router {
         .route("/:id/entropy", axum::routing::put(routes::put_entropy))
         .route("/:id/serial", axum::routing::put(routes::put_serial))
         .route("/:id/logger", axum::routing::put(routes::put_logger))
+        .route(
+            "/:id/port-forwards",
+            get(port_forwards::routes::list).post(port_forwards::routes::create),
+        )
+        .route(
+            "/:id/port-forwards/:forward_id",
+            axum::routing::delete(port_forwards::routes::delete),
+        )
         .route(
             "/:id/balloon",
             axum::routing::put(routes::put_balloon).patch(routes::patch_balloon),

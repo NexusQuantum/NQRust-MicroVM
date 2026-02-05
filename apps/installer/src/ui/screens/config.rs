@@ -10,12 +10,11 @@ use ratatui::{
 use crate::{app::App, theme::styles};
 
 /// Configuration fields
+/// Note: Network Mode and Bridge Name are configured in the Network Config screen.
 const CONFIG_FIELDS: &[(&str, &str)] = &[
     ("Install Directory", "/opt/nqrust-microvm"),
     ("Data Directory", "/srv/fc"),
     ("Config Directory", "/etc/nqrust-microvm"),
-    ("Network Mode", "NAT / Bridged"),
-    ("Bridge Name", "fcbr0"),
     ("Database Host", "localhost"),
     ("Database Port", "5432"),
     ("Database Name", "nqrust"),
@@ -42,7 +41,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2), // Header
-            Constraint::Min(15),   // Config fields
+            Constraint::Length(5), // Network info
+            Constraint::Min(15),  // Config fields
             Constraint::Length(3), // Summary
             Constraint::Length(3), // Key hints
         ])
@@ -56,6 +56,38 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     .alignment(Alignment::Center);
     frame.render_widget(header, chunks[0]);
 
+    // Current Network info box
+    let net_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(styles::border())
+        .title(" Current Network ")
+        .title_style(styles::info());
+
+    let iface = app.detected_interface.as_deref().unwrap_or("unknown");
+    let ip = app
+        .detected_ip
+        .as_deref()
+        .unwrap_or("not detected");
+    let gateway = app
+        .detected_gateway
+        .as_deref()
+        .unwrap_or("not detected");
+
+    let net_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Interface: ", styles::muted()),
+            Span::styled(iface, styles::primary()),
+            Span::styled("    IP: ", styles::muted()),
+            Span::styled(ip, styles::primary()),
+            Span::styled("    Gateway: ", styles::muted()),
+            Span::styled(gateway, styles::primary()),
+        ]),
+    ];
+    let net_para = Paragraph::new(net_lines).block(net_block);
+    frame.render_widget(net_para, chunks[1]);
+
     // Config fields layout
     let field_area = Layout::default()
         .direction(Direction::Horizontal)
@@ -64,7 +96,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Percentage(90),
             Constraint::Percentage(5),
         ])
-        .split(chunks[1])[1];
+        .split(chunks[2])[1];
 
     // Split field area into rows
     let field_rows = Layout::default()
@@ -96,7 +128,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(app.config.network_mode.name(), styles::info()),
     ])]);
     let summary = Paragraph::new(summary_text).alignment(Alignment::Center);
-    frame.render_widget(summary, chunks[2]);
+    frame.render_widget(summary, chunks[3]);
 
     // Key hints
     let hints = if app.editing {
@@ -110,16 +142,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Text::from(vec![Line::from(vec![
             Span::styled("↑/↓", styles::key_hint()),
             Span::styled(" Navigate  ", styles::muted()),
-            Span::styled("Enter", styles::key_hint()),
+            Span::styled("e/Space", styles::key_hint()),
             Span::styled(" Edit  ", styles::muted()),
-            Span::styled("Tab", styles::key_hint()),
+            Span::styled("Enter", styles::key_hint()),
             Span::styled(" Continue  ", styles::muted()),
             Span::styled("Esc", styles::key_hint()),
             Span::styled(" Back", styles::muted()),
         ])])
     };
     let hints_para = Paragraph::new(hints).alignment(Alignment::Center);
-    frame.render_widget(hints_para, chunks[3]);
+    frame.render_widget(hints_para, chunks[4]);
 }
 
 fn render_field(
@@ -180,20 +212,18 @@ fn get_field_value(app: &App, field: usize) -> String {
         0 => app.config.install_dir.display().to_string(),
         1 => app.config.data_dir.display().to_string(),
         2 => app.config.config_dir.display().to_string(),
-        3 => app.config.network_mode.name().to_string(),
-        4 => app.config.bridge_name.clone(),
-        5 => app.config.db_host.clone(),
-        6 => app.config.db_port.to_string(),
-        7 => app.config.db_name.clone(),
-        8 => app.config.db_user.clone(),
-        9 => {
+        3 => app.config.db_host.clone(),
+        4 => app.config.db_port.to_string(),
+        5 => app.config.db_name.clone(),
+        6 => app.config.db_user.clone(),
+        7 => {
             if app.config.with_docker {
                 "Yes".to_string()
             } else {
                 "No".to_string()
             }
         }
-        10 => {
+        8 => {
             if app.config.with_container_runtime {
                 "Yes".to_string()
             } else {

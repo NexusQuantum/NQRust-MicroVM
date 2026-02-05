@@ -4,6 +4,7 @@ pub mod balloon;
 pub mod entropy;
 pub mod metrics;
 pub mod mmds;
+pub mod port_forward;
 pub mod proxy;
 pub mod serial;
 pub mod shell;
@@ -27,4 +28,5 @@ pub fn router() -> Router {
         .merge(balloon::router())
         .merge(system::router())
         .merge(shell::router())
+        .merge(port_forward::router())
 }

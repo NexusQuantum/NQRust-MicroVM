@@ -5,8 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Trash2, Network, Tag } from "lucide-react"
-import { useVMNics, useCreateVMNic, useUpdateVMNic, useDeleteVMNic, useVM, useNetworks } from "@/lib/queries"
+import { Plus, Trash2, Network, Tag, ArrowRightLeft } from "lucide-react"
+import { useVMNics, useCreateVMNic, useUpdateVMNic, useDeleteVMNic, useVM, useNetworks, useVMPortForwards, useCreateVMPortForward, useDeleteVMPortForward } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import type { VmNic } from "@/lib/types"
+import type { VmNic, PortForward } from "@/lib/types"
 
 interface VMNetworkProps {
   vmId: string
@@ -141,6 +141,69 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
     )
   }
 
+  // Port Forward state and hooks
+  const { data: portForwards = [], isLoading: portForwardsLoading } = useVMPortForwards(vmId)
+  const createPortForward = useCreateVMPortForward()
+  const deletePortForward = useDeleteVMPortForward()
+
+  const [showAddPortForwardDialog, setShowAddPortForwardDialog] = useState(false)
+  const [showDeletePortForwardDialog, setShowDeletePortForwardDialog] = useState(false)
+  const [selectedPortForward, setSelectedPortForward] = useState<PortForward | null>(null)
+
+  const [portForwardForm, setPortForwardForm] = useState({
+    host_port: "",
+    guest_port: "",
+    protocol: "tcp",
+    description: "",
+  })
+
+  const resetPortForwardForm = () => {
+    setPortForwardForm({ host_port: "", guest_port: "", protocol: "tcp", description: "" })
+  }
+
+  const handleAddPortForward = () => {
+    resetPortForwardForm()
+    setShowAddPortForwardDialog(true)
+  }
+
+  const handleDeletePortForward = (pf: PortForward) => {
+    setSelectedPortForward(pf)
+    setShowDeletePortForwardDialog(true)
+  }
+
+  const handleSubmitPortForward = () => {
+    createPortForward.mutate(
+      {
+        vmId,
+        portForward: {
+          host_port: parseInt(portForwardForm.host_port, 10),
+          guest_port: parseInt(portForwardForm.guest_port, 10),
+          protocol: portForwardForm.protocol,
+          description: portForwardForm.description || undefined,
+        },
+      },
+      {
+        onSuccess: () => {
+          setShowAddPortForwardDialog(false)
+          resetPortForwardForm()
+        },
+      }
+    )
+  }
+
+  const handleConfirmDeletePortForward = () => {
+    if (!selectedPortForward) return
+    deletePortForward.mutate(
+      { vmId, forwardId: selectedPortForward.id },
+      {
+        onSuccess: () => {
+          setShowDeletePortForwardDialog(false)
+          setSelectedPortForward(null)
+        },
+      }
+    )
+  }
+
   return (
     <>
       <Card>
@@ -215,6 +278,71 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
                           </Button>
                         </div>
                       )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Port Forwarding Card */}
+      <Card className="mt-6">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ArrowRightLeft className="h-5 w-5" />
+            <CardTitle>Port Forwarding</CardTitle>
+          </div>
+          <Button onClick={handleAddPortForward}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Rule
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {portForwardsLoading ? (
+            <div className="space-y-4">
+              {[...Array(1)].map((_, i) => (
+                <div key={i} className="flex items-center space-x-4 p-4 border rounded">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-8 w-20 ml-auto" />
+                </div>
+              ))}
+            </div>
+          ) : portForwards.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <ArrowRightLeft className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>No port forwarding rules configured.</p>
+              <p className="text-sm">Add a rule to map a host port to a guest port.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Protocol</TableHead>
+                  <TableHead>Host Port</TableHead>
+                  <TableHead></TableHead>
+                  <TableHead>Guest Port</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {portForwards.map((pf) => (
+                  <TableRow key={pf.id}>
+                    <TableCell>
+                      <Badge variant="outline">{pf.protocol.toUpperCase()}</Badge>
+                    </TableCell>
+                    <TableCell className="font-mono">{pf.host_port}</TableCell>
+                    <TableCell className="text-muted-foreground">{"\u2192"}</TableCell>
+                    <TableCell className="font-mono">{pf.guest_port}</TableCell>
+                    <TableCell className="text-muted-foreground">{pf.description || "\u2014"}</TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="icon" onClick={() => handleDeletePortForward(pf)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -318,6 +446,93 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
         confirmText="Delete"
         variant="destructive"
         isLoading={deleteNic.isPending}
+      />
+
+      {/* Add Port Forward Dialog */}
+      <Dialog open={showAddPortForwardDialog} onOpenChange={setShowAddPortForwardDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Port Forwarding Rule</DialogTitle>
+            <DialogDescription>
+              Map a port on the host to a port inside the VM. This allows external access to services running in the VM.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="host_port">Host Port *</Label>
+                <Input
+                  id="host_port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  placeholder="8080"
+                  value={portForwardForm.host_port}
+                  onChange={(e) => setPortForwardForm({ ...portForwardForm, host_port: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="guest_port">Guest Port *</Label>
+                <Input
+                  id="guest_port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  placeholder="80"
+                  value={portForwardForm.guest_port}
+                  onChange={(e) => setPortForwardForm({ ...portForwardForm, guest_port: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="protocol">Protocol</Label>
+              <Select
+                value={portForwardForm.protocol}
+                onValueChange={(value) => setPortForwardForm({ ...portForwardForm, protocol: value })}
+              >
+                <SelectTrigger id="protocol">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="tcp">TCP</SelectItem>
+                  <SelectItem value="udp">UDP</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Input
+                id="description"
+                placeholder="e.g., Web server, SSH"
+                value={portForwardForm.description}
+                onChange={(e) => setPortForwardForm({ ...portForwardForm, description: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddPortForwardDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitPortForward}
+              disabled={!portForwardForm.host_port || !portForwardForm.guest_port || createPortForward.isPending}
+            >
+              {createPortForward.isPending ? "Adding..." : "Add Rule"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Port Forward Confirmation */}
+      <ConfirmDialog
+        open={showDeletePortForwardDialog}
+        onOpenChange={setShowDeletePortForwardDialog}
+        onConfirm={handleConfirmDeletePortForward}
+        title="Delete Port Forwarding Rule"
+        description={`Are you sure you want to delete the port forwarding rule ${selectedPortForward?.protocol.toUpperCase()} ${selectedPortForward?.host_port} \u2192 ${selectedPortForward?.guest_port}? This will take effect immediately.`}
+        confirmText="Delete"
+        variant="destructive"
+        isLoading={deletePortForward.isPending}
       />
     </>
   )

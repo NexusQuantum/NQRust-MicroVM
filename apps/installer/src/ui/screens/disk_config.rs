@@ -135,9 +135,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Text::from(vec![Line::from(vec![
             Span::styled("↑/↓", styles::key_hint()),
             Span::styled(" Navigate  ", styles::muted()),
-            Span::styled("Enter", styles::key_hint()),
+            Span::styled("e/Space", styles::key_hint()),
             Span::styled(" Edit  ", styles::muted()),
-            Span::styled("Tab", styles::key_hint()),
+            Span::styled("Enter", styles::key_hint()),
             Span::styled(" Start Install  ", styles::muted()),
             Span::styled("Esc", styles::key_hint()),
             Span::styled(" Back", styles::muted()),

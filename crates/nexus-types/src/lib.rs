@@ -307,6 +307,44 @@ pub struct VmNicPathParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PortForward {
+    pub id: uuid::Uuid,
+    pub vm_id: uuid::Uuid,
+    pub host_port: i32,
+    pub guest_port: i32,
+    pub protocol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreatePortForwardReq {
+    pub host_port: i32,
+    pub guest_port: i32,
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+fn default_protocol() -> String {
+    "tcp".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListPortForwardsResponse {
+    pub items: Vec<PortForward>,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct PortForwardPathParams {
+    pub id: uuid::Uuid,
+    pub forward_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateTemplateReq {
     pub name: String,
     pub spec: TemplateSpec,

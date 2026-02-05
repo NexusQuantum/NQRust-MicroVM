@@ -15,7 +15,7 @@ use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{
-        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        self, disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
         LeaveAlternateScreen,
     },
 };
@@ -180,6 +180,7 @@ impl From<CliInstallMode> for InstallMode {
 enum CliNetworkMode {
     Nat,
     Bridged,
+    Isolated,
 }
 
 impl From<CliNetworkMode> for NetworkMode {
@@ -187,6 +188,7 @@ impl From<CliNetworkMode> for NetworkMode {
         match mode {
             CliNetworkMode::Nat => NetworkMode::Nat,
             CliNetworkMode::Bridged => NetworkMode::Bridged,
+            CliNetworkMode::Isolated => NetworkMode::Isolated,
         }
     }
 }
@@ -312,6 +314,11 @@ fn run_tui(config: InstallConfig) -> Result<()> {
     // Create app state
     let mut app = App::new().with_config(config);
 
+    // Set initial terminal size
+    if let Ok((cols, rows)) = terminal::size() {
+        app.update_terminal_size(cols, rows);
+    }
+
     // Main loop
     let result = run_app(&mut terminal, &mut app);
 
@@ -335,27 +342,43 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
 
         // Handle input with timeout for spinner animation
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                // Global quit
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    app.should_quit = true;
+            match event::read()? {
+                Event::Resize(cols, rows) => {
+                    app.update_terminal_size(cols, rows);
                 }
+                Event::Key(key) => {
+                    // Global quit always works
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        app.should_quit = true;
+                    }
 
-                // Handle input based on current screen
-                match app.screen {
-                    Screen::Welcome => handle_welcome_input(app, key.code),
-                    Screen::InstallTypeSelect => handle_install_type_select_input(app, key.code),
-                    Screen::DiskSelect => handle_disk_select_input(app, key.code),
-                    Screen::DiskConfig => handle_disk_config_input(app, key.code),
-                    Screen::ModeSelect => handle_mode_select_input(app, key.code),
-                    Screen::Config => handle_config_input(app, key.code),
-                    Screen::Preflight => handle_preflight_input(app, key.code),
-                    Screen::Progress => handle_progress_input(app, key.code),
-                    Screen::DiskProgress => handle_disk_progress_input(app, key.code),
-                    Screen::Verify => handle_verify_input(app, key.code),
-                    Screen::Complete => handle_complete_input(app, key.code),
-                    Screen::Error => handle_error_input(app, key.code),
+                    // Skip input when terminal is too small (except quit)
+                    if !app.terminal_too_small {
+                        // Handle input based on current screen
+                        match app.screen {
+                            Screen::Welcome => handle_welcome_input(app, key.code),
+                            Screen::InstallTypeSelect => {
+                                handle_install_type_select_input(app, key.code)
+                            }
+                            Screen::DiskSelect => handle_disk_select_input(app, key.code),
+                            Screen::DiskConfig => handle_disk_config_input(app, key.code),
+                            Screen::ModeSelect => handle_mode_select_input(app, key.code),
+                            Screen::NetworkConfig => {
+                                handle_network_config_input(app, key.code)
+                            }
+                            Screen::Config => handle_config_input(app, key.code),
+                            Screen::Preflight => handle_preflight_input(app, key.code),
+                            Screen::Progress => handle_progress_input(app, key.code),
+                            Screen::DiskProgress => handle_disk_progress_input(app, key.code),
+                            Screen::Verify => handle_verify_input(app, key.code),
+                            Screen::Complete => handle_complete_input(app, key.code),
+                            Screen::Error => handle_error_input(app, key.code),
+                        }
+                    }
                 }
+                _ => {}
             }
         } else {
             // Tick spinner animation
@@ -458,6 +481,7 @@ fn handle_disk_select_input(app: &mut App, key: KeyCode) {
         }
         KeyCode::Enter => {
             if !app.available_disks.is_empty() {
+                app.detect_network_info();
                 // Go to disk config screen (installation starts from there)
                 app.next_screen();
             }
@@ -503,12 +527,12 @@ fn handle_disk_config_input(app: &mut App, key: KeyCode) {
                     app.disk_config_field += 1;
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Char('e') | KeyCode::Char(' ') => {
                 // Start editing the current field
                 app.editing = true;
                 app.input_buffer = get_disk_config_field_value(app);
             }
-            KeyCode::Tab => {
+            KeyCode::Enter => {
                 // Continue to disk progress and start installation
                 start_disk_installation(app);
                 app.next_screen();
@@ -634,9 +658,96 @@ fn handle_mode_select_input(app: &mut App, key: KeyCode) {
         }
         KeyCode::Enter => {
             app.config.mode = InstallMode::ALL[app.mode_selection];
+            // Detect interfaces for network config screen
+            app.available_interfaces = installer::network::list_interfaces();
+            app.interface_selection = 0;
+            app.detect_network_info();
             app.next_screen();
         }
         KeyCode::Esc => app.prev_screen(),
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Track which panel is focused on the network config screen
+/// false = mode list (left), true = interface list (right)
+static mut NETWORK_FOCUS_INTERFACES: bool = false;
+
+fn handle_network_config_input(app: &mut App, key: KeyCode) {
+    let selected_mode = app::NetworkMode::ALL[app.network_mode_selection];
+    let show_interfaces =
+        selected_mode == app::NetworkMode::Bridged && !app.available_interfaces.is_empty();
+
+    // Safety: single-threaded TUI, no concurrent access
+    let focus_interfaces = unsafe { NETWORK_FOCUS_INTERFACES } && show_interfaces;
+
+    match key {
+        KeyCode::Tab | KeyCode::BackTab => {
+            // Toggle between mode list and interface list (only when Bridged)
+            if show_interfaces {
+                unsafe {
+                    NETWORK_FOCUS_INTERFACES = !NETWORK_FOCUS_INTERFACES;
+                }
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if focus_interfaces {
+                if app.interface_selection > 0 {
+                    app.interface_selection -= 1;
+                }
+            } else if app.network_mode_selection > 0 {
+                app.network_mode_selection -= 1;
+                // Reset interface focus when mode changes
+                unsafe {
+                    NETWORK_FOCUS_INTERFACES = false;
+                }
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if focus_interfaces {
+                if app.interface_selection < app.available_interfaces.len().saturating_sub(1) {
+                    app.interface_selection += 1;
+                }
+            } else if app.network_mode_selection < app::NetworkMode::ALL.len() - 1 {
+                app.network_mode_selection += 1;
+                // Reset interface focus when mode changes
+                unsafe {
+                    NETWORK_FOCUS_INTERFACES = false;
+                }
+            }
+        }
+        KeyCode::Enter => {
+            // Apply network mode selection
+            app.config.network_mode = app::NetworkMode::ALL[app.network_mode_selection];
+
+            // If bridged mode and interfaces available, record the selected interface
+            if app.config.network_mode == app::NetworkMode::Bridged
+                && !app.available_interfaces.is_empty()
+            {
+                let iface = &app.available_interfaces[app.interface_selection];
+                app.detected_interface = Some(iface.name.clone());
+                app.detected_ip = iface.ip.clone();
+                // Re-detect gateway for the selected interface
+                app.detected_gateway = installer::network::get_default_gateway();
+            } else {
+                // For NAT/Isolated, detect network info normally
+                app.detect_network_info();
+            }
+
+            // Reset focus for next visit
+            unsafe {
+                NETWORK_FOCUS_INTERFACES = false;
+            }
+
+            app.next_screen();
+        }
+        KeyCode::Esc => {
+            unsafe {
+                NETWORK_FOCUS_INTERFACES = false;
+            }
+            app.prev_screen();
+        }
         KeyCode::Char('q') => app.should_quit = true,
         _ => {}
     }
@@ -670,17 +781,17 @@ fn handle_config_input(app: &mut App, key: KeyCode) {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if app.config_field < 10 {
-                    // CONFIG_FIELDS.len() - 1
+                if app.config_field < 8 {
+                    // CONFIG_FIELDS.len() - 1 (9 fields, indices 0..=8)
                     app.config_field += 1;
                 }
             }
-            KeyCode::Enter => {
-                // Start editing
+            KeyCode::Char('e') | KeyCode::Char(' ') => {
+                // Start editing the selected field
                 app.editing = true;
                 app.input_buffer = get_current_field_value(app);
             }
-            KeyCode::Tab => {
+            KeyCode::Enter => {
                 // Continue to next screen and run preflight checks
                 run_preflight_checks(app);
                 app.next_screen();
@@ -793,20 +904,18 @@ fn get_current_field_value(app: &App) -> String {
         0 => app.config.install_dir.display().to_string(),
         1 => app.config.data_dir.display().to_string(),
         2 => app.config.config_dir.display().to_string(),
-        3 => app.config.network_mode.name().to_string(),
-        4 => app.config.bridge_name.clone(),
-        5 => app.config.db_host.clone(),
-        6 => app.config.db_port.to_string(),
-        7 => app.config.db_name.clone(),
-        8 => app.config.db_user.clone(),
-        9 => {
+        3 => app.config.db_host.clone(),
+        4 => app.config.db_port.to_string(),
+        5 => app.config.db_name.clone(),
+        6 => app.config.db_user.clone(),
+        7 => {
             if app.config.with_docker {
                 "Yes".to_string()
             } else {
                 "No".to_string()
             }
         }
-        10 => {
+        8 => {
             if app.config.with_container_runtime {
                 "Yes".to_string()
             } else {
@@ -823,29 +932,21 @@ fn apply_config_field(app: &mut App) {
         0 => app.config.install_dir = PathBuf::from(&value),
         1 => app.config.data_dir = PathBuf::from(&value),
         2 => app.config.config_dir = PathBuf::from(&value),
-        3 => {
-            app.config.network_mode = if value.to_lowercase() == "bridged" {
-                NetworkMode::Bridged
-            } else {
-                NetworkMode::Nat
-            };
-        }
-        4 => app.config.bridge_name = value,
-        5 => app.config.db_host = value,
-        6 => {
+        3 => app.config.db_host = value,
+        4 => {
             if let Ok(port) = value.parse() {
                 app.config.db_port = port;
             }
         }
-        7 => app.config.db_name = value,
-        8 => app.config.db_user = value,
-        9 => {
+        5 => app.config.db_name = value,
+        6 => app.config.db_user = value,
+        7 => {
             // Toggle Docker installation (yes/no/y/n)
             let lower = value.to_lowercase();
             app.config.with_docker =
                 lower == "yes" || lower == "y" || lower == "true" || lower == "1";
         }
-        10 => {
+        8 => {
             // Toggle container runtime installation (yes/no/y/n)
             let lower = value.to_lowercase();
             app.config.with_container_runtime =
@@ -917,6 +1018,11 @@ fn run_disk_install_tui_proper(
     app.disk_hostname = hostname;
     app.disk_root_password = root_password;
     app.install_type = app::InstallType::DiskInstall;
+
+    // Set initial terminal size
+    if let Ok((cols, rows)) = terminal::size() {
+        app.update_terminal_size(cols, rows);
+    }
 
     // Load available disks
     if let Ok(disks) = disk::list_disks() {

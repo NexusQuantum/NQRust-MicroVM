@@ -8,14 +8,23 @@ pub mod screens;
 pub mod widgets;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    text::{Line, Span},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::app::{App, Screen};
+use crate::theme::styles;
 
 /// Main UI renderer
 pub fn render(frame: &mut Frame, app: &App) {
+    // Show resize prompt if terminal is too small
+    if app.terminal_too_small {
+        render_resize_prompt(frame, app);
+        return;
+    }
+
     // Create main layout with optional status bar
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -32,6 +41,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::DiskSelect => screens::disk_select::render(frame, app, chunks[0]),
         Screen::DiskConfig => screens::disk_config::render(frame, app, chunks[0]),
         Screen::ModeSelect => screens::mode_select::render(frame, app, chunks[0]),
+        Screen::NetworkConfig => screens::network_config::render(frame, app, chunks[0]),
         Screen::Config => screens::config::render(frame, app, chunks[0]),
         Screen::Preflight => screens::preflight::render(frame, app, chunks[0]),
         Screen::Progress => screens::progress::render(frame, app, chunks[0]),
@@ -43,6 +53,39 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Render status bar
     widgets::status_bar::render(frame, app, chunks[1]);
+}
+
+/// Render a centered prompt asking the user to resize their terminal
+fn render_resize_prompt(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled("Terminal Too Small", styles::warning())),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Current: ", styles::muted()),
+            Span::styled(
+                format!("{}x{}", app.terminal_cols, app.terminal_rows),
+                styles::primary(),
+            ),
+            Span::styled("  Minimum: ", styles::muted()),
+            Span::styled("80x24", styles::primary()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Please resize your terminal to continue.",
+            styles::text(),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Ctrl+C", styles::key_hint()),
+            Span::styled(" to quit", styles::muted()),
+        ]),
+    ];
+
+    let para = Paragraph::new(lines).alignment(Alignment::Center);
+    frame.render_widget(para, area);
 }
 
 /// Helper to create centered rect

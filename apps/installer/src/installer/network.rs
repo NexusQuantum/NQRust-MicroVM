@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::app::{LogEntry, NetworkMode};
+use crate::app::{InterfaceInfo, LogEntry, NetworkMode};
 use crate::installer::{run_command, run_sudo};
 
 /// Setup network bridge
@@ -41,6 +41,12 @@ pub fn setup_network(mode: NetworkMode, bridge_name: &str) -> Result<Vec<LogEntr
                 "This will modify network configuration. Ensure console access is available.",
             ));
             setup_bridged_network(bridge_name, &mut logs)?;
+        }
+        NetworkMode::Isolated => {
+            logs.push(LogEntry::info(
+                "Setting up isolated mode - bridge only, no external connectivity",
+            ));
+            setup_isolated_network(bridge_name, &mut logs)?;
         }
     }
 
@@ -507,7 +513,7 @@ fn setup_bridged_with_ip_commands(
 }
 
 /// Get IP address of an interface
-fn get_interface_ip(iface: &str) -> Option<String> {
+pub fn get_interface_ip(iface: &str) -> Option<String> {
     if let Ok(output) = run_command("ip", &["-4", "addr", "show", iface]) {
         let output_str = String::from_utf8_lossy(&output.stdout);
         // Parse "inet X.X.X.X/YY ..."
@@ -524,7 +530,7 @@ fn get_interface_ip(iface: &str) -> Option<String> {
 }
 
 /// Get default gateway IP
-fn get_default_gateway() -> Option<String> {
+pub fn get_default_gateway() -> Option<String> {
     if let Ok(output) = run_command("ip", &["route", "show", "default"]) {
         let output_str = String::from_utf8_lossy(&output.stdout);
         // Parse "default via X.X.X.X ..."
@@ -669,7 +675,7 @@ fn is_bridge_up(name: &str) -> bool {
 }
 
 /// Get the default network interface
-fn get_default_interface() -> Option<String> {
+pub fn get_default_interface() -> Option<String> {
     if let Ok(output) = run_command("ip", &["route", "show", "default"]) {
         let output_str = String::from_utf8_lossy(&output.stdout);
         // Parse "default via X.X.X.X dev ethX ..."
@@ -687,6 +693,110 @@ fn get_default_interface() -> Option<String> {
         }
     }
     None
+}
+
+/// Setup isolated network - just creates bridge, no NAT or external connectivity
+fn setup_isolated_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
+    logs.push(LogEntry::info(format!(
+        "Creating isolated bridge '{}'...",
+        bridge_name
+    )));
+
+    // Create bridge
+    let _ = run_sudo(
+        "ip",
+        &["link", "add", "name", bridge_name, "type", "bridge"],
+    );
+
+    // Bring it up
+    let _ = run_sudo("ip", &["link", "set", bridge_name, "up"]);
+
+    logs.push(LogEntry::success(format!(
+        "Isolated bridge '{}' created and UP",
+        bridge_name
+    )));
+    logs.push(LogEntry::info(
+        "VMs can communicate with each other via this bridge but have no internet access",
+    ));
+
+    Ok(())
+}
+
+/// List available physical network interfaces on the system
+pub fn list_interfaces() -> Vec<InterfaceInfo> {
+    let mut interfaces = Vec::new();
+    let net_dir = Path::new("/sys/class/net");
+
+    // Virtual interface prefixes to filter out
+    let virtual_prefixes = [
+        "lo", "veth", "docker", "br-", "virbr", "vnet", "tap", "tun", "fcbr", "dummy",
+    ];
+
+    let default_iface = get_default_interface();
+
+    if let Ok(entries) = fs::read_dir(net_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip virtual interfaces
+            if virtual_prefixes.iter().any(|p| name.starts_with(p)) {
+                continue;
+            }
+
+            // Check if it's a physical device (has a device symlink)
+            let device_path = net_dir.join(&name).join("device");
+            let is_physical = device_path.exists();
+            if !is_physical {
+                continue;
+            }
+
+            // Check if interface is UP
+            let is_up = fs::read_to_string(net_dir.join(&name).join("operstate"))
+                .map(|s| s.trim() == "up")
+                .unwrap_or(false);
+
+            // Get speed (only works for wired interfaces that are up)
+            let speed = fs::read_to_string(net_dir.join(&name).join("speed"))
+                .ok()
+                .and_then(|s| {
+                    let val = s.trim().to_string();
+                    // Speed is in Mbps; negative values mean unknown
+                    if val.starts_with('-') {
+                        None
+                    } else {
+                        Some(format!("{} Mbps", val))
+                    }
+                });
+
+            // Check if wireless
+            let is_wireless = net_dir.join(&name).join("wireless").exists()
+                || Path::new(&format!("/sys/class/net/{}/phy80211", name)).exists();
+
+            // Get IP address
+            let ip = get_interface_ip(&name);
+
+            let is_default = default_iface.as_deref() == Some(&name);
+
+            interfaces.push(InterfaceInfo {
+                name,
+                ip,
+                speed,
+                is_up,
+                is_default,
+                is_wireless,
+            });
+        }
+    }
+
+    // Sort: default first, then up interfaces, then by name
+    interfaces.sort_by(|a, b| {
+        b.is_default
+            .cmp(&a.is_default)
+            .then(b.is_up.cmp(&a.is_up))
+            .then(a.name.cmp(&b.name))
+    });
+
+    interfaces
 }
 
 /// Verify network is configured
