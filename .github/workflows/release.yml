@@ -711,20 +711,28 @@ jobs:
             exit 1
           fi
 
-          # Package the standalone build output
-          # The standalone directory contains server.js and minimal node_modules
-          cd .next/standalone/apps/ui
-          tar czf ../../../../../nqrust-ui.tar.gz \
-            server.js \
-            .next/ \
-            node_modules/ \
-            package.json
+          # Create a temporary directory to assemble the tarball contents
+          TEMP_DIR=$(mktemp -d)
 
-          # Also include static assets from the build root
-          cd ../../../..
-          tar rzf ../../nqrust-ui.tar.gz \
-            .next/static/ \
-            public/
+          # Copy standalone build output (includes server.js, .next/, node_modules/, package.json)
+          cp -r .next/standalone/apps/ui/* "$TEMP_DIR/"
+
+          # Copy static assets from build root (Next.js doesn't include these in standalone by default)
+          mkdir -p "$TEMP_DIR/.next/static"
+          cp -r .next/static/* "$TEMP_DIR/.next/static/" 2>/dev/null || true
+
+          # Copy public directory
+          mkdir -p "$TEMP_DIR/public"
+          cp -r public/* "$TEMP_DIR/public/" 2>/dev/null || true
+
+          # Create tarball from the assembled directory
+          tar czf ../../nqrust-ui.tar.gz -C "$TEMP_DIR" .
+
+          # Cleanup
+          rm -rf "$TEMP_DIR"
+
+          echo "UI tarball created successfully"
+          tar tzf ../../nqrust-ui.tar.gz | head -20
 
       - name: Upload UI as artifact
         uses: actions/upload-artifact@v4
