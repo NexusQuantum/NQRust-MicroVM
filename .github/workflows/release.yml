@@ -698,7 +698,10 @@ jobs:
 
       - name: Build UI
         working-directory: apps/ui
-        run: pnpm build
+        run: |
+          # Remove .env to prevent baking development API URLs into production build
+          rm -f .env .env.local .env.production .env.development
+          pnpm build
 
       - name: Package UI
         run: |
@@ -715,15 +718,22 @@ jobs:
           TEMP_DIR=$(mktemp -d)
 
           # Copy standalone build output (includes server.js, .next/, node_modules/, package.json)
-          cp -r .next/standalone/apps/ui/* "$TEMP_DIR/"
+          cp -r .next/standalone/apps/ui/. "$TEMP_DIR/"
 
-          # Copy static assets from build root (Next.js doesn't include these in standalone by default)
-          mkdir -p "$TEMP_DIR/.next/static"
-          cp -r .next/static/* "$TEMP_DIR/.next/static/" 2>/dev/null || true
+          # Remove any .env files that might have been included in standalone
+          rm -f "$TEMP_DIR/.env" "$TEMP_DIR/.env.local" "$TEMP_DIR/.env.production"
 
-          # Copy public directory
-          mkdir -p "$TEMP_DIR/public"
-          cp -r public/* "$TEMP_DIR/public/" 2>/dev/null || true
+          # Copy static assets from build root to standalone's .next/static
+          # The standalone .next/static might be incomplete, so merge from build root
+          if [[ -d .next/static ]]; then
+            mkdir -p "$TEMP_DIR/.next/static"
+            cp -r .next/static/. "$TEMP_DIR/.next/static/"
+          fi
+
+          # Copy public directory (Next.js standalone doesn't include this by default)
+          if [[ -d public ]]; then
+            cp -r public "$TEMP_DIR/"
+          fi
 
           # Create tarball from the assembled directory
           tar czf ../../nqrust-ui.tar.gz -C "$TEMP_DIR" .
