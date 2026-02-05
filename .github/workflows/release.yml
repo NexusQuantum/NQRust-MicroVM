@@ -703,12 +703,28 @@ jobs:
       - name: Package UI
         run: |
           cd apps/ui
-          tar czf ../../nqrust-ui.tar.gz \
+
+          # Verify standalone build exists
+          if [[ ! -f .next/standalone/apps/ui/server.js ]]; then
+            echo "ERROR: Standalone build not found at .next/standalone/apps/ui/server.js"
+            echo "Make sure next.config.mjs has output: 'standalone'"
+            exit 1
+          fi
+
+          # Package the standalone build output
+          # The standalone directory contains server.js and minimal node_modules
+          cd .next/standalone/apps/ui
+          tar czf ../../../../../nqrust-ui.tar.gz \
+            server.js \
             .next/ \
-            public/ \
-            package.json \
-            next.config.mjs \
-            pnpm-lock.yaml
+            node_modules/ \
+            package.json
+
+          # Also include static assets from the build root
+          cd ../../../..
+          tar rzf ../../nqrust-ui.tar.gz \
+            .next/static/ \
+            public/
 
       - name: Upload UI as artifact
         uses: actions/upload-artifact@v4
