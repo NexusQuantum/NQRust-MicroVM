@@ -33,6 +33,7 @@ The project has TWO frontends (note: `apps/frontend` is the old Next.js 14 versi
 2. Set up bridge: `sudo ./scripts/fc-bridge-setup.sh fcbr0 <uplink-iface>` (once per host)
 3. Configure environment variables (see `.env.example`)
 4. Start agent first (needs sudo for KVM), then manager
+5. (Optional) Create runtime snapshot for fast containers: `./scripts/create-runtime-snapshot.sh` (reduces container creation from 60-120s to 5-15s)
 
 ## Architecture Overview
 
@@ -55,6 +56,7 @@ NQRust-MicroVM is a Rust-based Firecracker microVM management platform with cont
 **Key Modules** (`apps/manager/src/features/`):
 - `vms/` - VM lifecycle, configuration, shell access, metrics
 - `containers/` - Docker container management via Firecracker VMs
+- `runtime_snapshots/` - Pre-warmed VM snapshots for fast container creation (60s → 5s)
 - `functions/` - Serverless function execution
 - `images/` - Image registry (upload, dockerhub, preload)
 - `snapshots/` - VM snapshot operations

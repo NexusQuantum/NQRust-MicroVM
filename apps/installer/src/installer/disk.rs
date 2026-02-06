@@ -1179,8 +1179,8 @@ fn create_nqrust_services(logs: &mut Vec<LogEntry>) -> Result<()> {
     // Manager service
     let manager_service = r#"[Unit]
 Description=NQR-MicroVM Manager Service
-After=network-online.target postgresql.service
-Wants=network-online.target
+After=network.target postgresql.service
+Wants=network.target
 Requires=postgresql.service
 
 [Service]
@@ -1209,8 +1209,8 @@ WantedBy=multi-user.target
     // Agent service
     let agent_service = r#"[Unit]
 Description=NQR-MicroVM Agent Service
-After=network-online.target
-Wants=network-online.target
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
@@ -1238,8 +1238,8 @@ WantedBy=multi-user.target
     // UI service (if UI is bundled)
     let ui_service = r#"[Unit]
 Description=NQR-MicroVM Web UI Service
-After=network-online.target nqrust-manager.service
-Wants=network-online.target
+After=network.target nqrust-manager.service
+Wants=network.target
 Requires=nqrust-manager.service
 
 [Service]
@@ -1329,8 +1329,8 @@ systemctl disable nqrust-firstboot.service
 
     let firstboot_service = r#"[Unit]
 Description=NQRust-MicroVM First Boot Configuration
-After=network-online.target postgresql.service
-Wants=network-online.target
+After=network.target postgresql.service
+Wants=network.target
 
 [Service]
 Type=oneshot

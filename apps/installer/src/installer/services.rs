@@ -55,8 +55,8 @@ fn install_manager_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
         r#"[Unit]
 Description=NQR-MicroVM Manager Service
 Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
-After=network-online.target postgresql.service
-Wants=network-online.target
+After=network.target postgresql.service
+Wants=network.target
 Requires=postgresql.service
 
 [Service]
@@ -110,9 +110,9 @@ fn install_agent_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
         r#"[Unit]
 Description=NQR-MicroVM Agent Service
 Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
-After=network-online.target
+After=network.target
 Before=nqrust-manager.service
-Wants=network-online.target
+Wants=network.target
 
 [Service]
 Type=simple
@@ -187,8 +187,8 @@ fn install_ui_service(config: &InstallConfig) -> Result<Vec<LogEntry>> {
         r#"[Unit]
 Description=NQR-MicroVM Web UI Service
 Documentation=https://github.com/NexusQuantum/NQRust-MicroVM
-After=network-online.target nqrust-manager.service
-Wants=network-online.target
+After=network.target nqrust-manager.service
+Wants=network.target
 Requires=nqrust-manager.service
 
 [Service]

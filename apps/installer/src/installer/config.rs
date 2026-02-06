@@ -92,8 +92,9 @@ MANAGER_ALLOW_IMAGE_PATHS=true
 # Disable VM reconciler (REQUIRED - causes race conditions if enabled)
 MANAGER_RECONCILER_DISABLED=1
 
-# Host registration
-MANAGER_HOST_ID=
+# Host self-registration (leave MANAGER_HOST_ID unset to skip self-registration;
+# the agent handles host registration via heartbeats)
+# MANAGER_HOST_ID=
 MANAGER_BRIDGE={}
 
 # Logging
