@@ -50,6 +50,9 @@ pub fn setup_network(mode: NetworkMode, bridge_name: &str) -> Result<Vec<LogEntr
         }
     }
 
+    // Setup UFW firewall for all modes (port rules + persistent NAT for NAT mode)
+    setup_firewall(&mode, bridge_name, &mut logs)?;
+
     Ok(logs)
 }
 
@@ -916,6 +919,111 @@ pub fn list_interfaces() -> Vec<InterfaceInfo> {
     });
 
     interfaces
+}
+
+/// Setup UFW firewall with appropriate rules for the network mode.
+/// This provides persistent firewall rules that survive reboots.
+/// For NAT mode, it also adds masquerade rules to /etc/ufw/before.rules.
+fn setup_firewall(
+    network_mode: &NetworkMode,
+    bridge_name: &str,
+    logs: &mut Vec<LogEntry>,
+) -> Result<()> {
+    // Check if ufw is available
+    if let Ok(output) = run_command("which", &["ufw"]) {
+        if !output.status.success() {
+            logs.push(LogEntry::info(
+                "UFW not found, skipping firewall setup (iptables rules still active)",
+            ));
+            return Ok(());
+        }
+    } else {
+        logs.push(LogEntry::info("UFW not available, skipping firewall setup"));
+        return Ok(());
+    }
+
+    logs.push(LogEntry::info("Configuring firewall (UFW)..."));
+
+    // CRITICAL: Allow SSH before enabling UFW to avoid lockout
+    let _ = run_sudo("ufw", &["allow", "ssh"]);
+    let _ = run_sudo("ufw", &["allow", "http"]);
+    let _ = run_sudo("ufw", &["allow", "https"]);
+    let _ = run_sudo("ufw", &["allow", "3000/tcp"]); // UI
+    let _ = run_sudo("ufw", &["allow", "9090/tcp"]); // Agent
+    let _ = run_sudo("ufw", &["allow", "18080/tcp"]); // Manager
+
+    logs.push(LogEntry::success(
+        "Firewall rules: SSH, HTTP, HTTPS, 3000, 9090, 18080 allowed",
+    ));
+
+    // For NAT and Bridged modes, enable forwarding and add masquerade rules
+    if matches!(network_mode, NetworkMode::Nat | NetworkMode::Bridged) {
+        // Set DEFAULT_FORWARD_POLICY to ACCEPT for VM traffic forwarding
+        let _ = run_command(
+            "sh",
+            &[
+                "-c",
+                "sudo sed -i 's/DEFAULT_FORWARD_POLICY=\"DROP\"/DEFAULT_FORWARD_POLICY=\"ACCEPT\"/' /etc/default/ufw",
+            ],
+        );
+        logs.push(LogEntry::info("UFW forward policy set to ACCEPT"));
+    }
+
+    // For NAT mode, add masquerade rules to before.rules for persistence
+    if matches!(network_mode, NetworkMode::Nat) {
+        let default_iface = get_default_interface().unwrap_or_else(|| "eth0".to_string());
+        setup_ufw_nat_rules(bridge_name, &default_iface, logs)?;
+    }
+
+    // Enable UFW non-interactively
+    let _ = run_command("sh", &["-c", "echo 'y' | sudo ufw enable"]);
+    let _ = run_sudo("ufw", &["reload"]);
+
+    logs.push(LogEntry::success("Firewall (UFW) enabled and configured"));
+
+    Ok(())
+}
+
+/// Add NAT masquerade rules to /etc/ufw/before.rules for persistent NAT across reboots.
+fn setup_ufw_nat_rules(
+    _bridge_name: &str,
+    default_iface: &str,
+    logs: &mut Vec<LogEntry>,
+) -> Result<()> {
+    let before_rules_path = "/etc/ufw/before.rules";
+
+    // Check if our NAT rules already exist
+    if let Ok(content) = fs::read_to_string(before_rules_path) {
+        if content.contains("NQRust-MicroVM NAT") {
+            logs.push(LogEntry::info("UFW NAT rules already present"));
+            return Ok(());
+        }
+    }
+
+    // Only add the *nat block for masquerade. Forward rules are handled by
+    // DEFAULT_FORWARD_POLICY="ACCEPT" in /etc/default/ufw, which allows all
+    // forwarding including future port forwarding (DNAT) rules.
+    let nat_block = format!(
+        r#"
+# NQRust-MicroVM NAT masquerade rules
+*nat
+:POSTROUTING ACCEPT [0:0]
+-A POSTROUTING -s 10.0.0.0/24 -o {} -j MASQUERADE
+COMMIT
+"#,
+        default_iface
+    );
+
+    // Append NAT block to before.rules
+    let write_cmd = format!(
+        "echo '{}' | sudo tee -a {} > /dev/null",
+        nat_block, before_rules_path
+    );
+    let _ = run_command("sh", &["-c", &write_cmd]);
+
+    logs.push(LogEntry::success("UFW NAT masquerade rules added (persistent)"));
+
+    Ok(())
 }
 
 /// Verify network is configured
