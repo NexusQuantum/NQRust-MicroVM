@@ -17,18 +17,35 @@ pub fn setup_network(mode: NetworkMode, bridge_name: &str) -> Result<Vec<LogEntr
         mode.name()
     )));
 
-    // Check if bridge already exists
-    if bridge_exists(bridge_name) {
-        logs.push(LogEntry::warning(format!(
-            "Bridge '{}' already exists",
-            bridge_name
-        )));
+    // Check if bridge already exists and has the expected configuration
+    if bridge_exists(bridge_name) && is_bridge_up(bridge_name) {
+        let current_ip = get_interface_ip(bridge_name);
+        let expected_ip = match mode {
+            NetworkMode::Nat => Some("10.0.0.1"),
+            NetworkMode::Isolated => Some("10.1.0.1"),
+            NetworkMode::Bridged => None, // Any IP is fine for bridged
+        };
 
-        // Check if it's UP
-        if is_bridge_up(bridge_name) {
-            logs.push(LogEntry::info(format!("Bridge '{}' is UP", bridge_name)));
+        let ip_ok = match (expected_ip, &current_ip) {
+            (Some(expected), Some(actual)) => actual.starts_with(expected),
+            (None, _) => true, // Bridged: any IP is acceptable
+            _ => false,
+        };
+
+        if ip_ok {
+            logs.push(LogEntry::info(format!(
+                "Bridge '{}' already exists and is UP (IP: {})",
+                bridge_name,
+                current_ip.as_deref().unwrap_or("none")
+            )));
             return Ok(logs);
         }
+
+        logs.push(LogEntry::warning(format!(
+            "Bridge '{}' exists but has unexpected IP ({}), reconfiguring...",
+            bridge_name,
+            current_ip.as_deref().unwrap_or("none")
+        )));
     }
 
     match mode {
@@ -164,8 +181,12 @@ fn setup_nat_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> 
 
     let dnsmasq_config = format!(
         r#"# NQRust-MicroVM DHCP Configuration
+# Use bind-dynamic so dnsmasq handles interfaces that appear after boot
+# (nqrust-bridge.service creates the bridge; dnsmasq must tolerate it not existing yet)
 interface={}
-bind-interfaces
+bind-dynamic
+# Disable DNS (port=0) — we only need DHCP. Avoids systemd-resolved port 53 conflict.
+port=0
 dhcp-range={},{},12h
 dhcp-option=option:router,{}
 dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
@@ -179,6 +200,9 @@ dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
         dnsmasq_config, dnsmasq_file
     );
     let _ = run_command("sh", &["-c", &write_cmd]);
+
+    // Disable systemd-resolved stub listener to prevent port 53 conflicts
+    disable_resolved_stub();
 
     // Restart dnsmasq
     let _ = run_sudo("systemctl", &["enable", "dnsmasq"]);
@@ -282,7 +306,9 @@ net.ipv4.ip_forward = 1
     logs.push(LogEntry::info("Validating netplan configuration..."));
     if let Ok(output) = run_command("sudo", &["netplan", "generate"]) {
         if !output.status.success() {
-            logs.push(LogEntry::error("Netplan config validation failed, restoring backups..."));
+            logs.push(LogEntry::error(
+                "Netplan config validation failed, restoring backups...",
+            ));
             restore_netplan_configs(&backups);
             return Ok(());
         }
@@ -344,89 +370,6 @@ net.ipv4.ip_forward = 1
             "Previous network config restored. Bridge mode may require manual setup.",
         ));
     }
-
-    Ok(())
-}
-
-/// Internal NAT setup (used as fallback)
-fn setup_nat_network_internal(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
-    let bridge_ip = "10.0.0.1";
-    let bridge_cidr = "10.0.0.1/24";
-
-    // Create bridge
-    logs.push(LogEntry::info(format!(
-        "Creating NAT bridge '{}' (bridged mode unavailable)...",
-        bridge_name
-    )));
-
-    let _ = run_sudo(
-        "ip",
-        &["link", "add", "name", bridge_name, "type", "bridge"],
-    );
-    let _ = run_sudo("ip", &["addr", "add", bridge_cidr, "dev", bridge_name]);
-    let _ = run_sudo("ip", &["link", "set", bridge_name, "up"]);
-
-    logs.push(LogEntry::success(format!(
-        "NAT bridge '{}' created with IP {}",
-        bridge_name, bridge_ip
-    )));
-
-    // Enable IP forwarding
-    let _ = run_command(
-        "sh",
-        &[
-            "-c",
-            "echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward > /dev/null",
-        ],
-    );
-
-    // Setup iptables NAT
-    let default_iface = get_default_interface().unwrap_or_else(|| "eth0".to_string());
-    let _ = run_sudo(
-        "iptables",
-        &[
-            "-t",
-            "nat",
-            "-A",
-            "POSTROUTING",
-            "-o",
-            &default_iface,
-            "-j",
-            "MASQUERADE",
-        ],
-    );
-    let _ = run_sudo(
-        "iptables",
-        &[
-            "-A",
-            "FORWARD",
-            "-i",
-            bridge_name,
-            "-o",
-            &default_iface,
-            "-j",
-            "ACCEPT",
-        ],
-    );
-    let _ = run_sudo(
-        "iptables",
-        &[
-            "-A",
-            "FORWARD",
-            "-i",
-            &default_iface,
-            "-o",
-            bridge_name,
-            "-m",
-            "state",
-            "--state",
-            "RELATED,ESTABLISHED",
-            "-j",
-            "ACCEPT",
-        ],
-    );
-
-    logs.push(LogEntry::success("NAT rules configured (fallback mode)"));
 
     Ok(())
 }
@@ -707,12 +650,43 @@ network:
     Ok(backups)
 }
 
+/// Disable systemd-resolved's DNS stub listener to prevent port 53 conflicts with dnsmasq.
+/// This is safe because we configure dnsmasq with port=0 (DHCP only, no DNS).
+fn disable_resolved_stub() {
+    // Check if resolved.conf exists
+    if !Path::new("/etc/systemd/resolved.conf").exists() {
+        return;
+    }
+
+    // Set DNSStubListener=no in resolved.conf
+    let _ = run_command(
+        "sh",
+        &[
+            "-c",
+            "sudo sed -i 's/^#\\?DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf",
+        ],
+    );
+
+    // If the line doesn't exist at all, append it
+    let _ = run_command(
+        "sh",
+        &[
+            "-c",
+            "grep -q '^DNSStubListener' /etc/systemd/resolved.conf || echo 'DNSStubListener=no' | sudo tee -a /etc/systemd/resolved.conf > /dev/null",
+        ],
+    );
+
+    // Restart systemd-resolved
+    let _ = run_sudo("systemctl", &["restart", "systemd-resolved"]);
+}
+
 /// Create systemd service for bridge persistence
 fn create_bridge_service(bridge_name: &str, bridge_cidr: &str) -> Result<()> {
     let service_content = format!(
         r#"[Unit]
 Description=NQRust-MicroVM Bridge Setup
 After=network.target
+Before=dnsmasq.service
 
 [Service]
 Type=oneshot
@@ -734,6 +708,16 @@ WantedBy=multi-user.target
         service_content, service_file
     );
     run_command("sh", &["-c", &write_cmd])?;
+
+    // Add dnsmasq dependency on bridge service via drop-in
+    let dropin_dir = "/etc/systemd/system/dnsmasq.service.d";
+    let _ = run_sudo("mkdir", &["-p", dropin_dir]);
+    let dropin_content = "[Unit]\nAfter=nqrust-bridge.service\nWants=nqrust-bridge.service\n";
+    let dropin_cmd = format!(
+        "echo '{}' | sudo tee {}/nqrust-bridge.conf > /dev/null",
+        dropin_content, dropin_dir
+    );
+    let _ = run_command("sh", &["-c", &dropin_cmd]);
 
     // Enable service
     let _ = run_sudo("systemctl", &["daemon-reload"]);
@@ -802,16 +786,19 @@ fn setup_isolated_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result
     )));
 
     // Setup dnsmasq for DHCP only (no DNS forwarding, no gateway)
-    logs.push(LogEntry::info("Configuring DHCP server for isolated network..."));
+    logs.push(LogEntry::info(
+        "Configuring DHCP server for isolated network...",
+    ));
 
     let dnsmasq_config = format!(
         r#"# NQRust-MicroVM Isolated Network DHCP Configuration
+# Use bind-dynamic so dnsmasq handles interfaces that appear after boot
 interface={}
-bind-interfaces
+bind-dynamic
+# Disable DNS (port=0) — we only need DHCP. Avoids systemd-resolved port 53 conflict.
+port=0
 dhcp-range={},{},12h
 # No router option - VMs cannot reach outside
-# No DNS option - no DNS forwarding in isolated mode
-no-resolv
 "#,
         bridge_name, dhcp_range_start, dhcp_range_end
     );
@@ -822,6 +809,9 @@ no-resolv
         dnsmasq_config, dnsmasq_file
     );
     let _ = run_command("sh", &["-c", &write_cmd]);
+
+    // Disable systemd-resolved stub listener to prevent port 53 conflicts
+    disable_resolved_stub();
 
     // Restart dnsmasq
     let _ = run_sudo("systemctl", &["enable", "dnsmasq"]);
@@ -1021,7 +1011,9 @@ COMMIT
     );
     let _ = run_command("sh", &["-c", &write_cmd]);
 
-    logs.push(LogEntry::success("UFW NAT masquerade rules added (persistent)"));
+    logs.push(LogEntry::success(
+        "UFW NAT masquerade rules added (persistent)",
+    ));
 
     Ok(())
 }
