@@ -260,9 +260,8 @@ net.ipv4.ip_forward = 1
     );
     let _ = run_command("sh", &["-c", &write_cmd]);
 
-    // Create netplan configuration for bridge
-    // This will be applied on next boot or with `netplan apply`
-    create_netplan_bridged(
+    // Create netplan configuration for bridge (backs up existing configs first)
+    let backups = create_netplan_bridged(
         bridge_name,
         &physical_iface,
         current_ip.as_deref(),
@@ -270,36 +269,76 @@ net.ipv4.ip_forward = 1
     )?;
 
     logs.push(LogEntry::success(format!(
-        "Bridged network config created for: {} → {}",
-        physical_iface, bridge_name
+        "Bridged network config created for: {} → {} (backed up {} existing config(s))",
+        physical_iface,
+        bridge_name,
+        backups.len()
     )));
 
-    // Try to apply netplan (this is the risky part)
+    // Validate config before applying
+    logs.push(LogEntry::info("Validating netplan configuration..."));
+    if let Ok(output) = run_command("sudo", &["netplan", "generate"]) {
+        if !output.status.success() {
+            logs.push(LogEntry::error("Netplan config validation failed, restoring backups..."));
+            restore_netplan_configs(&backups);
+            return Ok(());
+        }
+    }
+
+    // Apply netplan (this is the risky part - may briefly drop connectivity)
     logs.push(LogEntry::warning(
-        "Applying network changes... If connectivity is lost, reboot the machine.",
+        "Applying network changes... Connection may briefly drop.",
     ));
 
-    // Use netplan apply which handles the transition properly
     let apply_result = run_sudo("netplan", &["apply"]);
 
     if apply_result.is_ok() {
-        // Wait a moment for network to stabilize
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        // Wait for network to stabilize and bridge to get an IP
+        // DHCP may take a few seconds; static IP should be instant
+        logs.push(LogEntry::info("Waiting for bridge to acquire IP..."));
 
-        // Check if we still have connectivity by checking if bridge exists and is up
-        if bridge_exists(bridge_name) && is_bridge_up(bridge_name) {
-            logs.push(LogEntry::success("Bridged network is active"));
-            logs.push(LogEntry::info(
-                "VMs attached to this bridge will get IPs from your router's DHCP",
-            ));
-        } else {
+        let mut bridge_ok = false;
+        for attempt in 1..=5 {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            if bridge_exists(bridge_name) && is_bridge_up(bridge_name) {
+                if let Some(ip) = get_interface_ip(bridge_name) {
+                    logs.push(LogEntry::success(format!(
+                        "Bridged network active — bridge IP: {}",
+                        ip
+                    )));
+                    logs.push(LogEntry::info(
+                        "VMs attached to this bridge will get IPs from your router's DHCP",
+                    ));
+                    bridge_ok = true;
+                    break;
+                }
+            }
+
+            if attempt < 5 {
+                logs.push(LogEntry::info(format!(
+                    "Waiting for bridge IP (attempt {}/5)...",
+                    attempt
+                )));
+            }
+        }
+
+        if !bridge_ok {
             logs.push(LogEntry::warning(
-                "Bridge may not be fully active. A reboot may be required.",
+                "Bridge did not acquire an IP within 10 seconds. Restoring previous config...",
+            ));
+            restore_netplan_configs(&backups);
+            logs.push(LogEntry::warning(
+                "Previous network config restored. Bridge mode may require manual setup.",
             ));
         }
     } else {
+        logs.push(LogEntry::error(
+            "Could not apply netplan. Restoring previous config...",
+        ));
+        restore_netplan_configs(&backups);
         logs.push(LogEntry::warning(
-            "Could not apply netplan. Reboot required to activate bridged network.",
+            "Previous network config restored. Bridge mode may require manual setup.",
         ));
     }
 
@@ -544,20 +583,58 @@ pub fn get_default_gateway() -> Option<String> {
     None
 }
 
+/// Back up all existing netplan YAML configs so our bridge config is the sole config.
+/// Returns the list of backed-up file paths (for rollback).
+fn backup_netplan_configs() -> Vec<String> {
+    let mut backed_up = Vec::new();
+    let netplan_dir = Path::new("/etc/netplan");
+
+    if let Ok(entries) = fs::read_dir(netplan_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext == "yaml" || ext == "yml" {
+                let path_str = path.display().to_string();
+                let backup = format!("{}.bak.nqrust", path_str);
+                if run_sudo("mv", &[&path_str, &backup]).is_ok() {
+                    backed_up.push(backup);
+                }
+            }
+        }
+    }
+
+    backed_up
+}
+
+/// Restore backed-up netplan configs (rollback on failure).
+fn restore_netplan_configs(backups: &[String]) {
+    for backup in backups {
+        let original = backup.trim_end_matches(".bak.nqrust");
+        let _ = run_sudo("mv", &[backup, original]);
+    }
+    // Remove our config if it exists
+    let _ = run_sudo("rm", &["-f", "/etc/netplan/01-nqrust-bridge.yaml"]);
+    let _ = run_sudo("netplan", &["apply"]);
+}
+
 /// Create netplan config for bridged mode persistence
 fn create_netplan_bridged(
     bridge_name: &str,
     physical_iface: &str,
     current_ip: Option<&str>,
     current_gateway: Option<&str>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     if !Path::new("/etc/netplan").exists() {
-        // Netplan not available, skip
-        return Ok(());
+        return Ok(Vec::new());
     }
 
+    // Back up and remove ALL existing netplan configs to avoid merge conflicts.
+    // This is critical: conflicting configs (e.g. 50-cloud-init.yaml setting
+    // dhcp4:true on the same interface) cause routing races and broken connectivity.
+    let backups = backup_netplan_configs();
+
     let netplan_content = if let (Some(ip), Some(gw)) = (current_ip, current_gateway) {
-        // Static IP configuration
+        // Static IP configuration - preserve current IP on the bridge
         format!(
             r#"# NQRust-MicroVM Bridged Network Configuration
 # Generated by NQRust installer - bridged mode
@@ -588,7 +665,7 @@ network:
             physical_iface, bridge_name, physical_iface, ip, gw
         )
     } else {
-        // DHCP configuration
+        // DHCP configuration - bridge gets IP from router
         format!(
             r#"# NQRust-MicroVM Bridged Network Configuration
 # Generated by NQRust installer - bridged mode
@@ -613,17 +690,18 @@ network:
         )
     };
 
-    let netplan_file = "/etc/netplan/99-nqrust-bridge.yaml";
+    // Write as the sole netplan config
+    let netplan_file = "/etc/netplan/01-nqrust-bridge.yaml";
     let write_cmd = format!(
         "echo '{}' | sudo tee {} > /dev/null",
         netplan_content, netplan_file
     );
     run_command("sh", &["-c", &write_cmd])?;
 
-    // Set proper permissions
+    // Set proper permissions (netplan requires 600)
     let _ = run_sudo("chmod", &["600", netplan_file]);
 
-    Ok(())
+    Ok(backups)
 }
 
 /// Create systemd service for bridge persistence
@@ -695,26 +773,67 @@ pub fn get_default_interface() -> Option<String> {
     None
 }
 
-/// Setup isolated network - just creates bridge, no NAT or external connectivity
+/// Setup isolated network - internal bridge with DHCP but no internet access
 fn setup_isolated_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
+    let bridge_ip = "10.1.0.1";
+    let bridge_cidr = "10.1.0.1/24";
+    let dhcp_range_start = "10.1.0.10";
+    let dhcp_range_end = "10.1.0.250";
+
     logs.push(LogEntry::info(format!(
         "Creating isolated bridge '{}'...",
         bridge_name
     )));
 
-    // Create bridge
+    // Create bridge with IP (VMs need a DHCP server to get addresses)
     let _ = run_sudo(
         "ip",
         &["link", "add", "name", bridge_name, "type", "bridge"],
     );
-
-    // Bring it up
+    let _ = run_sudo("ip", &["addr", "add", bridge_cidr, "dev", bridge_name]);
     let _ = run_sudo("ip", &["link", "set", bridge_name, "up"]);
 
     logs.push(LogEntry::success(format!(
-        "Isolated bridge '{}' created and UP",
-        bridge_name
+        "Isolated bridge '{}' created with IP {}",
+        bridge_name, bridge_ip
     )));
+
+    // Setup dnsmasq for DHCP only (no DNS forwarding, no gateway)
+    logs.push(LogEntry::info("Configuring DHCP server for isolated network..."));
+
+    let dnsmasq_config = format!(
+        r#"# NQRust-MicroVM Isolated Network DHCP Configuration
+interface={}
+bind-interfaces
+dhcp-range={},{},12h
+# No router option - VMs cannot reach outside
+# No DNS option - no DNS forwarding in isolated mode
+no-resolv
+"#,
+        bridge_name, dhcp_range_start, dhcp_range_end
+    );
+
+    let dnsmasq_file = "/etc/dnsmasq.d/nqrust-microvm.conf";
+    let write_cmd = format!(
+        "echo '{}' | sudo tee {} > /dev/null",
+        dnsmasq_config, dnsmasq_file
+    );
+    let _ = run_command("sh", &["-c", &write_cmd]);
+
+    // Restart dnsmasq
+    let _ = run_sudo("systemctl", &["enable", "dnsmasq"]);
+    let _ = run_sudo("systemctl", &["restart", "dnsmasq"]);
+
+    logs.push(LogEntry::success(format!(
+        "DHCP configured (range: {} - {})",
+        dhcp_range_start, dhcp_range_end
+    )));
+
+    // Create bridge persistence service (like NAT mode)
+    create_bridge_service(bridge_name, bridge_cidr)?;
+    logs.push(LogEntry::success("Bridge persistence service created"));
+
+    // Explicitly NO ip_forward, NO iptables NAT
     logs.push(LogEntry::info(
         "VMs can communicate with each other via this bridge but have no internet access",
     ));
