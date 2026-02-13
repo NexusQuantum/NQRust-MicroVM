@@ -1,5 +1,7 @@
 use crate::features::networks::repo::NetworkRepository;
+use crate::features::networks::service;
 use crate::AppState;
+use axum::extract::Query;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -10,17 +12,17 @@ pub struct CreateNetworkRequest {
     pub name: String,
     pub description: Option<String>,
     #[serde(rename = "type")]
-    pub network_type: String, // "bridge" or "vlan"
+    pub network_type: String, // "nat", "isolated", "bridged", or "vxlan"
     pub vlan_id: Option<i32>,
-    pub bridge_name: String,
     pub host_id: Uuid,
     pub cidr: Option<String>,
-    pub gateway: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateNetworkResponse {
-    pub id: Uuid,
+    pub dhcp_enabled: Option<bool>,
+    pub dhcp_range_start: Option<String>,
+    pub dhcp_range_end: Option<String>,
+    /// Required for bridged networks: the physical NIC to attach
+    pub uplink_interface: Option<String>,
+    /// Required for VXLAN networks: the gateway host that runs DHCP + NAT
+    pub gateway_host_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,13 +33,23 @@ pub struct NetworkListItem {
     #[serde(rename = "type")]
     pub network_type: String,
     pub vlan_id: Option<i32>,
+    pub vni: Option<i32>,
     pub bridge_name: String,
     pub host_id: Option<Uuid>,
     pub host_name: Option<String>,
     pub cidr: Option<String>,
     pub gateway: Option<String>,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub managed: bool,
+    pub dhcp_enabled: bool,
+    pub dhcp_range_start: Option<String>,
+    pub dhcp_range_end: Option<String>,
     pub vm_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub participating_hosts: Option<i64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,12 +75,48 @@ pub struct OkResponse {
     pub message: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SuggestQuery {
+    pub host_id: Uuid,
+}
+
+fn network_to_list_item(
+    network: &crate::features::networks::repo::NetworkRow,
+    host_name: Option<String>,
+    vm_count: i64,
+    participating_hosts: Option<i64>,
+) -> NetworkListItem {
+    NetworkListItem {
+        id: network.id,
+        name: network.name.clone(),
+        description: network.description.clone(),
+        network_type: network.type_.clone(),
+        vlan_id: network.vlan_id,
+        vni: network.vni,
+        bridge_name: network.bridge_name.clone(),
+        host_id: network.host_id,
+        host_name,
+        cidr: network.cidr.clone(),
+        gateway: network.gateway.clone(),
+        status: network.status.clone(),
+        error_message: network.error_message.clone(),
+        managed: network.managed,
+        dhcp_enabled: network.dhcp_enabled,
+        dhcp_range_start: network.dhcp_range_start.clone(),
+        dhcp_range_end: network.dhcp_range_end.clone(),
+        vm_count,
+        participating_hosts,
+        created_at: network.created_at,
+        updated_at: network.updated_at,
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/v1/networks",
     request_body = CreateNetworkRequest,
     responses(
-        (status = 200, description = "Network created", body = CreateNetworkResponse),
+        (status = 201, description = "Network created", body = NetworkDetailResponse),
         (status = 400, description = "Invalid request"),
         (status = 500, description = "Failed to create network"),
     ),
@@ -77,43 +125,50 @@ pub struct OkResponse {
 pub async fn create(
     Extension(st): Extension<AppState>,
     Json(req): Json<CreateNetworkRequest>,
-) -> Result<Json<CreateNetworkResponse>, StatusCode> {
-    // Validate network type
-    if req.network_type != "bridge" && req.network_type != "vlan" {
-        return Err(StatusCode::BAD_REQUEST);
-    }
+) -> Result<(StatusCode, Json<NetworkDetailResponse>), (StatusCode, Json<OkResponse>)> {
+    let params = service::CreateNetworkParams {
+        name: req.name,
+        description: req.description,
+        network_type: req.network_type,
+        host_id: req.host_id,
+        cidr: req.cidr,
+        vlan_id: req.vlan_id,
+        dhcp_enabled: req.dhcp_enabled,
+        dhcp_range_start: req.dhcp_range_start,
+        dhcp_range_end: req.dhcp_range_end,
+        uplink_interface: req.uplink_interface,
+        gateway_host_id: req.gateway_host_id,
+    };
 
-    // Validate VLAN ID if type is vlan
-    if req.network_type == "vlan" {
-        if req.vlan_id.is_none() {
-            return Err(StatusCode::BAD_REQUEST);
+    match service::create_network(&st, params).await {
+        Ok(network) => {
+            let host_name = if let Some(hid) = network.host_id {
+                st.hosts.get(hid).await.ok().map(|h| h.name)
+            } else {
+                None
+            };
+            let participating_hosts = if network.type_ == "vxlan" {
+                Some(1)
+            } else {
+                None
+            };
+            Ok((
+                StatusCode::CREATED,
+                Json(NetworkDetailResponse {
+                    item: network_to_list_item(&network, host_name, 0, participating_hosts),
+                }),
+            ))
         }
-        if let Some(vlan_id) = req.vlan_id {
-            if !(1..=4094).contains(&vlan_id) {
-                return Err(StatusCode::BAD_REQUEST);
-            }
+        Err(e) => {
+            let msg = e.to_string();
+            let status = if msg.contains("must be") || msg.contains("required") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            Err((status, Json(OkResponse { message: msg })))
         }
     }
-
-    let network_repo = NetworkRepository::new(st.db.clone());
-    let network = network_repo
-        .create(
-            &req.name,
-            req.description.as_deref(),
-            &req.network_type,
-            req.vlan_id,
-            &req.bridge_name,
-            req.host_id,
-            req.cidr.as_deref(),
-            req.gateway.as_deref(),
-        )
-        .await
-        .map_err(|err| {
-            error!(?err, "failed to create network");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    Ok(Json(CreateNetworkResponse { id: network.id }))
 }
 
 #[utoipa::path(
@@ -135,30 +190,29 @@ pub async fn list(
     })?;
 
     let mut items = Vec::new();
-    for network in networks {
+    for network in &networks {
         let vm_count = network_repo.get_vm_count(network.id).await.unwrap_or(0);
-
-        // Get host name if host_id is present
         let host_name = if let Some(host_id) = network.host_id {
             st.hosts.get(host_id).await.ok().map(|h| h.name)
         } else {
             None
         };
-
-        items.push(NetworkListItem {
-            id: network.id,
-            name: network.name,
-            description: network.description,
-            network_type: network.type_,
-            vlan_id: network.vlan_id,
-            bridge_name: network.bridge_name,
-            host_id: network.host_id,
+        let participating_hosts = if network.type_ == "vxlan" {
+            Some(
+                network_repo
+                    .count_network_hosts(network.id)
+                    .await
+                    .unwrap_or(0),
+            )
+        } else {
+            None
+        };
+        items.push(network_to_list_item(
+            network,
             host_name,
-            cidr: network.cidr,
-            gateway: network.gateway,
             vm_count,
-            created_at: network.created_at,
-        });
+            participating_hosts,
+        ));
     }
 
     Ok(Json(NetworkListResponse { items }))
@@ -188,29 +242,19 @@ pub async fn get(
     })?;
 
     let vm_count = network_repo.get_vm_count(id).await.unwrap_or(0);
-
-    // Get host name
     let host_name = if let Some(host_id) = network.host_id {
         st.hosts.get(host_id).await.ok().map(|h| h.name)
     } else {
         None
     };
+    let participating_hosts = if network.type_ == "vxlan" {
+        Some(network_repo.count_network_hosts(id).await.unwrap_or(0))
+    } else {
+        None
+    };
 
     Ok(Json(NetworkDetailResponse {
-        item: NetworkListItem {
-            id: network.id,
-            name: network.name,
-            description: network.description,
-            network_type: network.type_,
-            vlan_id: network.vlan_id,
-            bridge_name: network.bridge_name,
-            host_id: network.host_id,
-            host_name,
-            cidr: network.cidr,
-            gateway: network.gateway,
-            vm_count,
-            created_at: network.created_at,
-        },
+        item: network_to_list_item(&network, host_name, vm_count, participating_hosts),
     }))
 }
 
@@ -249,28 +293,19 @@ pub async fn update(
         })?;
 
     let vm_count = network_repo.get_vm_count(id).await.unwrap_or(0);
-
     let host_name = if let Some(host_id) = network.host_id {
         st.hosts.get(host_id).await.ok().map(|h| h.name)
     } else {
         None
     };
+    let participating_hosts = if network.type_ == "vxlan" {
+        Some(network_repo.count_network_hosts(id).await.unwrap_or(0))
+    } else {
+        None
+    };
 
     Ok(Json(NetworkDetailResponse {
-        item: NetworkListItem {
-            id: network.id,
-            name: network.name,
-            description: network.description,
-            network_type: network.type_,
-            vlan_id: network.vlan_id,
-            bridge_name: network.bridge_name,
-            host_id: network.host_id,
-            host_name,
-            cidr: network.cidr,
-            gateway: network.gateway,
-            vm_count,
-            created_at: network.created_at,
-        },
+        item: network_to_list_item(&network, host_name, vm_count, participating_hosts),
     }))
 }
 
@@ -288,26 +323,86 @@ pub async fn update(
 pub async fn delete(
     Extension(st): Extension<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<OkResponse>, StatusCode> {
-    let network_repo = NetworkRepository::new(st.db.clone());
-
-    // Check if network has any VMs attached
-    let vm_count = network_repo.get_vm_count(id).await.unwrap_or(0);
-    if vm_count > 0 {
-        return Err(StatusCode::CONFLICT);
-    }
-
-    network_repo.delete(id).await.map_err(|err| match err {
-        sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
-        other => {
-            error!(error = ?other, "failed to delete network");
-            StatusCode::INTERNAL_SERVER_ERROR
+) -> Result<Json<OkResponse>, (StatusCode, Json<OkResponse>)> {
+    match service::delete_network(&st, id).await {
+        Ok(()) => Ok(Json(OkResponse {
+            message: "Network deleted successfully".to_string(),
+        })),
+        Err(e) => {
+            let msg = e.to_string();
+            let status = if msg.contains("attached VMs") {
+                StatusCode::CONFLICT
+            } else if msg.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            Err((status, Json(OkResponse { message: msg })))
         }
-    })?;
+    }
+}
 
-    Ok(Json(OkResponse {
-        message: "Network deleted successfully".to_string(),
-    }))
+#[utoipa::path(
+    post,
+    path = "/v1/networks/{id}/retry",
+    responses(
+        (status = 200, description = "Network provisioning retried", body = NetworkDetailResponse),
+        (status = 400, description = "Network not in error state"),
+        (status = 500, description = "Failed to retry"),
+    ),
+    tag = "Networks"
+)]
+pub async fn retry(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<NetworkDetailResponse>, (StatusCode, Json<OkResponse>)> {
+    match service::retry_network(&st, id).await {
+        Ok(network) => {
+            let host_name = if let Some(hid) = network.host_id {
+                st.hosts.get(hid).await.ok().map(|h| h.name)
+            } else {
+                None
+            };
+            let participating_hosts = if network.type_ == "vxlan" {
+                let network_repo = NetworkRepository::new(st.db.clone());
+                Some(
+                    network_repo
+                        .count_network_hosts(network.id)
+                        .await
+                        .unwrap_or(0),
+                )
+            } else {
+                None
+            };
+            Ok(Json(NetworkDetailResponse {
+                item: network_to_list_item(&network, host_name, 0, participating_hosts),
+            }))
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let status = if msg.contains("only retry") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            Err((status, Json(OkResponse { message: msg })))
+        }
+    }
+}
+
+pub async fn suggest(
+    Extension(st): Extension<AppState>,
+    Query(q): Query<SuggestQuery>,
+) -> Result<Json<service::NetworkSuggestion>, (StatusCode, Json<OkResponse>)> {
+    match service::suggest_network(&st, q.host_id).await {
+        Ok(suggestion) => Ok(Json(suggestion)),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(OkResponse {
+                message: e.to_string(),
+            }),
+        )),
+    }
 }
 
 #[utoipa::path(
@@ -326,7 +421,6 @@ pub async fn get_vms(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let network_repo = NetworkRepository::new(st.db.clone());
 
-    // Verify network exists
     let _ = network_repo.get(id).await.map_err(|err| match err {
         sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
         other => {
@@ -341,4 +435,24 @@ pub async fn get_vms(
     })?;
 
     Ok(Json(serde_json::json!({ "vm_ids": vm_ids })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InterfacesQuery {
+    pub host_id: Uuid,
+}
+
+pub async fn list_interfaces(
+    Extension(st): Extension<AppState>,
+    Query(q): Query<InterfacesQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OkResponse>)> {
+    match service::list_host_interfaces(&st, q.host_id).await {
+        Ok(interfaces) => Ok(Json(serde_json::json!({ "interfaces": interfaces }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(OkResponse {
+                message: e.to_string(),
+            }),
+        )),
+    }
 }

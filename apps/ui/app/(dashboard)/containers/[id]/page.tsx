@@ -12,9 +12,12 @@ import { EditContainerDialog } from "@/components/container/edit-container-dialo
 import { Play, Square, RotateCw, Trash2, ArrowLeft, Loader2, Pause, PlayCircle, Edit, ExternalLink, Eye, ScrollText, BarChart3, Settings, Activity } from "lucide-react"
 import Link from "next/link"
 import { use, useState, useMemo } from "react"
-import { useContainer, useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer, usePauseContainer, useResumeContainer } from "@/lib/queries"
+import { useContainer, useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer, usePauseContainer, useResumeContainer, useVolumes, useDeleteVolume } from "@/lib/queries"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 
 const getStatusColor = (status: string) => {
@@ -55,22 +58,33 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
   const resumeContainer = useResumeContainer()
   const deleteContainer = useDeleteContainer()
 
+  const { data: allVolumes = [] } = useVolumes()
+  const deleteVolumeMutation = useDeleteVolume()
   const [editDialogOpen, setEditDialogOpen] = useState(false)
-
-  const handleDelete = () => {
-    if (confirm(`Are you sure you want to delete container "${container?.name}"?`)) {
-      deleteContainer.mutate(id, {
-        onSuccess: () => {
-          router.push("/containers")
-        },
-      })
-    }
-  }
+  const [deleteDialog, setDeleteDialog] = useState(false)
+  const [deleteVolumesChecked, setDeleteVolumesChecked] = useState(true)
 
   // Extract VM UUID from container_runtime_id (format: "vm-{uuid}")
   const getVmId = () => {
     if (!container?.container_runtime_id) return null
     return container.container_runtime_id.replace('vm-', '')
+  }
+
+  const containerVmId = getVmId()
+  const attachedVolumes = allVolumes.filter(v => containerVmId && v.attached_to_vm_id === containerVmId)
+
+  const handleDelete = () => {
+    const volumeIdsToDelete = deleteVolumesChecked ? attachedVolumes.map(v => v.id) : []
+    deleteContainer.mutate(id, {
+      onSuccess: async () => {
+        if (volumeIdsToDelete.length > 0) {
+          await Promise.allSettled(
+            volumeIdsToDelete.map(vid => deleteVolumeMutation.mutateAsync(vid))
+          )
+        }
+        router.push("/containers")
+      },
+    })
   }
 
   const handleViewVm = () => {
@@ -245,7 +259,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
             <Button
               variant="destructive"
               size="sm"
-              onClick={handleDelete}
+              onClick={() => setDeleteDialog(true)}
               disabled={deleteContainer.isPending}
             >
               <Trash2 className="mr-2 h-4 w-4" />
@@ -269,6 +283,30 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
         open={editDialogOpen}
         onOpenChange={setEditDialogOpen}
       />
+
+      <ConfirmDialog
+        open={deleteDialog}
+        onOpenChange={setDeleteDialog}
+        title="Delete Container"
+        description={`Are you sure you want to delete "${container.name}"? This action cannot be undone and will permanently remove the container and its data.`}
+        confirmText="Delete"
+        onConfirm={handleDelete}
+        variant="destructive"
+        isLoading={deleteContainer.isPending}
+      >
+        {attachedVolumes.length > 0 && (
+          <div className="flex items-center space-x-2 py-2">
+            <Checkbox
+              id="delete-container-detail-volumes"
+              checked={deleteVolumesChecked}
+              onCheckedChange={(checked) => setDeleteVolumesChecked(checked as boolean)}
+            />
+            <Label htmlFor="delete-container-detail-volumes" className="text-sm cursor-pointer">
+              Also delete {attachedVolumes.length} attached volume{attachedVolumes.length !== 1 ? "s" : ""}
+            </Label>
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   )
 }

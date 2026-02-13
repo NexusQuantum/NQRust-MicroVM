@@ -265,6 +265,49 @@ pub async fn update_guest_ip(db: &PgPool, vm_id: Uuid, guest_ip: Option<&str>) -
     Ok(())
 }
 
+#[cfg(not(test))]
+pub async fn update_metadata(
+    db: &PgPool,
+    id: Uuid,
+    name: Option<&str>,
+    tags: Option<&[String]>,
+) -> sqlx::Result<()> {
+    if let Some(name) = name {
+        sqlx::query("UPDATE vm SET name = $2, updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .bind(name)
+            .execute(db)
+            .await?;
+    }
+    if let Some(tags) = tags {
+        sqlx::query("UPDATE vm SET tags = $2, updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .bind(tags)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub async fn update_metadata(
+    _: &PgPool,
+    id: Uuid,
+    name: Option<&str>,
+    tags: Option<&[String]>,
+) -> sqlx::Result<()> {
+    let mut guard = store().lock().unwrap();
+    let row = guard.get_mut(&id).ok_or(sqlx::Error::RowNotFound)?;
+    if let Some(name) = name {
+        row.name = name.to_string();
+    }
+    if let Some(tags) = tags {
+        row.tags = tags.to_vec();
+    }
+    row.updated_at = chrono::Utc::now();
+    Ok(())
+}
+
 #[derive(Clone, Serialize, sqlx::FromRow)]
 pub struct VmDrive {
     pub id: Uuid,

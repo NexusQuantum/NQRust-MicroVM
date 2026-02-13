@@ -88,7 +88,7 @@ export default function DashboardPage() {
       cpu: vm.vcpu || 0,
       memory: vm.mem_mib || 0, // Memory in MiB
     },
-    created_by_user_id: (vm as any).created_by_user_id,
+    created_by_user_id: vm.created_by_user_id,
   }))
 
   // Transform functions for resource table
@@ -101,7 +101,7 @@ export default function DashboardPage() {
       cpu: func.vcpu || 0,
       memory: func.memory_mb || 0, // Memory in MB
     },
-    created_by_user_id: (func as any).created_by_user_id,
+    created_by_user_id: func.created_by_user_id,
   }))
 
   // Transform containers for resource table
@@ -114,7 +114,7 @@ export default function DashboardPage() {
       cpu: container.cpu_limit || 0,
       memory: container.memory_limit_mb || 0, // Memory in MB
     },
-    created_by_user_id: (container as any).created_by_user_id,
+    created_by_user_id: container.created_by_user_id,
   }))
 
   // Combine all resources (VMs used by functions/containers are already excluded)

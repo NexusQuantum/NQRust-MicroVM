@@ -13,8 +13,8 @@ use nexus_types::{
     BalloonConfig, BalloonStatsConfig, CpuConfigReq, CreateDriveReq, CreateNicReq, CreateVmReq,
     CreateVmResponse, EntropyConfigReq, GetVmResponse, ListDrivesResponse, ListNicsResponse,
     ListVmsResponse, LoggerUpdateReq, MachineConfigPatchReq, MmdsConfigReq, MmdsDataReq,
-    OkResponse, SerialConfigReq, UpdateDriveReq, UpdateNicReq, Vm, VmDrive, VmNic, VmPathParams,
-    VsockConfigReq,
+    OkResponse, SerialConfigReq, UpdateDriveReq, UpdateNicReq, UpdateVmReq, Vm, VmDrive, VmNic,
+    VmPathParams, VsockConfigReq,
 };
 use reqwest::StatusCode;
 use serde::Serialize;
@@ -225,22 +225,31 @@ async fn stream_metrics(
     vm_id: Uuid,
     ws: WebSocket,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::fs::OpenOptions;
     use tokio::io::{AsyncBufReadExt, BufReader};
-    use tokio::time::{interval, Duration};
+    use tokio::net::unix::pipe;
+    use tokio::time::{interval, timeout, Duration};
 
     let (mut sender, mut receiver) = ws.split();
     let metrics_path = format!("/srv/fc/vms/{}/logs/metrics.json", vm_id);
 
-    // Create a ticker that will trigger metrics flush every second
     let mut ticker = interval(Duration::from_secs(1));
-
-    // Track last metrics for rate calculations
     let mut last_metrics: Option<serde_json::Value> = None;
+
+    // Open the FIFO once and keep it open for the entire session.
+    // Previously the FIFO was opened/closed each tick, which caused Firecracker
+    // to get EPIPE on writes (no reader present when FlushMetrics was called).
+    // Using tokio::net::unix::pipe for proper async, non-blocking FIFO I/O.
+    let fifo_rx = match pipe::OpenOptions::new().open_receiver(&metrics_path) {
+        Ok(rx) => rx,
+        Err(e) => {
+            tracing::warn!(vm_id = %vm_id, error = %e, "Failed to open metrics FIFO — was the VM started with metrics enabled?");
+            return Ok(());
+        }
+    };
+    let mut reader = BufReader::new(fifo_rx);
 
     loop {
         tokio::select! {
-            // Check for client disconnect
             msg = receiver.next() => {
                 match msg {
                     Some(Ok(Message::Close(_))) | None => {
@@ -256,65 +265,49 @@ async fn stream_metrics(
                 }
             }
 
-            // Send metrics every second
             _ = ticker.tick() => {
-                // First, flush metrics from Firecracker to the FIFO
+                // Flush metrics from Firecracker into the FIFO
                 if let Err(e) = super::service::flush_vm_metrics(&st, vm_id).await {
                     tracing::debug!(vm_id = %vm_id, "Failed to flush metrics: {}", e);
                     continue;
                 }
 
-                // Try to read metrics from the FIFO
-                match OpenOptions::new().read(true).open(&metrics_path).await {
-                    Ok(file) => {
-                        let mut reader = BufReader::new(file);
-                        let mut line = String::new();
+                // Read one JSON line with a timeout (Firecracker writes within ms of flush)
+                let mut line = String::new();
+                match timeout(Duration::from_millis(800), reader.read_line(&mut line)).await {
+                    Ok(Ok(n)) if n > 0 => {
+                        if let Ok(fc_metrics) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let (cpu_percent, memory_percent) = match super::service::get_process_stats(&st, vm_id).await {
+                                Ok(stats) => (stats.cpu_percent, stats.memory_percent),
+                                Err(e) => {
+                                    tracing::debug!(vm_id = %vm_id, "Failed to get process stats: {}", e);
+                                    (0.0, 0.0)
+                                }
+                            };
 
-                        // Read one line from the FIFO (Firecracker writes one JSON object per flush)
-                        match reader.read_line(&mut line).await {
-                            Ok(n) if n > 0 => {
-                                // Debug: log raw metrics
-                                tracing::info!(vm_id = %vm_id, raw_metrics = %line.chars().take(500).collect::<String>(), "Received Firecracker metrics");
+                            let simplified = simplify_firecracker_metrics(
+                                &fc_metrics,
+                                last_metrics.as_ref(),
+                                cpu_percent,
+                                memory_percent,
+                            );
 
-                                // Parse Firecracker metrics and convert to our format
-                                if let Ok(fc_metrics) = serde_json::from_str::<serde_json::Value>(&line) {
-                                    // Fetch process stats from agent for real CPU/memory metrics
-                                    let (cpu_percent, memory_percent) = match super::service::get_process_stats(&st, vm_id).await {
-                                        Ok(stats) => (stats.cpu_percent, stats.memory_percent),
-                                        Err(e) => {
-                                            tracing::debug!(vm_id = %vm_id, "Failed to get process stats: {}", e);
-                                            (0.0, 0.0)
-                                        }
-                                    };
-
-                                    let simplified = simplify_firecracker_metrics(
-                                        &fc_metrics,
-                                        last_metrics.as_ref(),
-                                        cpu_percent,
-                                        memory_percent,
-                                    );
-
-                                    tracing::info!(vm_id = %vm_id, simplified = ?simplified, "Simplified metrics");
-
-                                    if let Ok(json) = serde_json::to_string(&simplified) {
-                                        if sender.send(Message::Text(json)).await.is_err() {
-                                            break;
-                                        }
-                                    }
-
-                                    last_metrics = Some(fc_metrics);
-                                } else {
-                                    tracing::warn!(vm_id = %vm_id, "Failed to parse Firecracker metrics JSON");
+                            if let Ok(json) = serde_json::to_string(&simplified) {
+                                if sender.send(Message::Text(json)).await.is_err() {
+                                    break;
                                 }
                             }
-                            _ => {
-                                // No data available or error, skip this tick
-                            }
+
+                            last_metrics = Some(fc_metrics);
+                        } else {
+                            tracing::warn!(vm_id = %vm_id, "Failed to parse Firecracker metrics JSON");
                         }
                     }
-                    Err(e) => {
-                        tracing::debug!(vm_id = %vm_id, "Failed to open metrics FIFO: {}", e);
-                        // Metrics FIFO not available, skip this tick
+                    Ok(Err(e)) => {
+                        tracing::debug!(vm_id = %vm_id, "Failed to read metrics FIFO: {}", e);
+                    }
+                    _ => {
+                        // Timeout or empty read — skip this tick
                     }
                 }
             }
@@ -419,12 +412,20 @@ pub async fn create(
     Extension(st): Extension<AppState>,
     user: Option<Extension<AuthenticatedUser>>,
     Json(req): Json<CreateVmReq>,
-) -> Result<Json<CreateVmResponse>, axum::http::StatusCode> {
+) -> Result<Json<CreateVmResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (user_id, username) = extract_user_info(user);
     let id = Uuid::new_v4();
     super::service::create_and_start(&st, id, req, None, user_id, &username)
         .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to create VM".to_string(),
+                    fault_message: Some(err.to_string()),
+                }),
+            )
+        })?;
     Ok(Json(CreateVmResponse { id }))
 }
 
@@ -439,10 +440,16 @@ pub async fn create(
 )]
 pub async fn list(
     Extension(st): Extension<AppState>,
-) -> Result<Json<ListVmsResponse>, axum::http::StatusCode> {
-    let items = super::repo::list(&st.db)
-        .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<Json<ListVmsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let items = super::repo::list(&st.db).await.map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to list VMs".to_string(),
+                fault_message: Some(err.to_string()),
+            }),
+        )
+    })?;
     let items = items.into_iter().map(Vm::from).collect();
     Ok(Json(ListVmsResponse { items }))
 }
@@ -461,11 +468,73 @@ pub async fn list(
 pub async fn get(
     Extension(st): Extension<AppState>,
     Path(VmPathParams { id }): Path<VmPathParams>,
-) -> Result<Json<GetVmResponse>, axum::http::StatusCode> {
-    let row = super::repo::get(&st.db, id)
-        .await
-        .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+) -> Result<Json<GetVmResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let row = super::repo::get(&st.db, id).await.map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "VM not found".to_string(),
+                fault_message: None,
+            }),
+        )
+    })?;
     Ok(Json(GetVmResponse { item: row.into() }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fault_message: Option<String>,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/v1/vms/{id}",
+    params(VmPathParams),
+    request_body = UpdateVmReq,
+    responses(
+        (status = 200, description = "VM updated", body = OkResponse),
+        (status = 400, description = "Invalid request"),
+        (status = 404, description = "VM not found"),
+        (status = 500, description = "Failed to update VM"),
+    ),
+    tag = "VMs"
+)]
+pub async fn update(
+    Extension(st): Extension<AppState>,
+    user: Option<Extension<AuthenticatedUser>>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+    Json(req): Json<UpdateVmReq>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let (user_id, username) = extract_user_info(user);
+    super::service::update_vm_metadata(
+        &st,
+        id,
+        req.name.as_deref(),
+        req.tags.as_deref(),
+        user_id,
+        &username,
+    )
+    .await
+    .map_err(|err| {
+        let err_str = err.to_string();
+        let status = if err_str.contains("not found") {
+            StatusCode::NOT_FOUND
+        } else if err_str.contains("cannot be empty") {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: "Failed to update VM".to_string(),
+                fault_message: Some(err_str),
+            }),
+        )
+    })?;
+    Ok(Json(OkResponse { ok: true }))
 }
 
 #[utoipa::path(
@@ -483,11 +552,25 @@ pub async fn start(
     Extension(st): Extension<AppState>,
     user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
-) -> Result<Json<OkResponse>, axum::http::StatusCode> {
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (user_id, username) = extract_user_info(user);
     super::service::start_vm_by_id_with_user(&st, id, user_id, &username)
         .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            let err_str = err.to_string();
+            let status = if err_str.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (
+                status,
+                Json(ErrorResponse {
+                    error: "Failed to start VM".to_string(),
+                    fault_message: Some(err_str),
+                }),
+            )
+        })?;
     Ok(Json(OkResponse::default()))
 }
 
@@ -505,11 +588,19 @@ pub async fn stop(
     Extension(st): Extension<AppState>,
     user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
-) -> Result<Json<OkResponse>, axum::http::StatusCode> {
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (user_id, username) = extract_user_info(user);
     super::service::stop_only(&st, id, user_id, &username)
         .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to stop VM".to_string(),
+                    fault_message: Some(err.to_string()),
+                }),
+            )
+        })?;
     Ok(Json(OkResponse::default()))
 }
 
@@ -529,11 +620,25 @@ pub async fn pause(
     Extension(st): Extension<AppState>,
     user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
-) -> Result<Json<OkResponse>, axum::http::StatusCode> {
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (user_id, username) = extract_user_info(user);
     super::service::pause_vm(&st, id, user_id, &username)
         .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            let err_str = err.to_string();
+            let status = if err_str.contains("must be running") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (
+                status,
+                Json(ErrorResponse {
+                    error: "Failed to pause VM".to_string(),
+                    fault_message: Some(err_str),
+                }),
+            )
+        })?;
     Ok(Json(OkResponse::default()))
 }
 
@@ -553,11 +658,25 @@ pub async fn resume(
     Extension(st): Extension<AppState>,
     user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
-) -> Result<Json<OkResponse>, axum::http::StatusCode> {
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (user_id, username) = extract_user_info(user);
     super::service::resume_vm(&st, id, user_id, &username)
         .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            let err_str = err.to_string();
+            let status = if err_str.contains("must be paused") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (
+                status,
+                Json(ErrorResponse {
+                    error: "Failed to resume VM".to_string(),
+                    fault_message: Some(err_str),
+                }),
+            )
+        })?;
     Ok(Json(OkResponse::default()))
 }
 
@@ -575,11 +694,19 @@ pub async fn delete(
     Extension(st): Extension<AppState>,
     user: Option<Extension<AuthenticatedUser>>,
     Path(VmPathParams { id }): Path<VmPathParams>,
-) -> Result<Json<OkResponse>, axum::http::StatusCode> {
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (user_id, username) = extract_user_info(user);
     super::service::stop_and_delete_with_user(&st, id, user_id, &username)
         .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to delete VM".to_string(),
+                    fault_message: Some(err.to_string()),
+                }),
+            )
+        })?;
     Ok(Json(OkResponse::default()))
 }
 

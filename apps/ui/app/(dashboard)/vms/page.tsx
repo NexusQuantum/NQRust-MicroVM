@@ -66,7 +66,7 @@ const VMFlowDiagram = () => (
 )
 
 export default function VMsPage() {
-  const { data: vms, isLoading, error } = useVMs()
+  const { data: vms, isLoading, error } = useVMs(false, 5000)
   const { data: templates, isLoading: templatesLoading } = useTemplates()
   const [searchTerm, setSearchTerm] = useState("")
   const { user } = useAuthStore()

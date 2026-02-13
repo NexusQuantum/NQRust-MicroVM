@@ -517,6 +517,19 @@ pub fn install_bundled_packages(bundle_path: &Path) -> Result<Vec<LogEntry>> {
         ));
     }
 
+    // Verify critical packages are actually installed
+    for pkg in &["dnsmasq", "screen", "iptables", "bridge-utils"] {
+        let installed = run_command("dpkg", &["-l", pkg])
+            .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("ii"))
+            .unwrap_or(false);
+        if !installed {
+            logs.push(LogEntry::warning(format!(
+                "Package '{}' may not have installed correctly from bundle",
+                pkg
+            )));
+        }
+    }
+
     Ok(logs)
 }
 

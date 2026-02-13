@@ -9,9 +9,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { AlertCircle, Info } from "lucide-react"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { useCreateNetwork, useHosts, useHost } from "@/lib/queries"
+import { Switch } from "@/components/ui/switch"
+import { Globe, Lock, Network, Layers, Loader2, AlertTriangle } from "lucide-react"
+import { useCreateNetwork, useHosts, useNetworkSuggestion, useNetworkInterfaces } from "@/lib/queries"
 import { toast } from "sonner"
 
 interface NetworkCreateDialogProps {
@@ -26,73 +26,74 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    type: "bridge",
-    bridge_name: "",
-    vlan_id: "",
+    type: "nat" as "nat" | "isolated" | "bridged" | "vxlan",
     host_id: "",
     cidr: "",
-    gateway: "",
+    vlan_id: "",
+    dhcp_enabled: true,
+    dhcp_range_start: "",
+    dhcp_range_end: "",
+    uplink_interface: "",
+    gateway_host_id: "",
   })
 
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [bridgeAutoFilled, setBridgeAutoFilled] = useState(false)
 
-  // Fetch selected host details for smart defaults
-  const { data: selectedHost } = useHost(formData.host_id)
+  // Fetch suggestion for the selected host (for NAT/isolated/vxlan — not bridged)
+  const suggestionHostId = formData.type === "vxlan" ? formData.gateway_host_id : formData.host_id
+  const { data: suggestion, isLoading: suggestionLoading } = useNetworkSuggestion(
+    formData.type !== "bridged" ? suggestionHostId : ""
+  )
+
+  // Fetch available interfaces for bridged mode
+  const { data: interfacesData, isLoading: interfacesLoading } = useNetworkInterfaces(
+    formData.type === "bridged" ? formData.host_id : ""
+  )
+
+  // Auto-select host when dialog opens
+  useEffect(() => {
+    if (open && !formData.host_id && hosts.length > 0) {
+      const defaultHost = hosts.find(h => h.addr.includes(':19090')) || hosts[0]
+      setFormData(prev => ({ ...prev, host_id: defaultHost.id }))
+    }
+  }, [open, hosts, formData.host_id])
+
+  // Auto-fill CIDR and DHCP range from suggestion when host changes
+  useEffect(() => {
+    if (suggestion) {
+      setFormData(prev => ({
+        ...prev,
+        cidr: prev.cidr || suggestion.cidr,
+        dhcp_range_start: prev.dhcp_range_start || suggestion.dhcp_range_start,
+        dhcp_range_end: prev.dhcp_range_end || suggestion.dhcp_range_end,
+      }))
+    }
+  }, [suggestion])
 
   // Close dialog and reset form after successful creation
   useEffect(() => {
     if (createNetwork.isSuccess) {
-      toast.success("Network created successfully", {
-        description: `Network "${formData.name}" has been created.`
-      })
       resetForm()
       onOpenChange(false)
-      createNetwork.reset() // Reset mutation state
+      createNetwork.reset()
     }
   }, [createNetwork.isSuccess])
-
-  // Show error toast when creation fails
-  useEffect(() => {
-    if (createNetwork.isError) {
-      const errorMessage = createNetwork.error instanceof Error
-        ? createNetwork.error.message
-        : "An unexpected error occurred"
-      toast.error("Failed to create network", {
-        description: errorMessage
-      })
-    }
-  }, [createNetwork.isError])
-
-  // Auto-select defaults when dialog opens: host (port 19090) and bridge (fcbr0)
-  useEffect(() => {
-    if (open && !formData.host_id) {
-      if (hosts.length > 0) {
-        // Find host with port 19090 in address (manager host)
-        const defaultHost = hosts.find(h => h.addr.includes(':19090')) || hosts[0]
-        setFormData(prev => ({
-          ...prev,
-          host_id: defaultHost.id,
-          bridge_name: 'fcbr0'  // Always default to fcbr0
-        }))
-        setBridgeAutoFilled(true)
-      }
-    }
-  }, [open, hosts, formData.host_id])
 
   const resetForm = () => {
     setFormData({
       name: "",
       description: "",
-      type: "bridge",
-      bridge_name: "",
-      vlan_id: "",
+      type: "nat",
       host_id: "",
       cidr: "",
-      gateway: "",
+      vlan_id: "",
+      dhcp_enabled: true,
+      dhcp_range_start: "",
+      dhcp_range_end: "",
+      uplink_interface: "",
+      gateway_host_id: "",
     })
     setErrors({})
-    setBridgeAutoFilled(false)
   }
 
   const validateForm = () => {
@@ -102,63 +103,71 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
       newErrors.name = "Name is required"
     }
 
-    if (!formData.bridge_name.trim()) {
-      newErrors.bridge_name = "Bridge name is required"
-    }
-
     if (!formData.host_id) {
       newErrors.host_id = "Host is required"
     }
 
-    if (formData.type === "vlan") {
-      const vlanId = parseInt(formData.vlan_id, 10)
-      if (!formData.vlan_id || isNaN(vlanId)) {
-        newErrors.vlan_id = "VLAN ID is required for VLAN type"
-      } else if (vlanId < 1 || vlanId > 4094) {
-        newErrors.vlan_id = "VLAN ID must be between 1 and 4094"
+    // Bridged: require uplink interface
+    if (formData.type === "bridged" && !formData.uplink_interface) {
+      newErrors.uplink_interface = "Select a network interface to bridge"
+    }
+
+    // VXLAN: require gateway host
+    if (formData.type === "vxlan" && !formData.gateway_host_id) {
+      newErrors.gateway_host_id = "Gateway host is required for VXLAN networks"
+    }
+
+    // Validate CIDR format if provided (not required for bridged)
+    if (formData.cidr && !/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(formData.cidr)) {
+      newErrors.cidr = "Invalid CIDR format (e.g., 10.0.2.0/24)"
+    }
+
+    // Validate DHCP range if DHCP enabled and custom range provided
+    if (formData.dhcp_enabled) {
+      const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/
+      if (formData.dhcp_range_start && !ipPattern.test(formData.dhcp_range_start)) {
+        newErrors.dhcp_range_start = "Invalid IP address"
+      }
+      if (formData.dhcp_range_end && !ipPattern.test(formData.dhcp_range_end)) {
+        newErrors.dhcp_range_end = "Invalid IP address"
       }
     }
 
-    // Validate CIDR format if provided
-    if (formData.cidr && !/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(formData.cidr)) {
-      newErrors.cidr = "Invalid CIDR format (e.g., 10.100.0.0/24)"
-    }
-
-    // Validate gateway IP if provided
-    if (formData.gateway && !/^(\d{1,3}\.){3}\d{1,3}$/.test(formData.gateway)) {
-      newErrors.gateway = "Invalid IP address format"
+    // Validate VLAN ID if provided
+    if (formData.vlan_id) {
+      const vlanNum = parseInt(formData.vlan_id, 10)
+      if (isNaN(vlanNum) || vlanNum < 1 || vlanNum > 4094) {
+        newErrors.vlan_id = "VLAN ID must be between 1 and 4094"
+      }
     }
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
 
+  const selectedInterface = interfacesData?.interfaces.find(i => i.name === formData.uplink_interface)
+
   const handleSubmit = () => {
-    if (!validateForm()) {
-      return
-    }
+    if (!validateForm()) return
 
-    const payload: any = {
+    const isBridged = formData.type === "bridged"
+    const isVxlan = formData.type === "vxlan"
+    const hasDhcp = !isBridged && formData.dhcp_enabled
+
+    createNetwork.mutate({
       name: formData.name,
-      description: formData.description || null,
+      description: formData.description || undefined,
       type: formData.type,
-      bridge_name: formData.bridge_name,
-      host_id: formData.host_id,
-      cidr: formData.cidr || null,
-      gateway: formData.gateway || null,
-    }
-
-    if (formData.type === "vlan") {
-      payload.vlan_id = parseInt(formData.vlan_id, 10)
-    } else {
-      payload.vlan_id = null
-    }
-
-    createNetwork.mutate(payload)
+      host_id: isVxlan ? formData.gateway_host_id : formData.host_id,
+      cidr: !isBridged && formData.cidr ? formData.cidr : undefined,
+      vlan_id: formData.vlan_id ? parseInt(formData.vlan_id, 10) : undefined,
+      dhcp_enabled: isBridged ? false : formData.dhcp_enabled,
+      dhcp_range_start: hasDhcp && formData.dhcp_range_start ? formData.dhcp_range_start : undefined,
+      dhcp_range_end: hasDhcp && formData.dhcp_range_end ? formData.dhcp_range_end : undefined,
+      uplink_interface: isBridged ? formData.uplink_interface : undefined,
+      gateway_host_id: isVxlan ? formData.gateway_host_id : undefined,
+    })
   }
-
-  // Common bridge names for dropdown
-  const commonBridges = ["fcbr0", "fcbr1", "fcbr2", "virbr0", "br0"]
 
   return (
     <Dialog open={open} onOpenChange={(open) => {
@@ -169,23 +178,16 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Create Network</DialogTitle>
           <DialogDescription>
-            Create a new network for VM connectivity. Networks can be simple bridges or VLAN-isolated segments.
+            Create a new virtual network. The system will provision the bridge, DHCP, and firewall rules on the host.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4 overflow-y-auto flex-1 min-h-0">
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              Networks are host-specific. VMs can only use networks on the same host.
-            </AlertDescription>
-          </Alert>
-
           <div className="space-y-2">
             <Label htmlFor="name">Network Name *</Label>
             <Input
               id="name"
-              placeholder="e.g., Production Network"
+              placeholder="e.g., Dev Network"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             />
@@ -207,78 +209,71 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
             <Label>Network Type *</Label>
             <RadioGroup
               value={formData.type}
-              onValueChange={(value) => setFormData({ ...formData, type: value })}
+              onValueChange={(value: "nat" | "isolated" | "bridged" | "vxlan") => setFormData({ ...formData, type: value, uplink_interface: "", gateway_host_id: "" })}
             >
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="bridge" id="type-bridge" />
-                <Label htmlFor="type-bridge" className="font-normal cursor-pointer">
-                  Bridge - Standard bridge network
-                </Label>
+              <div className="flex items-start space-x-3 p-3 rounded-md border cursor-pointer hover:bg-muted/50"
+                onClick={() => setFormData({ ...formData, type: "nat", uplink_interface: "" })}>
+                <RadioGroupItem value="nat" id="type-nat" className="mt-0.5" />
+                <div className="space-y-1">
+                  <Label htmlFor="type-nat" className="font-medium cursor-pointer flex items-center gap-2">
+                    <Globe className="h-4 w-4" />
+                    NAT
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Private subnet with internet access via host NAT. VMs get DHCP addresses and can reach the internet through the host.
+                  </p>
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="vlan" id="type-vlan" />
-                <Label htmlFor="type-vlan" className="font-normal cursor-pointer">
-                  VLAN - Isolated network with VLAN tagging (802.1Q)
-                </Label>
+              <div className="flex items-start space-x-3 p-3 rounded-md border cursor-pointer hover:bg-muted/50"
+                onClick={() => setFormData({ ...formData, type: "isolated", uplink_interface: "" })}>
+                <RadioGroupItem value="isolated" id="type-isolated" className="mt-0.5" />
+                <div className="space-y-1">
+                  <Label htmlFor="type-isolated" className="font-medium cursor-pointer flex items-center gap-2">
+                    <Lock className="h-4 w-4" />
+                    Isolated
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Private subnet with no internet access. VMs can only communicate with each other. Ideal for air-gapped workloads.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start space-x-3 p-3 rounded-md border cursor-pointer hover:bg-muted/50"
+                onClick={() => setFormData({ ...formData, type: "bridged", uplink_interface: "", gateway_host_id: "" })}>
+                <RadioGroupItem value="bridged" id="type-bridged" className="mt-0.5" />
+                <div className="space-y-1">
+                  <Label htmlFor="type-bridged" className="font-medium cursor-pointer flex items-center gap-2">
+                    <Network className="h-4 w-4" />
+                    Bridged
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Direct LAN access. A physical NIC is attached to a bridge, giving VMs addresses on your external network.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start space-x-3 p-3 rounded-md border cursor-pointer hover:bg-muted/50"
+                onClick={() => setFormData({ ...formData, type: "vxlan", uplink_interface: "", gateway_host_id: "" })}>
+                <RadioGroupItem value="vxlan" id="type-vxlan" className="mt-0.5" />
+                <div className="space-y-1">
+                  <Label htmlFor="type-vxlan" className="font-medium cursor-pointer flex items-center gap-2">
+                    <Layers className="h-4 w-4" />
+                    VXLAN (Overlay)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Multi-host overlay network. VMs on different hosts communicate via VXLAN tunnels. Select a gateway host for DHCP and internet access.
+                  </p>
+                </div>
               </div>
             </RadioGroup>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="bridge_name">
-                  {formData.type === "vlan" ? "Parent Bridge *" : "Bridge Name *"}
-                </Label>
-                {formData.type === "vlan" && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p>VLANs require a parent bridge to create isolated network segments. The system will create a VLAN sub-interface (e.g., fcbr0.100) on this bridge.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-              </div>
-              <Select
-                value={formData.bridge_name}
-                onValueChange={(value) => {
-                  setFormData({ ...formData, bridge_name: value })
-                  setBridgeAutoFilled(false)
-                }}
-              >
-                <SelectTrigger id="bridge_name">
-                  <SelectValue placeholder="Select bridge" />
-                </SelectTrigger>
-                <SelectContent>
-                  {commonBridges.map((bridge) => (
-                    <SelectItem key={bridge} value={bridge}>
-                      {bridge}
-                      {bridge === formData.bridge_name && bridgeAutoFilled && (
-                        <span className="ml-2 text-xs text-muted-foreground">(default)</span>
-                      )}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors.bridge_name && <p className="text-xs text-destructive">{errors.bridge_name}</p>}
-              <p className="text-xs text-muted-foreground">
-                {bridgeAutoFilled ? (
-                  <span className="text-primary">Auto-filled from host default</span>
-                ) : (
-                  "Linux bridge device (e.g., fcbr0)"
-                )}
-              </p>
-            </div>
-
+          {formData.type !== "vxlan" && (
             <div className="space-y-2">
               <Label htmlFor="host_id">Host *</Label>
               <Select
                 value={formData.host_id}
-                onValueChange={(value) => setFormData({ ...formData, host_id: value })}
+                onValueChange={(value) => {
+                  setFormData({ ...formData, host_id: value, cidr: "", dhcp_range_start: "", dhcp_range_end: "", uplink_interface: "" })
+                }}
               >
                 <SelectTrigger id="host_id">
                   <SelectValue placeholder="Select host" />
@@ -292,60 +287,195 @@ export function NetworkCreateDialog({ open, onOpenChange }: NetworkCreateDialogP
                 </SelectContent>
               </Select>
               {errors.host_id && <p className="text-xs text-destructive">{errors.host_id}</p>}
-              <p className="text-xs text-muted-foreground">
-                Which host manages this network
-              </p>
             </div>
-          </div>
+          )}
 
-          {formData.type === "vlan" && (
+          {formData.type === "vxlan" && (
             <div className="space-y-2">
-              <Label htmlFor="vlan_id">VLAN ID *</Label>
-              <Input
-                id="vlan_id"
-                type="number"
-                min="1"
-                max="4094"
-                placeholder="e.g., 100"
-                value={formData.vlan_id}
-                onChange={(e) => setFormData({ ...formData, vlan_id: e.target.value })}
-              />
-              {errors.vlan_id && <p className="text-xs text-destructive">{errors.vlan_id}</p>}
+              <Label htmlFor="gateway_host_id">Gateway Host *</Label>
+              <Select
+                value={formData.gateway_host_id}
+                onValueChange={(value) => {
+                  setFormData({ ...formData, gateway_host_id: value, cidr: "", dhcp_range_start: "", dhcp_range_end: "" })
+                }}
+              >
+                <SelectTrigger id="gateway_host_id">
+                  <SelectValue placeholder="Select gateway host" />
+                </SelectTrigger>
+                <SelectContent>
+                  {hosts.map((host) => (
+                    <SelectItem key={host.id} value={host.id}>
+                      {host.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors.gateway_host_id && <p className="text-xs text-destructive">{errors.gateway_host_id}</p>}
               <p className="text-xs text-muted-foreground">
-                VLAN tag (1-4094) for network isolation
+                The gateway host runs DHCP and NAT for the overlay. VNI will be auto-assigned. The overlay auto-expands to other hosts when VMs are created.
               </p>
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="cidr">CIDR (optional)</Label>
-              <Input
-                id="cidr"
-                placeholder="e.g., 10.100.0.0/24"
-                value={formData.cidr}
-                onChange={(e) => setFormData({ ...formData, cidr: e.target.value })}
-              />
-              {errors.cidr && <p className="text-xs text-destructive">{errors.cidr}</p>}
-              <p className="text-xs text-muted-foreground">
-                Network address range
-              </p>
-            </div>
+          {formData.host_id && formData.type === "bridged" && (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="uplink_interface">Network Interface *</Label>
+                <Select
+                  value={formData.uplink_interface}
+                  onValueChange={(value) => setFormData({ ...formData, uplink_interface: value })}
+                >
+                  <SelectTrigger id="uplink_interface">
+                    <SelectValue placeholder={interfacesLoading ? "Loading interfaces..." : "Select a physical NIC"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {interfacesData?.interfaces.map((iface) => (
+                      <SelectItem key={iface.name} value={iface.name}>
+                        <span className="flex items-center gap-2">
+                          {iface.name}
+                          <span className="text-muted-foreground text-xs">
+                            {iface.addresses.length > 0 ? iface.addresses[0] : iface.mac}
+                          </span>
+                          {iface.is_management && (
+                            <span className="text-xs text-amber-500 font-medium">mgmt</span>
+                          )}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.uplink_interface && <p className="text-xs text-destructive">{errors.uplink_interface}</p>}
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="gateway">Gateway (optional)</Label>
-              <Input
-                id="gateway"
-                placeholder="e.g., 10.100.0.1"
-                value={formData.gateway}
-                onChange={(e) => setFormData({ ...formData, gateway: e.target.value })}
-              />
-              {errors.gateway && <p className="text-xs text-destructive">{errors.gateway}</p>}
+              {selectedInterface?.is_management && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    <strong>{selectedInterface.name}</strong> is the management interface (default route). Bridging it will disrupt host connectivity and you may lose access to this server. Choose a different NIC unless you know what you are doing.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="vlan_id">VLAN ID</Label>
+                <Input
+                  id="vlan_id"
+                  type="number"
+                  min={1}
+                  max={4094}
+                  placeholder="e.g., 100"
+                  value={formData.vlan_id}
+                  onChange={(e) => setFormData({ ...formData, vlan_id: e.target.value })}
+                />
+                {errors.vlan_id && <p className="text-xs text-destructive">{errors.vlan_id}</p>}
+                <p className="text-xs text-muted-foreground">
+                  Optional. Tag traffic with an 802.1Q VLAN ID. Requires the host uplink to be on a trunk port.
+                </p>
+              </div>
+
               <p className="text-xs text-muted-foreground">
-                Default gateway IP
+                The external network handles IP assignment. No CIDR, gateway, or DHCP is configured by the platform for bridged networks.
               </p>
             </div>
-          </div>
+          )}
+
+          {((formData.type === "vxlan" ? formData.gateway_host_id : formData.host_id) && formData.type !== "bridged") && (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="cidr">Subnet CIDR</Label>
+                <Input
+                  id="cidr"
+                  placeholder={suggestionLoading ? "Loading..." : "e.g., 10.0.2.0/24"}
+                  value={formData.cidr}
+                  onChange={(e) => setFormData({ ...formData, cidr: e.target.value })}
+                />
+                {errors.cidr && <p className="text-xs text-destructive">{errors.cidr}</p>}
+                <p className="text-xs text-muted-foreground">
+                  Leave empty to use the suggested subnet. The system auto-assigns an available range.
+                </p>
+              </div>
+
+              {formData.type !== "vxlan" && (
+                <div className="space-y-2">
+                  <Label htmlFor="vlan_id">VLAN ID</Label>
+                  <Input
+                    id="vlan_id"
+                    type="number"
+                    min={1}
+                    max={4094}
+                    placeholder="e.g., 100"
+                    value={formData.vlan_id}
+                    onChange={(e) => setFormData({ ...formData, vlan_id: e.target.value })}
+                  />
+                  {errors.vlan_id && <p className="text-xs text-destructive">{errors.vlan_id}</p>}
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Tag traffic with an 802.1Q VLAN ID. Requires the host uplink to be on a trunk port.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="dhcp_enabled">DHCP Server</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically assign IP addresses to VMs on this network.
+                    </p>
+                  </div>
+                  <Switch
+                    id="dhcp_enabled"
+                    checked={formData.dhcp_enabled}
+                    onCheckedChange={(checked) => setFormData({ ...formData, dhcp_enabled: checked })}
+                  />
+                </div>
+                {formData.dhcp_enabled && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="dhcp_start" className="text-xs">Range Start</Label>
+                      <Input
+                        id="dhcp_start"
+                        placeholder={suggestionLoading ? "..." : "e.g., 10.0.2.10"}
+                        value={formData.dhcp_range_start}
+                        onChange={(e) => setFormData({ ...formData, dhcp_range_start: e.target.value })}
+                      />
+                      {errors.dhcp_range_start && <p className="text-xs text-destructive">{errors.dhcp_range_start}</p>}
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="dhcp_end" className="text-xs">Range End</Label>
+                      <Input
+                        id="dhcp_end"
+                        placeholder={suggestionLoading ? "..." : "e.g., 10.0.2.250"}
+                        value={formData.dhcp_range_end}
+                        onChange={(e) => setFormData({ ...formData, dhcp_range_end: e.target.value })}
+                      />
+                      {errors.dhcp_range_end && <p className="text-xs text-destructive">{errors.dhcp_range_end}</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {suggestion && (
+                <Alert>
+                  {suggestionLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  <AlertDescription className="text-xs space-y-1">
+                    <div className="font-medium mb-1">Auto-assigned configuration:</div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                      <span className="text-muted-foreground">Bridge:</span>
+                      <code className="text-xs">{suggestion.bridge_name}</code>
+                      <span className="text-muted-foreground">Subnet:</span>
+                      <code className="text-xs">{suggestion.cidr}</code>
+                      <span className="text-muted-foreground">Gateway:</span>
+                      <code className="text-xs">{suggestion.gateway}</code>
+                      <span className="text-muted-foreground">DHCP Range:</span>
+                      <code className="text-xs">{suggestion.dhcp_range_start} - {suggestion.dhcp_range_end}</code>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )}
         </div>
 
         <DialogFooter className="flex-shrink-0">

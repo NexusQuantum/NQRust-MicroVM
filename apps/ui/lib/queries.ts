@@ -90,6 +90,8 @@ export const queryKeys = {
   networks: ["networks"] as const,
   network: (id: string) => ["networks", id] as const,
   networkVms: (id: string) => ["networks", id, "vms"] as const,
+  networkSuggestion: (hostId: string) => ["networks", "suggest", hostId] as const,
+  networkInterfaces: (hostId: string) => ["networks", "interfaces", hostId] as const,
 
   // volumes
   volumes: ["volumes"] as const,
@@ -238,12 +240,13 @@ export function useVMs(includeInternal = false, refetchInterval?: number) {
   });
 }
 
-export function useVM(id: string) {
+export function useVM(id: string, refetchInterval?: number) {
   return useQuery({
     queryKey: queryKeys.vm(id),
     queryFn: () => facadeApi.getVM(id),
     enabled: !!id,
     staleTime: 10 * 1000, // 10 seconds
+    refetchInterval,
   });
 }
 
@@ -547,6 +550,20 @@ export function useVmStatePatch() {
         case "ctrl_alt_del":          break;
       }
     }
+  });
+}
+
+// VM Update (rename, tags)
+export function useUpdateVM() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: import("@/lib/types").UpdateVmRequest }) =>
+      facadeApi.updateVM(id, data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    },
   });
 }
 
@@ -979,6 +996,35 @@ export function useDeleteNetwork() {
     mutationFn: (id: string) => facadeApi.deleteNetwork(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.networks });    }
+  });
+}
+
+export function useNetworkSuggestion(hostId: string) {
+  return useQuery({
+    queryKey: queryKeys.networkSuggestion(hostId),
+    queryFn: () => facadeApi.getNetworkSuggestion(hostId),
+    enabled: !!hostId,
+    staleTime: 10 * 1000,
+  });
+}
+
+export function useNetworkInterfaces(hostId: string) {
+  return useQuery({
+    queryKey: queryKeys.networkInterfaces(hostId),
+    queryFn: () => facadeApi.getNetworkInterfaces(hostId),
+    enabled: !!hostId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useRetryNetwork() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.retryNetwork(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.networks });
+    },
   });
 }
 

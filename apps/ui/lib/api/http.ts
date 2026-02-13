@@ -34,7 +34,7 @@ export class ApiClient {
   private timeout: number
   private getToken: (() => string | null) | null = null
 
-  constructor(baseUrl: string = API_BASE_URL, timeout: number = 12000) {
+  constructor(baseUrl: string = API_BASE_URL, timeout: number = 30000) {
     this.baseUrl = baseUrl
     this.timeout = timeout
   }

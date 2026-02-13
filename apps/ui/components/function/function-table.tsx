@@ -28,7 +28,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { useDeleteFunction, useInvokeFunction } from "@/lib/queries"
+import { useDeleteFunction, useInvokeFunction, useVolumes, useDeleteVolume } from "@/lib/queries"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import dynamic from "next/dynamic"
 import { useAuthStore, canDeleteResource } from "@/lib/auth/store"
@@ -77,15 +79,28 @@ export function FunctionTable({ functions }: FunctionTableProps) {
 
   // ---- delete ----
   const deleteMutation = useDeleteFunction()
+  const { data: allVolumes = [] } = useVolumes()
+  const deleteVolumeMutation = useDeleteVolume()
+  const [deleteVolumesChecked, setDeleteVolumesChecked] = useState(true)
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; fnId: string; fnName: string }>({
     open: false,
     fnId: "",
     fnName: "",
   })
+
+  const deletingFunction = functions.find(f => f.id === deleteDialog.fnId)
+  const attachedVolumes = allVolumes.filter(v => deletingFunction?.vm_id && v.attached_to_vm_id === deletingFunction.vm_id)
+
   const handleDelete = () => {
     if (deleteDialog.fnId && deleteDialog.fnName) {
+      const volumeIdsToDelete = deleteVolumesChecked ? attachedVolumes.map(v => v.id) : []
       deleteMutation.mutate(deleteDialog.fnId, {
-        onSuccess: () => {
+        onSuccess: async () => {
+          if (volumeIdsToDelete.length > 0) {
+            await Promise.allSettled(
+              volumeIdsToDelete.map(id => deleteVolumeMutation.mutateAsync(id))
+            )
+          }
           toast.success("Function Deleted", {
             description: `${deleteDialog.fnName} has been deleted successfully`,
           })
@@ -390,7 +405,20 @@ export function FunctionTable({ functions }: FunctionTableProps) {
         confirmText="Delete"
         onConfirm={handleDelete}
         variant="destructive"
-      />
+      >
+        {attachedVolumes.length > 0 && (
+          <div className="flex items-center space-x-2 py-2">
+            <Checkbox
+              id="delete-fn-volumes"
+              checked={deleteVolumesChecked}
+              onCheckedChange={(checked) => setDeleteVolumesChecked(checked as boolean)}
+            />
+            <Label htmlFor="delete-fn-volumes" className="text-sm cursor-pointer">
+              Also delete {attachedVolumes.length} attached volume{attachedVolumes.length !== 1 ? "s" : ""}
+            </Label>
+          </div>
+        )}
+      </ConfirmDialog>
 
       {/* Invoke dialog */}
       <Dialog open={showDialog.open} onOpenChange={(open) => setShowDialog({ ...showDialog, open })}>

@@ -21,10 +21,6 @@ export interface ImageResponse {
 }
 
 export interface Vm {
-  memory_usage_percent: undefined;
-  cpu_usage_percent: undefined;
-  guest_ip: string;
-  vm_name: string;
   id: string;
   name: string;
   state: string;
@@ -41,9 +37,19 @@ export interface Vm {
   kernel_path: string;
   rootfs_path: string;
   source_snapshot_id?: string;
+  guest_ip: string;
   tags: string[];
+  created_by_user_id?: string;
   created_at: string;
   updated_at: string;
+  // Runtime metrics (populated separately, not from REST list)
+  cpu_usage_percent?: number;
+  memory_usage_percent?: number;
+}
+
+export interface UpdateVmRequest {
+  name?: string;
+  tags?: string[];
 }
 
 export interface ListVmsResponse {
@@ -66,6 +72,7 @@ export interface CreateVmReq {
   username?: string;
   password?: string;
   rootfs_size_mb?: number;
+  network_id?: string;
 }
 
 export interface TemplateSpec {
@@ -296,6 +303,7 @@ export interface VmDrive {
   vm_id: string;
   drive_id: string;
   path_on_host: string;
+  size_bytes?: number;
   is_root_device: boolean;
   is_read_only: boolean;
   cache_type?: string;
@@ -333,6 +341,7 @@ export interface VmNic {
   guest_mac?: string;
   rx_rate_limiter?: any;
   tx_rate_limiter?: any;
+  network_id?: string;
   assigned_ip?: string;
   created_at: string;
   updated_at: string;
@@ -475,6 +484,7 @@ export interface Function {
   vcpu: number;
   memory_mb: number;
   env_vars?: Record<string, string>;
+  created_by_user_id?: string;
   created_at: string;
   updated_at: string;
   last_invoked_at?: string;
@@ -552,6 +562,7 @@ export interface Container {
   state: "creating" | "booting" | "initializing" | "running" | "stopped" | "paused" | "error";
   container_runtime_id?: string;
   error_message?: string;
+  created_by_user_id?: string;
   created_at: string;
   updated_at: string;
   started_at?: string;
@@ -743,14 +754,22 @@ export interface Network {
   id: string;
   name: string;
   description?: string;
-  type: "bridge" | "vlan";
+  type: "nat" | "bridged" | "isolated" | "vxlan";
   vlan_id?: number;
+  vni?: number;
   bridge_name: string;
-  host_id: string;
+  host_id?: string;
   host_name?: string;
   cidr?: string;
   gateway?: string;
+  status: "pending" | "provisioning" | "active" | "error" | "deleting";
+  error_message?: string;
+  managed: boolean;
+  dhcp_enabled: boolean;
+  dhcp_range_start?: string;
+  dhcp_range_end?: string;
   vm_count: number;
+  participating_hosts?: number;
   created_at: string;
   updated_at: string;
 }
@@ -758,12 +777,30 @@ export interface Network {
 export interface CreateNetworkRequest {
   name: string;
   description?: string;
-  type: "bridge" | "vlan";
-  vlan_id?: number;
-  bridge_name: string;
+  type: "nat" | "isolated" | "bridged" | "vxlan";
   host_id: string;
   cidr?: string;
-  gateway?: string;
+  vlan_id?: number;
+  dhcp_enabled?: boolean;
+  dhcp_range_start?: string;
+  dhcp_range_end?: string;
+  /** Required for bridged networks: the physical NIC to attach */
+  uplink_interface?: string;
+  /** Required for VXLAN networks: the gateway host that runs DHCP + NAT */
+  gateway_host_id?: string;
+}
+
+export interface HostInterface {
+  name: string;
+  mac: string;
+  state: string;
+  addresses: string[];
+  is_management: boolean;
+  master?: string;
+}
+
+export interface ListInterfacesResponse {
+  interfaces: HostInterface[];
 }
 
 export interface UpdateNetworkRequest {
@@ -773,8 +810,8 @@ export interface UpdateNetworkRequest {
   gateway?: string;
 }
 
-export interface CreateNetworkResponse {
-  id: string;
+export interface NetworkDetailResponse {
+  item: Network;
 }
 
 export interface ListNetworksResponse {
@@ -786,7 +823,15 @@ export interface GetNetworkResponse {
 }
 
 export interface NetworkVmsResponse {
-  items: VmSummary[];
+  vm_ids: string[];
+}
+
+export interface NetworkSuggestion {
+  bridge_name: string;
+  cidr: string;
+  gateway: string;
+  dhcp_range_start: string;
+  dhcp_range_end: string;
 }
 
 // Volume Management Types

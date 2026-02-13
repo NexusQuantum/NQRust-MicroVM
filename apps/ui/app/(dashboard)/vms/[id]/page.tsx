@@ -1,6 +1,6 @@
 "use client"
 
-import { useVM, useVmStatePatch, useDeleteVM } from "@/lib/queries"
+import { useVM, useVmStatePatch, useDeleteVM, useVolumes, useDeleteVolume } from "@/lib/queries"
 import { ReusableTabs, TabItem, TabContentItem } from "@/components/dashboard/tabs-new"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -18,6 +18,8 @@ import { useState, useMemo } from "react"
 import { use } from "react"
 import { useSearchParams } from "next/navigation"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 
 const getStatusColor = (state: string) => {
   switch (state) {
@@ -36,11 +38,16 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
   const { id } = use(params)
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab')
-  const { data: vm, isLoading, error } = useVM(id)
+  const { data: vm, isLoading, error } = useVM(id, 3000)
   const vmStatePatch = useVmStatePatch()
   const deleteVM = useDeleteVM()
+  const { data: allVolumes = [] } = useVolumes()
+  const deleteVolumeMutation = useDeleteVolume()
   const [deleteDialog, setDeleteDialog] = useState(false)
+  const [deleteVolumesChecked, setDeleteVolumesChecked] = useState(true)
   const { user } = useAuthStore()
+
+  const attachedVolumes = allVolumes.filter(v => v.attached_to_vm_id === id)
 
   // Valid tab values
   const validTabs = ['overview', 'config', 'storage', 'network', 'terminal', 'snapshots', 'metrics']
@@ -51,8 +58,14 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
   }
 
   const handleDelete = () => {
+    const volumeIdsToDelete = deleteVolumesChecked ? attachedVolumes.map(v => v.id) : []
     deleteVM.mutate(id, {
-      onSuccess: () => {
+      onSuccess: async () => {
+        if (volumeIdsToDelete.length > 0) {
+          await Promise.allSettled(
+            volumeIdsToDelete.map(vid => deleteVolumeMutation.mutateAsync(vid))
+          )
+        }
         window.location.href = '/vms'
       }
     })
@@ -162,7 +175,7 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {canModifyResource(user, (vm as any).created_by_user_id) && (
+          {canModifyResource(user, vm.created_by_user_id) && (
             <>
               {vm.state === 'stopped' && (
                 <Button variant="outline" size="sm" onClick={() => handleAction('start')}>
@@ -194,7 +207,7 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
               )}
             </>
           )}
-          {canDeleteResource(user, (vm as any).created_by_user_id) && (
+          {canDeleteResource(user, vm.created_by_user_id) && (
             <Button variant="destructive" size="sm" onClick={() => setDeleteDialog(true)}>
               <Trash2 className="mr-2 h-4 w-4" />
               Delete
@@ -217,8 +230,22 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
         title="Delete VM"
         description={`Are you sure you want to delete "${vm.name}"? This action cannot be undone.`}
         onConfirm={handleDelete}
-        isPending={deleteVM.isPending}
-      />
+        isLoading={deleteVM.isPending}
+        variant="destructive"
+      >
+        {attachedVolumes.length > 0 && (
+          <div className="flex items-center space-x-2 py-2">
+            <Checkbox
+              id="delete-vm-detail-volumes"
+              checked={deleteVolumesChecked}
+              onCheckedChange={(checked) => setDeleteVolumesChecked(checked as boolean)}
+            />
+            <Label htmlFor="delete-vm-detail-volumes" className="text-sm cursor-pointer">
+              Also delete {attachedVolumes.length} attached volume{attachedVolumes.length !== 1 ? "s" : ""}
+            </Label>
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   )
 }

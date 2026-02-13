@@ -1,10 +1,18 @@
+"use client"
+
+import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
 import { StatusBadge } from "@/components/shared/status-badge"
-import { Play, Square, Pause, Trash2, Power } from "lucide-react"
+import { Pencil, Check, X } from "lucide-react"
 import { formatPercentage } from "@/lib/utils/format"
 import type { Vm } from "@/lib/types"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
+import { useUpdateVM } from "@/lib/queries"
+import { TagEditor } from "@/components/vm/tag-editor"
+import { toast } from "sonner"
 
 interface VMOverviewProps {
   vm: Vm
@@ -12,6 +20,36 @@ interface VMOverviewProps {
 
 export function VMOverview({ vm }: VMOverviewProps) {
   const dateFormat = useDateFormat()
+  const updateVM = useUpdateVM()
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [editName, setEditName] = useState(vm.name)
+
+  const handleSaveName = () => {
+    const trimmed = editName.trim()
+    if (!trimmed) {
+      toast.error("Name cannot be empty")
+      return
+    }
+    if (trimmed === vm.name) {
+      setIsEditingName(false)
+      return
+    }
+    updateVM.mutate(
+      { id: vm.id, data: { name: trimmed } },
+      {
+        onSuccess: () => {
+          toast.success("VM renamed", { description: `Renamed to "${trimmed}"` })
+          setIsEditingName(false)
+        },
+        onError: (error) => {
+          toast.error("Failed to rename VM", {
+            description: error instanceof Error ? error.message : "An unexpected error occurred",
+          })
+        },
+      }
+    )
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -86,7 +124,35 @@ export function VMOverview({ vm }: VMOverviewProps) {
             </div>
             <div>
               <dt className="text-sm font-medium text-muted-foreground">Name</dt>
-              <dd className="mt-1 text-sm">{vm.name}</dd>
+              <dd className="mt-1 text-sm">
+                {isEditingName ? (
+                  <div className="flex items-center gap-1">
+                    <Input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="h-7 text-sm"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSaveName()
+                        if (e.key === "Escape") { setIsEditingName(false); setEditName(vm.name) }
+                      }}
+                      autoFocus
+                    />
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSaveName} disabled={updateVM.isPending}>
+                      <Check className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setIsEditingName(false); setEditName(vm.name) }}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <span>{vm.name}</span>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditName(vm.name); setIsEditingName(true) }}>
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+              </dd>
             </div>
             <div>
               <dt className="text-sm font-medium text-muted-foreground">Created</dt>
@@ -95,6 +161,12 @@ export function VMOverview({ vm }: VMOverviewProps) {
             <div>
               <dt className="text-sm font-medium text-muted-foreground">Last Updated</dt>
               <dd className="mt-1 text-sm">{dateFormat.formatRelative(vm.updated_at)}</dd>
+            </div>
+            <div className="col-span-2">
+              <dt className="text-sm font-medium text-muted-foreground">Tags</dt>
+              <dd className="mt-1">
+                <TagEditor vmId={vm.id} tags={vm.tags || []} />
+              </dd>
             </div>
             <div className="col-span-2">
               <dt className="text-sm font-medium text-muted-foreground">Rootfs Path</dt>

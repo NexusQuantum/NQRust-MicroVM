@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Plus, Trash2, Network, Tag, ArrowRightLeft } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useVMNics, useCreateVMNic, useUpdateVMNic, useDeleteVMNic, useVM, useNetworks, useVMPortForwards, useCreateVMPortForward, useDeleteVMPortForward } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
@@ -273,9 +274,22 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
                         <span className="text-xs text-muted-foreground">-</span>
                       ) : (
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(nic)} disabled={vm?.state === 'running'}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex">
+                                  <Button variant="ghost" size="icon" onClick={() => handleDelete(nic)} disabled={vm?.state === 'running'}>
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {vm?.state === 'running'
+                                  ? "Stop the VM to remove network interfaces"
+                                  : "Delete network interface"}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                       )}
                     </TableCell>

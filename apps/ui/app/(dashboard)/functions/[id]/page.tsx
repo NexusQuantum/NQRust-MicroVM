@@ -7,10 +7,12 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Trash2, FileText, Code, FileText as FileTextIcon, BarChart, Calendar, Terminal } from "lucide-react"
 import Link from "next/link"
 import { use, useState, useMemo, useCallback } from "react"
-import { useDeleteFunction, useFunction } from "@/lib/queries"
+import { useDeleteFunction, useFunction, useVolumes, useDeleteVolume } from "@/lib/queries"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { useAuthStore, canDeleteResource } from "@/lib/auth/store"
 import { useSearchParams } from "next/navigation"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 
 
@@ -40,9 +42,21 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
   const defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'editor'
 
   const deleteFunction = useDeleteFunction()
+  const { data: allVolumes = [] } = useVolumes()
+  const deleteVolumeMutation = useDeleteVolume()
+  const [deleteVolumesChecked, setDeleteVolumesChecked] = useState(true)
+
+  const attachedVolumes = allVolumes.filter(v => functions?.vm_id && v.attached_to_vm_id === functions.vm_id)
+
   const handleDelete = () => {
+    const volumeIdsToDelete = deleteVolumesChecked ? attachedVolumes.map(v => v.id) : []
     deleteFunction.mutate(id, {
-      onSuccess: () => {
+      onSuccess: async () => {
+        if (volumeIdsToDelete.length > 0) {
+          await Promise.allSettled(
+            volumeIdsToDelete.map(vid => deleteVolumeMutation.mutateAsync(vid))
+          )
+        }
         toast.success("Function Deleted", {
           description: `Function "${functions?.name ?? 'untitled'}" has been deleted successfully`
         })
@@ -183,10 +197,24 @@ export default function FunctionEditorPage({ params }: { params: Promise<{ id: s
         open={deleteDialog}
         onOpenChange={setDeleteDialog}
         title="Delete Function"
-        description={`Are you sure you want to delete function? This action cannot be undone.`}
+        description={`Are you sure you want to delete function "${functions?.name}"? This action cannot be undone.`}
         onConfirm={handleDelete}
-        isPending={deleteFunction.isPending}
-      />
+        isLoading={deleteFunction.isPending}
+        variant="destructive"
+      >
+        {attachedVolumes.length > 0 && (
+          <div className="flex items-center space-x-2 py-2">
+            <Checkbox
+              id="delete-fn-detail-volumes"
+              checked={deleteVolumesChecked}
+              onCheckedChange={(checked) => setDeleteVolumesChecked(checked as boolean)}
+            />
+            <Label htmlFor="delete-fn-detail-volumes" className="text-sm cursor-pointer">
+              Also delete {attachedVolumes.length} attached volume{attachedVolumes.length !== 1 ? "s" : ""}
+            </Label>
+          </div>
+        )}
+      </ConfirmDialog>
     </div >
   )
 }

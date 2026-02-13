@@ -84,6 +84,7 @@ pub async fn create_function_vm(
         password: Some("function".to_string()),
         tags: vec!["type:function".to_string()],
         rootfs_size_mb: None,
+        network_id: None,
     };
 
     // Create and start VM

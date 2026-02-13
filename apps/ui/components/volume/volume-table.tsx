@@ -7,9 +7,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Search, Link as LinkIcon, Settings, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react"
+import { Search, Link as LinkIcon, Settings, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Trash2, Unlink } from "lucide-react"
 import type { Volume } from "@/lib/types"
 import { formatDistanceToNow } from "date-fns"
+import { useDeleteVolume, useDetachVolume } from "@/lib/queries"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { toast } from "sonner"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B"
@@ -65,6 +68,11 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
   const [typeFilter, setTypeFilter] = useState<string>("all")
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
+
+  const deleteVolume = useDeleteVolume()
+  const detachVolume = useDetachVolume()
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; volume: Volume | null }>({ open: false, volume: null })
+  const [detachDialog, setDetachDialog] = useState<{ open: boolean; volume: Volume | null }>({ open: false, volume: null })
 
   const filteredVolumes = volumes.filter((volume) => {
     const matchesSearch =
@@ -212,21 +220,41 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
                       {formatDistanceToNow(new Date(volume.created_at), { addSuffix: true })}
                     </TableCell>
                     <TableCell className="text-right">
-                      {actualStatus === "attached" && volume.attached_to_vm_id ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Manage in VM Storage"
-                          asChild
-                        >
-                          <Link href={`/vms/${volume.attached_to_vm_id}?tab=storage`}>
-                            <Settings className="h-4 w-4 mr-2" />
-                            Manage Storage
-                          </Link>
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">-</span>
-                      )}
+                      <div className="flex justify-end gap-1">
+                        {actualStatus === "attached" && volume.attached_to_vm_id && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Manage in VM Storage"
+                              asChild
+                            >
+                              <Link href={`/vms/${volume.attached_to_vm_id}?tab=storage`}>
+                                <Settings className="h-4 w-4 mr-1" />
+                                Manage
+                              </Link>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Detach from VM"
+                              onClick={() => setDetachDialog({ open: true, volume })}
+                            >
+                              <Unlink className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
+                        {actualStatus !== "attached" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Delete volume"
+                            onClick={() => setDeleteDialog({ open: true, volume })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 )
@@ -314,6 +342,55 @@ export function VolumeTable({ volumes }: VolumeTableProps) {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        title="Delete Volume"
+        description={`Are you sure you want to delete volume "${deleteDialog.volume?.name}"? The underlying file will be removed. This action cannot be undone.`}
+        confirmText="Delete"
+        variant="destructive"
+        onConfirm={() => {
+          if (!deleteDialog.volume) return
+          deleteVolume.mutate(deleteDialog.volume.id, {
+            onSuccess: () => {
+              toast.success("Volume deleted", { description: `${deleteDialog.volume?.name} has been deleted` })
+              setDeleteDialog({ open: false, volume: null })
+            },
+            onError: (error) => {
+              toast.error("Failed to delete volume", {
+                description: error instanceof Error ? error.message : "An unexpected error occurred",
+              })
+            },
+          })
+        }}
+        isLoading={deleteVolume.isPending}
+      />
+
+      <ConfirmDialog
+        open={detachDialog.open}
+        onOpenChange={(open) => setDetachDialog({ ...detachDialog, open })}
+        title="Detach Volume"
+        description={`Detach volume "${detachDialog.volume?.name}" from ${detachDialog.volume?.attached_to_vm_name || "the VM"}? The volume will become available for reattachment.`}
+        confirmText="Detach"
+        onConfirm={() => {
+          if (!detachDialog.volume || !detachDialog.volume.attached_to_vm_id) return
+          detachVolume.mutate(
+            { id: detachDialog.volume.id, params: { vm_id: detachDialog.volume.attached_to_vm_id } },
+            {
+              onSuccess: () => {
+                toast.success("Volume detached", { description: `${detachDialog.volume?.name} is now available` })
+                setDetachDialog({ open: false, volume: null })
+              },
+              onError: (error) => {
+                toast.error("Failed to detach volume", {
+                  description: error instanceof Error ? error.message : "An unexpected error occurred",
+                })
+              },
+            }
+          )
+        }}
+        isLoading={detachVolume.isPending}
+      />
     </div>
   )
 }

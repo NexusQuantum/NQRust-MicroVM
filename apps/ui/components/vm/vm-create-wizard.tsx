@@ -13,9 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
-import { Separator } from "@/components/ui/separator"
 import { ChevronLeft, ChevronRight } from "lucide-react"
-import { useCreateVM } from "@/lib/queries"
+import { useCreateVM, useNetworks } from "@/lib/queries"
 import type { CreateVmReq } from "@/lib/types"
 
 const steps = ["Basic Info", "Credentials", "Machine Config", "Boot Source", "Network", "Review"]
@@ -51,9 +50,7 @@ const vmCreationSchema = z.object({
   bootArgs: z.string().optional(),
 
   // Network (optional)
-  enableNetwork: z.boolean().default(true),
-  hostDevice: z.string().optional(),
-  guestMac: z.string().optional(),
+  networkId: z.string().optional(),
 })
 
 type VMCreationForm = z.infer<typeof vmCreationSchema>
@@ -66,6 +63,7 @@ interface VMCreateWizardProps {
 export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const createVM = useCreateVM()
+  const { data: networks } = useNetworks()
 
   // Load user preferences for VM defaults
   const { data: preferences } = usePreferences()
@@ -100,9 +98,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
       rootfsSizeMb: undefined,
       initrdPath: "",
       bootArgs: "",
-      enableNetwork: true,
-      hostDevice: "tap0",
-      guestMac: "",
+      networkId: "",
     },
   })
 
@@ -115,6 +111,14 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
       setValue('memory', preferences.vm_defaults.mem_mib || 2048, { shouldValidate: false })
     }
   }, [preferences, setValue])
+
+  // Auto-select default network when networks load
+  useEffect(() => {
+    if (networks && networks.length > 0 && !formData.networkId) {
+      const defaultNet = networks.find(n => n.name === "Default Network") || networks[0]
+      setValue('networkId', defaultNet.id, { shouldValidate: false })
+    }
+  }, [networks, setValue, formData.networkId])
 
   useEffect(() => {
     (async () => {
@@ -199,9 +203,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
     rootfsPath: z.string().min(1, "Rootfs image is required"),
     initrdPath: z.string().optional(),
     bootArgs: z.string().optional(),
-    enableNetwork: z.boolean().default(false),
-    hostDevice: z.string().optional(),
-    guestMac: z.string().optional(),
+    networkId: z.string().optional(),
   }
 
   const stepSchemas = useMemo(
@@ -234,9 +236,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
       }),
       // Step 4: Network (all optional)
       z.object({
-        enableNetwork: stepSchemaFields.enableNetwork,
-        hostDevice: stepSchemaFields.hostDevice,
-        guestMac: stepSchemaFields.guestMac,
+        networkId: stepSchemaFields.networkId,
       }),
       z.any(), // Review step
     ],
@@ -259,7 +259,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
     } else if (currentStep === 3) {
       fieldsToValidate.push('kernelPath', 'rootfsPath', 'initrdPath', 'bootArgs')
     } else if (currentStep === 4) {
-      fieldsToValidate.push('enableNetwork', 'hostDevice', 'guestMac')
+      fieldsToValidate.push('networkId')
     }
 
     // Trigger validation only for current step fields
@@ -279,15 +279,6 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
     if (currentStep > 0) {
       setCurrentStep(currentStep - 1)
     }
-  }
-
-  const generateMac = () => {
-    const mac = Array.from({ length: 6 }, () =>
-      Math.floor(Math.random() * 256)
-        .toString(16)
-        .padStart(2, "0"),
-    ).join(":")
-    setValue('guestMac', mac)
   }
 
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -339,6 +330,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         username: data.username,
         password: data.password,
         rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
+        network_id: data.networkId || undefined,
       }
 
       console.log('Submitting VM creation request:', vmReq)
@@ -600,36 +592,33 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
 
           {currentStep === 4 && (
             <>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="enable-network"
-                  checked={formData.enableNetwork}
-                  onCheckedChange={(checked) => setValue("enableNetwork", checked as boolean)}
-                />
-                <Label htmlFor="enable-network" className="text-sm font-normal">
-                  Enable networking
-                </Label>
+              <div className="space-y-2">
+                <Label htmlFor="network">Network</Label>
+                <Select
+                  value={formData.networkId || ""}
+                  onValueChange={(value) => setValue("networkId", value)}
+                >
+                  <SelectTrigger id="network">
+                    <SelectValue placeholder={networks && networks.length > 0 ? "Select network" : "No networks available"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {networks && networks.length > 0 ? (
+                      networks.map((net) => (
+                        <SelectItem key={net.id} value={net.id}>
+                          {net.name} ({net.bridge_name} - {net.type})
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">No networks found</div>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {networks && networks.length > 0
+                    ? "Select which network this VM will be attached to. Manage networks on the Networks page."
+                    : "Create a network on the Networks page first"}
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">Default: enabled</p>
-              {formData.enableNetwork && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="host-device">Host Device Name</Label>
-                    <Input id="host-device" {...register("hostDevice")} placeholder="e.g., tap0" />
-                    <p className="text-xs text-muted-foreground">Default: tap0</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="guest-mac">Guest MAC Address</Label>
-                    <div className="flex gap-2">
-                      <Input id="guest-mac" {...register("guestMac")} placeholder="e.g., AA:FC:00:00:00:01" />
-                      <Button type="button" variant="outline" onClick={generateMac}>
-                        Generate
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Leave empty for auto-generation</p>
-                  </div>
-                </>
-              )}
             </>
           )}
 
@@ -687,16 +676,15 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
               <div className="rounded-lg border border-border p-4 space-y-3">
                 <h3 className="font-medium">Network</h3>
                 <dl className="grid grid-cols-2 gap-2 text-sm">
-                  <dt className="text-muted-foreground">Enabled:</dt>
-                  <dd>{formData.enableNetwork ? "Yes" : "No"}</dd>
-                  {formData.enableNetwork && (
-                    <>
-                      <dt className="text-muted-foreground">Host Device:</dt>
-                      <dd>{formData.hostDevice || "tap0"}</dd>
-                      <dt className="text-muted-foreground">Guest MAC:</dt>
-                      <dd className="font-mono text-xs">{formData.guestMac || "—"}</dd>
-                    </>
-                  )}
+                  <dt className="text-muted-foreground">Network:</dt>
+                  <dd>
+                    {formData.networkId && networks
+                      ? (() => {
+                          const net = networks.find(n => n.id === formData.networkId)
+                          return net ? `${net.name} (${net.bridge_name})` : "—"
+                        })()
+                      : "Default (auto-detect)"}
+                  </dd>
                 </dl>
               </div>
             </div>

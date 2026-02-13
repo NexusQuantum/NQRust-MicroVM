@@ -16,10 +16,11 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
+import { Badge } from "@/components/ui/badge"
 import { Play, Square, Pause, Trash2, Search } from "lucide-react"
 import { formatPercentage } from "@/lib/utils/format"
 import type { Vm } from "@/lib/types"
-import { useVmStatePatch, useDeleteVM } from "@/lib/queries"
+import { useVmStatePatch, useDeleteVM, useVolumes, useDeleteVolume } from "@/lib/queries"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
 import { useDateFormat } from "@/lib/hooks/use-date-format"
 import {
@@ -28,17 +29,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 
 interface VMTableProps {
   vms: Vm[]
 }
 
-const ITEMS_PER_PAGE = 10
-
 export function VMTable({ vms }: VMTableProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [stateFilter, setStateFilter] = useState<string>("all")
+  const [tagFilter, setTagFilter] = useState<string>("all")
+  const [itemsPerPage, setItemsPerPage] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; vmId: string; vmName: string }>({
     open: false,
@@ -48,22 +51,39 @@ export function VMTable({ vms }: VMTableProps) {
   const { user } = useAuthStore()
   const dateFormat = useDateFormat()
 
+  // Extract unique tags for filter dropdown
+  const allTags = Array.from(
+    new Set(vms.flatMap((vm) => vm.tags || []).filter((t) => !t.startsWith("type:")))
+  ).sort()
+
   const filteredVMs = vms.filter((vm) => {
-    const vmName = vm.name || vm.vm_name || `VM-${vm.id}`
-    const matchesSearch = vmName.toLowerCase().includes(searchQuery.toLowerCase())
+    const vmName = vm.name || `VM-${vm.id}`
+    const query = searchQuery.toLowerCase()
+    const matchesSearch =
+      vmName.toLowerCase().includes(query) ||
+      (vm.guest_ip && vm.guest_ip.toLowerCase().includes(query)) ||
+      vm.id.toLowerCase().includes(query) ||
+      (vm.tags || []).some((tag) => tag.toLowerCase().includes(query))
     const matchesState = stateFilter === "all" || vm.state === stateFilter
+    const matchesTag = tagFilter === "all" || (vm.tags || []).includes(tagFilter)
 
     // Filter by ownership for non-admin/non-viewer users
     const canView = user?.role === "admin" || user?.role === "viewer" ||
-                    !(vm as any).created_by_user_id ||
-                    (vm as any).created_by_user_id === user?.id
+                    !vm.created_by_user_id ||
+                    vm.created_by_user_id === user?.id
 
-    return matchesSearch && matchesState && canView
+    return matchesSearch && matchesState && matchesTag && canView
   })
 
-  const totalPages = Math.ceil(filteredVMs.length / ITEMS_PER_PAGE)
-  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
-  const paginatedVMs = filteredVMs.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+  const totalPages = Math.ceil(filteredVMs.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const paginatedVMs = filteredVMs.slice(startIndex, startIndex + itemsPerPage)
+
+  const { data: allVolumes = [] } = useVolumes()
+  const deleteVolumeMutation = useDeleteVolume()
+  const [deleteVolumesChecked, setDeleteVolumesChecked] = useState(true)
+
+  const attachedVolumes = allVolumes.filter(v => v.attached_to_vm_id === deleteDialog.vmId)
 
   const vmStatePatch = useVmStatePatch()
   const deleteMutation = useDeleteVM()
@@ -93,10 +113,16 @@ export function VMTable({ vms }: VMTableProps) {
 
   const handleDelete = () => {
     if (deleteDialog.vmId && deleteDialog.vmName) {
+      const volumeIdsToDelete = deleteVolumesChecked ? attachedVolumes.map(v => v.id) : []
       deleteMutation.mutate(deleteDialog.vmId, {
-        onSuccess: () => {
+        onSuccess: async () => {
+          if (volumeIdsToDelete.length > 0) {
+            await Promise.allSettled(
+              volumeIdsToDelete.map(id => deleteVolumeMutation.mutateAsync(id))
+            )
+          }
           toast.success("VM Deleted", {
-            description: `${deleteDialog.vmName} has been deleted`,
+            description: `${deleteDialog.vmName} has been deleted${volumeIdsToDelete.length > 0 ? ` along with ${volumeIdsToDelete.length} volume${volumeIdsToDelete.length !== 1 ? "s" : ""}` : ""}`,
           })
           setDeleteDialog({ open: false, vmId: "", vmName: "" })
         },
@@ -141,6 +167,25 @@ export function VMTable({ vms }: VMTableProps) {
             <SelectItem value="paused">Paused</SelectItem>
           </SelectContent>
         </Select>
+        {allTags.length > 0 && (
+          <Select
+            value={tagFilter}
+            onValueChange={(value) => {
+              setTagFilter(value)
+              setCurrentPage(1)
+            }}
+          >
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="Tag" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Tags</SelectItem>
+              {allTags.map((tag) => (
+                <SelectItem key={tag} value={tag}>{tag}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <div className="rounded-lg border border-border">
@@ -167,7 +212,7 @@ export function VMTable({ vms }: VMTableProps) {
               </TableRow>
             ) : (
               paginatedVMs.map((vm) => {
-                const vmName = vm.name || vm.vm_name || `VM-${vm.id}`
+                const vmName = vm.name || `VM-${vm.id}`
                 return (
                 <TableRow key={vm.id}>
                   <TableCell>
@@ -199,8 +244,8 @@ export function VMTable({ vms }: VMTableProps) {
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{vm.host_addr}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {(vm as any).created_by_user_id ? (
-                      (vm as any).created_by_user_id === user?.id ? (
+                    {vm.created_by_user_id ? (
+                      vm.created_by_user_id === user?.id ? (
                         <span className="text-primary font-medium">You</span>
                       ) : (
                         <span className="text-muted-foreground">Other User</span>
@@ -212,7 +257,7 @@ export function VMTable({ vms }: VMTableProps) {
                   <TableCell className="text-sm text-muted-foreground">{dateFormat.formatRelative(vm.created_at)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      {canModifyResource(user, (vm as any).created_by_user_id) && (
+                      {canModifyResource(user, vm.created_by_user_id) && (
                         <>
                           {vm.state === "stopped" && (
                             <Button
@@ -256,7 +301,7 @@ export function VMTable({ vms }: VMTableProps) {
                           )}
                         </>
                       )}
-                      {canDeleteResource(user, (vm as any).created_by_user_id) && (
+                      {canDeleteResource(user, vm.created_by_user_id) && (
                         <>
                           {vm.state === "running" ? (
                             <TooltipProvider>
@@ -293,35 +338,58 @@ export function VMTable({ vms }: VMTableProps) {
         </Table>
       </div>
 
-      {totalPages > 1 && (
-        <Pagination>
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-              />
-            </PaginationItem>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-              <PaginationItem key={page}>
-                <PaginationLink
-                  onClick={() => setCurrentPage(page)}
-                  isActive={currentPage === page}
-                  className="cursor-pointer"
-                >
-                  {page}
-                </PaginationLink>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Show</span>
+          <Select
+            value={String(itemsPerPage)}
+            onValueChange={(value) => {
+              setItemsPerPage(Number(value))
+              setCurrentPage(1)
+            }}
+          >
+            <SelectTrigger className="w-[70px] h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="10">10</SelectItem>
+              <SelectItem value="25">25</SelectItem>
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+            </SelectContent>
+          </Select>
+          <span>of {filteredVMs.length} VMs</span>
+        </div>
+        {totalPages > 1 && (
+          <Pagination className="justify-end w-auto mx-0">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                />
               </PaginationItem>
-            ))}
-            <PaginationItem>
-              <PaginationNext
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
-              />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
-      )}
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                <PaginationItem key={page}>
+                  <PaginationLink
+                    onClick={() => setCurrentPage(page)}
+                    isActive={currentPage === page}
+                    className="cursor-pointer"
+                  >
+                    {page}
+                  </PaginationLink>
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationNext
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        )}
+      </div>
 
       <ConfirmDialog
         open={deleteDialog.open}
@@ -331,7 +399,20 @@ export function VMTable({ vms }: VMTableProps) {
         confirmText="Delete"
         onConfirm={() => handleDelete()}
         variant="destructive"
-      />
+      >
+        {attachedVolumes.length > 0 && (
+          <div className="flex items-center space-x-2 py-2">
+            <Checkbox
+              id="delete-vm-volumes"
+              checked={deleteVolumesChecked}
+              onCheckedChange={(checked) => setDeleteVolumesChecked(checked as boolean)}
+            />
+            <Label htmlFor="delete-vm-volumes" className="text-sm cursor-pointer">
+              Also delete {attachedVolumes.length} attached volume{attachedVolumes.length !== 1 ? "s" : ""}
+            </Label>
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   )
 }

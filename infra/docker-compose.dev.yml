@@ -6,4 +6,5 @@ services:
       POSTGRES_USER: nexus
       POSTGRES_PASSWORD: nexus
       POSTGRES_DB: nexus
-    ports: ["5432:5432"]
+    ports: ["5435:5432"]
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off"]

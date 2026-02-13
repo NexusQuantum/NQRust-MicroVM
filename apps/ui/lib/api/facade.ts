@@ -79,10 +79,12 @@ import type {
   Network,
   CreateNetworkRequest,
   UpdateNetworkRequest,
-  CreateNetworkResponse,
+  NetworkDetailResponse,
   ListNetworksResponse,
   GetNetworkResponse,
   NetworkVmsResponse,
+  NetworkSuggestion,
+  ListInterfacesResponse,
   Volume,
   CreateVolumeRequest,
   AttachVolumeRequest,
@@ -166,10 +168,11 @@ export class FacadeApi {
   }
 
   /**
-   * Update VM configuration (not yet implemented in new backend)
+   * Update VM metadata (name, tags)
+   * PATCH /v1/vms/:id
    */
-  async updateVM(id: string, config: any): Promise<any> {
-    throw new Error("VM updates not yet supported in current backend");
+  async updateVM(id: string, data: import("@/lib/types").UpdateVmRequest): Promise<OkResponse> {
+    return apiClient.patch<OkResponse>(`/vms/${id}`, data);
   }
 
   /**
@@ -659,10 +662,9 @@ export class FacadeApi {
     return res.items;
   }
 
-  async createNetwork(params: any): Promise<Network> {
-    const res = await apiClient.post<CreateNetworkResponse>("/networks", params);
-    // Backend returns { id: "..." } not { item: ... }
-    return res as any;
+  async createNetwork(params: CreateNetworkRequest): Promise<Network> {
+    const res = await apiClient.post<NetworkDetailResponse>("/networks", params);
+    return res.item;
   }
 
   async getNetwork(id: string): Promise<Network> {
@@ -681,6 +683,19 @@ export class FacadeApi {
 
   async getNetworkVms(id: string): Promise<NetworkVmsResponse> {
     return apiClient.get<NetworkVmsResponse>(`/networks/${id}/vms`);
+  }
+
+  async retryNetwork(id: string): Promise<Network> {
+    const res = await apiClient.post<NetworkDetailResponse>(`/networks/${id}/retry`, {});
+    return res.item;
+  }
+
+  async getNetworkSuggestion(hostId: string): Promise<NetworkSuggestion> {
+    return apiClient.get<NetworkSuggestion>(`/networks/suggest?host_id=${hostId}`);
+  }
+
+  async getNetworkInterfaces(hostId: string): Promise<ListInterfacesResponse> {
+    return apiClient.get<ListInterfacesResponse>(`/networks/interfaces?host_id=${hostId}`);
   }
 
   // ==============

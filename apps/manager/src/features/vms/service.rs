@@ -91,7 +91,40 @@ pub async fn create_and_start(
         .first_healthy()
         .await
         .context("no healthy hosts available")?;
-    let network = select_network(&host.capabilities_json)?;
+
+    // Resolve network: use explicit network_id if provided, else fall back to host capabilities
+    let req_network_id = req.network_id;
+    let network = if let Some(nid) = req_network_id {
+        use crate::features::networks::repo::NetworkRepository;
+        let network_repo = NetworkRepository::new(st.db.clone());
+        let net = network_repo
+            .get(nid)
+            .await
+            .map_err(|_| anyhow::anyhow!("specified network not found: {}", nid))?;
+
+        // Auto-expand VXLAN overlay to this host if not already participating
+        if net.type_ == "vxlan" {
+            use crate::features::networks::service as net_svc;
+            if !net_svc::network_host_exists(st, net.id, host.id).await {
+                info!(vm_id = %id, network_id = %net.id, host_id = %host.id, "auto-expanding VXLAN overlay to host");
+                net_svc::expand_vxlan_to_host(st, &net, host.id)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to expand VXLAN network {} to host {}",
+                            net.id, host.id
+                        )
+                    })?;
+            }
+        }
+
+        NetworkSelection {
+            bridge: net.bridge_name,
+        }
+    } else {
+        select_network(&host.capabilities_json)?
+    };
+
     let paths = VmPaths::new(id, &st.storage).await?;
 
     // Extract credentials and tags before moving req into resolve_vm_spec
@@ -229,16 +262,20 @@ pub async fn create_and_start(
     )
     .await?;
 
-    // Auto-register network if it doesn't exist
-    info!(vm_id = %id, bridge = %network.bridge, host_id = %host.id, "attempting to auto-register network");
-    let network_id_opt = match ensure_network_registered(st, &network.bridge, host.id).await {
-        Ok(network_id) => {
-            info!(vm_id = %id, bridge = %network.bridge, network_id = %network_id, "network auto-registration successful or already exists");
-            Some(network_id)
-        }
-        Err(e) => {
-            warn!(vm_id = %id, bridge = %network.bridge, error = ?e, "failed to auto-register network");
-            None
+    // Resolve network ID: use explicit selection or auto-register from bridge
+    let network_id_opt = if let Some(nid) = req_network_id {
+        Some(nid)
+    } else {
+        info!(vm_id = %id, bridge = %network.bridge, host_id = %host.id, "attempting to auto-register network");
+        match ensure_network_registered(st, &network.bridge, host.id).await {
+            Ok(network_id) => {
+                info!(vm_id = %id, bridge = %network.bridge, network_id = %network_id, "network auto-registration successful or already exists");
+                Some(network_id)
+            }
+            Err(e) => {
+                warn!(vm_id = %id, bridge = %network.bridge, error = ?e, "failed to auto-register network");
+                None
+            }
         }
     };
 
@@ -671,6 +708,18 @@ pub async fn stop_and_delete_with_user(
                       "failed to cleanup storage directory during deletion");
     } else {
         info!(vm_id = %id, path = ?storage_path, "cleaned up VM storage directory");
+    }
+
+    // Reset volume statuses before cascading delete removes the attachment rows
+    let volume_repo = crate::features::volumes::repo::VolumeRepository::new(st.db.clone());
+    let attached_vols: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT volume_id FROM volume_attachment WHERE vm_id = $1")
+            .bind(id)
+            .fetch_all(&st.db)
+            .await
+            .unwrap_or_default();
+    for (vol_id,) in &attached_vols {
+        let _ = volume_repo.update_status(*vol_id, "available").await;
     }
 
     // Delete from database (this cascades to vm_drive and vm_network_interface)
@@ -2372,6 +2421,7 @@ mod tests {
                 password: None,
                 tags: vec![],
                 rootfs_size_mb: None,
+                network_id: None,
             },
             None,
             None,
@@ -2432,6 +2482,7 @@ mod tests {
                 password: None,
                 tags: vec![],
                 rootfs_size_mb: None,
+                network_id: None,
             },
             None,
             None,
@@ -3246,7 +3297,7 @@ async fn ensure_network_registered(
     for network in existing {
         // Only match bridge-type networks (not VLANs) for eth0
         if network.bridge_name == bridge_name
-            && network.type_ == "bridge"
+            && network.type_ == "bridged"
             && network.vlan_id.is_none()
         {
             // Network already registered
@@ -3256,8 +3307,8 @@ async fn ensure_network_registered(
     }
 
     // Create new network record
-    let name = format!("{} Network", bridge_name);
-    let description = Some("Auto-registered from VM creation");
+    let name = "Default Network".to_string();
+    let description = Some("Auto-registered default network");
 
     info!(bridge = %bridge_name, host_id = %host_id, name = %name, "creating new network record");
 
@@ -3265,12 +3316,18 @@ async fn ensure_network_registered(
         .create(
             &name,
             description,
-            "bridge",
+            "bridged",
             None, // no VLAN ID for default bridge
             bridge_name,
             host_id,
-            None, // CIDR will be determined by DHCP/router
-            None, // Gateway will be determined by DHCP/router
+            None,     // CIDR will be determined by DHCP/router
+            None,     // Gateway will be determined by DHCP/router
+            "active", // installer-created networks are already active
+            false,    // not managed (installer-created, read-only)
+            false,    // no DHCP management
+            None,     // no DHCP range start
+            None,     // no DHCP range end
+            None,     // no uplink_interface (installer-created)
         )
         .await?;
 
@@ -3456,6 +3513,47 @@ async fn ensure_volume_registered(
         .await?;
 
     info!(vm_id = %vm_id, volume_id = %volume.id, "volume attached to VM successfully");
+
+    Ok(())
+}
+
+/// Update VM metadata (name, tags). Does not affect running VM.
+pub async fn update_vm_metadata(
+    st: &AppState,
+    id: Uuid,
+    name: Option<&str>,
+    tags: Option<&[String]>,
+    user_id: Option<Uuid>,
+    audit_username: &str,
+) -> Result<()> {
+    // Verify VM exists
+    let _vm = super::repo::get(&st.db, id)
+        .await
+        .map_err(|_| anyhow!("VM not found: {}", id))?;
+
+    if let Some(name) = name {
+        if name.trim().is_empty() {
+            bail!("VM name cannot be empty");
+        }
+    }
+
+    super::repo::update_metadata(&st.db, id, name, tags)
+        .await
+        .context("failed to update VM metadata")?;
+
+    let _ = audit::log_action(
+        &st.db,
+        user_id,
+        audit_username,
+        AuditAction::UpdateVm,
+        Some("vm"),
+        Some(id),
+        Some(json!({"name": name, "tags": tags})),
+        None,
+        true,
+        None,
+    )
+    .await;
 
     Ok(())
 }

@@ -85,7 +85,6 @@ impl VolumeRepository {
         .await
     }
 
-    #[allow(dead_code)]
     pub async fn update_status(&self, id: Uuid, status: &str) -> sqlx::Result<VolumeRow> {
         sqlx::query_as::<_, VolumeRow>(
             r#"

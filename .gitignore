@@ -68,3 +68,7 @@ docs/public
 # Ignore theme submodules
 docs/themes/
 docs-zola-backup/themes/
+
+# Airgap installers (large binary files)
+downloaded-from-git/
+scripts/airgap/output/

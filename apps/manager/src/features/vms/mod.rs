@@ -13,7 +13,12 @@ pub mod shell; // shell session helpers // automatic guest agent installation
 pub fn router() -> Router {
     Router::new()
         .route("/", post(routes::create).get(routes::list))
-        .route("/:id", get(routes::get).delete(routes::delete))
+        .route(
+            "/:id",
+            get(routes::get)
+                .patch(routes::update)
+                .delete(routes::delete),
+        )
         .route("/:id/start", post(routes::start))
         .route("/:id/stop", post(routes::stop))
         .route("/:id/pause", post(routes::pause))

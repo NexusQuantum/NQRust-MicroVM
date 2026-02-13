@@ -48,6 +48,9 @@ pub fn setup_network(mode: NetworkMode, bridge_name: &str) -> Result<Vec<LogEntr
         )));
     }
 
+    // Tell NetworkManager to ignore NQRust-managed interfaces (if NM is active)
+    configure_networkmanager_unmanaged(bridge_name, &mut logs);
+
     match mode {
         NetworkMode::Nat => setup_nat_network(bridge_name, &mut logs)?,
         NetworkMode::Bridged => {
@@ -125,14 +128,11 @@ fn setup_nat_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> 
     // Get default interface
     let default_iface = get_default_interface().unwrap_or_else(|| "eth0".to_string());
 
-    // Add masquerade rule
-    let _ = run_sudo(
-        "iptables",
+    // Add masquerade rule (idempotent: -C check before -A)
+    ensure_iptables_rule(
+        Some("nat"),
+        "POSTROUTING",
         &[
-            "-t",
-            "nat",
-            "-A",
-            "POSTROUTING",
             "-s",
             "10.0.0.0/24",
             "-o",
@@ -142,25 +142,16 @@ fn setup_nat_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> 
         ],
     );
 
-    // Allow forwarding
-    let _ = run_sudo(
-        "iptables",
-        &[
-            "-A",
-            "FORWARD",
-            "-i",
-            bridge_name,
-            "-o",
-            &default_iface,
-            "-j",
-            "ACCEPT",
-        ],
+    // Allow forwarding (idempotent)
+    ensure_iptables_rule(
+        None,
+        "FORWARD",
+        &["-i", bridge_name, "-o", &default_iface, "-j", "ACCEPT"],
     );
-    let _ = run_sudo(
-        "iptables",
+    ensure_iptables_rule(
+        None,
+        "FORWARD",
         &[
-            "-A",
-            "FORWARD",
             "-i",
             &default_iface,
             "-o",
@@ -208,13 +199,33 @@ dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
     let _ = run_sudo("systemctl", &["enable", "dnsmasq"]);
     let _ = run_sudo("systemctl", &["restart", "dnsmasq"]);
 
-    logs.push(LogEntry::success(format!(
-        "DHCP configured (range: {} - {})",
-        dhcp_range_start, dhcp_range_end
-    )));
+    // Verify dnsmasq actually started (critical for DHCP)
+    let dnsmasq_running = run_sudo("systemctl", &["is-active", "dnsmasq"])
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+        .unwrap_or(false);
 
-    // Create systemd service to recreate bridge on boot
-    create_bridge_service(bridge_name, bridge_cidr)?;
+    if dnsmasq_running {
+        logs.push(LogEntry::success(format!(
+            "DHCP configured (range: {} - {})",
+            dhcp_range_start, dhcp_range_end
+        )));
+    } else {
+        logs.push(LogEntry::error(
+            "dnsmasq failed to start — VMs will not get IP addresses via DHCP",
+        ));
+        if let Ok(journal) = run_command("journalctl", &["-u", "dnsmasq", "-n", "10", "--no-pager"])
+        {
+            let msg = String::from_utf8_lossy(&journal.stdout);
+            logs.push(LogEntry::error(format!("dnsmasq logs: {}", msg.trim())));
+        }
+    }
+
+    // Create systemd service to recreate bridge + NAT rules on boot
+    create_bridge_service(
+        bridge_name,
+        bridge_cidr,
+        Some((&default_iface, "10.0.0.0/24")),
+    )?;
     logs.push(LogEntry::success("Bridge persistence service created"));
 
     Ok(())
@@ -680,26 +691,50 @@ fn disable_resolved_stub() {
     let _ = run_sudo("systemctl", &["restart", "systemd-resolved"]);
 }
 
-/// Create systemd service for bridge persistence
-fn create_bridge_service(bridge_name: &str, bridge_cidr: &str) -> Result<()> {
+/// Create systemd service for bridge persistence.
+/// When `nat_config` is Some((default_iface, subnet)), also persist iptables NAT rules.
+fn create_bridge_service(
+    bridge_name: &str,
+    bridge_cidr: &str,
+    nat_config: Option<(&str, &str)>,
+) -> Result<()> {
+    let mut exec_lines = format!(
+        "ExecStart=/sbin/ip link add name {br} type bridge\n\
+         ExecStart=/bin/sh -c '/sbin/ip addr replace {cidr} dev {br}'\n\
+         ExecStart=/sbin/ip link set {br} up",
+        br = bridge_name,
+        cidr = bridge_cidr,
+    );
+
+    if let Some((iface, subnet)) = nat_config {
+        exec_lines.push_str(&format!(
+            "\n\
+             ExecStart=/sbin/sysctl -w net.ipv4.ip_forward=1\n\
+             ExecStart=/bin/sh -c '/sbin/iptables -t nat -C POSTROUTING -s {sub} -o {ifc} -j MASQUERADE || /sbin/iptables -t nat -A POSTROUTING -s {sub} -o {ifc} -j MASQUERADE'\n\
+             ExecStart=/bin/sh -c '/sbin/iptables -C FORWARD -i {br} -o {ifc} -j ACCEPT || /sbin/iptables -A FORWARD -i {br} -o {ifc} -j ACCEPT'\n\
+             ExecStart=/bin/sh -c '/sbin/iptables -C FORWARD -i {ifc} -o {br} -m state --state RELATED,ESTABLISHED -j ACCEPT || /sbin/iptables -A FORWARD -i {ifc} -o {br} -m state --state RELATED,ESTABLISHED -j ACCEPT'",
+            sub = subnet,
+            ifc = iface,
+            br = bridge_name,
+        ));
+    }
+
     let service_content = format!(
-        r#"[Unit]
-Description=NQRust-MicroVM Bridge Setup
-After=network.target
-Before=dnsmasq.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/sbin/ip link add name {} type bridge
-ExecStart=/sbin/ip addr add {} dev {}
-ExecStart=/sbin/ip link set {} up
-ExecStop=/sbin/ip link del {}
-
-[Install]
-WantedBy=multi-user.target
-"#,
-        bridge_name, bridge_cidr, bridge_name, bridge_name, bridge_name
+        "[Unit]\n\
+         Description=NQRust-MicroVM Bridge Setup\n\
+         After=network.target\n\
+         Before=dnsmasq.service\n\
+         \n\
+         [Service]\n\
+         Type=oneshot\n\
+         RemainAfterExit=yes\n\
+         {exec}\n\
+         ExecStop=/sbin/ip link del {br}\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n",
+        exec = exec_lines,
+        br = bridge_name,
     );
 
     let service_file = "/etc/systemd/system/nqrust-bridge.service";
@@ -726,6 +761,37 @@ WantedBy=multi-user.target
     Ok(())
 }
 
+/// Tell NetworkManager to ignore NQRust-managed interfaces (bridges, taps, VXLAN).
+fn configure_networkmanager_unmanaged(bridge_name: &str, logs: &mut Vec<LogEntry>) {
+    let nm_active = run_sudo("systemctl", &["is-active", "NetworkManager"])
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+        .unwrap_or(false);
+
+    if !nm_active {
+        return;
+    }
+
+    logs.push(LogEntry::info(
+        "NetworkManager detected, configuring unmanaged interfaces...",
+    ));
+
+    let conf_content = format!(
+        "[keyfile]\nunmanaged-devices=interface-name:{};interface-name:nqbr*;interface-name:br-vx*;interface-name:tap-*;interface-name:vxlan*\n",
+        bridge_name
+    );
+    let conf_path = "/etc/NetworkManager/conf.d/99-nqrust-unmanaged.conf";
+    let write_cmd = format!(
+        "echo '{}' | sudo tee {} > /dev/null",
+        conf_content, conf_path
+    );
+    let _ = run_command("sh", &["-c", &write_cmd]);
+    let _ = run_sudo("systemctl", &["reload", "NetworkManager"]);
+
+    logs.push(LogEntry::success(
+        "NetworkManager configured to ignore NQRust interfaces",
+    ));
+}
+
 /// Check if a bridge exists
 fn bridge_exists(name: &str) -> bool {
     Path::new(&format!("/sys/class/net/{}/bridge", name)).exists()
@@ -737,6 +803,23 @@ fn is_bridge_up(name: &str) -> bool {
         return operstate.trim() == "up";
     }
     false
+}
+
+/// Ensure an iptables rule exists (idempotent: check with -C before appending with -A).
+fn ensure_iptables_rule(table: Option<&str>, chain: &str, rule_args: &[&str]) {
+    let tbl = table.unwrap_or("filter");
+    let mut check_args = vec!["-t", tbl, "-C", chain];
+    check_args.extend_from_slice(rule_args);
+
+    let exists = run_sudo("iptables", &check_args)
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !exists {
+        let mut add_args = vec!["-t", tbl, "-A", chain];
+        add_args.extend_from_slice(rule_args);
+        let _ = run_sudo("iptables", &add_args);
+    }
 }
 
 /// Get the default network interface
@@ -817,13 +900,29 @@ dhcp-range={},{},12h
     let _ = run_sudo("systemctl", &["enable", "dnsmasq"]);
     let _ = run_sudo("systemctl", &["restart", "dnsmasq"]);
 
-    logs.push(LogEntry::success(format!(
-        "DHCP configured (range: {} - {})",
-        dhcp_range_start, dhcp_range_end
-    )));
+    // Verify dnsmasq actually started (critical for DHCP)
+    let dnsmasq_running = run_sudo("systemctl", &["is-active", "dnsmasq"])
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+        .unwrap_or(false);
 
-    // Create bridge persistence service (like NAT mode)
-    create_bridge_service(bridge_name, bridge_cidr)?;
+    if dnsmasq_running {
+        logs.push(LogEntry::success(format!(
+            "DHCP configured (range: {} - {})",
+            dhcp_range_start, dhcp_range_end
+        )));
+    } else {
+        logs.push(LogEntry::error(
+            "dnsmasq failed to start — VMs will not get IP addresses via DHCP",
+        ));
+        if let Ok(journal) = run_command("journalctl", &["-u", "dnsmasq", "-n", "10", "--no-pager"])
+        {
+            let msg = String::from_utf8_lossy(&journal.stdout);
+            logs.push(LogEntry::error(format!("dnsmasq logs: {}", msg.trim())));
+        }
+    }
+
+    // Create bridge persistence service (no NAT rules for isolated mode)
+    create_bridge_service(bridge_name, bridge_cidr, None)?;
     logs.push(LogEntry::success("Bridge persistence service created"));
 
     // Explicitly NO ip_forward, NO iptables NAT

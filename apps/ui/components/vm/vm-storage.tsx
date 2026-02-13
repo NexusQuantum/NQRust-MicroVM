@@ -5,8 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Edit, Trash2, HardDrive } from "lucide-react"
-import { useVMDrives, useCreateVMDrive, useUpdateVMDrive, useDeleteVMDrive, useVM } from "@/lib/queries"
+import { Plus, Trash2, HardDrive } from "lucide-react"
+import { useVMDrives, useCreateVMDrive, useDeleteVMDrive, useVM } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -26,6 +26,16 @@ import type { VmDrive } from "@/lib/types"
 
 interface VMStorageProps {
   vmId: string
+}
+
+function formatDriveSize(sizeBytes?: number): string {
+  if (sizeBytes == null) return "—"
+  const sizeGB = sizeBytes / (1024 * 1024 * 1024)
+  if (sizeGB >= 1) {
+    return `${sizeGB.toFixed(1)} GB`
+  }
+  const sizeMB = sizeBytes / (1024 * 1024)
+  return `${sizeMB.toFixed(0)} MB`
 }
 
 export function VMStorage({ vmId }: VMStorageProps) {
@@ -50,13 +60,12 @@ export function VMStorage({ vmId }: VMStorageProps) {
     return [rootfsDrive, ...drives]
   }, [vm, drives, vmId])
   const createDrive = useCreateVMDrive()
-  const updateDrive = useUpdateVMDrive()
   const deleteDrive = useDeleteVMDrive()
 
   const [showAddDialog, setShowAddDialog] = useState(false)
-  const [showEditDialog, setShowEditDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [selectedDrive, setSelectedDrive] = useState<VmDrive | null>(null)
+  const [duplicateError, setDuplicateError] = useState(false)
 
   const [formData, setFormData] = useState({
     drive_id: "",
@@ -74,23 +83,12 @@ export function VMStorage({ vmId }: VMStorageProps) {
       is_root_device: false,
       is_read_only: false,
     })
+    setDuplicateError(false)
   }
 
   const handleAdd = () => {
     resetForm()
     setShowAddDialog(true)
-  }
-
-  const handleEdit = (drive: VmDrive) => {
-    setSelectedDrive(drive)
-    setFormData({
-      drive_id: drive.drive_id,
-      path_on_host: drive.path_on_host || "",
-      size_bytes: "",
-      is_root_device: drive.is_root_device,
-      is_read_only: drive.is_read_only,
-    })
-    setShowEditDialog(true)
   }
 
   const handleDelete = (drive: VmDrive) => {
@@ -99,6 +97,12 @@ export function VMStorage({ vmId }: VMStorageProps) {
   }
 
   const handleSubmitAdd = () => {
+    // Check for duplicate drive_id
+    if (allDrives.some(d => d.drive_id === formData.drive_id)) {
+      setDuplicateError(true)
+      return
+    }
+
     const payload: any = {
       drive_id: formData.drive_id,
       is_root_device: formData.is_root_device,
@@ -108,7 +112,8 @@ export function VMStorage({ vmId }: VMStorageProps) {
 
     // Always use size for auto-provisioning
     if (formData.size_bytes) {
-      payload.size_bytes = parseInt(formData.size_bytes, 10)
+      // Convert MB to bytes (backend expects bytes)
+      payload.size_bytes = parseInt(formData.size_bytes, 10) * 1024 * 1024
     }
 
     createDrive.mutate(
@@ -120,34 +125,6 @@ export function VMStorage({ vmId }: VMStorageProps) {
         },
       }
     )
-  }
-
-  const handleSubmitEdit = () => {
-    if (!selectedDrive) return
-
-    const payload: any = {}
-
-    if (formData.path_on_host && formData.path_on_host !== selectedDrive.path_on_host) {
-      payload.path_on_host = formData.path_on_host
-    }
-
-    // Only send if there are changes
-    if (Object.keys(payload).length > 0) {
-      updateDrive.mutate(
-        { vmId, driveId: selectedDrive.id, drive: payload },
-        {
-          onSuccess: () => {
-            setShowEditDialog(false)
-            setSelectedDrive(null)
-            resetForm()
-          },
-        }
-      )
-    } else {
-      setShowEditDialog(false)
-      setSelectedDrive(null)
-      resetForm()
-    }
   }
 
   const handleConfirmDelete = () => {
@@ -202,6 +179,7 @@ export function VMStorage({ vmId }: VMStorageProps) {
                 <TableRow>
                   <TableHead>Drive ID</TableHead>
                   <TableHead>Path</TableHead>
+                  <TableHead>Size</TableHead>
                   <TableHead>Root Device</TableHead>
                   <TableHead>Read Only</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -219,6 +197,7 @@ export function VMStorage({ vmId }: VMStorageProps) {
                       )}
                     </TableCell>
                     <TableCell className="font-mono text-sm break-all">{drive.path_on_host}</TableCell>
+                    <TableCell className="text-sm">{formatDriveSize(drive.size_bytes)}</TableCell>
                     <TableCell>
                       {drive.is_root_device ? (
                         <Badge variant="outline" className="bg-blue-100 text-blue-700 border-blue-200">
@@ -271,8 +250,15 @@ export function VMStorage({ vmId }: VMStorageProps) {
                 id="drive_id"
                 placeholder="e.g., vdb, vdc, scratch"
                 value={formData.drive_id}
-                onChange={(e) => setFormData({ ...formData, drive_id: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, drive_id: e.target.value })
+                  setDuplicateError(false)
+                }}
+                className={duplicateError ? "border-red-500" : ""}
               />
+              {duplicateError && (
+                <p className="text-xs text-red-500">A drive with this ID already exists</p>
+              )}
               <p className="text-xs text-muted-foreground">Unique identifier for this drive</p>
             </div>
 
@@ -320,44 +306,9 @@ export function VMStorage({ vmId }: VMStorageProps) {
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmitAdd} disabled={!formData.drive_id || !formData.size_bytes || createDrive.isPending}>
+            <Button onClick={handleSubmitAdd} disabled={!formData.drive_id || !formData.size_bytes || parseInt(formData.size_bytes, 10) < 1 || createDrive.isPending}>
               {createDrive.isPending ? "Adding..." : "Add Drive"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Drive Dialog */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Drive Details</DialogTitle>
-            <DialogDescription>View drive information</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Drive ID</Label>
-              <Input value={formData.drive_id} disabled />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Host Path</Label>
-              <Input value={formData.path_on_host} disabled />
-              <p className="text-xs text-muted-foreground">Path to the volume on the host</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Root Device</Label>
-              <Input value={formData.is_root_device ? "Yes" : "No"} disabled />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Read Only</Label>
-              <Input value={formData.is_read_only ? "Yes" : "No"} disabled />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setShowEditDialog(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

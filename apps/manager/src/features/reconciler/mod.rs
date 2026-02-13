@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::features::hosts::repo::HostRow;
+use crate::features::networks;
 use crate::features::vms;
 use crate::features::vms::repo::{VmDrive, VmNic};
 use crate::AppState;
@@ -83,8 +84,247 @@ async fn reconcile_host(state: &AppState, host: &HostRow, inventory: AgentInvent
     }
 
     reconcile_devices(state, host, &vm_map, &inventory).await?;
+    reconcile_networks(state, host).await?;
 
     Ok(())
+}
+
+async fn reconcile_networks(state: &AppState, host: &HostRow) -> Result<()> {
+    let network_repo = networks::repo::NetworkRepository::new(state.db.clone());
+    let client = reqwest::Client::new();
+
+    // --- Single-host networks (NAT, isolated, bridged) ---
+    let managed_networks = network_repo
+        .list_active_managed_for_host(host.id)
+        .await
+        .unwrap_or_default();
+
+    for network in &managed_networks {
+        reconcile_single_network(&client, &network_repo, host, network).await;
+    }
+
+    // --- VXLAN overlay networks ---
+    let vxlan_hosts = network_repo
+        .list_active_vxlan_hosts_for_host(host.id)
+        .await
+        .unwrap_or_default();
+
+    for nh in &vxlan_hosts {
+        let network = match network_repo.get(nh.network_id).await {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+
+        // Check bridge exists on this host
+        let status_url = format!(
+            "{}/agent/v1/networks/status/{}",
+            host.addr.trim_end_matches('/'),
+            network.bridge_name
+        );
+
+        let bridge_exists = match client.get(&status_url).send().await {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v["bridge_exists"].as_bool())
+                .unwrap_or(false),
+            _ => {
+                debug!(
+                    network_id = %network.id,
+                    bridge = %network.bridge_name,
+                    "could not check VXLAN network status, skipping"
+                );
+                continue;
+            }
+        };
+
+        if bridge_exists {
+            continue;
+        }
+
+        // Re-provision VXLAN bridge
+        info!(
+            network_id = %network.id,
+            bridge = %network.bridge_name,
+            vni = ?network.vni,
+            is_gateway = nh.is_gateway,
+            "VXLAN network bridge missing, re-provisioning"
+        );
+        metrics::counter!("manager_reconciler_network_reprovision_attempts", 1);
+
+        let provision_url = format!(
+            "{}/agent/v1/networks/provision",
+            host.addr.trim_end_matches('/')
+        );
+
+        let body = serde_json::json!({
+            "network_type": "vxlan",
+            "bridge_name": network.bridge_name,
+            "cidr": network.cidr,
+            "gateway": network.gateway,
+            "dhcp_enabled": network.dhcp_enabled,
+            "dhcp_range_start": network.dhcp_range_start,
+            "dhcp_range_end": network.dhcp_range_end,
+            "vni": network.vni,
+            "local_ip": nh.vtep_ip,
+            "is_gateway": nh.is_gateway,
+        });
+
+        match client.post(&provision_url).json(&body).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                metrics::counter!("manager_reconciler_network_reprovision_success", 1);
+                info!(
+                    network_id = %network.id,
+                    bridge = %network.bridge_name,
+                    "VXLAN network re-provisioned successfully"
+                );
+            }
+            Ok(resp) => {
+                let err_body = resp.text().await.unwrap_or_default();
+                metrics::counter!("manager_reconciler_network_reprovision_failure", 1);
+                warn!(
+                    network_id = %network.id,
+                    bridge = %network.bridge_name,
+                    error = %err_body,
+                    "VXLAN network re-provisioning failed"
+                );
+                continue; // don't attempt peers if provisioning failed
+            }
+            Err(err) => {
+                metrics::counter!("manager_reconciler_network_reprovision_failure", 1);
+                warn!(
+                    network_id = %network.id,
+                    error = ?err,
+                    "failed to reach agent for VXLAN re-provisioning"
+                );
+                continue;
+            }
+        }
+
+        // Re-add FDB peers: get all other hosts for this network
+        let all_hosts = network_repo
+            .list_network_hosts(network.id)
+            .await
+            .unwrap_or_default();
+
+        for peer in &all_hosts {
+            if peer.host_id == host.id {
+                continue; // skip self
+            }
+            let peer_url = format!(
+                "{}/agent/v1/networks/peers/add",
+                host.addr.trim_end_matches('/')
+            );
+            let peer_body = serde_json::json!({
+                "vni": network.vni,
+                "peer_ip": peer.vtep_ip,
+            });
+            if let Err(err) = client.post(&peer_url).json(&peer_body).send().await {
+                warn!(
+                    network_id = %network.id,
+                    peer_ip = %peer.vtep_ip,
+                    error = ?err,
+                    "failed to re-add VXLAN peer"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Reconcile a single non-VXLAN network (NAT, isolated, bridged).
+async fn reconcile_single_network(
+    client: &reqwest::Client,
+    network_repo: &networks::repo::NetworkRepository,
+    host: &HostRow,
+    network: &networks::repo::NetworkRow,
+) {
+    let status_url = format!(
+        "{}/agent/v1/networks/status/{}",
+        host.addr.trim_end_matches('/'),
+        network.bridge_name
+    );
+
+    let bridge_exists = match client.get(&status_url).send().await {
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| v["bridge_exists"].as_bool())
+            .unwrap_or(false),
+        _ => {
+            debug!(
+                network_id = %network.id,
+                bridge = %network.bridge_name,
+                "could not check network status, skipping"
+            );
+            return;
+        }
+    };
+
+    if bridge_exists {
+        return;
+    }
+
+    info!(
+        network_id = %network.id,
+        bridge = %network.bridge_name,
+        network_type = %network.type_,
+        "network bridge missing, re-provisioning"
+    );
+    metrics::counter!("manager_reconciler_network_reprovision_attempts", 1);
+
+    let provision_url = format!(
+        "{}/agent/v1/networks/provision",
+        host.addr.trim_end_matches('/')
+    );
+
+    let mut body = serde_json::json!({
+        "network_type": network.type_,
+        "bridge_name": network.bridge_name,
+        "cidr": network.cidr,
+        "gateway": network.gateway,
+        "dhcp_enabled": network.dhcp_enabled,
+        "dhcp_range_start": network.dhcp_range_start,
+        "dhcp_range_end": network.dhcp_range_end,
+    });
+    if let Some(ref uplink) = network.uplink_interface {
+        body["uplink_interface"] = serde_json::json!(uplink);
+    }
+
+    match client.post(&provision_url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            metrics::counter!("manager_reconciler_network_reprovision_success", 1);
+            info!(
+                network_id = %network.id,
+                bridge = %network.bridge_name,
+                "network re-provisioned successfully"
+            );
+        }
+        Ok(resp) => {
+            let err_body = resp.text().await.unwrap_or_default();
+            metrics::counter!("manager_reconciler_network_reprovision_failure", 1);
+            warn!(
+                network_id = %network.id,
+                bridge = %network.bridge_name,
+                error = %err_body,
+                "network re-provisioning failed"
+            );
+            let _ = network_repo
+                .update_status(network.id, "error", Some(&err_body))
+                .await;
+        }
+        Err(err) => {
+            metrics::counter!("manager_reconciler_network_reprovision_failure", 1);
+            warn!(
+                network_id = %network.id,
+                error = ?err,
+                "failed to reach agent for network re-provisioning"
+            );
+        }
+    }
 }
 
 async fn reconcile_devices(

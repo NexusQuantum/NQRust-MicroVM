@@ -204,6 +204,26 @@ fn verify_infrastructure(config: &InstallConfig) -> Vec<CheckItem> {
                 .with_message(config.bridge_name.clone()),
         );
 
+        // DHCP server check (dnsmasq provides DHCP for VMs in NAT/isolated mode)
+        let (active, enabled) = get_service_state("dnsmasq.service");
+        let status = if active {
+            Status::Success
+        } else if enabled {
+            Status::Warning
+        } else {
+            Status::Error
+        };
+        let msg = if active {
+            "running".to_string()
+        } else {
+            "NOT running — VMs won't get IPs via DHCP".to_string()
+        };
+        checks.push(
+            CheckItem::new("DHCP Server", "dnsmasq provides DHCP for VMs")
+                .with_status(status)
+                .with_message(msg),
+        );
+
         // KVM check
         let status = check_kvm_access();
         checks.push(

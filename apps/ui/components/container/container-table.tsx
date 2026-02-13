@@ -11,8 +11,10 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Play, Square, RotateCw, FileText, Terminal, Trash2, Search } from "lucide-react"
 import { formatDuration } from "@/lib/utils/format"
 import type { Container } from "@/lib/types"
-import { useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer } from "@/lib/queries"
+import { useStartContainer, useStopContainer, useRestartContainer, useDeleteContainer, useVolumes, useDeleteVolume } from "@/lib/queries"
 import { useAuthStore, canModifyResource, canDeleteResource } from "@/lib/auth/store"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 
 interface ContainerTableProps {
@@ -33,11 +35,24 @@ export function ContainerTable({ containers }: ContainerTableProps) {
   const stopContainer = useStopContainer()
   const restartContainer = useRestartContainer()
   const deleteContainer = useDeleteContainer()
+  const { data: allVolumes = [] } = useVolumes()
+  const deleteVolumeMutation = useDeleteVolume()
+  const [deleteVolumesChecked, setDeleteVolumesChecked] = useState(true)
+
+  const deletingContainer = containers.find(c => c.id === deleteDialog.containerId)
+  const containerVmId = deletingContainer?.container_runtime_id?.replace('vm-', '')
+  const attachedVolumes = allVolumes.filter(v => containerVmId && v.attached_to_vm_id === containerVmId)
 
   const handleDelete = () => {
     if (deleteDialog.containerId && deleteDialog.containerName) {
+      const volumeIdsToDelete = deleteVolumesChecked ? attachedVolumes.map(v => v.id) : []
       deleteContainer.mutate(deleteDialog.containerId, {
-        onSuccess: () => {
+        onSuccess: async () => {
+          if (volumeIdsToDelete.length > 0) {
+            await Promise.allSettled(
+              volumeIdsToDelete.map(id => deleteVolumeMutation.mutateAsync(id))
+            )
+          }
           toast.success("Container Deleted", {
             description: `${deleteDialog.containerName} has been deleted successfully`,
           })
@@ -243,7 +258,20 @@ export function ContainerTable({ containers }: ContainerTableProps) {
         confirmText="Delete"
         onConfirm={() => handleDelete()}
         variant="destructive"
-      />
+      >
+        {attachedVolumes.length > 0 && (
+          <div className="flex items-center space-x-2 py-2">
+            <Checkbox
+              id="delete-container-volumes"
+              checked={deleteVolumesChecked}
+              onCheckedChange={(checked) => setDeleteVolumesChecked(checked as boolean)}
+            />
+            <Label htmlFor="delete-container-volumes" className="text-sm cursor-pointer">
+              Also delete {attachedVolumes.length} attached volume{attachedVolumes.length !== 1 ? "s" : ""}
+            </Label>
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   )
 }

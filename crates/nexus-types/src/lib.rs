@@ -55,6 +55,14 @@ pub struct GetVmResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateVmReq {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateVmReq {
     pub name: String,
     pub vcpu: u8,
@@ -77,6 +85,8 @@ pub struct CreateVmReq {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rootfs_size_mb: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -110,6 +120,7 @@ impl TemplateSpec {
             password: None,
             tags: vec![],
             rootfs_size_mb: self.rootfs_size_mb,
+            network_id: None,
         }
     }
 }

@@ -110,10 +110,15 @@ async fn collect_vm_metrics(
     sem: std::sync::Arc<Semaphore>,
 ) -> anyhow::Result<()> {
     let vms = crate::features::vms::repo::list(&state.db).await?;
-    let running: Vec<_> = vms
-        .into_iter()
-        .filter(|vm| vm.state == "running" && vm.guest_ip.is_some())
-        .collect();
+    let running: Vec<_> = vms.into_iter().filter(|vm| vm.state == "running").collect();
+
+    let skipped = running.iter().filter(|vm| vm.guest_ip.is_none()).count();
+    if skipped > 0 {
+        warn!(
+            skipped,
+            "running VMs without guest_ip — guest agent may not have reported IP yet"
+        );
+    }
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
@@ -122,10 +127,14 @@ async fn collect_vm_metrics(
     let mut handles = Vec::with_capacity(running.len());
 
     for vm in running {
+        let guest_ip = match vm.guest_ip.clone() {
+            Some(ip) => ip,
+            None => continue, // skip VMs without guest IP (logged above)
+        };
+
         let pool = state.db.clone();
         let client = client.clone();
         let sem = sem.clone();
-        let guest_ip = vm.guest_ip.clone().unwrap();
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await;
