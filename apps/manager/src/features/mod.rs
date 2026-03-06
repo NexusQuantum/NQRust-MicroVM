@@ -6,6 +6,7 @@ pub mod containers;
 pub mod functions;
 pub mod hosts;
 pub mod images;
+pub mod licensing;
 pub mod logs; // A3 starter
 pub mod metrics;
 pub mod networks;
@@ -39,6 +40,17 @@ pub fn router(state: AppState) -> Router {
                 state.clone(),
                 users::middleware::auth_middleware,
             )),
+        )
+        .nest(
+            "/v1/licensing",
+            licensing::router().route_layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                users::middleware::auth_middleware,
+            )),
+        )
+        .nest(
+            "/v1/licensing",
+            licensing::public_router(),
         )
         .nest(
             "/v1/users",

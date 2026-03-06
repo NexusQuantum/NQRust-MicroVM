@@ -1,0 +1,958 @@
+{
+  "name": "VM devices",
+  "description": "Block and network device management.",
+  "endpoints": [
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/drives",
+      "method": "GET",
+      "slug": "get-vms-id-drives",
+      "operationId": "list_drives",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Drives listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "cache_type": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "drive_id": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "io_engine": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "is_read_only": {
+                      "type": "boolean"
+                    },
+                    "is_root_device": {
+                      "type": "boolean"
+                    },
+                    "path_on_host": {
+                      "type": "string"
+                    },
+                    "rate_limiter": {
+                      "nullable": true
+                    },
+                    "size_bytes": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "vm_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "vm_id",
+                    "drive_id",
+                    "path_on_host",
+                    "is_root_device",
+                    "is_read_only",
+                    "created_at",
+                    "updated_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/drives",
+      "method": "POST",
+      "slug": "post-vms-id-drives",
+      "operationId": "create_drive",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "cache_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "drive_id": {
+            "type": "string"
+          },
+          "io_engine": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_read_only": {
+            "type": "boolean"
+          },
+          "is_root_device": {
+            "type": "boolean"
+          },
+          "path_on_host": {
+            "type": "string",
+            "nullable": true
+          },
+          "rate_limiter": {
+            "nullable": true
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "minimum": 0
+          }
+        },
+        "required": [
+          "drive_id"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Drive created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "cache_type": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "drive_id": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "io_engine": {
+                "type": "string",
+                "nullable": true
+              },
+              "is_read_only": {
+                "type": "boolean"
+              },
+              "is_root_device": {
+                "type": "boolean"
+              },
+              "path_on_host": {
+                "type": "string"
+              },
+              "rate_limiter": {
+                "nullable": true
+              },
+              "size_bytes": {
+                "type": "integer",
+                "format": "int64",
+                "nullable": true
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "vm_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id",
+              "vm_id",
+              "drive_id",
+              "path_on_host",
+              "is_root_device",
+              "is_read_only",
+              "created_at",
+              "updated_at"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/drives/{drive_id}",
+      "method": "GET",
+      "slug": "get-vms-id-drives-drive_id",
+      "operationId": "get_drive",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "VM ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "drive_id",
+          "in": "path",
+          "required": true,
+          "description": "Drive record ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Drive fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "cache_type": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "drive_id": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "io_engine": {
+                "type": "string",
+                "nullable": true
+              },
+              "is_read_only": {
+                "type": "boolean"
+              },
+              "is_root_device": {
+                "type": "boolean"
+              },
+              "path_on_host": {
+                "type": "string"
+              },
+              "rate_limiter": {
+                "nullable": true
+              },
+              "size_bytes": {
+                "type": "integer",
+                "format": "int64",
+                "nullable": true
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "vm_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id",
+              "vm_id",
+              "drive_id",
+              "path_on_host",
+              "is_root_device",
+              "is_read_only",
+              "created_at",
+              "updated_at"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Drive not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/drives/{drive_id}",
+      "method": "PATCH",
+      "slug": "patch-vms-id-drives-drive_id",
+      "operationId": "update_drive",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "VM ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "drive_id",
+          "in": "path",
+          "required": true,
+          "description": "Drive record ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "path_on_host": {
+            "type": "string",
+            "nullable": true
+          },
+          "rate_limiter": {
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Drive updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "cache_type": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "drive_id": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "io_engine": {
+                "type": "string",
+                "nullable": true
+              },
+              "is_read_only": {
+                "type": "boolean"
+              },
+              "is_root_device": {
+                "type": "boolean"
+              },
+              "path_on_host": {
+                "type": "string"
+              },
+              "rate_limiter": {
+                "nullable": true
+              },
+              "size_bytes": {
+                "type": "integer",
+                "format": "int64",
+                "nullable": true
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "vm_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id",
+              "vm_id",
+              "drive_id",
+              "path_on_host",
+              "is_root_device",
+              "is_read_only",
+              "created_at",
+              "updated_at"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "404",
+          "description": "Drive not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/drives/{drive_id}",
+      "method": "DELETE",
+      "slug": "delete-vms-id-drives-drive_id",
+      "operationId": "delete_drive",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "VM ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "drive_id",
+          "in": "path",
+          "required": true,
+          "description": "Drive record ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Drive deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "404",
+          "description": "Drive not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/nics",
+      "method": "GET",
+      "slug": "get-vms-id-nics",
+      "operationId": "list_nics",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "NICs listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "assigned_ip": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "guest_mac": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "host_dev_name": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "iface_id": {
+                      "type": "string"
+                    },
+                    "network_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "rx_rate_limiter": {
+                      "nullable": true
+                    },
+                    "tx_rate_limiter": {
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "vm_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "vm_id",
+                    "iface_id",
+                    "host_dev_name",
+                    "created_at",
+                    "updated_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/nics",
+      "method": "POST",
+      "slug": "post-vms-id-nics",
+      "operationId": "create_nic",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "guest_mac": {
+            "type": "string",
+            "nullable": true
+          },
+          "iface_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional interface ID (e.g., \"eth1\"). If not provided, will auto-assign next sequential interface (eth1, eth2, eth3, etc.)"
+          },
+          "network_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rx_rate_limiter": {
+            "nullable": true
+          },
+          "tx_rate_limiter": {
+            "nullable": true
+          }
+        },
+        "required": [
+          "network_id"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "NIC created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "assigned_ip": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "guest_mac": {
+                "type": "string",
+                "nullable": true
+              },
+              "host_dev_name": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "iface_id": {
+                "type": "string"
+              },
+              "network_id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "rx_rate_limiter": {
+                "nullable": true
+              },
+              "tx_rate_limiter": {
+                "nullable": true
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "vm_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id",
+              "vm_id",
+              "iface_id",
+              "host_dev_name",
+              "created_at",
+              "updated_at"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/nics/{nic_id}",
+      "method": "GET",
+      "slug": "get-vms-id-nics-nic_id",
+      "operationId": "get_nic",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "VM ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "nic_id",
+          "in": "path",
+          "required": true,
+          "description": "NIC record ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "NIC fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "assigned_ip": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "guest_mac": {
+                "type": "string",
+                "nullable": true
+              },
+              "host_dev_name": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "iface_id": {
+                "type": "string"
+              },
+              "network_id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "rx_rate_limiter": {
+                "nullable": true
+              },
+              "tx_rate_limiter": {
+                "nullable": true
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "vm_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id",
+              "vm_id",
+              "iface_id",
+              "host_dev_name",
+              "created_at",
+              "updated_at"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "NIC not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/nics/{nic_id}",
+      "method": "PATCH",
+      "slug": "patch-vms-id-nics-nic_id",
+      "operationId": "update_nic",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "VM ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "nic_id",
+          "in": "path",
+          "required": true,
+          "description": "NIC record ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "rx_rate_limiter": {
+            "nullable": true
+          },
+          "tx_rate_limiter": {
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "NIC updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "assigned_ip": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "guest_mac": {
+                "type": "string",
+                "nullable": true
+              },
+              "host_dev_name": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "iface_id": {
+                "type": "string"
+              },
+              "network_id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "rx_rate_limiter": {
+                "nullable": true
+              },
+              "tx_rate_limiter": {
+                "nullable": true
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "vm_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id",
+              "vm_id",
+              "iface_id",
+              "host_dev_name",
+              "created_at",
+              "updated_at"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "404",
+          "description": "NIC not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM devices",
+      "path": "/v1/vms/{id}/nics/{nic_id}",
+      "method": "DELETE",
+      "slug": "delete-vms-id-nics-nic_id",
+      "operationId": "delete_nic",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "VM ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "nic_id",
+          "in": "path",
+          "required": true,
+          "description": "NIC record ID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "NIC deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "404",
+          "description": "NIC not found"
+        }
+      ]
+    }
+  ]
+}

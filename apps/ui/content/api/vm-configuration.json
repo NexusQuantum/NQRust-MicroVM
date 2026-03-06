@@ -1,0 +1,341 @@
+{
+  "name": "VM configuration",
+  "endpoints": [
+    {
+      "tag": "VM configuration",
+      "path": "/v1/vms/{id}/balloon",
+      "method": "PUT",
+      "slug": "put-vms-id-balloon",
+      "operationId": "put_balloon",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "amount_mib": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deflate_on_oom": {
+            "type": "boolean"
+          },
+          "stats_polling_interval_s": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "minimum": 0
+          }
+        },
+        "required": [
+          "amount_mib",
+          "deflate_on_oom"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Balloon configured",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM configuration",
+      "path": "/v1/vms/{id}/balloon",
+      "method": "PATCH",
+      "slug": "patch-vms-id-balloon",
+      "operationId": "patch_balloon",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "amount_mib": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deflate_on_oom": {
+            "type": "boolean"
+          },
+          "stats_polling_interval_s": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "minimum": 0
+          }
+        },
+        "required": [
+          "amount_mib",
+          "deflate_on_oom"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Balloon updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM configuration",
+      "path": "/v1/vms/{id}/balloon/statistics",
+      "method": "PATCH",
+      "slug": "patch-vms-id-balloon-statistics",
+      "operationId": "patch_balloon_statistics",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "stats_polling_interval_s": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "minimum": 0
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Balloon stats updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM configuration",
+      "path": "/v1/vms/{id}/entropy",
+      "method": "PUT",
+      "slug": "put-vms-id-entropy",
+      "operationId": "put_entropy",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "string",
+        "description": "(EntropyConfigReq)"
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Entropy device configured",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM configuration",
+      "path": "/v1/vms/{id}/logger",
+      "method": "PUT",
+      "slug": "put-vms-id-logger",
+      "operationId": "put_logger",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "string",
+            "nullable": true
+          },
+          "log_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "module": {
+            "type": "string",
+            "nullable": true
+          },
+          "show_level": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "show_log_origin": {
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Logger updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    },
+    {
+      "tag": "VM configuration",
+      "path": "/v1/vms/{id}/serial",
+      "method": "PUT",
+      "slug": "put-vms-id-serial",
+      "operationId": "put_serial",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "string",
+        "description": "(SerialConfigReq)"
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Serial device configured",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        }
+      ]
+    }
+  ]
+}

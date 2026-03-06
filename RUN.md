@@ -6,7 +6,7 @@ export the env
 
 # Manager
 cargo build -p manager
-export DATABASE_URL=postgres://nexus:nexus@localhost:5432/nexus
+export DATABASE_URL=postgres://nexus:nexus@localhost:5435/nexus
 # Optionally set custom image root (default: /srv/images)
 # export MANAGER_IMAGE_ROOT=$HOME/images  # Use home directory instead
 sudo -E env MANAGER_RECONCILER_DISABLED=1 MANAGER_ALLOW_IMAGE_PATHS=true RUST_LOG=info ./target/debug/manager

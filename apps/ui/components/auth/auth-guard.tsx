@@ -12,7 +12,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, token } = useAuthStore()
   const [isChecking, setIsChecking] = useState(true)
 
-  const isPublicRoute = PUBLIC_ROUTES.includes(pathname || "")
+  const isPublicRoute = PUBLIC_ROUTES.includes(pathname || "") || pathname?.startsWith("/docs")
   const isProtectedRoute = !isPublicRoute
 
   useEffect(() => {
@@ -32,8 +32,9 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       router.replace("/")
     }
 
-    // Redirect to dashboard if trying to access login while authenticated
-    if (isPublicRoute && isAuthenticated && token) {
+    // Redirect to dashboard if on login page while authenticated
+    // (but not /docs — those are public and accessible while logged in)
+    if (isPublicRoute && isAuthenticated && token && pathname === "/") {
       router.replace("/dashboard")
     }
   }, [isAuthenticated, token, pathname, router, isProtectedRoute, isPublicRoute, isChecking])

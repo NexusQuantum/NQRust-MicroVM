@@ -1,0 +1,654 @@
+{
+  "name": "VMs",
+  "description": "Virtual machine lifecycle APIs.",
+  "endpoints": [
+    {
+      "tag": "VMs",
+      "path": "/v1/vms",
+      "method": "GET",
+      "slug": "get-vms",
+      "operationId": "list",
+      "security": true,
+      "parameters": [],
+      "responses": [
+        {
+          "status": "200",
+          "description": "VMs listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "api_sock": {
+                      "type": "string"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "created_by_user_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "fc_unit": {
+                      "type": "string"
+                    },
+                    "guest_ip": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "host_addr": {
+                      "type": "string"
+                    },
+                    "host_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "http_port": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kernel_path": {
+                      "type": "string"
+                    },
+                    "log_path": {
+                      "type": "string"
+                    },
+                    "mem_mib": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "rootfs_path": {
+                      "type": "string"
+                    },
+                    "source_snapshot_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "tap": {
+                      "type": "string"
+                    },
+                    "template_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "vcpu": {
+                      "type": "integer",
+                      "format": "int32"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "state",
+                    "host_id",
+                    "host_addr",
+                    "api_sock",
+                    "tap",
+                    "log_path",
+                    "http_port",
+                    "fc_unit",
+                    "vcpu",
+                    "mem_mib",
+                    "kernel_path",
+                    "rootfs_path",
+                    "created_at",
+                    "updated_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to list VMs"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms",
+      "method": "POST",
+      "slug": "post-vms",
+      "operationId": "create",
+      "security": true,
+      "parameters": [],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "kernel_image_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "kernel_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "mem_mib": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "network_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "password": {
+            "type": "string",
+            "nullable": true
+          },
+          "rootfs_image_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "rootfs_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "rootfs_size_mb": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "minimum": 0
+          },
+          "source_snapshot_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "vcpu": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "name",
+          "vcpu",
+          "mem_mib"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "VM created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to create VM"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms/{id}",
+      "method": "GET",
+      "slug": "get-vms-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "VM fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "api_sock": {
+                    "type": "string"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "created_by_user_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "fc_unit": {
+                    "type": "string"
+                  },
+                  "guest_ip": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "host_addr": {
+                    "type": "string"
+                  },
+                  "host_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "http_port": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kernel_path": {
+                    "type": "string"
+                  },
+                  "log_path": {
+                    "type": "string"
+                  },
+                  "mem_mib": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "rootfs_path": {
+                    "type": "string"
+                  },
+                  "source_snapshot_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "tap": {
+                    "type": "string"
+                  },
+                  "template_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "vcpu": {
+                    "type": "integer",
+                    "format": "int32"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "state",
+                  "host_id",
+                  "host_addr",
+                  "api_sock",
+                  "tap",
+                  "log_path",
+                  "http_port",
+                  "fc_unit",
+                  "vcpu",
+                  "mem_mib",
+                  "kernel_path",
+                  "rootfs_path",
+                  "created_at",
+                  "updated_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch VM"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms/{id}",
+      "method": "DELETE",
+      "slug": "delete-vms-id",
+      "operationId": "delete",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "VM deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to delete VM"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms/{id}/ctrl-alt-del",
+      "method": "POST",
+      "slug": "post-vms-id-ctrl-alt-del",
+      "operationId": "ctrl_alt_del",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Ctrl-Alt-Del sent",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "VM must be running"
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to send Ctrl-Alt-Del"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms/{id}/flush-metrics",
+      "method": "POST",
+      "slug": "post-vms-id-flush-metrics",
+      "operationId": "flush_metrics",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Metrics flushed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to flush metrics"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms/{id}/pause",
+      "method": "POST",
+      "slug": "post-vms-id-pause",
+      "operationId": "pause",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "VM paused",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "VM must be running to pause"
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to pause VM"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms/{id}/resume",
+      "method": "POST",
+      "slug": "post-vms-id-resume",
+      "operationId": "resume",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "VM resumed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "VM must be paused to resume"
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to resume VM"
+        }
+      ]
+    },
+    {
+      "tag": "VMs",
+      "path": "/v1/vms/{id}/stop",
+      "method": "POST",
+      "slug": "post-vms-id-stop",
+      "operationId": "stop",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "VM stopped",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to stop VM"
+        }
+      ]
+    }
+  ]
+}

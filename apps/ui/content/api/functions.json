@@ -1,0 +1,717 @@
+{
+  "name": "Functions",
+  "description": "Serverless function management APIs.",
+  "endpoints": [
+    {
+      "tag": "Functions",
+      "path": "/v1/functions",
+      "method": "GET",
+      "slug": "get-functions",
+      "operationId": "list",
+      "security": true,
+      "parameters": [],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Functions listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "created_by_user_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "env_vars": {
+                      "nullable": true
+                    },
+                    "guest_ip": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "handler": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "last_invoked_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "memory_mb": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "port": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "runtime": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "timeout_seconds": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "vcpu": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "vm_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "runtime",
+                    "code",
+                    "handler",
+                    "timeout_seconds",
+                    "memory_mb",
+                    "vcpu",
+                    "port",
+                    "state",
+                    "created_at",
+                    "updated_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to list functions"
+        }
+      ]
+    },
+    {
+      "tag": "Functions",
+      "path": "/v1/functions",
+      "method": "POST",
+      "slug": "post-functions",
+      "operationId": "create",
+      "security": true,
+      "parameters": [],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "env_vars": {
+            "nullable": true
+          },
+          "handler": {
+            "type": "string"
+          },
+          "memory_mb": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "vcpu": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "required": [
+          "name",
+          "runtime",
+          "code",
+          "handler"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Function created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "500",
+          "description": "Failed to create function"
+        }
+      ]
+    },
+    {
+      "tag": "Functions",
+      "path": "/v1/functions/{id}",
+      "method": "GET",
+      "slug": "get-functions-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Function fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "created_by_user_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "env_vars": {
+                    "nullable": true
+                  },
+                  "guest_ip": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "handler": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "last_invoked_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "memory_mb": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "port": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "runtime": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "timeout_seconds": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "vcpu": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "vm_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "runtime",
+                  "code",
+                  "handler",
+                  "timeout_seconds",
+                  "memory_mb",
+                  "vcpu",
+                  "port",
+                  "state",
+                  "created_at",
+                  "updated_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Function not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch function"
+        }
+      ]
+    },
+    {
+      "tag": "Functions",
+      "path": "/v1/functions/{id}",
+      "method": "PUT",
+      "slug": "put-functions-id",
+      "operationId": "update",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "env_vars": {
+            "nullable": true
+          },
+          "handler": {
+            "type": "string",
+            "nullable": true
+          },
+          "memory_mb": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "runtime": {
+            "type": "string",
+            "nullable": true
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Function updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "created_by_user_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "env_vars": {
+                    "nullable": true
+                  },
+                  "guest_ip": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "handler": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "last_invoked_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "memory_mb": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "port": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "runtime": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "timeout_seconds": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "vcpu": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "vm_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "runtime",
+                  "code",
+                  "handler",
+                  "timeout_seconds",
+                  "memory_mb",
+                  "vcpu",
+                  "port",
+                  "state",
+                  "created_at",
+                  "updated_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Function not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to update function"
+        }
+      ]
+    },
+    {
+      "tag": "Functions",
+      "path": "/v1/functions/{id}",
+      "method": "DELETE",
+      "slug": "delete-functions-id",
+      "operationId": "delete",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Function deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Function not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to delete function"
+        }
+      ]
+    },
+    {
+      "tag": "Functions",
+      "path": "/v1/functions/{id}/invoke",
+      "method": "POST",
+      "slug": "post-functions-id-invoke",
+      "operationId": "invoke",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "event": {}
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Function invoked",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "duration_ms": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "error": {
+                "type": "string",
+                "nullable": true
+              },
+              "logs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "response": {
+                "nullable": true
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_id",
+              "status",
+              "duration_ms"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Function not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to invoke function"
+        }
+      ]
+    },
+    {
+      "tag": "Functions",
+      "path": "/v1/functions/{id}/logs",
+      "method": "GET",
+      "slug": "get-functions-id-logs",
+      "operationId": "logs",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "status",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Invocation logs fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "duration_ms": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "error": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "event": {},
+                    "function_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "invoked_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "logs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "memory_used_mb": {
+                      "type": "integer",
+                      "format": "int32",
+                      "nullable": true
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "response": {
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "function_id",
+                    "status",
+                    "duration_ms",
+                    "request_id",
+                    "event",
+                    "invoked_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Function not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch logs"
+        }
+      ]
+    }
+  ]
+}

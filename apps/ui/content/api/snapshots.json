@@ -1,0 +1,338 @@
+{
+  "name": "Snapshots",
+  "description": "Snapshot management APIs.",
+  "endpoints": [
+    {
+      "tag": "Snapshots",
+      "path": "/v1/snapshots/{id}",
+      "method": "GET",
+      "slug": "get-snapshots-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Snapshot fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "mem_path": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "parent_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "size_bytes": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "snapshot_path": {
+                    "type": "string"
+                  },
+                  "snapshot_type": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "track_dirty_pages": {
+                    "type": "boolean"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "vm_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "id",
+                  "vm_id",
+                  "snapshot_path",
+                  "mem_path",
+                  "size_bytes",
+                  "state",
+                  "created_at",
+                  "updated_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Snapshot not found"
+        }
+      ]
+    },
+    {
+      "tag": "Snapshots",
+      "path": "/v1/snapshots/{id}/instantiate",
+      "method": "POST",
+      "slug": "post-snapshots-id-instantiate",
+      "operationId": "instantiate",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Snapshot instantiated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Snapshot not found"
+        },
+        {
+          "status": "502",
+          "description": "Failed to instantiate snapshot"
+        }
+      ]
+    },
+    {
+      "tag": "Snapshots",
+      "path": "/v1/vms/{id}/snapshots",
+      "method": "GET",
+      "slug": "get-vms-id-snapshots",
+      "operationId": "list_for_vm",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Snapshots listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "mem_path": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "parent_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "size_bytes": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "snapshot_path": {
+                      "type": "string"
+                    },
+                    "snapshot_type": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "track_dirty_pages": {
+                      "type": "boolean"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "vm_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "vm_id",
+                    "snapshot_path",
+                    "mem_path",
+                    "size_bytes",
+                    "state",
+                    "created_at",
+                    "updated_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to list snapshots"
+        }
+      ]
+    },
+    {
+      "tag": "Snapshots",
+      "path": "/v1/vms/{id}/snapshots",
+      "method": "POST",
+      "slug": "post-vms-id-snapshots",
+      "operationId": "create",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "parent_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "snapshot_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "track_dirty_pages": {
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Snapshot created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "VM not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to record snapshot"
+        },
+        {
+          "status": "502",
+          "description": "Agent interaction failed"
+        }
+      ]
+    }
+  ]
+}

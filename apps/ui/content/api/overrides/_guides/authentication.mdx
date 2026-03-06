@@ -1,0 +1,46 @@
+# Authentication Guide
+
+## Overview
+
+The NQR-MicroVM API uses **Bearer token authentication**. All API requests (except login) must include an `Authorization` header with a valid JWT token.
+
+## Getting a Token
+
+Send a POST request to `/v1/auth/login` with your credentials:
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "your-password"}' \
+  http://localhost:18080/v1/auth/login
+```
+
+The response includes a `token` field:
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "username": "admin",
+    "role": "admin"
+  }
+}
+```
+
+## Using the Token
+
+Include the token in the `Authorization` header of all subsequent requests:
+
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+## Token Expiration
+
+Tokens expire after 24 hours. When a token expires, you'll receive a `401 Unauthorized` response. Request a new token by logging in again.
+
+## Roles
+
+- **admin**: Full access to all endpoints
+- **user**: Access to own resources only

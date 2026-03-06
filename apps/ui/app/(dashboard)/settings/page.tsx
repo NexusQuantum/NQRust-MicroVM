@@ -51,8 +51,10 @@ import {
   useDeleteAvatar,
   useAuditLogs,
   useDbInfo,
-  useSystemStats
+  useSystemStats,
+  useEulaStatus,
 } from "@/lib/queries"
+import { LicenseSettingsTab } from "@/components/license/license-settings-tab"
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { toast } from "sonner"
 import { AvatarUpload } from "@/components/user"
@@ -72,6 +74,7 @@ const ACTION_GROUPS: Record<string, string[]> = {
 function formatAction(action: string): string {
   return action.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
 }
+
 
 function LoggingTabContent() {
   const dateFormat = useDateFormat()
@@ -400,6 +403,7 @@ export default function SettingsPage() {
   const changePasswordMutation = useChangePassword()
   const uploadAvatarMutation = useUploadAvatar()
   const deleteAvatarMutation = useDeleteAvatar()
+  const { data: eulaStatus } = useEulaStatus()
 
   // Local state for form inputs (synced with backend)
   const [localTimezone, setLocalTimezone] = useState("UTC")
@@ -644,7 +648,7 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="account" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="account">
             <User className="mr-2 h-4 w-4" />
             Account
@@ -664,6 +668,10 @@ export default function SettingsPage() {
           <TabsTrigger value="system">
             <Info className="mr-2 h-4 w-4" />
             System
+          </TabsTrigger>
+          <TabsTrigger value="license">
+            <Lock className="mr-2 h-4 w-4" />
+            License
           </TabsTrigger>
         </TabsList>
 
@@ -849,6 +857,45 @@ export default function SettingsPage() {
               >
                 {changePasswordMutation.isPending ? "Changing..." : "Change Password"}
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <div className="rounded-lg bg-emerald-500/10 p-2">
+                  <ScrollText className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <CardTitle>Agreements & Licenses</CardTitle>
+                  <CardDescription>View your accepted legal agreements</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">End User License Agreement (EULA)</p>
+                  <p className="text-sm text-muted-foreground">
+                    {eulaStatus?.latest_accepted_version
+                      ? `Last accepted version: v${eulaStatus.latest_accepted_version}`
+                      : "No version accepted yet"}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" asChild>
+                  <a href="/eula" target="_blank" rel="noopener noreferrer">
+                    View EULA
+                  </a>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">
+                Manage your software license and read the EULA in the <strong>License</strong> tab.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1183,6 +1230,11 @@ export default function SettingsPage() {
               */}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* License Tab */}
+        <TabsContent value="license" className="space-y-6">
+          <LicenseSettingsTab />
         </TabsContent>
       </Tabs>
 

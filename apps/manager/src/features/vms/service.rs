@@ -2399,9 +2399,12 @@ mod tests {
             snapshots,
             users,
             shell_repo,
+            licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
             download_progress,
+            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(nexus_types::LicenseState::default())),
+            license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
         };
 
         let vm_id = Uuid::new_v4();
@@ -2455,15 +2458,18 @@ mod tests {
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
         let state = AppState {
-            db: pool,
+            db: pool.clone(),
             hosts,
             images,
             snapshots,
             users,
             shell_repo,
+            licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
             download_progress,
+            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(nexus_types::LicenseState::default())),
+            license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
         };
 
         let err = create_and_start(
@@ -2514,15 +2520,18 @@ mod tests {
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
         let state = AppState {
-            db: pool,
+            db: pool.clone(),
             hosts,
             images,
             snapshots,
             users,
             shell_repo,
+            licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
             download_progress,
+            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(nexus_types::LicenseState::default())),
+            license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
         };
 
         let vm = repo::VmRow {
@@ -2582,9 +2591,12 @@ mod tests {
             snapshots,
             users,
             shell_repo,
+            licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
             download_progress,
+            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(nexus_types::LicenseState::default())),
+            license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
         };
 
         let now = chrono::Utc::now();

@@ -1098,6 +1098,10 @@ pub enum AuditAction {
 
     // System/lifecycle events
     SystemEvent,
+
+    // EULA actions
+    AcceptEula,
+    ActivateLicense,
 }
 
 impl AuditAction {
@@ -1136,6 +1140,8 @@ impl AuditAction {
             AuditAction::DetachVolume => "detach_volume",
             AuditAction::DeleteVolume => "delete_volume",
             AuditAction::SystemEvent => "system_event",
+            AuditAction::AcceptEula => "accept_eula",
+            AuditAction::ActivateLicense => "activate_license",
         }
     }
 }
@@ -1325,6 +1331,98 @@ pub struct HostMetric {
     pub memory_total_mb: Option<f64>,
     pub disk_used_gb: Option<f64>,
     pub disk_total_gb: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BackupLog {
+    pub message: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub level: String,
+}
+
+// ========================================
+// EULA & Licensing Types
+// ========================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EulaInfo {
+    pub version: String,
+    pub languages: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EulaStatus {
+    pub needs_acceptance: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_accepted_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EulaAcceptRequest {
+    pub version: String,
+    pub language: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EulaAcceptResponse {
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LicenseState {
+    pub is_licensed: bool,
+    pub status: String, // active, expired, invalid, grace_period, unlicensed, unknown
+    pub is_grace_period: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grace_days_remaining: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub customer_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activations: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_activations: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license_key: Option<String>, // masked: XXXX-****-****-XXXX
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+impl Default for LicenseState {
+    fn default() -> Self {
+        Self {
+            is_licensed: false,
+            status: "unlicensed".to_string(),
+            is_grace_period: false,
+            grace_days_remaining: None,
+            customer_name: None,
+            product: None,
+            features: vec![],
+            expires_at: None,
+            activations: None,
+            max_activations: None,
+            verified_at: None,
+            license_key: None,
+            error_message: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LicenseActivateRequest {
+    pub license_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LicenseUploadRequest {
+    pub file_content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

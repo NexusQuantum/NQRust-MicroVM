@@ -1,0 +1,1357 @@
+{
+  "name": "Containers",
+  "description": "Docker container orchestration APIs.",
+  "endpoints": [
+    {
+      "tag": "Containers",
+      "path": "/v1/containers",
+      "method": "GET",
+      "slug": "get-containers",
+      "operationId": "list",
+      "security": true,
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        {
+          "name": "host_id",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Containers listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "args": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "command": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "container_runtime_id": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "cpu_limit": {
+                      "type": "number",
+                      "format": "float",
+                      "nullable": true
+                    },
+                    "cpu_percent": {
+                      "type": "number",
+                      "format": "float",
+                      "nullable": true
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "created_by_user_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "env_vars": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "error_message": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "guest_ip": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "host_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "image": {
+                      "type": "string"
+                    },
+                    "memory_limit_mb": {
+                      "type": "integer",
+                      "format": "int32",
+                      "nullable": true
+                    },
+                    "memory_used_mb": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "port_mappings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "container": {
+                            "type": "integer",
+                            "format": "int32"
+                          },
+                          "host": {
+                            "type": "integer",
+                            "format": "int32"
+                          },
+                          "protocol": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "host",
+                          "container",
+                          "protocol"
+                        ]
+                      }
+                    },
+                    "restart_policy": {
+                      "type": "string"
+                    },
+                    "started_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "stopped_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "uptime_seconds": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "container": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string"
+                          },
+                          "read_only": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "host",
+                          "container"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "image",
+                    "restart_policy",
+                    "state",
+                    "created_at",
+                    "updated_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to list containers"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers",
+      "method": "POST",
+      "slug": "post-containers",
+      "operationId": "create",
+      "security": true,
+      "parameters": [],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string",
+            "nullable": true
+          },
+          "cpu_limit": {
+            "type": "number",
+            "format": "float",
+            "nullable": true
+          },
+          "env_vars": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "image": {
+            "type": "string"
+          },
+          "memory_limit_mb": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "port_mappings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "container": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "host": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "protocol": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "host",
+                "container",
+                "protocol"
+              ]
+            }
+          },
+          "registry_auth": {
+            "type": "string",
+            "description": "(RegistryAuth)",
+            "nullable": true
+          },
+          "restart_policy": {
+            "type": "string"
+          },
+          "volumes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "container": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "read_only": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "host",
+                "container"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name",
+          "image"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "500",
+          "description": "Failed to create container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}",
+      "method": "GET",
+      "slug": "get-containers-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "command": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "container_runtime_id": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "cpu_limit": {
+                    "type": "number",
+                    "format": "float",
+                    "nullable": true
+                  },
+                  "cpu_percent": {
+                    "type": "number",
+                    "format": "float",
+                    "nullable": true
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "created_by_user_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "env_vars": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "error_message": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "guest_ip": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "host_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "image": {
+                    "type": "string"
+                  },
+                  "memory_limit_mb": {
+                    "type": "integer",
+                    "format": "int32",
+                    "nullable": true
+                  },
+                  "memory_used_mb": {
+                    "type": "integer",
+                    "format": "int64",
+                    "nullable": true
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "port_mappings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "container": {
+                          "type": "integer",
+                          "format": "int32"
+                        },
+                        "host": {
+                          "type": "integer",
+                          "format": "int32"
+                        },
+                        "protocol": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "container",
+                        "protocol"
+                      ]
+                    }
+                  },
+                  "restart_policy": {
+                    "type": "string"
+                  },
+                  "started_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "stopped_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "uptime_seconds": {
+                    "type": "integer",
+                    "format": "int64",
+                    "nullable": true
+                  },
+                  "volumes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "container": {
+                          "type": "string"
+                        },
+                        "host": {
+                          "type": "string"
+                        },
+                        "read_only": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "container"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "image",
+                  "restart_policy",
+                  "state",
+                  "created_at",
+                  "updated_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}",
+      "method": "PUT",
+      "slug": "put-containers-id",
+      "operationId": "update",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "cpu_limit": {
+            "type": "number",
+            "format": "float",
+            "nullable": true
+          },
+          "env_vars": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "memory_limit_mb": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "restart_policy": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "command": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "container_runtime_id": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "cpu_limit": {
+                    "type": "number",
+                    "format": "float",
+                    "nullable": true
+                  },
+                  "cpu_percent": {
+                    "type": "number",
+                    "format": "float",
+                    "nullable": true
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "created_by_user_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "env_vars": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "error_message": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "guest_ip": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "host_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "image": {
+                    "type": "string"
+                  },
+                  "memory_limit_mb": {
+                    "type": "integer",
+                    "format": "int32",
+                    "nullable": true
+                  },
+                  "memory_used_mb": {
+                    "type": "integer",
+                    "format": "int64",
+                    "nullable": true
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "port_mappings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "container": {
+                          "type": "integer",
+                          "format": "int32"
+                        },
+                        "host": {
+                          "type": "integer",
+                          "format": "int32"
+                        },
+                        "protocol": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "container",
+                        "protocol"
+                      ]
+                    }
+                  },
+                  "restart_policy": {
+                    "type": "string"
+                  },
+                  "started_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "stopped_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "uptime_seconds": {
+                    "type": "integer",
+                    "format": "int64",
+                    "nullable": true
+                  },
+                  "volumes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "container": {
+                          "type": "string"
+                        },
+                        "host": {
+                          "type": "string"
+                        },
+                        "read_only": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "container"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "image",
+                  "restart_policy",
+                  "state",
+                  "created_at",
+                  "updated_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to update container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}",
+      "method": "DELETE",
+      "slug": "delete-containers-id",
+      "operationId": "delete",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to delete container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/exec",
+      "method": "POST",
+      "slug": "post-containers-id-exec",
+      "operationId": "exec",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "attach_stderr": {
+            "type": "boolean"
+          },
+          "attach_stdin": {
+            "type": "boolean"
+          },
+          "attach_stdout": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tty": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Command executed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "exec_id": {
+                "type": "string"
+              },
+              "exit_code": {
+                "type": "integer",
+                "format": "int32",
+                "nullable": true
+              },
+              "output": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "exec_id"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Container not running"
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to execute command"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/logs",
+      "method": "GET",
+      "slug": "get-containers-id-logs",
+      "operationId": "logs",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "since",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        {
+          "name": "until",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        {
+          "name": "tail",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          }
+        },
+        {
+          "name": "follow",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container logs fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "container_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "stream": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "container_id",
+                    "timestamp",
+                    "stream",
+                    "message",
+                    "created_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch logs"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/pause",
+      "method": "POST",
+      "slug": "post-containers-id-pause",
+      "operationId": "pause",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container paused",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Container not running"
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to pause container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/restart",
+      "method": "POST",
+      "slug": "post-containers-id-restart",
+      "operationId": "restart",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container restarted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to restart container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/resume",
+      "method": "POST",
+      "slug": "post-containers-id-resume",
+      "operationId": "resume",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container resumed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Container not paused"
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to resume container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/start",
+      "method": "POST",
+      "slug": "post-containers-id-start",
+      "operationId": "start",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container started",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Container already running"
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to start container"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/stats",
+      "method": "GET",
+      "slug": "get-containers-id-stats",
+      "operationId": "stats",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container stats fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "block_read_bytes": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "block_write_bytes": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "container_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "cpu_percent": {
+                      "type": "number",
+                      "format": "float",
+                      "nullable": true
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "memory_limit_mb": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "memory_used_mb": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "network_rx_bytes": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "network_tx_bytes": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "pids": {
+                      "type": "integer",
+                      "format": "int32",
+                      "nullable": true
+                    },
+                    "recorded_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "container_id",
+                    "recorded_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch stats"
+        }
+      ]
+    },
+    {
+      "tag": "Containers",
+      "path": "/v1/containers/{id}/stop",
+      "method": "POST",
+      "slug": "post-containers-id-stop",
+      "operationId": "stop",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Container stopped",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Container not running"
+        },
+        {
+          "status": "404",
+          "description": "Container not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to stop container"
+        }
+      ]
+    }
+  ]
+}

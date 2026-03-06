@@ -332,7 +332,7 @@ export class FacadeApi {
     const res = await apiClient.get<GetImageResp>(`/images/${id}`);
     return res.item;
   }
-  
+
   /**
    * Template Management - New backend feature
    */
@@ -513,20 +513,20 @@ export class FacadeApi {
 
 
   // Functions
-  async getFunctions(): Promise<Fn[]>{
+  async getFunctions(): Promise<Fn[]> {
     const res = await apiClient.get(`/functions`)
-        const json =
+    const json =
       res && typeof res === "object" && "data" in res ? (res as any).data : res;
 
     const list = Array.isArray(json)
       ? json
       : Array.isArray((json as any)?.items)
-      ? (json as any).items
-      : Array.isArray((json as any)?.data)
-      ? (json as any).data
-      : Array.isArray((json as any)?.functions)
-      ? (json as any).functions
-      : [];
+        ? (json as any).items
+        : Array.isArray((json as any)?.data)
+          ? (json as any).data
+          : Array.isArray((json as any)?.functions)
+            ? (json as any).functions
+            : [];
 
     return list as Fn[];
   }
@@ -545,13 +545,13 @@ export class FacadeApi {
   async createFunction(params: CreateFunction) {
     return apiClient.post<CreateFunction>("/functions", params)
   }
-  
+
   async updateFunction(id: string, data: UpdateFunction) {
-    return apiClient.put(`/functions/${id}`,data);
+    return apiClient.put(`/functions/${id}`, data);
   }
 
   async invokeFunction(id: string, data: InvokeFunction) {
-    return apiClient.post(`/functions/${id}/invoke`, data )
+    return apiClient.post(`/functions/${id}/invoke`, data)
   }
 
   async testFunction(params: TestFunction) {
@@ -822,17 +822,17 @@ export class FacadeApi {
   // Audit Logs
   // ==============
 
-  async getAuditLogs(params?: AuditLogQueryParams): Promise<ListAuditLogsResponse> {
-    let url = "/logs/audit";
-    if (params) {
-      const qp = new URLSearchParams();
-      if (params.action) qp.append("action", params.action);
-      if (params.resource_type) qp.append("resource_type", params.resource_type);
-      if (params.limit != null) qp.append("limit", String(params.limit));
-      if (params.offset != null) qp.append("offset", String(params.offset));
-      const qs = qp.toString();
-      if (qs) url += `?${qs}`;
-    }
+  async listAuditLogs(
+    params: AuditLogQueryParams = {}
+  ): Promise<ListAuditLogsResponse> {
+    const query = new URLSearchParams();
+    if (params.user_id) query.append("user_id", params.user_id);
+    if (params.action) query.append("action", params.action);
+    if (params.limit) query.append("limit", params.limit.toString());
+    if (params.before) query.append("before", params.before);
+
+    const qs = query.toString();
+    const url = qs ? `/audit/logs?${qs}` : "/audit/logs";
     return apiClient.get<ListAuditLogsResponse>(url);
   }
 
@@ -877,6 +877,34 @@ export class FacadeApi {
     const qs = qp.toString();
     if (qs) url += `?${qs}`;
     return apiClient.get<ContainerMetric[]>(url);
+  }
+
+  // ==============
+  // Licensing & EULA
+  // ==============
+
+  async getEulaInfo(): Promise<import("@/lib/types").EulaInfo> {
+    return apiClient.get<import("@/lib/types").EulaInfo>("/licensing/eula");
+  }
+
+  async getEulaStatus(): Promise<import("@/lib/types").EulaStatus> {
+    return apiClient.get<import("@/lib/types").EulaStatus>("/licensing/eula/status");
+  }
+
+  async acceptEula(params: import("@/lib/types").EulaAcceptRequest): Promise<import("@/lib/types").EulaAcceptResponse> {
+    return apiClient.post<import("@/lib/types").EulaAcceptResponse>("/licensing/eula/accept", params);
+  }
+
+  async getLicenseStatus(): Promise<import("@/lib/types").LicenseState> {
+    return apiClient.get<import("@/lib/types").LicenseState>("/licensing/license/status");
+  }
+
+  async activateLicense(params: import("@/lib/types").LicenseActivateRequest): Promise<import("@/lib/types").LicenseState> {
+    return apiClient.post<import("@/lib/types").LicenseState>("/licensing/license/activate", params);
+  }
+
+  async activateLicenseFile(fileContent: string): Promise<import("@/lib/types").LicenseState> {
+    return apiClient.post<import("@/lib/types").LicenseState>("/licensing/license/activate-file", { file_content: fileContent });
   }
 }
 

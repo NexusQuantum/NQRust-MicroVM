@@ -110,6 +110,11 @@ export const queryKeys = {
   dbInfo: ["db-info"] as const,
   systemStats: ["system-stats"] as const,
 
+  // eula
+  eulaInfo: ["eula", "info"] as const,
+  eulaStatus: ["eula", "status"] as const,
+  licenseStatus: ["license", "status"] as const,
+
   // time-series metrics
   hostMetrics: (id: string) => ["metrics", "hosts", id] as const,
   vmTimeMetrics: (id: string) => ["metrics", "vms", id] as const,
@@ -148,14 +153,14 @@ export function useDeleteFunction() {
     },
   })
 }
-  
+
 // !CREATE
 export function useCreateFunction() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ name, runtime, handler, code, vcpu, memory_mb}: CreateFunction) =>
-      facadeApi.createFunction({ name, runtime, handler, code, vcpu, memory_mb}),
+    mutationFn: ({ name, runtime, handler, code, vcpu, memory_mb }: CreateFunction) =>
+      facadeApi.createFunction({ name, runtime, handler, code, vcpu, memory_mb }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.functions })
 
@@ -267,7 +272,7 @@ export function useImage(id: string) {
   return useQuery({
     queryKey: queryKeys.image(id),
     queryFn: () => facadeApi.getImage(id),
-    
+
   })
 }
 
@@ -542,12 +547,12 @@ export function useVmStatePatch() {
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.vms });
       switch (action) {
-        case "start":          break;
-        case "pause":          break;
-        case "resume":          break;
-        case "stop":          break;
-        case "flush_metrics":          break;
-        case "ctrl_alt_del":          break;
+        case "start": break;
+        case "pause": break;
+        case "resume": break;
+        case "stop": break;
+        case "flush_metrics": break;
+        case "ctrl_alt_del": break;
       }
     }
   });
@@ -574,7 +579,8 @@ export function useDeleteVM() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteVM(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.vms });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    }
   });
 }
 
@@ -596,7 +602,8 @@ export function useCreateVMDrive() {
       facadeApi.createVMDrive(vmId, drive),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
   });
 }
 
@@ -615,7 +622,8 @@ export function useUpdateVMDrive() {
     }) => facadeApi.updateVMDrive(vmId, driveId, drive),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
   });
 }
 
@@ -627,7 +635,8 @@ export function useDeleteVMDrive() {
       facadeApi.deleteVMDrive(vmId, driveId),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
   });
 }
 
@@ -649,7 +658,8 @@ export function useCreateVMNic() {
       facadeApi.createVMNic(vmId, nic),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
   });
 }
 
@@ -668,7 +678,8 @@ export function useUpdateVMNic() {
     }) => facadeApi.updateVMNic(vmId, nicId, nic),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
   });
 }
 
@@ -680,7 +691,8 @@ export function useDeleteVMNic() {
       facadeApi.deleteVMNic(vmId, nicId),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmNics(vmId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
   });
 }
 
@@ -746,7 +758,8 @@ export function useCreateContainer() {
     mutationFn: (params: import("@/lib/types").CreateContainerReq) =>
       facadeApi.createContainer(params),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    }
   });
 }
 
@@ -758,7 +771,8 @@ export function useUpdateContainer() {
       facadeApi.updateContainer(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    }
   });
 }
 
@@ -768,7 +782,8 @@ export function useDeleteContainer() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteContainer(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    }
   });
 }
 
@@ -854,7 +869,8 @@ export function usePauseContainer() {
     mutationFn: (id: string) => facadeApi.pauseContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    }
   });
 }
 
@@ -865,7 +881,8 @@ export function useResumeContainer() {
     mutationFn: (id: string) => facadeApi.resumeContainer(id),
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.containers });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers });
+    }
   });
 }
 
@@ -957,7 +974,8 @@ export function useUpdateNetwork() {
       facadeApi.updateNetwork(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.network(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.networks });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.networks });
+    }
   });
 }
 
@@ -995,7 +1013,8 @@ export function useDeleteNetwork() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteNetwork(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.networks });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.networks });
+    }
   });
 }
 
@@ -1055,7 +1074,8 @@ export function useCreateVolume() {
   return useMutation({
     mutationFn: facadeApi.createVolume.bind(facadeApi),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
+    }
   });
 }
 
@@ -1067,7 +1087,8 @@ export function useAttachVolume() {
       facadeApi.attachVolume(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.volume(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
+    }
   });
 }
 
@@ -1079,7 +1100,8 @@ export function useDetachVolume() {
       facadeApi.detachVolume(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.volume(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
+    }
   });
 }
 
@@ -1089,7 +1111,8 @@ export function useDeleteVolume() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteVolume(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.volumes });
+    }
   });
 }
 
@@ -1134,7 +1157,8 @@ export function useUpdateUser() {
       facadeApi.updateUser(id, params),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.user(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.users });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.users });
+    }
   });
 }
 
@@ -1144,7 +1168,8 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (id: string) => facadeApi.deleteUser(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.users });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.users });
+    }
   });
 }
 
@@ -1198,7 +1223,8 @@ export function useUpdateProfile() {
     mutationFn: (params: import("@/lib/types").UpdateProfileRequest) =>
       facadeApi.updateProfile(params),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.profile });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile });
+    }
   });
 }
 
@@ -1206,7 +1232,7 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: (params: import("@/lib/types").ChangePasswordRequest) =>
       facadeApi.changePassword(params),
-    onSuccess: () => {    }
+    onSuccess: () => { }
   });
 }
 
@@ -1216,7 +1242,8 @@ export function useUploadAvatar() {
   return useMutation({
     mutationFn: (file: File) => facadeApi.uploadAvatar(file),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.profile });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile });
+    }
   });
 }
 
@@ -1226,7 +1253,8 @@ export function useDeleteAvatar() {
   return useMutation({
     mutationFn: () => facadeApi.deleteAvatar(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.profile });    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile });
+    }
   });
 }
 
@@ -1237,7 +1265,7 @@ export function useDeleteAvatar() {
 export function useAuditLogs(params?: AuditLogQueryParams, refetchInterval?: number) {
   return useQuery({
     queryKey: [...queryKeys.auditLogs, params],
-    queryFn: () => facadeApi.getAuditLogs(params),
+    queryFn: () => facadeApi.listAuditLogs(params),
     staleTime: 10 * 1000,
     refetchInterval,
   });
@@ -1289,5 +1317,74 @@ export function useContainerMetrics(containerId: string, params?: MetricsQueryPa
     staleTime: 10 * 1000,
     refetchInterval: 10_000,
     enabled: !!containerId,
+  });
+}
+
+// ==============
+// Licensing & EULA
+// ==============
+
+export function useEulaInfo() {
+  return useQuery({
+    queryKey: queryKeys.eulaInfo,
+    queryFn: () => facadeApi.getEulaInfo(),
+    staleTime: 24 * 60 * 60 * 1000, // 24 hours
+  });
+}
+
+export function useEulaStatus(enabled: boolean = true) {
+  return useQuery({
+    queryKey: queryKeys.eulaStatus,
+    queryFn: () => facadeApi.getEulaStatus(),
+    staleTime: 5 * 60 * 1000, // 5 minutes (invalidated on auth state change anyway)
+    retry: false, // Don't retry auth-related things heavily
+    enabled,
+  });
+}
+
+export function useAcceptEula() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: import("@/lib/types").EulaAcceptRequest) =>
+      facadeApi.acceptEula(params),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.eulaStatus });
+    },
+  });
+}
+
+// ── License Query Hooks ──
+
+export function useLicenseStatus(enabled: boolean = true) {
+  return useQuery({
+    queryKey: queryKeys.licenseStatus,
+    queryFn: () => facadeApi.getLicenseStatus(),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: false,
+    enabled,
+  });
+}
+
+export function useActivateLicense() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: import("@/lib/types").LicenseActivateRequest) =>
+      facadeApi.activateLicense(params),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.licenseStatus });
+    },
+  });
+}
+
+export function useActivateLicenseFile() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (fileContent: string) => facadeApi.activateLicenseFile(fileContent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.licenseStatus });
+    },
   });
 }

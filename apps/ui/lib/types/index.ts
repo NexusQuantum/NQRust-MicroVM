@@ -253,10 +253,12 @@ export interface ListAuditLogsResponse {
 }
 
 export interface AuditLogQueryParams {
+  user_id?: string;
   action?: string;
   resource_type?: string;
   limit?: number;
   offset?: number;
+  before?: string;
 }
 
 export interface DbConnectionInfo {
@@ -474,7 +476,7 @@ export interface TestFunction {
 }
 
 export interface Function {
-  state: "creating" | "booting" | "deploying" | "error" |"ready";
+  state: "creating" | "booting" | "deploying" | "error" | "ready";
   id: string;
   name: string;
   runtime: "python" | "javascript" | "typescript";
@@ -543,7 +545,7 @@ export interface UpdateFunction {
   "code": string,
   // "vcpu": number,
   "memory_mb": number,
-  "timeout_seconds" : number
+  "timeout_seconds": number
 }
 
 // Container Types (matching backend API)
@@ -1001,4 +1003,55 @@ export interface MetricsQueryParams {
   from?: string;
   to?: string;
   limit?: number;
+}
+
+// ========================================
+// EULA & Licensing Types
+// ========================================
+
+export interface EulaInfo {
+  version: string;
+  languages: string[];
+}
+
+export interface EulaStatus {
+  needs_acceptance: boolean;
+  latest_accepted_version?: string;
+}
+
+export interface EulaAcceptRequest {
+  version: string;
+  language: string;
+}
+
+export interface EulaAcceptResponse {
+  success: boolean;
+}
+
+// ========================================
+// License Types
+// ========================================
+
+export interface LicenseState {
+  is_licensed: boolean;
+  status: string; // active, expired, invalid, grace_period, unlicensed, unknown
+  is_grace_period: boolean;
+  grace_days_remaining?: number;
+  customer_name?: string;
+  product?: string;
+  features: string[];
+  expires_at?: string;
+  activations?: number;
+  max_activations?: number;
+  verified_at?: string;
+  license_key?: string; // masked: XXXX-****-****-XXXX
+  error_message?: string;
+}
+
+export interface LicenseActivateRequest {
+  license_key: string;
+}
+
+export interface LicenseUploadRequest {
+  file_content: string;
 }

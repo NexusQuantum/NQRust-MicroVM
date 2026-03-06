@@ -1,0 +1,311 @@
+{
+  "name": "Images",
+  "description": "Image registry APIs.",
+  "endpoints": [
+    {
+      "tag": "Images",
+      "path": "/v1/images",
+      "method": "GET",
+      "slug": "get-images",
+      "operationId": "list",
+      "security": true,
+      "parameters": [
+        {
+          "name": "kind",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        {
+          "name": "project",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        {
+          "name": "name",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Images listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "host_path": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "project": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "name",
+                    "host_path",
+                    "sha256",
+                    "size",
+                    "created_at",
+                    "updated_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to list images"
+        }
+      ]
+    },
+    {
+      "tag": "Images",
+      "path": "/v1/images",
+      "method": "POST",
+      "slug": "post-images",
+      "operationId": "create",
+      "security": true,
+      "parameters": [],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "host_path": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "nullable": true
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "host_path",
+          "sha256",
+          "size"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Image registered",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid image path"
+        },
+        {
+          "status": "500",
+          "description": "Failed to store image metadata"
+        }
+      ]
+    },
+    {
+      "tag": "Images",
+      "path": "/v1/images/{id}",
+      "method": "GET",
+      "slug": "get-images-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Image fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "host_path": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "project": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "name",
+                  "host_path",
+                  "sha256",
+                  "size",
+                  "created_at",
+                  "updated_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Image not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch image"
+        }
+      ]
+    },
+    {
+      "tag": "Images",
+      "path": "/v1/images/{id}",
+      "method": "DELETE",
+      "slug": "delete-images-id",
+      "operationId": "delete",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Image deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Image not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to delete image"
+        }
+      ]
+    }
+  ]
+}

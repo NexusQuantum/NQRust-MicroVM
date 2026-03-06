@@ -1,0 +1,215 @@
+{
+  "name": "Hosts",
+  "description": "Host lifecycle operations.",
+  "endpoints": [
+    {
+      "tag": "Hosts",
+      "path": "/v1/hosts",
+      "method": "GET",
+      "slug": "get-hosts",
+      "operationId": "list",
+      "security": true,
+      "parameters": [],
+      "responses": [
+        {
+          "status": "200",
+          "description": "List of all hosts",
+          "schema": {
+            "type": "string",
+            "description": "(HostListResponse)"
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to list hosts"
+        }
+      ]
+    },
+    {
+      "tag": "Hosts",
+      "path": "/v1/hosts/register",
+      "method": "POST",
+      "slug": "post-hosts-register",
+      "operationId": "register",
+      "security": true,
+      "parameters": [],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "addr": {
+            "type": "string"
+          },
+          "capabilities": {},
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "addr"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Host registered",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to register host"
+        }
+      ]
+    },
+    {
+      "tag": "Hosts",
+      "path": "/v1/hosts/{id}",
+      "method": "GET",
+      "slug": "get-hosts-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Host details",
+          "schema": {
+            "type": "string",
+            "description": "(HostDetailResponse)"
+          }
+        },
+        {
+          "status": "404",
+          "description": "Host not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to get host"
+        }
+      ]
+    },
+    {
+      "tag": "Hosts",
+      "path": "/v1/hosts/{id}",
+      "method": "DELETE",
+      "slug": "delete-hosts-id",
+      "operationId": "delete",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Host deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Cannot delete alive host"
+        },
+        {
+          "status": "404",
+          "description": "Host not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to delete host"
+        }
+      ]
+    },
+    {
+      "tag": "Hosts",
+      "path": "/v1/hosts/{id}/heartbeat",
+      "method": "POST",
+      "slug": "post-hosts-id-heartbeat",
+      "operationId": "heartbeat",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "capabilities": {
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Heartbeat recorded",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Host not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to record heartbeat"
+        }
+      ]
+    }
+  ]
+}

@@ -72,3 +72,9 @@ docs-zola-backup/themes/
 # Airgap installers (large binary files)
 downloaded-from-git/
 scripts/airgap/output/
+
+# Runtime data
+.data/
+
+# Internal dev notes
+notes/

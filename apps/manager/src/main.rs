@@ -5,7 +5,7 @@ mod features;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -14,6 +14,8 @@ use utoipa::OpenApi as _;
 use crate::features::storage::LocalStorage;
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
+use features::licensing::license_service::{self, LicenseConfig, SharedLicenseState};
+use features::licensing::repo::LicensingRepository;
 use features::snapshots::repo::SnapshotRepository;
 use features::users::repo::UserRepository;
 use features::vms::shell::ShellRepository;
@@ -40,11 +42,15 @@ pub struct AppState {
     pub shell_repo: ShellRepository,
     pub allow_direct_image_paths: bool,
     pub storage: LocalStorage,
+    pub licensing: LicensingRepository,
     pub download_progress: DownloadProgressTracker,
+    pub license_state: SharedLicenseState,
+    pub license_config: LicenseConfig,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
@@ -82,6 +88,10 @@ async fn main() -> anyhow::Result<()> {
         .map(|value| matches_ignore_case(value.trim()))
         .unwrap_or(false);
     let download_progress = Arc::new(Mutex::new(HashMap::new()));
+    let licensing = LicensingRepository::new(db.clone());
+    let license_config = LicenseConfig::from_env();
+    let license_state: SharedLicenseState =
+        Arc::new(RwLock::new(nexus_types::LicenseState::default()));
     let state = AppState {
         db,
         hosts,
@@ -89,9 +99,12 @@ async fn main() -> anyhow::Result<()> {
         snapshots,
         users,
         shell_repo,
+        licensing,
         download_progress,
         allow_direct_image_paths,
         storage: LocalStorage::new(),
+        license_state,
+        license_config,
     };
 
     // Auto-register base images found in the image root directory
@@ -123,6 +136,37 @@ async fn main() -> anyhow::Result<()> {
         let _metrics_handle = features::metrics::spawn_collector(state.clone());
     } else {
         warn!("metrics collector disabled by MANAGER_METRICS_DISABLED");
+    }
+
+    // Initial license check (non-fatal)
+    {
+        let s = state.clone();
+        let initial_state = license_service::check_license(
+            &s.license_config,
+            &s.licensing,
+            &s.license_state,
+        )
+        .await;
+        info!(status = %initial_state.status, is_licensed = initial_state.is_licensed, "initial license check");
+    }
+
+    // Periodic license re-check every 6 hours
+    {
+        let s = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            interval.tick().await; // skip immediate tick
+            loop {
+                interval.tick().await;
+                let result = license_service::check_license(
+                    &s.license_config,
+                    &s.licensing,
+                    &s.license_state,
+                )
+                .await;
+                info!(status = %result.status, is_licensed = result.is_licensed, "periodic license re-check");
+            }
+        });
     }
 
     let openapi = docs::ApiDoc::openapi();

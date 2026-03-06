@@ -81,10 +81,9 @@ pub async fn require_admin(
 }
 
 /// Helper to extract client IP address from request
-#[allow(dead_code)]
-fn get_client_ip(req: &Request) -> Option<String> {
+pub fn get_client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
     // Try X-Forwarded-For header first (for proxied requests)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
+    if let Some(forwarded) = headers.get("x-forwarded-for") {
         if let Ok(forwarded_str) = forwarded.to_str() {
             // Take the first IP if there are multiple
             return forwarded_str
@@ -95,7 +94,7 @@ fn get_client_ip(req: &Request) -> Option<String> {
     }
 
     // Try X-Real-IP header
-    if let Some(real_ip) = req.headers().get("x-real-ip") {
+    if let Some(real_ip) = headers.get("x-real-ip") {
         if let Ok(ip_str) = real_ip.to_str() {
             return Some(ip_str.to_string());
         }

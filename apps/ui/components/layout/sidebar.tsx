@@ -33,6 +33,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Avatar } from "@/components/user/avatar"
 import { useProfile } from "@/lib/queries"
+import { useQueryClient } from "@tanstack/react-query"
 
 type IconType = React.ComponentType<{ className?: string }>
 export type NavItem = { name: string; href: string; icon: IconType }
@@ -54,6 +55,7 @@ const HOST: NavItem[] = [
 
 const BOTTOM: NavItem[] = [
   { name: "Users", href: "/users", icon: Users },
+  { name: "API Docs", href: "/docs", icon: BookOpen },
   { name: "Settings", href: "/settings", icon: Settings }
 ]
 
@@ -127,6 +129,7 @@ const SidebarSection = React.memo(function SidebarSection({
 function SidebarUser({ collapsed }: { collapsed: boolean }) {
   const { user, clearAuth, avatarRefreshKey } = useAuthStore()
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { data: profile } = useProfile()
 
   if (!user) {
@@ -134,7 +137,8 @@ function SidebarUser({ collapsed }: { collapsed: boolean }) {
   }
 
   const handleLogout = () => {
-    // Clear auth state and localStorage
+    // Clear all cached query data before clearing auth to prevent stale data bleeding
+    queryClient.clear()
     clearAuth()
 
     // Redirect to login page

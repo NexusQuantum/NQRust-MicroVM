@@ -1,0 +1,406 @@
+{
+  "name": "Users",
+  "description": "User management APIs.",
+  "endpoints": [
+    {
+      "tag": "Users",
+      "path": "/v1/users",
+      "method": "GET",
+      "slug": "get-users",
+      "operationId": "list",
+      "security": true,
+      "parameters": [],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Users listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "avatar_path": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "last_login_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "role": {
+                      "type": "string",
+                      "description": "(Role)"
+                    },
+                    "theme": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "timezone": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "username": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "username",
+                    "role",
+                    "created_at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "403",
+          "description": "Forbidden - admin only"
+        },
+        {
+          "status": "500",
+          "description": "Failed to list users"
+        }
+      ]
+    },
+    {
+      "tag": "Users",
+      "path": "/v1/users",
+      "method": "POST",
+      "slug": "post-users",
+      "operationId": "create",
+      "security": true,
+      "parameters": [],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "(Role)"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "role"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "User created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "avatar_path": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "last_login_at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "role": {
+                "type": "string",
+                "description": "(Role)"
+              },
+              "theme": {
+                "type": "string",
+                "nullable": true
+              },
+              "timezone": {
+                "type": "string",
+                "nullable": true
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "username",
+              "role",
+              "created_at"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "403",
+          "description": "Forbidden - admin only"
+        },
+        {
+          "status": "500",
+          "description": "Failed to create user"
+        }
+      ]
+    },
+    {
+      "tag": "Users",
+      "path": "/v1/users/{id}",
+      "method": "GET",
+      "slug": "get-users-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "User fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "avatar_path": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "last_login_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "role": {
+                    "type": "string",
+                    "description": "(Role)"
+                  },
+                  "theme": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "timezone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "username": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "username",
+                  "role",
+                  "created_at"
+                ]
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "403",
+          "description": "Forbidden - admin only"
+        },
+        {
+          "status": "404",
+          "description": "User not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch user"
+        }
+      ]
+    },
+    {
+      "tag": "Users",
+      "path": "/v1/users/{id}",
+      "method": "PATCH",
+      "slug": "patch-users-id",
+      "operationId": "update",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "description": "(Role)",
+            "nullable": true
+          },
+          "username": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "User updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "avatar_path": {
+                "type": "string",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "last_login_at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "role": {
+                "type": "string",
+                "description": "(Role)"
+              },
+              "theme": {
+                "type": "string",
+                "nullable": true
+              },
+              "timezone": {
+                "type": "string",
+                "nullable": true
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "username",
+              "role",
+              "created_at"
+            ]
+          }
+        },
+        {
+          "status": "400",
+          "description": "Invalid request"
+        },
+        {
+          "status": "403",
+          "description": "Forbidden - admin only"
+        },
+        {
+          "status": "404",
+          "description": "User not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to update user"
+        }
+      ]
+    },
+    {
+      "tag": "Users",
+      "path": "/v1/users/{id}",
+      "method": "DELETE",
+      "slug": "delete-users-id",
+      "operationId": "delete",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "User deleted",
+          "schema": {
+            "type": "string",
+            "description": "(nexus_types.OkResponse)"
+          }
+        },
+        {
+          "status": "403",
+          "description": "Forbidden - admin only"
+        },
+        {
+          "status": "404",
+          "description": "User not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to delete user"
+        }
+      ]
+    }
+  ]
+}

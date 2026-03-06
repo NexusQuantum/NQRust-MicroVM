@@ -1,0 +1,519 @@
+{
+  "tags": [
+    {
+      "name": "Auth",
+      "slug": "auth",
+      "description": "Authentication APIs.",
+      "endpoints": [
+        {
+          "slug": "post-auth-login",
+          "method": "POST",
+          "path": "/v1/auth/login",
+          "summary": "Login successful"
+        },
+        {
+          "slug": "get-auth-me",
+          "method": "GET",
+          "path": "/v1/auth/me",
+          "summary": "Current user info"
+        }
+      ]
+    },
+    {
+      "name": "Containers",
+      "slug": "containers",
+      "description": "Docker container orchestration APIs.",
+      "endpoints": [
+        {
+          "slug": "get-containers",
+          "method": "GET",
+          "path": "/v1/containers",
+          "summary": "Containers listed"
+        },
+        {
+          "slug": "post-containers",
+          "method": "POST",
+          "path": "/v1/containers",
+          "summary": "Container created"
+        },
+        {
+          "slug": "get-containers-id",
+          "method": "GET",
+          "path": "/v1/containers/{id}",
+          "summary": "Container fetched"
+        },
+        {
+          "slug": "put-containers-id",
+          "method": "PUT",
+          "path": "/v1/containers/{id}",
+          "summary": "Container updated"
+        },
+        {
+          "slug": "delete-containers-id",
+          "method": "DELETE",
+          "path": "/v1/containers/{id}",
+          "summary": "Container deleted"
+        },
+        {
+          "slug": "post-containers-id-exec",
+          "method": "POST",
+          "path": "/v1/containers/{id}/exec",
+          "summary": "Command executed"
+        },
+        {
+          "slug": "get-containers-id-logs",
+          "method": "GET",
+          "path": "/v1/containers/{id}/logs",
+          "summary": "Container logs fetched"
+        },
+        {
+          "slug": "post-containers-id-pause",
+          "method": "POST",
+          "path": "/v1/containers/{id}/pause",
+          "summary": "Container paused"
+        },
+        {
+          "slug": "post-containers-id-restart",
+          "method": "POST",
+          "path": "/v1/containers/{id}/restart",
+          "summary": "Container restarted"
+        },
+        {
+          "slug": "post-containers-id-resume",
+          "method": "POST",
+          "path": "/v1/containers/{id}/resume",
+          "summary": "Container resumed"
+        },
+        {
+          "slug": "post-containers-id-start",
+          "method": "POST",
+          "path": "/v1/containers/{id}/start",
+          "summary": "Container started"
+        },
+        {
+          "slug": "get-containers-id-stats",
+          "method": "GET",
+          "path": "/v1/containers/{id}/stats",
+          "summary": "Container stats fetched"
+        },
+        {
+          "slug": "post-containers-id-stop",
+          "method": "POST",
+          "path": "/v1/containers/{id}/stop",
+          "summary": "Container stopped"
+        }
+      ]
+    },
+    {
+      "name": "Functions",
+      "slug": "functions",
+      "description": "Serverless function management APIs.",
+      "endpoints": [
+        {
+          "slug": "get-functions",
+          "method": "GET",
+          "path": "/v1/functions",
+          "summary": "Functions listed"
+        },
+        {
+          "slug": "post-functions",
+          "method": "POST",
+          "path": "/v1/functions",
+          "summary": "Function created"
+        },
+        {
+          "slug": "get-functions-id",
+          "method": "GET",
+          "path": "/v1/functions/{id}",
+          "summary": "Function fetched"
+        },
+        {
+          "slug": "put-functions-id",
+          "method": "PUT",
+          "path": "/v1/functions/{id}",
+          "summary": "Function updated"
+        },
+        {
+          "slug": "delete-functions-id",
+          "method": "DELETE",
+          "path": "/v1/functions/{id}",
+          "summary": "Function deleted"
+        },
+        {
+          "slug": "post-functions-id-invoke",
+          "method": "POST",
+          "path": "/v1/functions/{id}/invoke",
+          "summary": "Function invoked"
+        },
+        {
+          "slug": "get-functions-id-logs",
+          "method": "GET",
+          "path": "/v1/functions/{id}/logs",
+          "summary": "Invocation logs fetched"
+        }
+      ]
+    },
+    {
+      "name": "Hosts",
+      "slug": "hosts",
+      "description": "Host lifecycle operations.",
+      "endpoints": [
+        {
+          "slug": "get-hosts",
+          "method": "GET",
+          "path": "/v1/hosts",
+          "summary": "List of all hosts"
+        },
+        {
+          "slug": "post-hosts-register",
+          "method": "POST",
+          "path": "/v1/hosts/register",
+          "summary": "Host registered"
+        },
+        {
+          "slug": "get-hosts-id",
+          "method": "GET",
+          "path": "/v1/hosts/{id}",
+          "summary": "Host details"
+        },
+        {
+          "slug": "delete-hosts-id",
+          "method": "DELETE",
+          "path": "/v1/hosts/{id}",
+          "summary": "Host deleted"
+        },
+        {
+          "slug": "post-hosts-id-heartbeat",
+          "method": "POST",
+          "path": "/v1/hosts/{id}/heartbeat",
+          "summary": "Heartbeat recorded"
+        }
+      ]
+    },
+    {
+      "name": "Images",
+      "slug": "images",
+      "description": "Image registry APIs.",
+      "endpoints": [
+        {
+          "slug": "get-images",
+          "method": "GET",
+          "path": "/v1/images",
+          "summary": "Images listed"
+        },
+        {
+          "slug": "post-images",
+          "method": "POST",
+          "path": "/v1/images",
+          "summary": "Image registered"
+        },
+        {
+          "slug": "get-images-id",
+          "method": "GET",
+          "path": "/v1/images/{id}",
+          "summary": "Image fetched"
+        },
+        {
+          "slug": "delete-images-id",
+          "method": "DELETE",
+          "path": "/v1/images/{id}",
+          "summary": "Image deleted"
+        }
+      ]
+    },
+    {
+      "name": "Logs",
+      "slug": "logs",
+      "description": "Development log utilities.",
+      "endpoints": [
+        {
+          "slug": "get-logs-tail",
+          "method": "GET",
+          "path": "/v1/logs/tail",
+          "summary": "Super simple file read (dev only). Frontend can poll."
+        }
+      ]
+    },
+    {
+      "name": "Snapshots",
+      "slug": "snapshots",
+      "description": "Snapshot management APIs.",
+      "endpoints": [
+        {
+          "slug": "get-snapshots-id",
+          "method": "GET",
+          "path": "/v1/snapshots/{id}",
+          "summary": "Snapshot fetched"
+        },
+        {
+          "slug": "post-snapshots-id-instantiate",
+          "method": "POST",
+          "path": "/v1/snapshots/{id}/instantiate",
+          "summary": "Snapshot instantiated"
+        },
+        {
+          "slug": "get-vms-id-snapshots",
+          "method": "GET",
+          "path": "/v1/vms/{id}/snapshots",
+          "summary": "Snapshots listed"
+        },
+        {
+          "slug": "post-vms-id-snapshots",
+          "method": "POST",
+          "path": "/v1/vms/{id}/snapshots",
+          "summary": "Snapshot created"
+        }
+      ]
+    },
+    {
+      "name": "Templates",
+      "slug": "templates",
+      "description": "Template management APIs.",
+      "endpoints": [
+        {
+          "slug": "get-templates",
+          "method": "GET",
+          "path": "/v1/templates",
+          "summary": "Templates listed"
+        },
+        {
+          "slug": "post-templates",
+          "method": "POST",
+          "path": "/v1/templates",
+          "summary": "Template created"
+        },
+        {
+          "slug": "get-templates-id",
+          "method": "GET",
+          "path": "/v1/templates/{id}",
+          "summary": "Template fetched"
+        },
+        {
+          "slug": "put-templates-id",
+          "method": "PUT",
+          "path": "/v1/templates/{id}",
+          "summary": "Template updated"
+        },
+        {
+          "slug": "delete-templates-id",
+          "method": "DELETE",
+          "path": "/v1/templates/{id}",
+          "summary": "Template deleted"
+        },
+        {
+          "slug": "post-templates-id-instantiate",
+          "method": "POST",
+          "path": "/v1/templates/{id}/instantiate",
+          "summary": "Template instantiated"
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "slug": "users",
+      "description": "User management APIs.",
+      "endpoints": [
+        {
+          "slug": "get-users",
+          "method": "GET",
+          "path": "/v1/users",
+          "summary": "Users listed"
+        },
+        {
+          "slug": "post-users",
+          "method": "POST",
+          "path": "/v1/users",
+          "summary": "User created"
+        },
+        {
+          "slug": "get-users-id",
+          "method": "GET",
+          "path": "/v1/users/{id}",
+          "summary": "User fetched"
+        },
+        {
+          "slug": "patch-users-id",
+          "method": "PATCH",
+          "path": "/v1/users/{id}",
+          "summary": "User updated"
+        },
+        {
+          "slug": "delete-users-id",
+          "method": "DELETE",
+          "path": "/v1/users/{id}",
+          "summary": "User deleted"
+        }
+      ]
+    },
+    {
+      "name": "VMs",
+      "slug": "vms",
+      "description": "Virtual machine lifecycle APIs.",
+      "endpoints": [
+        {
+          "slug": "get-vms",
+          "method": "GET",
+          "path": "/v1/vms",
+          "summary": "VMs listed"
+        },
+        {
+          "slug": "post-vms",
+          "method": "POST",
+          "path": "/v1/vms",
+          "summary": "VM created"
+        },
+        {
+          "slug": "get-vms-id",
+          "method": "GET",
+          "path": "/v1/vms/{id}",
+          "summary": "VM fetched"
+        },
+        {
+          "slug": "delete-vms-id",
+          "method": "DELETE",
+          "path": "/v1/vms/{id}",
+          "summary": "VM deleted"
+        },
+        {
+          "slug": "post-vms-id-ctrl-alt-del",
+          "method": "POST",
+          "path": "/v1/vms/{id}/ctrl-alt-del",
+          "summary": "Ctrl-Alt-Del sent"
+        },
+        {
+          "slug": "post-vms-id-flush-metrics",
+          "method": "POST",
+          "path": "/v1/vms/{id}/flush-metrics",
+          "summary": "Metrics flushed"
+        },
+        {
+          "slug": "post-vms-id-pause",
+          "method": "POST",
+          "path": "/v1/vms/{id}/pause",
+          "summary": "VM paused"
+        },
+        {
+          "slug": "post-vms-id-resume",
+          "method": "POST",
+          "path": "/v1/vms/{id}/resume",
+          "summary": "VM resumed"
+        },
+        {
+          "slug": "post-vms-id-stop",
+          "method": "POST",
+          "path": "/v1/vms/{id}/stop",
+          "summary": "VM stopped"
+        }
+      ]
+    },
+    {
+      "name": "VM configuration",
+      "slug": "vm-configuration",
+      "endpoints": [
+        {
+          "slug": "put-vms-id-balloon",
+          "method": "PUT",
+          "path": "/v1/vms/{id}/balloon",
+          "summary": "Balloon configured"
+        },
+        {
+          "slug": "patch-vms-id-balloon",
+          "method": "PATCH",
+          "path": "/v1/vms/{id}/balloon",
+          "summary": "Balloon updated"
+        },
+        {
+          "slug": "patch-vms-id-balloon-statistics",
+          "method": "PATCH",
+          "path": "/v1/vms/{id}/balloon/statistics",
+          "summary": "Balloon stats updated"
+        },
+        {
+          "slug": "put-vms-id-entropy",
+          "method": "PUT",
+          "path": "/v1/vms/{id}/entropy",
+          "summary": "Entropy device configured"
+        },
+        {
+          "slug": "put-vms-id-logger",
+          "method": "PUT",
+          "path": "/v1/vms/{id}/logger",
+          "summary": "Logger updated"
+        },
+        {
+          "slug": "put-vms-id-serial",
+          "method": "PUT",
+          "path": "/v1/vms/{id}/serial",
+          "summary": "Serial device configured"
+        }
+      ]
+    },
+    {
+      "name": "VM devices",
+      "slug": "vm-devices",
+      "description": "Block and network device management.",
+      "endpoints": [
+        {
+          "slug": "get-vms-id-drives",
+          "method": "GET",
+          "path": "/v1/vms/{id}/drives",
+          "summary": "Drives listed"
+        },
+        {
+          "slug": "post-vms-id-drives",
+          "method": "POST",
+          "path": "/v1/vms/{id}/drives",
+          "summary": "Drive created"
+        },
+        {
+          "slug": "get-vms-id-drives-drive_id",
+          "method": "GET",
+          "path": "/v1/vms/{id}/drives/{drive_id}",
+          "summary": "Drive fetched"
+        },
+        {
+          "slug": "patch-vms-id-drives-drive_id",
+          "method": "PATCH",
+          "path": "/v1/vms/{id}/drives/{drive_id}",
+          "summary": "Drive updated"
+        },
+        {
+          "slug": "delete-vms-id-drives-drive_id",
+          "method": "DELETE",
+          "path": "/v1/vms/{id}/drives/{drive_id}",
+          "summary": "Drive deleted"
+        },
+        {
+          "slug": "get-vms-id-nics",
+          "method": "GET",
+          "path": "/v1/vms/{id}/nics",
+          "summary": "NICs listed"
+        },
+        {
+          "slug": "post-vms-id-nics",
+          "method": "POST",
+          "path": "/v1/vms/{id}/nics",
+          "summary": "NIC created"
+        },
+        {
+          "slug": "get-vms-id-nics-nic_id",
+          "method": "GET",
+          "path": "/v1/vms/{id}/nics/{nic_id}",
+          "summary": "NIC fetched"
+        },
+        {
+          "slug": "patch-vms-id-nics-nic_id",
+          "method": "PATCH",
+          "path": "/v1/vms/{id}/nics/{nic_id}",
+          "summary": "NIC updated"
+        },
+        {
+          "slug": "delete-vms-id-nics-nic_id",
+          "method": "DELETE",
+          "path": "/v1/vms/{id}/nics/{nic_id}",
+          "summary": "NIC deleted"
+        }
+      ]
+    }
+  ]
+}

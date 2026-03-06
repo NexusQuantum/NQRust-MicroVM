@@ -35,6 +35,10 @@ argon2 = "0.5"
 rand = "0.8"
 image = "0.24"
 tokio-util = { version = "0.7", features = ["io"] }
+hostname = "0.4"
+hex = "0.4"
+dotenvy = "0.15"
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
 
 [dev-dependencies]
 wiremock = "0.6"

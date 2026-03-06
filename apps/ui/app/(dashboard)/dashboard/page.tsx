@@ -236,9 +236,9 @@ export default function DashboardPage() {
             ) : (
               <div className="text-2xl font-bold">{totalHosts}</div>
             )}
-            <p className="text-xs text-foreground mt-1">
+            <div className="text-xs text-foreground mt-1">
               {hostsLoading ? <Skeleton className="h-3 w-24" /> : "Available hosts"}
-            </p>
+            </div>
           </CardContent>
         </Card>
       </div>

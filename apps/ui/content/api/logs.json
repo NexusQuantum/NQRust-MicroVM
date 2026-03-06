@@ -1,0 +1,42 @@
+{
+  "name": "Logs",
+  "description": "Development log utilities.",
+  "endpoints": [
+    {
+      "tag": "Logs",
+      "path": "/v1/logs/tail",
+      "method": "GET",
+      "slug": "get-logs-tail",
+      "operationId": "tail_once",
+      "summary": "Super simple file read (dev only). Frontend can poll.",
+      "security": true,
+      "parameters": [
+        {
+          "name": "path",
+          "in": "query",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Log tailed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

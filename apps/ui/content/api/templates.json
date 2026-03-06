@@ -1,0 +1,374 @@
+{
+  "name": "Templates",
+  "description": "Template management APIs.",
+  "endpoints": [
+    {
+      "tag": "Templates",
+      "path": "/v1/templates",
+      "method": "GET",
+      "slug": "get-templates",
+      "operationId": "list",
+      "security": true,
+      "parameters": [],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Templates listed",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": "(Template)"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to list templates"
+        }
+      ]
+    },
+    {
+      "tag": "Templates",
+      "path": "/v1/templates",
+      "method": "POST",
+      "slug": "post-templates",
+      "operationId": "create",
+      "security": true,
+      "parameters": [],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "kernel_image_id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "kernel_path": {
+                "type": "string",
+                "nullable": true
+              },
+              "mem_mib": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "rootfs_image_id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "rootfs_path": {
+                "type": "string",
+                "nullable": true
+              },
+              "rootfs_size_mb": {
+                "type": "integer",
+                "format": "int32",
+                "nullable": true,
+                "minimum": 0
+              },
+              "vcpu": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "vcpu",
+              "mem_mib"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "spec"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Template created",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "500",
+          "description": "Failed to create template"
+        }
+      ]
+    },
+    {
+      "tag": "Templates",
+      "path": "/v1/templates/{id}",
+      "method": "GET",
+      "slug": "get-templates-id",
+      "operationId": "get",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Template fetched",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "string",
+                "description": "(Template)"
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Template not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to fetch template"
+        }
+      ]
+    },
+    {
+      "tag": "Templates",
+      "path": "/v1/templates/{id}",
+      "method": "PUT",
+      "slug": "put-templates-id",
+      "operationId": "update",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "kernel_image_id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "kernel_path": {
+                "type": "string",
+                "nullable": true
+              },
+              "mem_mib": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "rootfs_image_id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "rootfs_path": {
+                "type": "string",
+                "nullable": true
+              },
+              "rootfs_size_mb": {
+                "type": "integer",
+                "format": "int32",
+                "nullable": true,
+                "minimum": 0
+              },
+              "vcpu": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "vcpu",
+              "mem_mib"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "spec"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Template updated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "string",
+                "description": "(Template)"
+              }
+            },
+            "required": [
+              "item"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Template not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to update template"
+        }
+      ]
+    },
+    {
+      "tag": "Templates",
+      "path": "/v1/templates/{id}",
+      "method": "DELETE",
+      "slug": "delete-templates-id",
+      "operationId": "delete",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": [
+        {
+          "status": "200",
+          "description": "Template deleted",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Template not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to delete template"
+        }
+      ]
+    },
+    {
+      "tag": "Templates",
+      "path": "/v1/templates/{id}/instantiate",
+      "method": "POST",
+      "slug": "post-templates-id-instantiate",
+      "operationId": "instantiate",
+      "security": true,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "requestBodyRequired": true,
+      "responses": [
+        {
+          "status": "200",
+          "description": "Template instantiated",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "status": "404",
+          "description": "Template not found"
+        },
+        {
+          "status": "500",
+          "description": "Failed to instantiate template"
+        }
+      ]
+    }
+  ]
+}

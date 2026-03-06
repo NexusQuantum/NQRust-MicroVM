@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
 import { useState, useEffect } from "react"
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { EulaGuard } from "@/components/auth/eula-guard"
+import { LicenseGuard } from "@/components/auth/license-guard"
 import { AuthProvider, useAuthStore, getAuthToken } from "@/lib/auth/store"
 import { authApi, setAuthTokenGetter } from "@/lib/api/auth"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -81,9 +83,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <AuthProvider>
           <AuthInitializer>
             <ThemeSyncProvider>
-              <AuthGuard>
-                {children}
-              </AuthGuard>
+              <LicenseGuard>
+                <EulaGuard>
+                  <AuthGuard>
+                    {children}
+                  </AuthGuard>
+                </EulaGuard>
+              </LicenseGuard>
             </ThemeSyncProvider>
           </AuthInitializer>
           <ReactQueryDevtools initialIsOpen={false} />
