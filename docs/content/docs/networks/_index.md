@@ -1,7 +1,7 @@
 +++
 title = "Networks"
 description = "Complete guide to virtual networks for VM connectivity through the web interface"
-weight = 60
+weight = 80
 date = 2025-01-08
 +++
 

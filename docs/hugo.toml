@@ -176,6 +176,42 @@ enableGitInfo = false
   url = "/docs/user-guide/storage/"
   weight = 27
 
+# Hosts Section
+[[menu.sidebar]]
+  name = "Hosts"
+  weight = 85
+  identifier = "hosts"
+
+[[menu.sidebar]]
+  name = "Manage Hosts"
+  parent = "hosts"
+  url = "/docs/hosts/manage-hosts/"
+  weight = 86
+
+# Users Section
+[[menu.sidebar]]
+  name = "Users"
+  weight = 80
+  identifier = "users"
+
+[[menu.sidebar]]
+  name = "Manage Users"
+  parent = "users"
+  url = "/docs/users/manage-users/"
+  weight = 81
+
+# Settings Section
+[[menu.sidebar]]
+  name = "Settings"
+  weight = 90
+  identifier = "settings"
+
+[[menu.sidebar]]
+  name = "Manage Settings"
+  parent = "settings"
+  url = "/docs/settings/manage-settings/"
+  weight = 91
+
 # Markup Configuration
 [markup]
   [markup.goldmark]

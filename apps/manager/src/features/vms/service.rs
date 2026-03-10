@@ -94,6 +94,7 @@ pub async fn create_and_start(
 
     // Resolve network: use explicit network_id if provided, else fall back to host capabilities
     let req_network_id = req.network_id;
+    let req_port_forwards = std::mem::take(&mut req.port_forwards);
     let network = if let Some(nid) = req_network_id {
         use crate::features::networks::repo::NetworkRepository;
         let network_repo = NetworkRepository::new(st.db.clone());
@@ -326,6 +327,27 @@ pub async fn create_and_start(
     // This enables DHCP networking for cloud-init enabled images
     if let Err(e) = configure_cloud_init_with_network(st, id, &username, &password).await {
         warn!(vm_id = %id, error = ?e, "cloud-init configuration failed (not critical if image lacks cloud-init)");
+    }
+
+    // Insert port forward rules from creation request (applied later when guest IP is known)
+    for pf in &req_port_forwards {
+        match super::port_forwards::repo::insert(
+            &st.db,
+            id,
+            pf.host_port,
+            pf.guest_port,
+            &pf.protocol,
+            pf.description.as_deref(),
+        )
+        .await
+        {
+            Ok(_) => {
+                info!(vm_id=%id, host_port=%pf.host_port, guest_port=%pf.guest_port, "port forward rule created")
+            }
+            Err(e) => {
+                warn!(vm_id=%id, host_port=%pf.host_port, error=?e, "failed to create port forward rule")
+            }
+        }
     }
 
     let _ = audit::log_action(
@@ -2427,6 +2449,7 @@ mod tests {
                 tags: vec![],
                 rootfs_size_mb: None,
                 network_id: None,
+                port_forwards: vec![],
             },
             None,
             None,
@@ -2493,6 +2516,7 @@ mod tests {
                 tags: vec![],
                 rootfs_size_mb: None,
                 network_id: None,
+                port_forwards: vec![],
             },
             None,
             None,

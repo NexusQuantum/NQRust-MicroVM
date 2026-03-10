@@ -1,7 +1,7 @@
 +++
 title = "Volumes"
 description = "Complete guide to managing storage volumes for VMs through the web interface"
-weight = 70
+weight = 90
 date = 2025-01-13
 +++
 

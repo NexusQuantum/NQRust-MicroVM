@@ -85,8 +85,22 @@ async fn reconcile_host(state: &AppState, host: &HostRow, inventory: AgentInvent
 
     reconcile_devices(state, host, &vm_map, &inventory).await?;
     reconcile_networks(state, host).await?;
+    reconcile_port_forwards(state, &vm_map).await;
 
     Ok(())
+}
+
+/// Re-apply port forward rules for running VMs that have a guest IP.
+/// This ensures iptables rules are restored after an agent restart.
+async fn reconcile_port_forwards(state: &AppState, vm_map: &HashMap<Uuid, vms::repo::VmRow>) {
+    for (vm_id, vm) in vm_map {
+        if vm.state != "running" || vm.guest_ip.as_ref().is_none_or(|ip| ip.is_empty()) {
+            continue;
+        }
+        if let Err(e) = vms::port_forwards::service::apply_forwards(state, *vm_id).await {
+            warn!(vm_id=%vm_id, error=?e, "failed to reconcile port forwards");
+        }
+    }
 }
 
 async fn reconcile_networks(state: &AppState, host: &HostRow) -> Result<()> {

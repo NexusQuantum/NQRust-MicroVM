@@ -87,6 +87,8 @@ pub struct CreateVmReq {
     pub rootfs_size_mb: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub port_forwards: Vec<CreatePortForwardReq>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -121,6 +123,7 @@ impl TemplateSpec {
             tags: vec![],
             rootfs_size_mb: self.rootfs_size_mb,
             network_id: None,
+            port_forwards: vec![],
         }
     }
 }

@@ -9,7 +9,11 @@ use crate::app::{InterfaceInfo, LogEntry, NetworkMode};
 use crate::installer::{run_command, run_sudo};
 
 /// Setup network bridge
-pub fn setup_network(mode: NetworkMode, bridge_name: &str) -> Result<Vec<LogEntry>> {
+pub fn setup_network(
+    mode: NetworkMode,
+    bridge_name: &str,
+    bridge_interface: Option<&str>,
+) -> Result<Vec<LogEntry>> {
     let mut logs = Vec::new();
 
     logs.push(LogEntry::info(format!(
@@ -60,7 +64,7 @@ pub fn setup_network(mode: NetworkMode, bridge_name: &str) -> Result<Vec<LogEntr
             logs.push(LogEntry::warning(
                 "This will modify network configuration. Ensure console access is available.",
             ));
-            setup_bridged_network(bridge_name, &mut logs)?;
+            setup_bridged_network(bridge_name, bridge_interface, &mut logs)?;
         }
         NetworkMode::Isolated => {
             logs.push(LogEntry::info(
@@ -237,20 +241,33 @@ dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
 /// This implementation:
 /// 1. Tries netplan if available (safer, persistent)
 /// 2. Falls back to direct `ip` commands (works on live ISO)
-fn setup_bridged_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> {
+fn setup_bridged_network(
+    bridge_name: &str,
+    bridge_interface: Option<&str>,
+    logs: &mut Vec<LogEntry>,
+) -> Result<()> {
     logs.push(LogEntry::info(
         "Setting up bridged network (VMs will get IPs from router)...",
     ));
 
-    // Get the default physical interface
-    let physical_iface = match get_default_interface() {
-        Some(iface) => iface,
-        None => {
-            logs.push(LogEntry::error(
-                "Could not detect physical network interface",
-            ));
-            return Ok(());
+    // Use user-selected interface, or fall back to default interface detection
+    let physical_iface = match bridge_interface {
+        Some(iface) => {
+            logs.push(LogEntry::info(format!(
+                "Using user-selected interface: {}",
+                iface
+            )));
+            iface.to_string()
         }
+        None => match get_default_interface() {
+            Some(iface) => iface,
+            None => {
+                logs.push(LogEntry::error(
+                    "Could not detect physical network interface",
+                ));
+                return Ok(());
+            }
+        },
     };
 
     logs.push(LogEntry::info(format!(

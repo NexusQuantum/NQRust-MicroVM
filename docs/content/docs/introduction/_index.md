@@ -1,7 +1,7 @@
 +++
 title = "Introduction"
 description = "Overview of NQRust-MicroVM architecture and key concepts"
-weight = 1
+weight = 10
 sort_by = "weight"
 template = "section.html"
 page_template = "page.html"

@@ -200,6 +200,8 @@ pub struct InstallConfig {
     pub network_mode: NetworkMode,
     /// Bridge name
     pub bridge_name: String,
+    /// Physical interface for bridged mode (user-selected)
+    pub bridge_interface: Option<String>,
     /// Database host (for manager)
     pub db_host: String,
     /// Database port
@@ -231,6 +233,7 @@ impl Default for InstallConfig {
             log_dir: PathBuf::from("/var/log/nqrust-microvm"),
             network_mode: NetworkMode::default(),
             bridge_name: "fcbr0".to_string(),
+            bridge_interface: None,
             db_host: "localhost".to_string(),
             db_port: 5432,
             db_name: "nqrust".to_string(),

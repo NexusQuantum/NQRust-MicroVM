@@ -62,6 +62,10 @@ enum Commands {
         #[arg(long, default_value = "fcbr0")]
         bridge_name: String,
 
+        /// Physical interface for bridged mode (auto-detected if not specified)
+        #[arg(long)]
+        bridge_interface: Option<String>,
+
         /// Database host
         #[arg(long, default_value = "localhost")]
         db_host: String,
@@ -204,6 +208,7 @@ fn main() -> Result<()> {
             config_dir,
             network_mode,
             bridge_name,
+            bridge_interface,
             db_host,
             db_port,
             db_password,
@@ -234,6 +239,7 @@ fn main() -> Result<()> {
                 log_dir: PathBuf::from("/var/log/nqrust-microvm"),
                 network_mode: network_mode.into(),
                 bridge_name,
+                bridge_interface,
                 db_host,
                 db_port,
                 db_name: "nqrust".to_string(),
@@ -725,6 +731,7 @@ fn handle_network_config_input(app: &mut App, key: KeyCode) {
             {
                 let iface = &app.available_interfaces[app.interface_selection];
                 app.detected_interface = Some(iface.name.clone());
+                app.config.bridge_interface = Some(iface.name.clone());
                 app.detected_ip = iface.ip.clone();
                 // Re-detect gateway for the selected interface
                 app.detected_gateway = installer::network::get_default_gateway();

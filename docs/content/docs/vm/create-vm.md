@@ -480,8 +480,6 @@ The VM is created instantly with pre-configured settings!
 
 **Problem**: Kernel or Rootfs dropdown is empty
 
-![Image: Empty dropdown](/images/vm/troubleshoot-no-images.png)
-
 **Solution**:
 1. Go to **Image Registry** page
 2. Upload required images (see [Upload Images](../registry/upload-images/))
@@ -492,8 +490,6 @@ The VM is created instantly with pre-configured settings!
 ### Issue: Not Enough Resources
 
 **Problem**: Error message "Insufficient resources available"
-
-![Image: Error dialog](/images/vm/troubleshoot-resources.png)
 
 **Solution**:
 - Reduce CPU or memory allocation

@@ -1,7 +1,7 @@
 +++
 title = "Image Registry"
 description = "Complete guide to managing VM images, kernels, and root filesystems through the web interface"
-weight = 50
+weight = 70
 date = 2025-01-13
 +++
 

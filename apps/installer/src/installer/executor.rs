@@ -114,9 +114,27 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
         )))?;
 
         if config.mode.includes_manager() {
-            tx.send(InstallMessage::Log(LogEntry::success(
-                "PostgreSQL installed from bundle",
-            )))?;
+            // Verify PostgreSQL was actually installed from the bundle
+            if super::command_exists("psql") {
+                tx.send(InstallMessage::Log(LogEntry::success(
+                    "PostgreSQL installed from bundle",
+                )))?;
+            } else {
+                tx.send(InstallMessage::Log(LogEntry::error(
+                    "PostgreSQL was NOT installed from bundle — psql not found",
+                )))?;
+                tx.send(InstallMessage::Log(LogEntry::info(
+                    "The bundle may be missing postgresql .deb packages. Rebuild with bundle-debs-ubuntu.sh",
+                )))?;
+                tx.send(InstallMessage::PhaseComplete(
+                    Phase::Dependencies,
+                    Status::Error,
+                ))?;
+                tx.send(InstallMessage::Error(
+                    "PostgreSQL not found after installing bundled packages".to_string(),
+                ))?;
+                return Ok(());
+            }
         }
     } else {
         // Online mode: install from package repositories
@@ -321,7 +339,11 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
             config.bridge_name
         ))))?;
 
-        match network::setup_network(config.network_mode, &config.bridge_name) {
+        match network::setup_network(
+            config.network_mode,
+            &config.bridge_name,
+            config.bridge_interface.as_deref(),
+        ) {
             Ok(logs) => {
                 for log in logs {
                     tx.send(InstallMessage::Log(log))?;

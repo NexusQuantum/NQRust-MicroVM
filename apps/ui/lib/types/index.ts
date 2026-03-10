@@ -73,6 +73,7 @@ export interface CreateVmReq {
   password?: string;
   rootfs_size_mb?: number;
   network_id?: string;
+  port_forwards?: CreatePortForwardReq[];
 }
 
 export interface TemplateSpec {

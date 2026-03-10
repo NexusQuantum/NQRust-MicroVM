@@ -1,7 +1,7 @@
 +++
 title = "Virtual Machines"
 description = "Create and manage lightweight Firecracker microVMs"
-weight = 40
+weight = 30
 date = 2025-12-16
 +++
 
@@ -74,3 +74,4 @@ Choose a topic to learn more:
 - **[Manage VMs](manage-vm/)** - Start, stop, pause, resume operations
 - **[Backup & Snapshot](backup-snapshot/)** - Protect your VM data
 - **[Monitoring](monitoring/)** - View real-time metrics and logs
+- **[Troubleshooting](troubleshooting/)** - Diagnose and resolve common issues

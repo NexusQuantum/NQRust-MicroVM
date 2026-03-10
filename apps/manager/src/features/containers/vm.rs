@@ -87,6 +87,7 @@ pub async fn create_container_vm(
         tags: vec!["type:container".to_string()],
         rootfs_size_mb: None,
         network_id: None,
+        port_forwards: vec![],
     };
 
     // Create and start VM

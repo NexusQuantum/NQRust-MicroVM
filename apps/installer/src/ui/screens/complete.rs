@@ -78,7 +78,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         ]));
         url_lines.push(Line::from(vec![
             Span::styled("  API Docs:    ", styles::muted()),
-            Span::styled(format!("http://{}:18080/swagger-ui/", host), styles::info()),
+            Span::styled(format!("http://{}:3000/docs", host), styles::info()),
         ]));
     }
     if app.config.mode.includes_agent() {

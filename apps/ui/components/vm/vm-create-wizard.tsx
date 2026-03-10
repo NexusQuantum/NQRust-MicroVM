@@ -13,9 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react"
 import { useCreateVM, useNetworks } from "@/lib/queries"
-import type { CreateVmReq } from "@/lib/types"
+import type { CreateVmReq, CreatePortForwardReq } from "@/lib/types"
 
 const steps = ["Basic Info", "Credentials", "Machine Config", "Boot Source", "Network", "Review"]
 
@@ -67,6 +67,13 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
 
   // Load user preferences for VM defaults
   const { data: preferences } = usePreferences()
+
+  // Port forwarding rules
+  const [portForwards, setPortForwards] = useState<CreatePortForwardReq[]>([])
+  const [pfHostPort, setPfHostPort] = useState("")
+  const [pfGuestPort, setPfGuestPort] = useState("")
+  const [pfProtocol, setPfProtocol] = useState("tcp")
+  const [pfDescription, setPfDescription] = useState("")
 
   // Load kernel and rootfs options from backend
   const [kernelOptions, setKernelOptions] = useState<{ name: string; path: string; id: string }[]>([])
@@ -331,6 +338,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         password: data.password,
         rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
         network_id: data.networkId || undefined,
+        port_forwards: portForwards.length > 0 ? portForwards : undefined,
       }
 
       console.log('Submitting VM creation request:', vmReq)
@@ -619,6 +627,121 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                     : "Create a network on the Networks page first"}
                 </p>
               </div>
+
+              <div className="space-y-3 pt-4 border-t">
+                <Label>Port Forwarding Rules</Label>
+                <p className="text-xs text-muted-foreground">
+                  Forward host ports to the VM. Rules are applied once the VM gets an IP.
+                </p>
+
+                {portForwards.length > 0 && (
+                  <div className="rounded-md border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="px-3 py-2 text-left font-medium">Protocol</th>
+                          <th className="px-3 py-2 text-left font-medium">Host Port</th>
+                          <th className="px-3 py-2 text-left font-medium">Guest Port</th>
+                          <th className="px-3 py-2 text-left font-medium">Description</th>
+                          <th className="px-3 py-2 w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {portForwards.map((pf, i) => (
+                          <tr key={i} className="border-b last:border-0">
+                            <td className="px-3 py-2 uppercase text-xs font-mono">{pf.protocol || "tcp"}</td>
+                            <td className="px-3 py-2 font-mono">{pf.host_port}</td>
+                            <td className="px-3 py-2 font-mono">{pf.guest_port}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{pf.description || "—"}</td>
+                            <td className="px-3 py-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => setPortForwards(prev => prev.filter((_, idx) => idx !== i))}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="flex gap-2 items-end">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Host Port</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      placeholder="8080"
+                      value={pfHostPort}
+                      onChange={(e) => setPfHostPort(e.target.value)}
+                      className="w-24"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Guest Port</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      placeholder="80"
+                      value={pfGuestPort}
+                      onChange={(e) => setPfGuestPort(e.target.value)}
+                      className="w-24"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Protocol</Label>
+                    <Select value={pfProtocol} onValueChange={setPfProtocol}>
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tcp">TCP</SelectItem>
+                        <SelectItem value="udp">UDP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <Label className="text-xs">Description</Label>
+                    <Input
+                      placeholder="e.g., HTTP server"
+                      value={pfDescription}
+                      onChange={(e) => setPfDescription(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!pfHostPort || !pfGuestPort}
+                    onClick={() => {
+                      const hp = parseInt(pfHostPort)
+                      const gp = parseInt(pfGuestPort)
+                      if (hp >= 1 && hp <= 65535 && gp >= 1 && gp <= 65535) {
+                        setPortForwards(prev => [...prev, {
+                          host_port: hp,
+                          guest_port: gp,
+                          protocol: pfProtocol,
+                          description: pfDescription || undefined,
+                        }])
+                        setPfHostPort("")
+                        setPfGuestPort("")
+                        setPfDescription("")
+                      }
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add
+                  </Button>
+                </div>
+              </div>
             </>
           )}
 
@@ -684,6 +807,16 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                           return net ? `${net.name} (${net.bridge_name})` : "—"
                         })()
                       : "Default (auto-detect)"}
+                  </dd>
+                  <dt className="text-muted-foreground">Port Forwards:</dt>
+                  <dd>
+                    {portForwards.length > 0
+                      ? portForwards.map((pf, i) => (
+                          <span key={i} className="inline-flex items-center gap-1 mr-2 px-2 py-0.5 rounded bg-muted text-xs font-mono">
+                            {pf.protocol?.toUpperCase() || "TCP"} {pf.host_port}→{pf.guest_port}
+                          </span>
+                        ))
+                      : "None"}
                   </dd>
                 </dl>
               </div>

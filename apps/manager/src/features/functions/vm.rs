@@ -85,6 +85,7 @@ pub async fn create_function_vm(
         tags: vec!["type:function".to_string()],
         rootfs_size_mb: None,
         network_id: None,
+        port_forwards: vec![],
     };
 
     // Create and start VM

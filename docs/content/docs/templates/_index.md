@@ -1,7 +1,7 @@
 +++
 title = "VM Templates"
 description = "Save and deploy VM configurations as reusable templates"
-weight = 35
+weight = 60
 date = 2025-01-08
 +++
 
