@@ -15,7 +15,10 @@ pub const AVAILABLE_LANGUAGES: [&str; 2] = ["en", "id"];
 pub fn router() -> Router {
     Router::new()
         .route("/license/activate", post(routes::activate_license))
-        .route("/license/activate-file", post(routes::activate_license_file))
+        .route(
+            "/license/activate-file",
+            post(routes::activate_license_file),
+        )
 }
 
 /// Public routes that don't require authentication

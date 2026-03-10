@@ -5,7 +5,7 @@ use crate::features::users::middleware::get_client_ip;
 use crate::features::users::repo::AuthenticatedUser;
 use crate::AppState;
 use axum::http::StatusCode;
-use axum::{Extension, http::HeaderMap, Json};
+use axum::{http::HeaderMap, Extension, Json};
 use nexus_types::{
     AuditAction, EulaAcceptRequest, EulaAcceptResponse, EulaInfo, EulaStatus,
     LicenseActivateRequest, LicenseState, LicenseUploadRequest,
@@ -21,7 +21,12 @@ pub async fn get_eula_status(
     service::get_app_eula_status(&state.licensing)
         .await
         .map(Json)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get eula status: {}", e)))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get eula status: {}", e),
+            )
+        })
 }
 
 pub async fn accept_eula(
@@ -127,4 +132,3 @@ pub async fn activate_license_file(
 
     Ok(Json(result))
 }
-

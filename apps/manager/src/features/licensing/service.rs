@@ -9,9 +9,7 @@ pub async fn get_eula_info() -> EulaInfo {
     }
 }
 
-pub async fn get_app_eula_status(
-    repo: &LicensingRepository,
-) -> Result<EulaStatus, sqlx::Error> {
+pub async fn get_app_eula_status(repo: &LicensingRepository) -> Result<EulaStatus, sqlx::Error> {
     let latest = repo.get_app_acceptance().await?;
     let needs_acceptance = match &latest {
         Some(v) => v != CURRENT_EULA_VERSION,

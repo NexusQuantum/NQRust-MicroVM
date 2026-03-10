@@ -294,7 +294,9 @@ mod tests {
             allow_direct_image_paths: true,
             storage,
             download_progress,
-            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(nexus_types::LicenseState::default())),
+            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
+                nexus_types::LicenseState::default(),
+            )),
             license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
         };
 
@@ -335,7 +337,9 @@ mod tests {
             allow_direct_image_paths: true,
             storage,
             download_progress,
-            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(nexus_types::LicenseState::default())),
+            license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
+                nexus_types::LicenseState::default(),
+            )),
             license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
         };
 

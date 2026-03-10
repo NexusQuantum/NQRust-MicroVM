@@ -116,13 +116,11 @@ impl LicensingRepository {
         version: &str,
         language: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO app_eula_acceptance (eula_version, language) VALUES ($1, $2)",
-        )
-        .bind(version)
-        .bind(language)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT INTO app_eula_acceptance (eula_version, language) VALUES ($1, $2)")
+            .bind(version)
+            .bind(language)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -200,4 +198,3 @@ impl LicensingRepository {
         Ok(row)
     }
 }
-

@@ -136,13 +136,15 @@ fn extract_lic_section<'a>(content: &'a str, name: &str) -> Option<&'a str> {
 
 /// Verify an offline .lic file using the configured Ed25519 public key.
 /// Returns a LicenseState on success, or an error string.
-pub fn verify_offline_lic(config: &LicenseConfig, lic_content: &str) -> Result<LicenseState, String> {
+pub fn verify_offline_lic(
+    config: &LicenseConfig,
+    lic_content: &str,
+) -> Result<LicenseState, String> {
     use ed25519_dalek::Verifier;
 
-    let public_key_pem = config
-        .public_key
-        .as_deref()
-        .ok_or_else(|| "Offline verification is not configured (LICENSE_PUBLIC_KEY not set)".to_string())?;
+    let public_key_pem = config.public_key.as_deref().ok_or_else(|| {
+        "Offline verification is not configured (LICENSE_PUBLIC_KEY not set)".to_string()
+    })?;
 
     // Parse Ed25519 public key from PEM (SubjectPublicKeyInfo / SPKI format).
     // Strip the PEM armor and decode; the raw 32-byte key is the last 32 bytes of the DER.
@@ -194,10 +196,7 @@ pub fn verify_offline_lic(config: &LicenseConfig, lic_content: &str) -> Result<L
         let expires = chrono::NaiveDate::parse_from_str(&payload.expires_at, "%Y-%m-%d")
             .map_err(|e| format!("Invalid expiresAt date: {}", e))?;
         if expires < today {
-            return Err(format!(
-                "License expired on {}",
-                payload.expires_at
-            ));
+            return Err(format!("License expired on {}", payload.expires_at));
         }
     }
 
@@ -312,8 +311,12 @@ async fn verify_online(
 
     tracing::debug!("License verify response HTTP {}: {}", status, body);
 
-    let data: VerifyResponse = serde_json::from_str(&body)
-        .map_err(|e| format!("Response parse error (HTTP {}): {} — body: {}", status, e, body))?;
+    let data: VerifyResponse = serde_json::from_str(&body).map_err(|e| {
+        format!(
+            "Response parse error (HTTP {}): {} — body: {}",
+            status, e, body
+        )
+    })?;
 
     if data.valid {
         if let Some(lic) = data.license {
@@ -365,10 +368,7 @@ async fn verify_online(
 }
 
 /// Check grace period from cached DB row.
-async fn check_grace_period(
-    repo: &LicensingRepository,
-    grace_days: i64,
-) -> Option<LicenseState> {
+async fn check_grace_period(repo: &LicensingRepository, grace_days: i64) -> Option<LicenseState> {
     let cached = match repo.get_latest_license().await {
         Ok(Some(row)) => row,
         _ => return None,
@@ -439,8 +439,7 @@ pub async fn activate_license(
         Ok(state) => {
             if state.is_licensed {
                 // Cache to DB
-                let features_json =
-                    serde_json::to_value(&state.features).unwrap_or_default();
+                let features_json = serde_json::to_value(&state.features).unwrap_or_default();
                 let expires = state
                     .expires_at
                     .as_deref()
@@ -461,8 +460,7 @@ pub async fn activate_license(
                     .await;
 
                 // Persist key to disk
-                let key_file =
-                    std::path::Path::new(&config.persist_dir).join(".license-key");
+                let key_file = std::path::Path::new(&config.persist_dir).join(".license-key");
                 let _ = std::fs::create_dir_all(&config.persist_dir);
                 let _ = std::fs::write(&key_file, license_key);
             }
@@ -489,7 +487,9 @@ pub async fn check_license(
     // Load persisted key from env or disk
     let license_key = config.license_key.clone().or_else(|| {
         let key_file = std::path::Path::new(&config.persist_dir).join(".license-key");
-        std::fs::read_to_string(&key_file).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(&key_file)
+            .ok()
+            .map(|s| s.trim().to_string())
     });
 
     let device_id = get_or_create_device_id(&config.persist_dir);
@@ -498,8 +498,7 @@ pub async fn check_license(
         // Tier 1: Online verification
         match verify_online(config, &key, &device_id).await {
             Ok(state) if state.is_licensed => {
-                let features_json =
-                    serde_json::to_value(&state.features).unwrap_or_default();
+                let features_json = serde_json::to_value(&state.features).unwrap_or_default();
                 let expires = state
                     .expires_at
                     .as_deref()

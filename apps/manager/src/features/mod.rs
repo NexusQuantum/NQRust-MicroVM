@@ -48,10 +48,7 @@ pub fn router(state: AppState) -> Router {
                 users::middleware::auth_middleware,
             )),
         )
-        .nest(
-            "/v1/licensing",
-            licensing::public_router(),
-        )
+        .nest("/v1/licensing", licensing::public_router())
         .nest(
             "/v1/users",
             users::users_router()

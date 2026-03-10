@@ -141,12 +141,8 @@ async fn main() -> anyhow::Result<()> {
     // Initial license check (non-fatal)
     {
         let s = state.clone();
-        let initial_state = license_service::check_license(
-            &s.license_config,
-            &s.licensing,
-            &s.license_state,
-        )
-        .await;
+        let initial_state =
+            license_service::check_license(&s.license_config, &s.licensing, &s.license_state).await;
         info!(status = %initial_state.status, is_licensed = initial_state.is_licensed, "initial license check");
     }
 
