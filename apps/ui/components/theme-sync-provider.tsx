@@ -17,7 +17,7 @@ import { useAuthStore } from "@/lib/auth/store"
 export function ThemeSyncProvider({ children }: { children: React.ReactNode }) {
   const { theme, setTheme, resolvedTheme } = useTheme()
   const { isAuthenticated } = useAuthStore()
-  const { data: preferences, isLoading } = usePreferences()
+  const { data: preferences, isLoading } = usePreferences(isAuthenticated)
   const updatePreferencesMutation = useUpdatePreferences()
   const [hasLoadedFromBackend, setHasLoadedFromBackend] = useState(false)
 

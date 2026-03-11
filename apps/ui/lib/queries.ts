@@ -1177,12 +1177,13 @@ export function useDeleteUser() {
 // User Preferences & Profile Queries
 // ======================
 
-export function usePreferences() {
+export function usePreferences(enabled: boolean = true) {
   return useQuery({
     queryKey: queryKeys.preferences,
     queryFn: () => facadeApi.getPreferences(),
     staleTime: 0, // Always fetch fresh data for immediate updates
     refetchOnWindowFocus: true, // Refetch when window regains focus
+    enabled,
   });
 }
 
