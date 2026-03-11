@@ -1349,7 +1349,12 @@ export function useAcceptEula() {
   return useMutation({
     mutationFn: (params: import("@/lib/types").EulaAcceptRequest) =>
       facadeApi.acceptEula(params),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // Optimistically update cache so EulaGuard doesn't see stale needs_acceptance
+      queryClient.setQueryData(queryKeys.eulaStatus, {
+        needs_acceptance: false,
+        latest_accepted_version: variables.version,
+      });
       queryClient.invalidateQueries({ queryKey: queryKeys.eulaStatus });
     },
   });

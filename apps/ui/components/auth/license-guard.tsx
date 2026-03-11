@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation"
 import { useLicenseStatus } from "@/lib/queries"
 import { AlertTriangle } from "lucide-react"
 
-const SKIP_PATHS = ["/setup/license", "/eula", "/"]
+const SKIP_PATHS = ["/setup/license", "/eula"]
 
 export function LicenseGuard({ children }: { children: React.ReactNode }) {
     const router = useRouter()

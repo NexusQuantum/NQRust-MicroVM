@@ -2,7 +2,6 @@ use crate::features::licensing::license_service;
 use crate::features::licensing::service;
 use crate::features::users::audit;
 use crate::features::users::middleware::get_client_ip;
-use crate::features::users::repo::AuthenticatedUser;
 use crate::AppState;
 use axum::http::StatusCode;
 use axum::{http::HeaderMap, Extension, Json};
@@ -50,18 +49,9 @@ pub async fn get_license_status(
 
 pub async fn activate_license(
     Extension(state): Extension<AppState>,
-    axum::Extension(user): axum::Extension<AuthenticatedUser>,
     headers: HeaderMap,
     Json(req): Json<LicenseActivateRequest>,
 ) -> Result<Json<LicenseState>, (StatusCode, String)> {
-    // Only admins can activate licenses
-    if user.role != nexus_types::Role::Admin {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only administrators can activate licenses".to_string(),
-        ));
-    }
-
     let result = license_service::activate_license(
         &state.license_config,
         &state.licensing,
@@ -70,7 +60,7 @@ pub async fn activate_license(
     )
     .await;
 
-    // Audit log
+    // Audit log (pre-login setup, no authenticated user)
     let client_ip = get_client_ip(&headers);
     let details = serde_json::json!({
         "status": result.status,
@@ -78,8 +68,8 @@ pub async fn activate_license(
     });
     let _ = audit::log_success(
         &state.db,
-        user.id,
-        &user.username,
+        uuid::Uuid::nil(),
+        "system",
         AuditAction::ActivateLicense,
         None,
         None,
@@ -93,17 +83,9 @@ pub async fn activate_license(
 
 pub async fn activate_license_file(
     Extension(state): Extension<AppState>,
-    axum::Extension(user): axum::Extension<AuthenticatedUser>,
     headers: HeaderMap,
     Json(req): Json<LicenseUploadRequest>,
 ) -> Result<Json<LicenseState>, (StatusCode, String)> {
-    if user.role != nexus_types::Role::Admin {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only administrators can activate licenses".to_string(),
-        ));
-    }
-
     let result = license_service::activate_offline_license(
         &state.license_config,
         &state.licensing,
@@ -120,8 +102,8 @@ pub async fn activate_license_file(
     });
     let _ = audit::log_success(
         &state.db,
-        user.id,
-        &user.username,
+        uuid::Uuid::nil(),
+        "system",
         AuditAction::ActivateLicense,
         None,
         None,
