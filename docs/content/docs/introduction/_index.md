@@ -1,260 +1,126 @@
 +++
 title = "Introduction"
-description = "Overview of NQRust-MicroVM architecture and key concepts"
+description = "NQRust-MicroVM — self-hosted microVM platform for VMs, containers, and serverless functions"
+icon = "rocket_launch"
 weight = 10
-sort_by = "weight"
-template = "section.html"
-page_template = "page.html"
+layout = "single"
+toc = true
 +++
 
-# Introduction to NQRust-MicroVM
+<div style="text-align: center; margin: 2rem 0;">
+  <img src="/images/nqr-logo-full.png" alt="NQRust-MicroVM" style="max-width: 320px; width: 100%;" />
+</div>
 
-**NQRust-MicroVM** is a modern, high-performance management system for AWS Firecracker microVMs. It provides a complete platform for managing lightweight virtual machines, Docker containers, and serverless functions with a focus on security, performance, and ease of use.
+**NQRust-MicroVM** is a self-hosted platform for running and managing lightweight virtual machines, Docker containers, and serverless functions on your own Linux hardware — with a full web dashboard, REST API, browser-based terminal, and real-time metrics.
 
-## What is NQRust-MicroVM?
+{{% alert icon="⚡" context="info" %}}
+VMs boot in under 125 ms with as little as 5 MB overhead each. The platform runs entirely on your infrastructure — no cloud dependency, no vendor lock-in.
+{{% /alert %}}
 
-NQRust-MicroVM bridges the gap between raw KVM processes and a usable cloud platform. Designed for home labs, private clouds, and edge deployments, it offers an intuitive web dashboard to spin up virtual machines in milliseconds with minimal resource overhead.
+---
 
-### Key Differentiators
+## What You Can Run
 
-- **Firecracker-First**: Built specifically for AWS Firecracker, not a generic VM manager
-- **Modern Stack**: Rust backend for safety and performance, Next.js 15 frontend for UX
-- **Security by Default**: Strong kernel-level isolation via Firecracker microVMs
-- **Developer Friendly**: Web terminal, real-time metrics, comprehensive API
-- **Hybrid Architecture**: Supports VMs, containers, and serverless functions in one platform
+### Virtual Machines
+Spin up isolated Linux VMs instantly. Each VM gets its own kernel, root filesystem, CPU and memory limits, network interface, and storage volumes. Access them through the built-in web terminal. Capture state with snapshots. Save reusable configurations as templates.
 
-+++
+### Containers
+Deploy Docker containers that run **inside** VMs — combining the familiar Docker workflow with hardware-level kernel isolation underneath. Eliminates container escape risks entirely.
 
-## Architecture Overview
+### Serverless Functions
+Write and deploy Node.js, Python, or Ruby functions that execute on demand inside isolated VMs. Ideal for webhooks, automation, and event-driven tasks — without managing full servers.
 
-The system consists of four main components:
+---
 
-### Manager (Port 18080)
-The **central orchestration service** managing VM lifecycle, containers, and functions.
+## Platform Components
 
-- **Technology**: Rust with Axum web framework
-- **Database**: PostgreSQL with SQLx ORM
-- **Features**:
-  - VM lifecycle management (create, start, stop, pause, resume, delete)
-  - Docker container orchestration (container-per-VM architecture)
-  - Serverless function execution (Node.js, Python, Ruby)
-  - Image registry (kernels, rootfs, container runtimes)
-  - Snapshot and template management
-  - WebSocket support (shell access, real-time metrics)
-  - Background reconciler for health monitoring
+NQRust-MicroVM is three Rust services and a Next.js 15 frontend, orchestrated by the `nqr-installer`.
 
-### Agent (Port 9090)
-**Runs on KVM hosts** to execute VM operations via Firecracker.
+| Component | Role |
+|---|---|
+| **Manager** | Central API server — VM lifecycle, image registry, networking, storage, users, RBAC. Built on Axum + PostgreSQL. |
+| **Agent** | Runs on each KVM host with root privileges. Translates Manager instructions into hypervisor operations. Multiple agents supported. |
+| **Guest Agent** | Tiny static binary auto-deployed inside each VM. Reports CPU, memory, uptime, and IP address — no manual setup. |
+| **Web UI** | Next.js 15 / React 19 dashboard served from the Manager host. Full xterm.js terminal, real-time metric graphs. |
 
-- **Technology**: Rust with Axum
-- **Requires**: Root privileges for KVM access
-- **Functions**:
-  - Registers with manager on startup
-  - Sends periodic heartbeats
-  - Communicates with Firecracker VMM via Unix domain sockets
-  - Handles VM creation, lifecycle, snapshots
-  - Proxies shell access via screen sessions
+---
 
-### Guest Agent (Port 9000)
-**Runs inside VMs** to report metrics and status back to the manager.
-
-- **Technology**: Rust (statically compiled with musl)
-- **Auto-deployed**: Manager installs it during VM creation
-- **Functions**:
-  - Reports CPU, memory, uptime, load average, process count
-  - Auto-reports VM IP address to manager
-  - Enables real-time guest metrics via WebSocket
-
-### Frontend UI (Port 3000)
-**Modern web interface** for managing the entire platform.
-
-- **Technology**: Next.js 15, React 19, TypeScript
-- **UI Framework**: shadcn/ui with Tailwind CSS 4
-- **State Management**: TanStack Query (React Query)
-- **Real-time**: WebSocket for terminal and metrics
-- **Features**:
-  - VM management with 7-tab detail view
-  - Container and function management
-  - Image registry with DockerHub browser
-  - Host, network, and volume registries
-  - Browser-based terminal (xterm.js)
-  - Real-time metrics dashboards
-
-+++
-
-## Component Communication
+## Architecture
 
 ```mermaid
 graph TD
-    User([User / Browser])
-    Frontend[Next.js Frontend<br/>Port 3000]
-    Manager[Rust Manager API<br/>Port 18080]
-    DB[(PostgreSQL)]
-    Agent[Rust Host Agent<br/>Port 9090]
-    GuestAgent[Guest Agent<br/>Port 9000]
+    Browser([🌐 Browser])
 
-    subgraph "Host Server (KVM)"
-        Frontend
-        Manager
-        DB
-        Agent
+    subgraph Platform["NQRust-MicroVM Platform"]
+        UI["Web UI\nNext.js 15"]
+        Manager["Manager API\nRust · Axum"]
+        DB[("PostgreSQL")]
 
-        subgraph "MicroVMs"
-            VM1[Firecracker VM 1]
-            VM2[Firecracker VM 2]
-            GuestAgent
+        subgraph Host1["KVM Host"]
+            Agent1["Host Agent\nRust"]
+            VM1["microVM"]
+            VM2["microVM"]
+            GA1["Guest Agent"]
+            GA2["Guest Agent"]
         end
     end
 
-    User -->|HTTPS| Frontend
-    User -->|WebSocket| Manager
-    Frontend -->|REST API| Manager
-    Manager -->|SQL| DB
-    Manager -->|REST API| Agent
-    Agent -->|Unix Socket| VM1
-    Agent -->|Unix Socket| VM2
-    Manager -->|HTTP| GuestAgent
+    Browser -->|"HTTPS / WebSocket"| UI
+    UI -->|"REST API"| Manager
+    Manager -->|"SQL"| DB
+    Manager -->|"REST"| Agent1
+    Agent1 -->|"Unix socket"| VM1
+    Agent1 -->|"Unix socket"| VM2
+    VM1 --- GA1
+    VM2 --- GA2
+    GA1 -->|"metrics · IP"| Manager
+    GA2 -->|"metrics · IP"| Manager
 ```
 
-+++
+---
 
-## Key Concepts
+## Key Features
 
-### MicroVMs vs Containers
+{{% alert icon="🖥️" context="success" %}}
+**Web Dashboard** — Manage VMs, containers, and functions entirely from the browser. No CLI required for day-to-day operations.
+{{% /alert %}}
 
-**Firecracker microVMs** provide:
-- Full kernel isolation (each VM runs its own Linux kernel)
-- Hardware virtualization via KVM
-- Boot times under 125ms
-- Memory overhead as low as 5MB per VM
-- Stronger security than containers alone
+{{% alert icon="🔌" context="success" %}}
+**REST API + Swagger** — Every action is API-accessible. Interactive Swagger UI available at `/swagger-ui/` on your Manager host.
+{{% /alert %}}
 
-**Container Mode** runs Docker inside microVMs for:
-- Maximum isolation (kernel + hardware virtualization)
-- Familiar Docker workflow
-- Protection against container escape vulnerabilities
+{{% alert icon="📡" context="success" %}}
+**Real-time Terminal & Metrics** — Browser-based xterm.js shell into any running VM. Live CPU and memory graphs over WebSocket.
+{{% /alert %}}
 
-### VM Lifecycle States
+{{% alert icon="🌐" context="success" %}}
+**Flexible Networking** — NAT, Isolated, Bridged, and VXLAN overlay networks provisioned automatically. Multi-host VXLAN lets VMs on different physical machines communicate transparently.
+{{% /alert %}}
 
-- **Creating**: VM configuration being prepared
-- **Created**: Ready to start but not running
-- **Running**: VM is active and accessible
-- **Paused**: VM execution suspended (memory preserved)
-- **Stopped**: VM gracefully shut down
-- **Failed**: VM encountered an error
+{{% alert icon="🔒" context="success" %}}
+**RBAC** — Three roles: Admin (full access), User (own resources), and Viewer (read-only). Multi-user safe.
+{{% /alert %}}
 
-### Templates
+---
 
-**VM Templates** allow you to save complete VM configurations for reuse:
-- Hardware settings (CPU, memory)
-- Boot source (kernel, rootfs, boot args)
-- Network configuration
-- Drive attachments
+## Network Types
 
-See [Templates Documentation](/user-guide/vm-management/templates/) for details.
+| Type | Description | Best For |
+|---|---|---|
+| **NAT** | Private subnet, internet via host NAT | Most workloads |
+| **Isolated** | Private subnet, no external access | Air-gapped / internal services |
+| **Bridged** | VMs appear directly on your LAN | Direct network access |
+| **VXLAN** | Multi-host overlay tunnel | VMs across multiple physical hosts |
 
-### Snapshots
-
-**Snapshots** capture the complete state of a running VM:
-- **Full snapshots**: Complete memory and disk state
-- **Differential snapshots**: Only changes since last snapshot
-- **Instant restore**: Resume from snapshot in milliseconds
-
-See [Snapshots Guide](/user-guide/vm-management/snapshots/) for details.
-
-+++
-
-## Network Architecture
-
-NQRust-MicroVM supports flexible networking:
-
-### NAT Mode (Default)
-- VMs connected to bridge (default: `fcbr0`)
-- Isolated from LAN
-- Outbound internet access via NAT
-- Easy setup, no network configuration required
-
-### Bridged Mode
-- VMs appear as physical devices on your LAN
-- Can receive DHCP addresses from your router
-- Accessible from other devices on network
-- Requires bridge setup (see [Bridged Networking](/operations/bridged-networking/))
-
-### VLAN Support
-- 802.1Q VLAN tagging
-- Isolate VM traffic on separate VLANs
-- Network registry with auto-registration
-- See [Networking Guide](/user-guide/networking/)
-
-+++
-
-## Storage Architecture
-
-### Volume Types
-- **rootfs**: Root filesystem (required for boot)
-- **data**: Additional data volumes
-- **Formats**: ext4, qcow2, raw
-
-### Image Registry
-Central registry for:
-- **Kernels**: Linux kernel binaries
-- **Rootfs**: Root filesystem images
-- **Container Runtimes**: Alpine + Docker images
-
-**Image Sources**:
-- Local file upload
-- Docker Hub browser
-- Direct file paths (if enabled)
-
-See [Storage Documentation](/user-guide/storage/) for details.
-
-+++
-
-## Security Model
-
-### Isolation Layers
-
-1. **Hardware Virtualization**: KVM-based isolation
-2. **Minimal Attack Surface**: Firecracker has tiny TCB (Trusted Computing Base)
-3. **Process Isolation**: Each VM is a separate Linux process
-4. **Network Isolation**: VMs can be network-isolated or VLAN-tagged
-5. **RBAC**: Role-based access control for multi-user environments (in development)
-
-### Auto-Authentication
-
-VMs receive auto-generated credentials via:
-- **MMDS** (Microvm Metadata Service): Firecracker's metadata service
-- **cloud-init**: Standard cloud initialization
-- Credentials accessible in VM at boot time
-
-+++
+---
 
 ## What's Next?
 
-- [**Getting Started**](/getting-started/) - Install and run your first VM
-- [**User Guide**](/user-guide/) - Learn about all features
-- [**Operations**](/operations/) - Production deployment and tuning
-- [**API Reference**](http://localhost:18080/swagger-ui/) - REST API documentation
+{{% alert icon="🚀" context="info" %}}
+**New here?** Head straight to the [Installation Guide](../getting-started/installation/) — the TUI installer gets you running in under 15 minutes.
+{{% /alert %}}
 
-+++
-
-## Project Status
-
-NQRust-MicroVM is under active development. Key features are production-ready:
-
-**Production Ready:**
-- VM lifecycle management
-- Web terminal and metrics
-- Snapshots and templates
-- Networking (NAT and bridged)
-- Volume management
-- Container orchestration
-- Serverless functions
-
-**In Development:**
-- Full RBAC implementation
-- Multi-tenancy
-- Advanced monitoring
-- Cluster orchestration
-
-See [Project Roadmap](/project/roadmap/) for future plans.
+- **[Table of Contents](../table-of-contents/)** — Full index of all documentation sections
+- **[Installation](../getting-started/installation/)** — Online and airgapped installer walkthrough
+- **[Quick Start](../getting-started/quick-start/)** — Create your first VM after installation
+- **[REST API](/swagger-ui/)** — Interactive API reference

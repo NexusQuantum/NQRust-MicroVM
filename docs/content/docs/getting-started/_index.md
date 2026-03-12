@@ -37,3 +37,9 @@ Set up NQRust-MicroVM using the **online** or **airgapped** installer.
 Log in to your freshly installed platform and create your first microVM.
 
 **Time required:** ~5 minutes (after installation)
+
+### [License Activation](license/)
+Activate NQRust-MicroVM using an online license key or an offline `.lic` file.
+
+### [EULA](eula/)
+Read and accept the End User License Agreement required on first login.

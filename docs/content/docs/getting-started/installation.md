@@ -8,8 +8,6 @@ date = 2025-12-01
 toc = true
 +++
 
-# Installation
-
 NQRust-MicroVM is installed via `nqr-installer` — a guided Rust TUI that provisions everything on your host: KVM access, networking bridge, PostgreSQL, systemd services, and platform configuration.
 
 Choose the method that matches your environment.
@@ -83,7 +81,19 @@ The installer provisions each component in sequence and streams live logs.
 
 ![Installation progress screen](/images/installer/installer-progress.png)
 
-Once all phases complete, the installer prints your platform URL and default credentials.
+![Installation progress complete](/images/installer/installer-progress-complete.png)
+
+**Step 6 — Verification**
+
+The installer verifies every component is healthy before finishing.
+
+![Installation verification screen](/images/installer/installer-verification.png)
+
+**Step 7 — Complete**
+
+Installation is done. The installer shows your access URLs and exits.
+
+![Installation complete screen](/images/installer/installer-complete.png)
 
 ---
 
@@ -150,7 +160,14 @@ systemctl status nqrust-agent
 
 ## After Installation
 
-Once the installer finishes, open the web UI in your browser. The default address is printed at the end of the installer output.
+Once the installer finishes, open the web UI in your browser. The installer shows your exact URLs on the completion screen:
+
+| Service | Default URL |
+|---|---|
+| **Web UI** | `http://<host>:3000` |
+| **Manager API** | `http://<host>:18080` |
+| **API Docs** | `http://<host>:18080/swagger-ui/` |
+| **Agent API** | `http://<host>:9090` |
 
 Default credentials on first login:
 - **Username:** `root`

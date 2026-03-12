@@ -8,8 +8,6 @@ date = 2025-12-01
 toc = true
 +++
 
-# Quick Start
-
 This guide assumes you have completed the [Installation](../installation/). All services are already running — there is nothing to start manually.
 
 ---
