@@ -144,7 +144,6 @@ Click **"Users"** in the sidebar to access User Management.
 
 ### 2. View User List
 
-![Image: Users page](/images/users/page-layout.png)
 
 The Users page shows:
 - Total user count
@@ -169,7 +168,6 @@ The Users page shows:
 
 ### 4. Manage Existing Users
 
-![Image: User actions](/images/users/user-actions.png)
 
 For each user, you can:
 - **Edit** - Update username, password, or role
@@ -284,7 +282,6 @@ Promoting to Admin:
 
 ### Users Page Header
 
-![Image: Users header](/images/users/header.png)
 
 **Displays**:
 - "User Management" title
@@ -296,7 +293,6 @@ Promoting to Admin:
 
 ### User Table
 
-![Image: User table](/images/users/table.png)
 
 **Columns**:
 - **Username** - User's login name (shows "You" badge for current user)
@@ -309,7 +305,6 @@ Promoting to Admin:
 
 ### Filters
 
-![Image: Filters](/images/users/filters.png)
 
 **Available filters**:
 - **Search** - Find users by username

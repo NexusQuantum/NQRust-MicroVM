@@ -79,7 +79,6 @@ Fill in the required fields:
 
 ### Step 3: Create the User
 
-![Image: Create button](/images/users/create-submit-button.png)
 
 Click **"Create"** button to create the user.
 
@@ -188,7 +187,6 @@ Use the search box or scroll through the table to find the user you want to edit
 
 ### Step 2: Open Edit Dialog
 
-![Image: Edit button](/images/users/edit-button.png)
 
 Click the **pencil icon** in the Actions column for the user.
 
@@ -218,7 +216,6 @@ You can update:
 
 ### Step 4: Save Changes
 
-![Image: Save button](/images/users/save-button.png)
 
 Click **"Save"** to apply the changes.
 
@@ -278,7 +275,6 @@ User has been updated successfully
 
 ### Step 1: Find the User
 
-![Image: User to delete](/images/users/user-to-delete.png)
 
 Locate the user you want to delete in the table.
 
@@ -346,7 +342,6 @@ The delete button is **disabled for your own account**.
 
 ### Search by Username
 
-![Image: Search box](/images/users/search-box.png)
 
 Type in the search box to filter users:
 
@@ -393,7 +388,6 @@ You can combine search and role filter:
 
 ### Understanding the Table
 
-![Image: User table explained](/images/users/table-explained.png)
 
 **Columns**:
 
@@ -421,7 +415,6 @@ Role badges are color-coded for quick identification:
 
 ### "You" Badge
 
-![Image: You badge](/images/users/you-badge.png)
 
 Your own account shows a **"You"** badge next to the username.
 
@@ -452,7 +445,6 @@ Shows when the user last logged in:
 
 ### Navigating Multiple Pages
 
-![Image: Pagination](/images/users/pagination.png)
 
 When you have many users, pagination appears:
 

@@ -18,9 +18,6 @@ Snapshots capture the complete state of a VM at a specific point in time:
 - **Quick Restore**: Restore VM in seconds
 - **Multiple Snapshots**: Keep several backup points
 
-<!-- **[IMAGE: snapshot-concept.png - Diagram showing VM → Snapshot → Restore]** -->
-![IMAGE: snapshot-concept.png - Diagram showing VM → Snapshot → Restore](/images/vm/snapshot-concept.png)
-
 ### Use Cases
 
 **Before Risky Changes**:
@@ -53,20 +50,17 @@ Create Snapshot → Make Changes → Success? Keep | Failure? Restore
 2. Click on the VM you want to snapshot
 3. Click the **Snapshots** tab
 
-<!-- **[IMAGE: vm-snapshots-tab.png - Snapshots tab highlighted]** -->
-![IMAGE: vm-snapshots-tab.png - Snapshots tab highlighted](/images/vm/vm-snapshots-tab.png)
+![Snapshots tab](/images/vm/vm-snapshots-tab.png)
 
 ### Step 2: Create Snapshot
 
 Click the **Create Snapshot** button:
 
-<!-- **[IMAGE: create-snapshot-button.png - Create Snapshot button in toolbar]** -->
-![IMAGE: create-snapshot-button.png - Create Snapshot button in toolbar](/images/vm/create-snapshot-button.png)
+![Create Snapshot button](/images/vm/create-snapshot-button.png)
 
 A dialog will appear:
 
-<!-- **[IMAGE: create-snapshot-dialog.png - Create snapshot dialog with fields]** -->
-![IMAGE: create-snapshot-dialog.png - Create snapshot dialog with fields](/images/vm/create-snapshot-dialog.png)
+![Create snapshot dialog](/images/vm/create-snapshot-dialog.png)
 
 ### Step 3: Enter Snapshot Details
 
@@ -89,8 +83,7 @@ Installed packages: postgresql-14, nginx, nodejs
 
 Click **Create** to start the snapshot process:
 
-<!-- **[IMAGE: snapshot-creating.png - Progress indicator]** -->
-![IMAGE: snapshot-creating.png - Progress indicator](/images/vm/snapshot-creating.png)
+![Snapshot creating progress](/images/vm/snapshot-creating.png)
 
 **What happens**:
 1. VM state is paused briefly
@@ -104,8 +97,7 @@ Click **Create** to start the snapshot process:
 
 The new snapshot appears in the list:
 
-<!-- **[IMAGE: snapshot-list.png - List showing created snapshot]** -->
-![IMAGE: snapshot-list.png - List showing created snapshot](/images/vm/snapshot-list.png)
+![Snapshot list](/images/vm/snapshot-list.png)
 
 You'll see:
 - Snapshot name
@@ -131,14 +123,11 @@ You'll see:
 2. Find the snapshot you want to restore
 3. Click **Restore** button
 
-<!-- **[IMAGE: snapshot-restore-button.png - Restore button on snapshot entry]** -->
-![IMAGE: snapshot-restore-button.png - Restore button on snapshot entry](/images/vm/snapshot-restore-button.png)
+![Restore button on snapshot entry](/images/vm/snapshot-restore-button.png)
 
 4. Confirm the restoration:
 
-<!-- **[IMAGE: restore-confirm-dialog.png - Restore confirmation with warning]** -->
-![IMAGE: restore-confirm-dialog.png - Restore confirmation with warning](/images/vm/restore-confirm-dialog.png)
-
+![Restore confirmation dialog](/images/vm/restore-confirm-dialog.png)
 
 **Confirmation message**:
 ```
@@ -155,8 +144,6 @@ Type VM name to confirm: my-vm
 
 ### Restoration Progress
 
-**[IMAGE: restore-progress.png - Restoration in progress]**
-
 The system will:
 1. Stop the VM (if running)
 2. Replace disk with snapshot
@@ -169,12 +156,10 @@ The system will:
 
 After restoration:
 
-**[IMAGE: restore-complete.png - VM running after restore]**
-
 1. Check VM is in "Running" state
 2. Access console and verify data
 3. Test that everything works as expected
-4. Check timestamp - should match snapshot time
+4. Check timestamp — should match snapshot time
 
 **Example verification**:
 ```bash
@@ -199,8 +184,6 @@ ps aux | grep nginx
 3. Enter new name
 4. Click **Save**
 
-**[IMAGE: snapshot-rename.png - Rename dialog]**
-
 ### Deleting a Snapshot
 
 **Caution**: Deleted snapshots cannot be recovered!
@@ -208,8 +191,6 @@ ps aux | grep nginx
 1. Click **⋮** menu next to snapshot
 2. Select **Delete**
 3. Confirm deletion
-
-**[IMAGE: snapshot-delete-confirm.png - Delete confirmation]**
 
 **What happens**:
 - Snapshot is permanently removed
@@ -244,8 +225,6 @@ Captures only changes since last snapshot:
 **Size**: Only changed data
 
 **Use when**: Frequent backups of same VM
-
-**[IMAGE: snapshot-types.png - Diagram showing full vs incremental]**
 
 ---
 
@@ -313,8 +292,6 @@ test
 2. Check total size
 3. Review storage usage
 
-**[IMAGE: snapshot-storage-usage.png - Storage usage dashboard]**
-
 **Optimize storage**:
 - Delete unnecessary snapshots
 - Use incremental snapshots
@@ -358,8 +335,6 @@ test
    - Implement fixes
    - Create new snapshot of fixed state
 
-**[IMAGE: disaster-recovery-flow.png - Recovery flowchart]**
-
 ### Testing Restores
 
 **Monthly practice**:
@@ -383,8 +358,6 @@ test
 ### Issue: Snapshot Creation Fails
 
 **Problem**: Error message when creating snapshot
-
-**[IMAGE: troubleshoot-snapshot-fail.png - Snapshot creation error]**
 
 **Solutions**:
 1. Check available disk space on host
