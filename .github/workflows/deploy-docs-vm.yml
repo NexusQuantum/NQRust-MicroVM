@@ -1,12 +1,10 @@
-name: Deploy Docs to VM
+# DEPRECATED: This workflow deploys docs to a self-hosted VM via SSH/rsync.
+# Replaced by deploy-docs-pages.yml which deploys to GitHub Pages at microvm.nexusquantum.id.
+# Kept for reference only — triggers are disabled.
+name: Deploy Docs to VM (Deprecated)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs/**'
-      - '.github/workflows/deploy-docs-vm.yml'
-  workflow_dispatch:
+  workflow_dispatch: # manual trigger only — automatic triggers removed
 
 env:
   DOCS_PATH: /var/www/docs
