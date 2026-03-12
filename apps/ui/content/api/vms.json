@@ -172,6 +172,13 @@
             "type": "string",
             "nullable": true
           },
+          "port_forwards": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "(CreatePortForwardReq)"
+            }
+          },
           "rootfs_image_id": {
             "type": "string",
             "format": "uuid",
