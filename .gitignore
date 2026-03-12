@@ -64,6 +64,7 @@ build-python-runtime/*
 build-bun-runtime/*
 
 docs/public
+docs/resources/_gen/
 
 # Ignore theme submodules
 docs/themes/
