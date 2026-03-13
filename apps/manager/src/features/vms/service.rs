@@ -3366,7 +3366,7 @@ async fn ensure_network_registered(
             true,     // DHCP enabled
             Some("10.0.0.10"),
             Some("10.0.0.250"),
-            None,     // no uplink_interface (installer-created)
+            None, // no uplink_interface (installer-created)
         )
         .await?;
 
