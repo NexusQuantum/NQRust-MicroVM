@@ -68,7 +68,7 @@ export function LicenseSettingsTab() {
         activateFileMutation.mutate(fileContent, {
             onSuccess: (data) => {
                 if (data.is_licensed) {
-                    toast.success("Offline license activated successfully!")
+                    toast.success("Offline product activated successfully!")
                     setFileContent(null)
                     setFileName(null)
                     setShowFileForm(false)
@@ -112,7 +112,7 @@ export function LicenseSettingsTab() {
             {
                 onSuccess: (data) => {
                     if (data.is_licensed) {
-                        toast.success("License activated successfully!")
+                        toast.success("Product activated successfully!")
                         setLicenseKey("")
                         setShowUpdateForm(false)
                     } else {

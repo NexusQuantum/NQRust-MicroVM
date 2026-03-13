@@ -47,7 +47,7 @@ export default function LicenseSetupPage() {
             {
                 onSuccess: (data) => {
                     if (data.is_licensed) {
-                        toast.success("License activated successfully!")
+                        toast.success("Product activated successfully!")
                         setTimeout(() => router.push("/dashboard"), 1200)
                     } else {
                         toast.error(data.error_message || "Activation failed")
@@ -67,7 +67,7 @@ export default function LicenseSetupPage() {
         activateFileMutation.mutate(fileContent, {
             onSuccess: (data) => {
                 if (data.is_licensed) {
-                    toast.success("License activated successfully!")
+                    toast.success("Product activated successfully!")
                     setTimeout(() => router.push("/dashboard"), 1200)
                 } else {
                     toast.error(data.error_message || "Activation failed")
@@ -110,9 +110,9 @@ export default function LicenseSetupPage() {
                     <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
                         <ShieldCheck className="h-7 w-7 text-primary" />
                     </div>
-                    <CardTitle className="text-2xl font-bold tracking-tight">Activate License</CardTitle>
+                    <CardTitle className="text-2xl font-bold tracking-tight">Product Activation</CardTitle>
                     <CardDescription className="text-muted-foreground text-sm">
-                        Enter your license key or upload an offline license file to activate NQRust-MicroVM.
+                        Enter your product key or upload an offline license file to activate NQRust-MicroVM.
                     </CardDescription>
                 </CardHeader>
 
@@ -120,7 +120,7 @@ export default function LicenseSetupPage() {
                     <CardContent className="space-y-4 text-center">
                         <div className="flex items-center justify-center gap-2 text-green-500">
                             <CheckCircle2 className="h-6 w-6" />
-                            <span className="font-semibold text-lg">License Active</span>
+                            <span className="font-semibold text-lg">Product Activated</span>
                         </div>
                         <div className="space-y-1 text-sm text-muted-foreground">
                             {licenseStatus?.product && <p><strong>Product:</strong> {licenseStatus.product}</p>}
@@ -136,7 +136,7 @@ export default function LicenseSetupPage() {
                     <Tabs defaultValue="key" className="w-full">
                         <TabsList className="grid w-full grid-cols-2 mx-0 rounded-none border-b border-border bg-transparent">
                             <TabsTrigger value="key" className="gap-2 data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none">
-                                <Key className="h-3.5 w-3.5" /> License Key
+                                <Key className="h-3.5 w-3.5" /> Product Key
                             </TabsTrigger>
                             <TabsTrigger value="file" className="gap-2 data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none">
                                 <Upload className="h-3.5 w-3.5" /> Offline File
@@ -146,7 +146,7 @@ export default function LicenseSetupPage() {
                         <TabsContent value="key" className="p-6 pt-4">
                             <form onSubmit={handleActivateKey} className="space-y-4">
                                 <div className="space-y-2">
-                                    <Label htmlFor="license-key" className="text-sm font-medium">License Key</Label>
+                                    <Label htmlFor="license-key" className="text-sm font-medium">Product Key</Label>
                                     <Input
                                         id="license-key"
                                         type="text"
@@ -165,7 +165,7 @@ export default function LicenseSetupPage() {
                                     disabled={!isValidKey(licenseKey) || activateMutation.isPending}
                                 >
                                     {activateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    Activate License
+                                    Activate Product
                                 </Button>
                             </form>
                         </TabsContent>

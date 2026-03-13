@@ -947,10 +947,10 @@ jobs:
           ### Air-Gapped Installation
 
           For servers without internet access, download the self-extracting bundle (built automatically after release):
-          - **Air-Gapped Bundle**: `nqr-microvm-airgap-${{ steps.version.outputs.version }}.run` (~3-5GB)
+          - **Air-Gapped Bundle**: [nqr-microvm-airgap-${{ steps.version.outputs.version }}.run](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nqr-microvm-airgap-${{ steps.version.outputs.version }}.run) (~3-5GB)
 
           ```bash
-          # Transfer to air-gapped Ubuntu 24.04 server, then:
+          chmod +x nqr-microvm-airgap-${{ steps.version.outputs.version }}.run
           sudo ./nqr-microvm-airgap-${{ steps.version.outputs.version }}.run
           ```
 

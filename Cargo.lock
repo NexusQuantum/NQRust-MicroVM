@@ -1965,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "nqr-installer"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "chrono",
