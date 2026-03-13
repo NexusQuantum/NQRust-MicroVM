@@ -3334,23 +3334,18 @@ async fn ensure_network_registered(
 
     let network_repo = NetworkRepository::new(st.db.clone());
 
-    // Check if a bridge-type network (not VLAN) with this bridge already exists for this host
+    // Check if a network with this bridge already exists for this host
     let existing = network_repo.list_by_host(host_id).await?;
     info!(bridge = %bridge_name, host_id = %host_id, existing_count = existing.len(), "checking for existing networks");
 
     for network in existing {
-        // Only match bridge-type networks (not VLANs) for eth0
-        if network.bridge_name == bridge_name
-            && network.type_ == "bridged"
-            && network.vlan_id.is_none()
-        {
-            // Network already registered
+        if network.bridge_name == bridge_name && network.vlan_id.is_none() {
             info!(bridge = %bridge_name, network_id = %network.id, network_type = %network.type_, "bridge network already registered, skipping creation");
             return Ok(network.id);
         }
     }
 
-    // Create new network record
+    // Create new network record — default bridge uses NAT (10.0.0.0/24)
     let name = "Default Network".to_string();
     let description = Some("Auto-registered default network");
 
@@ -3360,17 +3355,17 @@ async fn ensure_network_registered(
         .create(
             &name,
             description,
-            "bridged",
+            "nat",
             None, // no VLAN ID for default bridge
             bridge_name,
             host_id,
-            None,     // CIDR will be determined by DHCP/router
-            None,     // Gateway will be determined by DHCP/router
+            Some("10.0.0.0/24"),
+            Some("10.0.0.1"),
             "active", // installer-created networks are already active
             false,    // not managed (installer-created, read-only)
-            false,    // no DHCP management
-            None,     // no DHCP range start
-            None,     // no DHCP range end
+            true,     // DHCP enabled
+            Some("10.0.0.10"),
+            Some("10.0.0.250"),
             None,     // no uplink_interface (installer-created)
         )
         .await?;

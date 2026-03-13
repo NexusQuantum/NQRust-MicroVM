@@ -39,12 +39,13 @@ pub fn generate_config(config: &InstallConfig, db_password: &str) -> Result<Vec<
     // Generate unified YAML config
     logs.extend(generate_yaml_config(config, db_password)?);
 
-    // Set permissions
-    let _ = run_sudo("chmod", &["700", &config_dir.display().to_string()]);
-    let _ = run_sudo(
-        "chown",
-        &["-R", "root:root", &config_dir.display().to_string()],
-    );
+    // Set permissions: 711 allows nqrust user to traverse into the directory
+    // to read files owned by nqrust (e.g. license-public-key.pem).
+    // Individual files are already set to 600 (root-owned) or 400 (nqrust-owned).
+    let _ = run_sudo("chmod", &["711", &config_dir.display().to_string()]);
+    // Only chown the directory itself, not recursively — files like
+    // license-public-key.pem are intentionally owned by nqrust.
+    let _ = run_sudo("chown", &["root:root", &config_dir.display().to_string()]);
 
     logs.push(LogEntry::success("Configuration generated"));
 
@@ -85,6 +86,11 @@ fn generate_manager_config(config: &InstallConfig, db_password: &str) -> Result<
     if !license_public_key.is_empty() {
         let key_file = config.config_dir.join("license-public-key.pem");
         write_config_file(&key_file, license_public_key)?;
+        // The PEM file must be readable by the nqrust user since the manager
+        // reads it at runtime via std::fs::read_to_string (not via systemd
+        // EnvironmentFile which runs as root).
+        let _ = run_sudo("chown", &["nqrust:nqrust", &key_file.display().to_string()]);
+        let _ = run_sudo("chmod", &["400", &key_file.display().to_string()]);
         license_section.push_str(&format!("LICENSE_PUBLIC_KEY_FILE={}\n", key_file.display()));
     }
 
@@ -283,9 +289,9 @@ ui:
 /// Write a configuration file with sudo
 fn write_config_file(path: &Path, content: &str) -> Result<()> {
     let cmd = format!(
-        "echo '{}' | sudo tee {} > /dev/null",
-        content.replace('\'', "'\"'\"'"),
-        path.display()
+        "cat <<'NQEOF' | sudo tee {} > /dev/null\n{}\nNQEOF",
+        path.display(),
+        content
     );
     run_command("sh", &["-c", &cmd])?;
 
@@ -450,9 +456,8 @@ Defaults:nqrust !authenticate
 
     // Write sudoers file
     let cmd = format!(
-        "echo '{}' | sudo tee {} > /dev/null",
-        sudoers_content.replace('\'', "'\"'\"'"),
-        sudoers_path
+        "cat <<'NQEOF' | sudo tee {} > /dev/null\n{}\nNQEOF",
+        sudoers_path, sudoers_content
     );
 
     match run_command("sh", &["-c", &cmd]) {

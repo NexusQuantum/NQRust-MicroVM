@@ -174,14 +174,24 @@ fn setup_nat_network(bridge_name: &str, logs: &mut Vec<LogEntry>) -> Result<()> 
     // Setup dnsmasq for DHCP
     logs.push(LogEntry::info("Configuring DHCP server (dnsmasq)..."));
 
-    let dnsmasq_config = format!(
-        r#"# NQRust-MicroVM DHCP Configuration
-# Use bind-dynamic so dnsmasq handles interfaces that appear after boot
-# (nqrust-bridge.service creates the bridge; dnsmasq must tolerate it not existing yet)
-interface={}
-bind-dynamic
+    // Write global dnsmasq settings (port=0) in a single file to avoid
+    // "illegal repeated keyword" errors when multiple per-network configs exist.
+    let globals_config = r#"# Global NQRust dnsmasq settings (written once)
 # Disable DNS (port=0) — we only need DHCP. Avoids systemd-resolved port 53 conflict.
 port=0
+# bind-dynamic: tolerate interfaces appearing/disappearing after dnsmasq starts.
+bind-dynamic
+"#;
+    let globals_file = "/etc/dnsmasq.d/nqrust-globals.conf";
+    let globals_cmd = format!(
+        "cat <<'NQEOF' | sudo tee {} > /dev/null\n{}\nNQEOF",
+        globals_file, globals_config
+    );
+    let _ = run_command("sh", &["-c", &globals_cmd]);
+
+    let dnsmasq_config = format!(
+        r#"# NQRust-MicroVM DHCP Configuration
+interface={}
 dhcp-range={},{},12h
 dhcp-option=option:router,{}
 dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
@@ -191,8 +201,8 @@ dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
 
     let dnsmasq_file = "/etc/dnsmasq.d/nqrust-microvm.conf";
     let write_cmd = format!(
-        "echo '{}' | sudo tee {} > /dev/null",
-        dnsmasq_config, dnsmasq_file
+        "cat <<'NQEOF' | sudo tee {} > /dev/null\n{}\nNQEOF",
+        dnsmasq_file, dnsmasq_config
     );
     let _ = run_command("sh", &["-c", &write_cmd]);
 
