@@ -1062,6 +1062,15 @@ fn setup_firewall(
         "Firewall rules: SSH, HTTP, HTTPS, 3000, 9090, 18080 allowed",
     ));
 
+    // Allow all traffic on the bridge interface (DHCP, VM communication, etc.)
+    // Without this, UFW blocks DHCP requests (UDP 67/68) from VMs on the bridge,
+    // causing "udhcpc: no lease" failures inside VMs.
+    let _ = run_sudo("ufw", &["allow", "in", "on", bridge_name]);
+    logs.push(LogEntry::success(format!(
+        "Firewall: allowed all traffic on bridge '{}'",
+        bridge_name
+    )));
+
     // For NAT and Bridged modes, enable forwarding and add masquerade rules
     if matches!(network_mode, NetworkMode::Nat | NetworkMode::Bridged) {
         // Set DEFAULT_FORWARD_POLICY to ACCEPT for VM traffic forwarding

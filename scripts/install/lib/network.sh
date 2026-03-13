@@ -125,30 +125,19 @@ setup_dnsmasq_nat() {
 # VMs will get IPs in the 10.0.0.10-250 range
 
 interface=$BRIDGE
-bind-interfaces
+# Use bind-dynamic so dnsmasq handles interfaces that appear after boot
+bind-dynamic
+# Disable DNS (port=0) — we only need DHCP. Avoids systemd-resolved port 53 conflict.
+port=0
 
 # DHCP range
-dhcp-range=10.0.0.10,10.0.0.250,255.255.255.0,24h
+dhcp-range=10.0.0.10,10.0.0.250,12h
 
 # Gateway (this host)
-dhcp-option=3,10.0.0.1
+dhcp-option=option:router,10.0.0.1
 
 # DNS servers (Google DNS + Cloudflare)
-dhcp-option=6,8.8.8.8,8.8.4.4,1.1.1.1
-
-# Don't read /etc/resolv.conf
-no-resolv
-
-# Use these DNS servers for queries
-server=8.8.8.8
-server=8.8.4.4
-
-# Don't forward plain names
-domain-needed
-
-# Log queries (useful for debugging)
-# log-queries
-# log-dhcp
+dhcp-option=option:dns-server,8.8.8.8,8.8.4.4,1.1.1.1
 EOF
 
     # Restart dnsmasq

@@ -78,8 +78,14 @@ fn generate_manager_config(config: &InstallConfig, db_password: &str) -> Result<
     if !license_api_key.is_empty() {
         license_section.push_str(&format!("LICENSE_API_KEY={}\n", license_api_key));
     }
+    // Write the public key to a separate file instead of inlining in the .env.
+    // PEM keys are multi-line and systemd EnvironmentFile is line-based, so
+    // LICENSE_PUBLIC_KEY=<multiline PEM> gets truncated to the first line only.
+    // Using LICENSE_PUBLIC_KEY_FILE avoids this issue entirely.
     if !license_public_key.is_empty() {
-        license_section.push_str(&format!("LICENSE_PUBLIC_KEY={}\n", license_public_key));
+        let key_file = config.config_dir.join("license-public-key.pem");
+        write_config_file(&key_file, license_public_key)?;
+        license_section.push_str(&format!("LICENSE_PUBLIC_KEY_FILE={}\n", key_file.display()));
     }
 
     let env_content = format!(
