@@ -188,15 +188,19 @@ jobs:
             -R -J \
             "${ISO_DIR}"
 
-          # Generate checksum
-          (cd scripts/airgap/output && sha256sum "${ISO_NAME}" > "${ISO_NAME}.sha256")
+          # Compress ISO to fit under GitHub's 2GB release asset limit
+          echo "Compressing ISO..."
+          gzip -9 "scripts/airgap/output/${ISO_NAME}"
+          GZ_NAME="${ISO_NAME}.gz"
 
-          echo "iso_file=scripts/airgap/output/${ISO_NAME}" >> $GITHUB_OUTPUT
-          echo "iso_sha256=scripts/airgap/output/${ISO_NAME}.sha256" >> $GITHUB_OUTPUT
-          echo "iso_name=${ISO_NAME}" >> $GITHUB_OUTPUT
+          # Generate checksums
+          (cd scripts/airgap/output && sha256sum "${GZ_NAME}" > "${GZ_NAME}.sha256")
 
-          echo "ISO created: ${ISO_NAME}"
-          ls -lh "scripts/airgap/output/${ISO_NAME}"
+          echo "iso_file=scripts/airgap/output/${GZ_NAME}" >> $GITHUB_OUTPUT
+          echo "iso_sha256=scripts/airgap/output/${GZ_NAME}.sha256" >> $GITHUB_OUTPUT
+
+          echo "ISO created and compressed: ${GZ_NAME}"
+          ls -lh "scripts/airgap/output/${GZ_NAME}"
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
@@ -214,11 +218,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          # ISO excluded from release — exceeds GitHub's 2GB asset limit.
-          # ISO is available as a workflow artifact for manual download.
           files: |
             ${{ steps.bundle.outputs.bundle_file }}
             ${{ steps.bundle.outputs.sha256_file }}
+            ${{ steps.iso.outputs.iso_file }}
+            ${{ steps.iso.outputs.iso_sha256 }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
