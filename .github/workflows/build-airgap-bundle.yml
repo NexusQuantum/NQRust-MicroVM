@@ -214,11 +214,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
+          # ISO excluded from release — exceeds GitHub's 2GB asset limit.
+          # ISO is available as a workflow artifact for manual download.
           files: |
             ${{ steps.bundle.outputs.bundle_file }}
             ${{ steps.bundle.outputs.sha256_file }}
-            ${{ steps.iso.outputs.iso_file }}
-            ${{ steps.iso.outputs.iso_sha256 }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
