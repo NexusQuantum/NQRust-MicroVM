@@ -85,7 +85,10 @@ fn generate_manager_config(config: &InstallConfig, db_password: &str) -> Result<
     // Using LICENSE_PUBLIC_KEY_FILE avoids this issue entirely.
     if !license_public_key.is_empty() {
         let key_file = config.config_dir.join("license-public-key.pem");
-        write_config_file(&key_file, license_public_key)?;
+        // GitHub Actions secrets may deliver the PEM with literal "\n" instead of
+        // real newlines, or as a single line. Normalize to proper multi-line PEM.
+        let normalized_pem = license_public_key.replace("\\n", "\n");
+        write_config_file(&key_file, &normalized_pem)?;
         // The PEM file must be readable by the nqrust user since the manager
         // reads it at runtime via std::fs::read_to_string (not via systemd
         // EnvironmentFile which runs as root).

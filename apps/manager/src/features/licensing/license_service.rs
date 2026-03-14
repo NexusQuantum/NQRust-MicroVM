@@ -148,11 +148,17 @@ pub fn verify_offline_lic(
 
     // Parse Ed25519 public key from PEM (SubjectPublicKeyInfo / SPKI format).
     // Strip the PEM armor and decode; the raw 32-byte key is the last 32 bytes of the DER.
-    let pem_body = public_key_pem
-        .lines()
-        .filter(|l| !l.starts_with("-----"))
-        .collect::<Vec<_>>()
-        .join("");
+    // Handle both multi-line and single-line PEM formats (single-line occurs when
+    // environment variables lose newlines, e.g. GitHub Actions secrets via option_env!).
+    let pem_body = {
+        let s = public_key_pem.trim();
+        // Remove BEGIN/END markers regardless of line structure
+        let s = s
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "");
+        // Remove any whitespace/newlines left over
+        s.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+    };
     let der = base64::engine::general_purpose::STANDARD
         .decode(pem_body.trim())
         .map_err(|e| format!("Invalid public key PEM encoding: {}", e))?;
