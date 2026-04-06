@@ -17,6 +17,8 @@ use features::images::repo::ImageRepository;
 use features::licensing::license_service::{self, LicenseConfig, SharedLicenseState};
 use features::licensing::repo::LicensingRepository;
 use features::snapshots::repo::SnapshotRepository;
+use features::sso::crypto as sso_crypto;
+use features::sso::repo::{AuthStateRepository, SsoProviderRepository, UserIdentityRepository};
 use features::users::repo::UserRepository;
 use features::vms::shell::ShellRepository;
 
@@ -46,6 +48,13 @@ pub struct AppState {
     pub download_progress: DownloadProgressTracker,
     pub license_state: SharedLicenseState,
     pub license_config: LicenseConfig,
+    // SSO
+    pub sso_providers: SsoProviderRepository,
+    pub user_identities: UserIdentityRepository,
+    pub auth_states: AuthStateRepository,
+    pub sso_base_url: String,
+    pub sso_frontend_url: String,
+    pub sso_encryption_key: [u8; 32],
 }
 
 #[tokio::main]
@@ -92,6 +101,23 @@ async fn main() -> anyhow::Result<()> {
     let license_config = LicenseConfig::from_env();
     let license_state: SharedLicenseState =
         Arc::new(RwLock::new(nexus_types::LicenseState::default()));
+
+    // SSO
+    let sso_providers = SsoProviderRepository::new(db.clone());
+    let user_identities = UserIdentityRepository::new(db.clone());
+    let auth_states = AuthStateRepository::new(db.clone());
+    let sso_base_url = std::env::var("SSO_BASE_URL").unwrap_or_else(|_| {
+        let bind = std::env::var("MANAGER_BIND").unwrap_or_else(|_| "127.0.0.1:18080".into());
+        format!("http://{}", bind)
+    });
+    let sso_frontend_url =
+        std::env::var("SSO_FRONTEND_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+    let sso_encryption_key =
+        sso_crypto::derive_key(&std::env::var("SSO_ENCRYPTION_KEY").unwrap_or_else(|_| {
+            warn!("SSO_ENCRYPTION_KEY not set — using insecure default (set this in production!)");
+            "insecure-default-key-change-me".to_string()
+        }));
+
     let state = AppState {
         db,
         hosts,
@@ -105,6 +131,12 @@ async fn main() -> anyhow::Result<()> {
         storage: LocalStorage::new(),
         license_state,
         license_config,
+        sso_providers,
+        user_identities,
+        auth_states,
+        sso_base_url,
+        sso_frontend_url,
+        sso_encryption_key,
     };
 
     // Auto-register base images found in the image root directory
@@ -161,6 +193,27 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await;
                 info!(status = %result.status, is_licensed = result.is_licensed, "periodic license re-check");
+            }
+        });
+    }
+
+    // Periodic SSO auth state cleanup every 5 minutes
+    {
+        let auth_states = state.auth_states.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.tick().await; // skip immediate tick
+            loop {
+                interval.tick().await;
+                match auth_states.cleanup_expired().await {
+                    Ok(count) if count > 0 => {
+                        info!(count, "cleaned up expired SSO auth states");
+                    }
+                    Err(e) => {
+                        warn!(error = ?e, "failed to clean up expired SSO auth states");
+                    }
+                    _ => {}
+                }
             }
         });
     }

@@ -17,8 +17,10 @@ pub struct UserRepository {
 pub struct UserRow {
     pub id: Uuid,
     pub username: String,
-    pub password_hash: String,
+    pub password_hash: Option<String>,
     pub role: String,
+    pub auth_source: String,
+    pub email: Option<String>,
     pub last_login_at: Option<DateTime<Utc>>,
     pub avatar_path: Option<String>,
     pub timezone: Option<String>,
@@ -32,6 +34,22 @@ impl UserRow {
     /// Convert role string to Role enum
     pub fn get_role(&self) -> nexus_types::Role {
         self.role.parse().unwrap_or(nexus_types::Role::User)
+    }
+
+    /// Convert to public User type
+    pub fn to_user(&self) -> nexus_types::User {
+        nexus_types::User {
+            id: self.id,
+            username: self.username.clone(),
+            role: self.get_role(),
+            email: self.email.clone(),
+            auth_source: Some(self.auth_source.clone()),
+            last_login_at: self.last_login_at,
+            avatar_path: self.avatar_path.clone(),
+            timezone: self.timezone.clone(),
+            theme: self.theme.clone(),
+            created_at: self.created_at,
+        }
     }
 }
 
@@ -102,9 +120,9 @@ impl UserRepository {
 
         let row = sqlx::query_as::<_, UserRow>(
             r#"
-            INSERT INTO users (id, username, password_hash, role)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, username, password_hash, role, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
+            INSERT INTO users (id, username, password_hash, role, auth_source)
+            VALUES ($1, $2, $3, $4, 'local')
+            RETURNING id, username, password_hash, role, auth_source, email, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
             "#,
         )
         .bind(Uuid::new_v4())
@@ -117,10 +135,64 @@ impl UserRepository {
         Ok(row)
     }
 
+    pub async fn create_sso_user(
+        &self,
+        username: &str,
+        email: Option<&str>,
+        role: nexus_types::Role,
+    ) -> Result<UserRow, UserRepoError> {
+        let role_str = role.as_str();
+
+        let row = sqlx::query_as::<_, UserRow>(
+            r#"
+            INSERT INTO users (id, username, password_hash, role, auth_source, email)
+            VALUES ($1, $2, NULL, $3, 'sso', $4)
+            RETURNING id, username, password_hash, role, auth_source, email, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(username)
+        .bind(role_str)
+        .bind(email)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn get_by_email(&self, email: &str) -> Result<UserRow, UserRepoError> {
+        let row = sqlx::query_as::<_, UserRow>(
+            r#"
+            SELECT id, username, password_hash, role, auth_source, email, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
+            FROM users
+            WHERE email = $1
+            "#,
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(UserRepoError::UserNotFound)?;
+
+        Ok(row)
+    }
+
+    pub async fn set_auth_source(
+        &self,
+        user_id: Uuid,
+        auth_source: &str,
+    ) -> Result<(), UserRepoError> {
+        sqlx::query("UPDATE users SET auth_source = $1, updated_at = now() WHERE id = $2")
+            .bind(auth_source)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_by_username(&self, username: &str) -> Result<UserRow, UserRepoError> {
         let row = sqlx::query_as::<_, UserRow>(
             r#"
-            SELECT id, username, password_hash, role, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
+            SELECT id, username, password_hash, role, auth_source, email, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
             FROM users
             WHERE username = $1
             "#,
@@ -138,7 +210,7 @@ impl UserRepository {
 
         let row = sqlx::query_as::<_, UserRow>(
             r#"
-            SELECT id, username, password_hash, role, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
+            SELECT id, username, password_hash, role, auth_source, email, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
             FROM users
             WHERE id = $1
             "#,
@@ -162,7 +234,7 @@ impl UserRepository {
     pub async fn list(&self) -> Result<Vec<UserRow>, UserRepoError> {
         let rows = sqlx::query_as::<_, UserRow>(
             r#"
-            SELECT id, username, password_hash, role, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
+            SELECT id, username, password_hash, role, auth_source, email, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
             FROM users
             ORDER BY created_at DESC
             "#,
@@ -189,7 +261,7 @@ impl UserRepository {
         }
 
         if let Some(p) = password {
-            user.password_hash = Self::hash_password(p)?;
+            user.password_hash = Some(Self::hash_password(p)?);
         }
 
         if let Some(r) = role {
@@ -202,7 +274,7 @@ impl UserRepository {
             UPDATE users
             SET username = $2, password_hash = $3, role = $4, updated_at = now()
             WHERE id = $1
-            RETURNING id, username, password_hash, role, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
+            RETURNING id, username, password_hash, role, auth_source, email, last_login_at, avatar_path, timezone, theme, preferences, created_at, updated_at
             "#,
         )
         .bind(id)
@@ -234,7 +306,11 @@ impl UserRepository {
         password: &str,
     ) -> Result<UserRow, UserRepoError> {
         let user = self.get_by_username(username).await?;
-        let is_valid = Self::verify_password_hash(password, &user.password_hash)?;
+        let password_hash = user
+            .password_hash
+            .as_deref()
+            .ok_or(UserRepoError::SsoOnlyUser)?;
+        let is_valid = Self::verify_password_hash(password, password_hash)?;
         if !is_valid {
             return Err(UserRepoError::InvalidCredentials);
         }
@@ -439,7 +515,11 @@ impl UserRepository {
         let user = self.get_by_id(user_id).await?;
 
         // Verify current password
-        if !Self::verify_password_hash(current_password, &user.password_hash)? {
+        let hash = user
+            .password_hash
+            .as_deref()
+            .ok_or(UserRepoError::SsoOnlyUser)?;
+        if !Self::verify_password_hash(current_password, hash)? {
             return Err(UserRepoError::InvalidCredentials);
         }
 
@@ -501,6 +581,8 @@ pub enum UserRepoError {
     InvalidRole(String),
     #[error("password hashing error: {0}")]
     HashingError(String),
+    #[error("this account uses SSO authentication — please sign in with your identity provider")]
+    SsoOnlyUser,
     #[error(transparent)]
     Sql(#[from] sqlx::Error),
 }

@@ -39,6 +39,10 @@ hostname = "0.4"
 hex = "0.4"
 dotenvy = "0.15"
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
+openidconnect = "4"
+samael = "0.0.17"
+aes-gcm = "0.10"
+url = "2"
 
 [dev-dependencies]
 wiremock = "0.6"

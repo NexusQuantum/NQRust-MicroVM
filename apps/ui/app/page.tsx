@@ -10,10 +10,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { authApi } from "@/lib/api/auth"
+import { ssoApi, type SsoProvider } from "@/lib/api/sso"
 import { useAuthStore } from "@/lib/auth/store"
 import { parseFacadeError } from "@/lib/api"
-import { Eye, EyeOff } from "lucide-react"
+import { Eye, EyeOff, LogIn } from "lucide-react"
 import { toast } from "sonner"
+import { apiClient } from "@/lib/api/http"
 
 export default function LandingPage() {
   const router = useRouter()
@@ -23,8 +25,9 @@ export default function LandingPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
+  const [ssoProviders, setSsoProviders] = useState<SsoProvider[]>([])
 
-  // Check authentication status on mount
+  // Check authentication status on mount and load SSO providers
   useEffect(() => {
     // Small delay to ensure auth store is hydrated from localStorage
     const timer = setTimeout(() => {
@@ -33,6 +36,11 @@ export default function LandingPage() {
         router.replace("/dashboard")
       }
     }, 100)
+
+    // Load SSO providers (no auth required)
+    ssoApi.getProviders().then(setSsoProviders).catch(() => {
+      // Silently ignore — SSO just won't be shown
+    })
 
     return () => clearTimeout(timer)
   }, [isAuthenticated, router])
@@ -195,6 +203,34 @@ export default function LandingPage() {
                   {isLoading ? "Signing in..." : "Sign In"}
                 </Button>
               </form>
+
+              {ssoProviders.length > 0 && (
+                <div className="mt-6">
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {ssoProviders.map((provider) => (
+                      <Button
+                        key={provider.slug}
+                        variant="outline"
+                        className="w-full h-11 cursor-pointer"
+                        onClick={() => {
+                          window.location.href = `${apiClient.baseURL}/sso/${provider.protocol}/${provider.slug}/login?redirect_after=/dashboard`
+                        }}
+                      >
+                        <LogIn className="mr-2 h-4 w-4" />
+                        Sign in with {provider.name}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

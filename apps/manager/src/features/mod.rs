@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod networks;
 pub mod reconciler;
 pub mod snapshots;
+pub mod sso;
 pub mod storage;
 pub mod templates;
 pub mod users;
@@ -84,5 +85,17 @@ pub fn router(state: AppState) -> Router {
         .nest("/v1/logs", logs::router())
         .nest("/v1/metrics", metrics::router())
         .nest("/v1/volumes", volumes::router())
+        // SSO public routes (no auth — these ARE the auth flow)
+        .nest("/v1/sso", sso::public_router())
+        // SSO admin routes (auth + admin required)
+        .nest(
+            "/v1/admin/sso",
+            sso::admin_router()
+                .layer(axum::middleware::from_fn(users::middleware::require_admin))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    users::middleware::auth_middleware,
+                )),
+        )
         .layer(Extension(state))
 }

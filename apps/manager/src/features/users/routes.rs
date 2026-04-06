@@ -38,7 +38,10 @@ pub async fn login(
         .await
         .map_err(|e| {
             error!(?e, "failed to verify password");
-            StatusCode::UNAUTHORIZED
+            match e {
+                crate::features::users::repo::UserRepoError::SsoOnlyUser => StatusCode::FORBIDDEN,
+                _ => StatusCode::UNAUTHORIZED,
+            }
         })?;
 
     let token = st.users.create_token(user.id, None).await.map_err(|e| {
@@ -48,16 +51,7 @@ pub async fn login(
 
     Ok(Json(LoginResponse {
         token,
-        user: User {
-            id: user.id,
-            username: user.username.clone(),
-            role: user.get_role(),
-            avatar_path: user.avatar_path.clone(),
-            timezone: user.timezone.clone(),
-            theme: user.theme.clone(),
-            last_login_at: user.last_login_at,
-            created_at: user.created_at,
-        },
+        user: user.to_user(),
     }))
 }
 
@@ -83,16 +77,7 @@ pub async fn me(
     })?;
 
     info!(user_id = ?user.id, "current user info fetched successfully");
-    Ok(Json(User {
-        id: user_row.id,
-        username: user_row.username.clone(),
-        role: user_row.get_role(),
-        avatar_path: user_row.avatar_path.clone(),
-        timezone: user_row.timezone.clone(),
-        theme: user_row.theme.clone(),
-        last_login_at: user_row.last_login_at,
-        created_at: user_row.created_at,
-    }))
+    Ok(Json(user_row.to_user()))
 }
 
 #[utoipa::path(
@@ -113,19 +98,7 @@ pub async fn list(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let items: Vec<User> = users
-        .into_iter()
-        .map(|u| User {
-            id: u.id,
-            username: u.username.clone(),
-            role: u.get_role(),
-            avatar_path: u.avatar_path.clone(),
-            timezone: u.timezone.clone(),
-            theme: u.theme.clone(),
-            last_login_at: u.last_login_at,
-            created_at: u.created_at,
-        })
-        .collect();
+    let items: Vec<User> = users.iter().map(|u| u.to_user()).collect();
 
     Ok(Json(ListUsersResponse { items }))
 }
@@ -164,16 +137,7 @@ pub async fn create(
             }
         })?;
 
-    Ok(Json(User {
-        id: user.id,
-        username: user.username.clone(),
-        role: user.get_role(),
-        avatar_path: user.avatar_path.clone(),
-        timezone: user.timezone.clone(),
-        theme: user.theme.clone(),
-        last_login_at: user.last_login_at,
-        created_at: user.created_at,
-    }))
+    Ok(Json(user.to_user()))
 }
 
 #[utoipa::path(
@@ -201,16 +165,7 @@ pub async fn get(
     })?;
 
     Ok(Json(GetUserResponse {
-        item: User {
-            id: user.id,
-            username: user.username.clone(),
-            role: user.get_role(),
-            avatar_path: user.avatar_path.clone(),
-            timezone: user.timezone.clone(),
-            theme: user.theme.clone(),
-            last_login_at: user.last_login_at,
-            created_at: user.created_at,
-        },
+        item: user.to_user(),
     }))
 }
 
@@ -251,16 +206,7 @@ pub async fn update(
             }
         })?;
 
-    Ok(Json(User {
-        id: user.id,
-        username: user.username.clone(),
-        role: user.get_role(),
-        avatar_path: user.avatar_path.clone(),
-        timezone: user.timezone.clone(),
-        theme: user.theme.clone(),
-        last_login_at: user.last_login_at,
-        created_at: user.created_at,
-    }))
+    Ok(Json(user.to_user()))
 }
 
 #[utoipa::path(
@@ -368,16 +314,7 @@ pub async fn get_profile(
     })?;
 
     info!(user_id = ?user.id, "profile fetched successfully");
-    Ok(Json(User {
-        id: user_row.id,
-        username: user_row.username.clone(),
-        role: user_row.get_role(),
-        last_login_at: user_row.last_login_at,
-        avatar_path: user_row.avatar_path,
-        timezone: user_row.timezone,
-        theme: user_row.theme,
-        created_at: user_row.created_at,
-    }))
+    Ok(Json(user_row.to_user()))
 }
 
 #[utoipa::path(
@@ -408,16 +345,7 @@ pub async fn update_profile(
         })?;
 
     info!(user_id = ?user.id, "profile updated successfully");
-    Ok(Json(User {
-        id: user_row.id,
-        username: user_row.username.clone(),
-        role: user_row.get_role(),
-        last_login_at: user_row.last_login_at,
-        avatar_path: user_row.avatar_path,
-        timezone: user_row.timezone,
-        theme: user_row.theme,
-        created_at: user_row.created_at,
-    }))
+    Ok(Json(user_row.to_user()))
 }
 
 #[utoipa::path(

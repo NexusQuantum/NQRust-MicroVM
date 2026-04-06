@@ -1105,6 +1105,14 @@ pub enum AuditAction {
     // EULA actions
     AcceptEula,
     ActivateLicense,
+
+    // SSO actions
+    SsoLogin,
+    SsoLoginFailed,
+    SsoUserProvisioned,
+    SsoProviderCreated,
+    SsoProviderUpdated,
+    SsoProviderDeleted,
 }
 
 impl AuditAction {
@@ -1145,6 +1153,12 @@ impl AuditAction {
             AuditAction::SystemEvent => "system_event",
             AuditAction::AcceptEula => "accept_eula",
             AuditAction::ActivateLicense => "activate_license",
+            AuditAction::SsoLogin => "sso_login",
+            AuditAction::SsoLoginFailed => "sso_login_failed",
+            AuditAction::SsoUserProvisioned => "sso_user_provisioned",
+            AuditAction::SsoProviderCreated => "sso_provider_created",
+            AuditAction::SsoProviderUpdated => "sso_provider_updated",
+            AuditAction::SsoProviderDeleted => "sso_provider_deleted",
         }
     }
 }
@@ -1154,6 +1168,10 @@ pub struct User {
     pub id: uuid::Uuid,
     pub username: String,
     pub role: Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1319,6 +1337,215 @@ pub struct AuditLogQueryParams {
     pub limit: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<i64>,
+}
+
+// ========================================
+// SSO Types
+// ========================================
+
+/// SSO provider protocol
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SsoProtocol {
+    Oidc,
+    Saml,
+}
+
+impl std::fmt::Display for SsoProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SsoProtocol::Oidc => write!(f, "oidc"),
+            SsoProtocol::Saml => write!(f, "saml"),
+        }
+    }
+}
+
+/// Public SSO provider info (shown on login page)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SsoProvider {
+    pub slug: String,
+    pub name: String,
+    pub protocol: SsoProtocol,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_hint: Option<String>,
+    #[serde(default)]
+    pub display_order: i32,
+}
+
+/// List of enabled SSO providers
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListSsoProvidersResponse {
+    pub providers: Vec<SsoProvider>,
+}
+
+/// Full SSO provider config (admin view, secrets masked)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SsoProviderConfig {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub slug: String,
+    pub protocol: SsoProtocol,
+    pub enabled: bool,
+
+    // OIDC
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_issuer_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_client_id: Option<String>,
+    pub oidc_secret_set: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_scopes: Option<String>,
+
+    // SAML
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_entity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_sso_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_sp_entity_id: Option<String>,
+
+    // Shared
+    #[serde(default)]
+    pub role_mapping: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_claim_name: Option<String>,
+    pub default_role: Role,
+    pub allow_jit_provisioning: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_hint: Option<String>,
+    pub display_order: i32,
+
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Create SSO provider request
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateSsoProviderRequest {
+    pub name: String,
+    pub slug: String,
+    pub protocol: SsoProtocol,
+
+    // OIDC
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_issuer_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_scopes: Option<String>,
+
+    // SAML
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_metadata_xml: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_sso_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_entity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_certificate_pem: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_sp_entity_id: Option<String>,
+
+    // Shared
+    #[serde(default)]
+    pub role_mapping: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_claim_name: Option<String>,
+    #[serde(default)]
+    pub default_role: Option<Role>,
+    #[serde(default)]
+    pub allow_jit_provisioning: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_hint: Option<String>,
+    #[serde(default)]
+    pub display_order: Option<i32>,
+}
+
+/// Update SSO provider request
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateSsoProviderRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_issuer_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_scopes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_metadata_xml: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_sso_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_entity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_idp_certificate_pem: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_sp_entity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_mapping: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_claim_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_role: Option<Role>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_jit_provisioning: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_order: Option<i32>,
+}
+
+/// SSO provider test result
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SsoTestResult {
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Admin list of all SSO providers
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListSsoProviderConfigsResponse {
+    pub items: Vec<SsoProviderConfig>,
+}
+
+/// SSO provider path params
+#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+pub struct SsoProviderPathParams {
+    pub id: uuid::Uuid,
+}
+
+/// SSO slug path params
+#[derive(Debug, Clone, Serialize, Deserialize, IntoParams)]
+pub struct SsoSlugPathParams {
+    pub slug: String,
 }
 
 // ========================================

@@ -2429,6 +2429,12 @@ mod tests {
                 nexus_types::LicenseState::default(),
             )),
             license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
+            sso_providers: crate::features::sso::repo::SsoProviderRepository::new(pool.clone()),
+            user_identities: crate::features::sso::repo::UserIdentityRepository::new(pool.clone()),
+            auth_states: crate::features::sso::repo::AuthStateRepository::new(pool.clone()),
+            sso_base_url: "http://localhost:18080".to_string(),
+            sso_frontend_url: "http://localhost:3000".to_string(),
+            sso_encryption_key: crate::features::sso::crypto::derive_key("test-key"),
         };
 
         let vm_id = Uuid::new_v4();
@@ -2497,6 +2503,12 @@ mod tests {
                 nexus_types::LicenseState::default(),
             )),
             license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
+            sso_providers: crate::features::sso::repo::SsoProviderRepository::new(pool.clone()),
+            user_identities: crate::features::sso::repo::UserIdentityRepository::new(pool.clone()),
+            auth_states: crate::features::sso::repo::AuthStateRepository::new(pool.clone()),
+            sso_base_url: "http://localhost:18080".to_string(),
+            sso_frontend_url: "http://localhost:3000".to_string(),
+            sso_encryption_key: crate::features::sso::crypto::derive_key("test-key"),
         };
 
         let err = create_and_start(
@@ -2562,6 +2574,12 @@ mod tests {
                 nexus_types::LicenseState::default(),
             )),
             license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
+            sso_providers: crate::features::sso::repo::SsoProviderRepository::new(pool.clone()),
+            user_identities: crate::features::sso::repo::UserIdentityRepository::new(pool.clone()),
+            auth_states: crate::features::sso::repo::AuthStateRepository::new(pool.clone()),
+            sso_base_url: "http://localhost:18080".to_string(),
+            sso_frontend_url: "http://localhost:3000".to_string(),
+            sso_encryption_key: crate::features::sso::crypto::derive_key("test-key"),
         };
 
         let vm = repo::VmRow {
@@ -2629,6 +2647,12 @@ mod tests {
                 nexus_types::LicenseState::default(),
             )),
             license_config: crate::features::licensing::license_service::LicenseConfig::from_env(),
+            sso_providers: crate::features::sso::repo::SsoProviderRepository::new(pool.clone()),
+            user_identities: crate::features::sso::repo::UserIdentityRepository::new(pool.clone()),
+            auth_states: crate::features::sso::repo::AuthStateRepository::new(pool.clone()),
+            sso_base_url: "http://localhost:18080".to_string(),
+            sso_frontend_url: "http://localhost:3000".to_string(),
+            sso_encryption_key: crate::features::sso::crypto::derive_key("test-key"),
         };
 
         let now = chrono::Utc::now();
