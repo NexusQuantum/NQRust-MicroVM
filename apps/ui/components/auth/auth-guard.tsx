@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { useAuthStore } from "@/lib/auth/store"
 
-const PUBLIC_ROUTES = ["/", "/eula", "/setup/license"]
+const PUBLIC_ROUTES = ["/", "/eula", "/setup/license", "/sso/callback"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()

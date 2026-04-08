@@ -2275,6 +2275,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "hex",
  "nix",
  "rand 0.8.5",
  "ratatui",

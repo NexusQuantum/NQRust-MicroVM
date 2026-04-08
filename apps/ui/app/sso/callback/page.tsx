@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuthStore } from "@/lib/auth/store"
 
@@ -9,8 +9,16 @@ export default function SsoCallbackPage() {
   const searchParams = useSearchParams()
   const { setAuth } = useAuthStore()
   const [error, setError] = useState<string | null>(null)
+  const processedRef = useRef(false)
 
   useEffect(() => {
+    // Ensure this effect only runs once. Without this guard, calling
+    // window.history.replaceState to strip the token from the URL triggers
+    // a second re-run where searchParams is empty, which would briefly
+    // flash "Missing authentication data" before the redirect lands.
+    if (processedRef.current) return
+    processedRef.current = true
+
     const token = searchParams.get("token")
     const userParam = searchParams.get("user")
 
@@ -26,7 +34,11 @@ export default function SsoCallbackPage() {
       // Clear sensitive data from URL
       window.history.replaceState({}, "", "/sso/callback")
 
-      router.replace("/dashboard")
+      // Wait a tick so the auth store + localStorage write settle
+      // before the AuthGuard on /dashboard re-reads them.
+      setTimeout(() => {
+        router.replace("/dashboard")
+      }, 150)
     } catch {
       setError("Failed to process authentication response. Please try again.")
     }

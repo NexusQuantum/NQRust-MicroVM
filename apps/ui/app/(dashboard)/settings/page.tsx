@@ -34,7 +34,8 @@ import {
   XCircle,
   Monitor,
   Code,
-  Box
+  Box,
+  Shield
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import {
@@ -55,6 +56,7 @@ import {
   useEulaStatus,
 } from "@/lib/queries"
 import { LicenseSettingsTab } from "@/components/license/license-settings-tab"
+import { SsoSettingsTab } from "@/components/sso/sso-settings-tab"
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { toast } from "sonner"
 import { AvatarUpload } from "@/components/user"
@@ -648,7 +650,7 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="account" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="account">
             <User className="mr-2 h-4 w-4" />
             Account
@@ -668,6 +670,10 @@ export default function SettingsPage() {
           <TabsTrigger value="system">
             <Info className="mr-2 h-4 w-4" />
             System
+          </TabsTrigger>
+          <TabsTrigger value="sso">
+            <Shield className="mr-2 h-4 w-4" />
+            SSO
           </TabsTrigger>
           <TabsTrigger value="license">
             <Lock className="mr-2 h-4 w-4" />
@@ -1230,6 +1236,11 @@ export default function SettingsPage() {
               */}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* SSO Tab */}
+        <TabsContent value="sso" className="space-y-6">
+          <SsoSettingsTab />
         </TabsContent>
 
         {/* License Tab */}

@@ -2926,12 +2926,18 @@ components:
       - role
       - created_at
       properties:
+        auth_source:
+          type: string
+          nullable: true
         avatar_path:
           type: string
           nullable: true
         created_at:
           type: string
           format: date-time
+        email:
+          type: string
+          nullable: true
         id:
           type: string
           format: uuid

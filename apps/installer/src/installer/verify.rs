@@ -158,6 +158,15 @@ fn verify_health_endpoints(config: &InstallConfig) -> Vec<CheckItem> {
                 .with_status(status)
                 .with_message("http://localhost:18080/health"),
         );
+
+        // SSO endpoint — public route, exercises the SSO feature module
+        // (verifies migrations 0032/0033 ran and the SSO router is wired up).
+        let sso_status = check_health_endpoint("http://localhost:18080/v1/sso/providers", 5);
+        checks.push(
+            CheckItem::new("SSO Endpoint", "SSO providers endpoint responds")
+                .with_status(sso_status)
+                .with_message("http://localhost:18080/v1/sso/providers"),
+        );
     }
 
     if config.mode.includes_agent() {

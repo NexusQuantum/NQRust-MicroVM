@@ -22,6 +22,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "auth_source": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "avatar_path": {
                       "type": "string",
                       "nullable": true
@@ -29,6 +33,10 @@
                     "created_at": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "email": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "id": {
                       "type": "string",
@@ -115,6 +123,10 @@
           "schema": {
             "type": "object",
             "properties": {
+              "auth_source": {
+                "type": "string",
+                "nullable": true
+              },
               "avatar_path": {
                 "type": "string",
                 "nullable": true
@@ -122,6 +134,10 @@
               "created_at": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "email": {
+                "type": "string",
+                "nullable": true
               },
               "id": {
                 "type": "string",
@@ -198,6 +214,10 @@
               "item": {
                 "type": "object",
                 "properties": {
+                  "auth_source": {
+                    "type": "string",
+                    "nullable": true
+                  },
                   "avatar_path": {
                     "type": "string",
                     "nullable": true
@@ -205,6 +225,10 @@
                   "created_at": {
                     "type": "string",
                     "format": "date-time"
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
                   },
                   "id": {
                     "type": "string",
@@ -302,6 +326,10 @@
           "schema": {
             "type": "object",
             "properties": {
+              "auth_source": {
+                "type": "string",
+                "nullable": true
+              },
               "avatar_path": {
                 "type": "string",
                 "nullable": true
@@ -309,6 +337,10 @@
               "created_at": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "email": {
+                "type": "string",
+                "nullable": true
               },
               "id": {
                 "type": "string",

@@ -21,10 +21,21 @@ pub struct OidcClaims {
 }
 
 fn make_http_client() -> Result<reqwest::Client> {
-    reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .context("failed to build HTTP client")
+    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+
+    // DEV-ONLY: allow self-signed certs on IdPs when SSO_INSECURE_SKIP_TLS_VERIFY=true
+    // Never enable this in production — it defeats TLS entirely.
+    if std::env::var("SSO_INSECURE_SKIP_TLS_VERIFY")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+    {
+        tracing::warn!(
+            "SSO_INSECURE_SKIP_TLS_VERIFY is enabled — TLS certificate verification disabled for OIDC discovery"
+        );
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+
+    builder.build().context("failed to build HTTP client")
 }
 
 /// Generate an authorization URL with PKCE, state, and nonce. Returns
@@ -150,15 +161,10 @@ pub async fn exchange_code(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let groups = raw_claims
-        .get(role_claim_name)
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Support dot-notation paths for nested claims, e.g. Keycloak's "realm_access.roles"
+    // or Azure AD's "resource_access.api.roles". Also merges multiple comma-separated
+    // claim paths (e.g. "realm_access.roles,groups") into a single group list.
+    let groups = extract_groups(&raw_claims, role_claim_name);
 
     Ok(OidcClaims {
         sub,
@@ -180,6 +186,40 @@ pub async fn test_discovery(provider: &SsoProviderRow, encryption_key: &[u8; 32]
         .map_err(|e| anyhow::anyhow!("OIDC discovery failed: {}", e))?;
 
     Ok(())
+}
+
+/// Look up a value by dot-notation path, e.g. "realm_access.roles".
+fn lookup_nested<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+/// Extract groups from claims supporting dot-notation paths and comma-separated
+/// fallback paths. Handles both array values and single-string values.
+fn extract_groups(claims: &Value, role_claim_name: &str) -> Vec<String> {
+    let mut groups = Vec::new();
+    for path in role_claim_name
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(value) = lookup_nested(claims, path) {
+            if let Some(arr) = value.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        groups.push(s.to_string());
+                    }
+                }
+            } else if let Some(s) = value.as_str() {
+                // Some IdPs return a single string
+                groups.push(s.to_string());
+            }
+        }
+    }
+    groups
 }
 
 fn extract_oidc_config(
