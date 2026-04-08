@@ -41,6 +41,10 @@ dotenvy = "0.15"
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
 openidconnect = "4"
 samael = "0.0.17"
+# Force vendored OpenSSL so musl static builds work without system openssl-dev headers.
+# samael depends on openssl-sys which otherwise tries to link against the host
+# OpenSSL — that fails for the x86_64-unknown-linux-musl target in CI.
+openssl = { version = "0.10", features = ["vendored"] }
 aes-gcm = "0.10"
 url = "2"
 
