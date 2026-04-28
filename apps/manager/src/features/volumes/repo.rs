@@ -187,6 +187,37 @@ impl VolumeRepository {
 
         Ok(result.map(|(vm_id,)| vm_id))
     }
+
+    #[allow(dead_code)]
+    pub async fn insert_active_attachment(
+        &self,
+        volume_id: Uuid,
+        vm_id: Uuid,
+        drive_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,
+        )
+        .bind(volume_id)
+        .bind(vm_id)
+        .bind(drive_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub async fn mark_detached(&self, vm_id: Uuid, drive_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"UPDATE volume_attachment SET detached_at = now()
+               WHERE vm_id = $1 AND drive_id = $2 AND detached_at IS NULL"#,
+        )
+        .bind(vm_id)
+        .bind(drive_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -200,7 +231,8 @@ pub struct VolumeRow {
     #[sqlx(rename = "type")]
     pub type_: String,
     pub status: String,
-    pub host_id: Uuid,
+    pub host_id: Option<Uuid>,
+    pub backend_id: Uuid,
     pub created_by_user_id: Option<Uuid>,
     pub created_at: DateTime<chrono::Utc>,
     pub updated_at: DateTime<chrono::Utc>,
@@ -213,4 +245,5 @@ pub struct AttachmentRow {
     pub vm_id: Uuid,
     pub drive_id: String,
     pub attached_at: DateTime<chrono::Utc>,
+    pub detached_at: Option<DateTime<chrono::Utc>>,
 }

@@ -1186,6 +1186,16 @@ async fn provision_rootfs(
     .await
     .context("failed to record rootfs volume")?;
 
+    sqlx::query(
+        r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,
+    )
+    .bind(alloc.volume_handle.volume_id)
+    .bind(vm_id)
+    .bind("rootfs")
+    .execute(&st.db)
+    .await
+    .context("inserting volume_attachment row")?;
+
     let vm_root = alloc.volume_handle.locator.clone();
     let size_bytes = alloc.volume_handle.size_bytes;
 
@@ -1261,6 +1271,16 @@ pub async fn create_drive(
         .execute(&st.db)
         .await
         .context("failed to record data disk volume")?;
+
+        sqlx::query(
+            r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,
+        )
+        .bind(dh.volume_id)
+        .bind(vm_id)
+        .bind(&req.drive_id)
+        .execute(&st.db)
+        .await
+        .context("inserting volume_attachment row")?;
 
         (dh.locator, Some(size as i64))
     };

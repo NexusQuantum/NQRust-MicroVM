@@ -71,7 +71,11 @@ async fn volume_to_list_item(
     let volume_repo = VolumeRepository::new(st.db.clone());
 
     // Get host name
-    let host_name = st.hosts.get(volume.host_id).await.ok().map(|h| h.name);
+    let host_name = if let Some(hid) = volume.host_id {
+        st.hosts.get(hid).await.ok().map(|h| h.name)
+    } else {
+        None
+    };
 
     // Get attached VM if any
     let attached_vm_id = volume_repo.get_attached_vm(volume.id).await.ok().flatten();
@@ -97,7 +101,7 @@ async fn volume_to_list_item(
         size_gb: volume.size_bytes / (1024 * 1024 * 1024),
         volume_type: volume.type_,
         status: volume.status,
-        host_id: volume.host_id,
+        host_id: volume.host_id.unwrap_or_default(),
         host_name,
         attached_to_vm_id: attached_vm_id,
         attached_to_vm_name: attached_vm_name,
