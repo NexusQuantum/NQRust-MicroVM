@@ -861,6 +861,7 @@ export interface CreateVolumeRequest {
   size_gb: number;
   type: "raw" | "qcow2" | "ext4";
   host_id: string;
+  backend_id?: string;
 }
 
 export interface AttachVolumeRequest {
