@@ -160,3 +160,5 @@ impl LocalStorage {
         Ok(())
     }
 }
+
+pub mod config;
