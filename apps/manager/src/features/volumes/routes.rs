@@ -18,6 +18,8 @@ pub struct CreateVolumeRequest {
     #[serde(rename = "type")]
     pub volume_type: String, // "raw", "qcow2", "ext4"
     pub host_id: Uuid,
+    #[serde(default)]
+    pub backend_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +163,11 @@ pub async fn create(
     // This allows for lazy allocation and avoids pre-allocating large files
     let size_bytes = req.size_gb * 1024 * 1024 * 1024;
 
+    let backend_id = req
+        .backend_id
+        .or_else(|| st.registry.default_id())
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
     // Create database record
     let volume_repo = VolumeRepository::new(st.db.clone());
     let volume = volume_repo
@@ -170,7 +177,8 @@ pub async fn create(
             &path,
             size_bytes,
             &req.volume_type,
-            req.host_id,
+            Some(req.host_id),
+            backend_id,
         )
         .await
         .map_err(|err| {

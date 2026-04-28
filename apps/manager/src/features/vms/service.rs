@@ -136,7 +136,7 @@ pub async fn create_and_start(
         .unwrap_or_else(|| format!("vm-{}", &id.to_string()[..8]));
     let tags = req.tags.clone();
 
-    let spec = resolve_vm_spec(st, req, id).await?;
+    let spec = resolve_vm_spec(st, req, id, host.id).await?;
 
     // Inject credentials into rootfs BEFORE VM starts (while rootfs is not in use)
     // This is the fallback for images without cloud-init
@@ -1081,7 +1081,12 @@ struct ResolvedVmSpec {
     rootfs_size_bytes: Option<u64>,
 }
 
-async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result<ResolvedVmSpec> {
+async fn resolve_vm_spec(
+    st: &AppState,
+    req: CreateVmReq,
+    vm_id: Uuid,
+    vm_host_id: Uuid,
+) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
     let (rootfs_path, rootfs_size_bytes) = provision_rootfs(
@@ -1091,6 +1096,7 @@ async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result
         vm_id,
         req.rootfs_size_mb,
         req.backend_id,
+        vm_host_id,
     )
     .await?;
 
@@ -1138,6 +1144,7 @@ async fn provision_rootfs(
     vm_id: Uuid,
     rootfs_size_mb: Option<u32>,
     req_backend_id: Option<Uuid>,
+    vm_host_id: Uuid,
 ) -> Result<(String, Option<u64>)> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
@@ -1195,7 +1202,7 @@ async fn provision_rootfs(
     .await
     .context("failed to provision rootfs via storage registry")?;
 
-    let host_id_for_volume = st.host_id_for_local_file().await;
+    let host_id_for_volume = st.host_id_for_local_file(vm_host_id);
 
     sqlx::query(
         r#"INSERT INTO volume (id, name, path, size_bytes, type, status, host_id, backend_id)
@@ -1258,8 +1265,8 @@ pub async fn create_drive(
     vm_id: Uuid,
     req: CreateDriveReq,
 ) -> Result<nexus_types::VmDrive> {
-    // Verify VM exists
-    let _vm = super::repo::get(&st.db, vm_id).await?;
+    // Verify VM exists and get its host assignment
+    let vm = super::repo::get(&st.db, vm_id).await?;
 
     // Determine path and size
     let (host_path, size_bytes) = if let Some(path) = req.path_on_host.as_ref() {
@@ -1282,7 +1289,7 @@ pub async fn create_drive(
         .await
         .context("failed to provision data disk via storage registry")?;
 
-        let host_id_for_volume = st.host_id_for_local_file().await;
+        let host_id_for_volume = st.host_id_for_local_file(vm.host_id);
         sqlx::query(
             r#"INSERT INTO volume (id, name, path, size_bytes, type, status, host_id, backend_id)
                VALUES ($1, $2, $3, $4, 'raw', 'available', $5, $6)
@@ -1339,7 +1346,6 @@ pub async fn create_drive(
           "Drive created in database, will be attached on next VM start");
 
     // Auto-register drive as a volume in the volume registry
-    let vm = super::repo::get(&st.db, vm_id).await?;
     if let Err(e) =
         ensure_data_drive_registered(st, vm_id, &host_path, &req.drive_id, vm.host_id).await
     {
@@ -3593,6 +3599,11 @@ async fn ensure_data_drive_registered(
     let description_text = format!("Data drive '{}' for VM: {}", drive_id, vm_name);
     let description = Some(description_text.as_str());
 
+    let backend_id = st
+        .registry
+        .default_id()
+        .ok_or_else(|| anyhow::anyhow!("no default storage backend configured"))?;
+
     let volume = volume_repo
         .create(
             &name,
@@ -3600,7 +3611,8 @@ async fn ensure_data_drive_registered(
             drive_path,
             size_bytes,
             volume_type,
-            host_id,
+            Some(host_id),
+            backend_id,
         )
         .await?;
 
@@ -3683,6 +3695,11 @@ async fn ensure_volume_registered(
     let description_text = format!("Rootfs for VM: {}", vm_name);
     let description = Some(description_text.as_str());
 
+    let backend_id = st
+        .registry
+        .default_id()
+        .ok_or_else(|| anyhow::anyhow!("no default storage backend configured"))?;
+
     let volume = volume_repo
         .create(
             &name,
@@ -3690,7 +3707,8 @@ async fn ensure_volume_registered(
             rootfs_path,
             size_bytes,
             volume_type,
-            host_id,
+            Some(host_id),
+            backend_id,
         )
         .await?;
 
