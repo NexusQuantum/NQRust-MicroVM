@@ -94,7 +94,12 @@ jobs:
 
   build:
     name: Build
-    runs-on: self-hosted
+    # Was self-hosted; that runner is on an Arch host without passwordless
+    # sudo or musl-tools, so `sudo apt-get install musl-tools` fails before
+    # `ring` can cross-compile to x86_64-unknown-linux-musl. Routing to a
+    # GitHub-hosted Ubuntu runner unblocks. Switch back to self-hosted once
+    # the runner has: passwordless sudo, musl-tools (or pacman musl), lld.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         profile: [debug, release]
@@ -300,7 +305,7 @@ jobs:
 
   integration-test:
     name: Integration Test
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     needs: [build, build-ui]
 
     steps:
