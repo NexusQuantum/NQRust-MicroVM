@@ -35,10 +35,12 @@ impl StorageBackendRepository {
     }
 
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<StorageBackendRow>> {
-        sqlx::query_as::<_, StorageBackendRow>(r#"SELECT * FROM storage_backend WHERE id = $1"#)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
+        sqlx::query_as::<_, StorageBackendRow>(
+            r#"SELECT * FROM storage_backend WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     #[allow(dead_code)]

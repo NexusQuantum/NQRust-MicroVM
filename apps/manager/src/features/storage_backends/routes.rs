@@ -7,8 +7,16 @@ use uuid::Uuid;
 fn row_to_wire(row: StorageBackendRow) -> Result<StorageBackend, StatusCode> {
     let kind: BackendKind = serde_json::from_value(serde_json::Value::String(row.kind.clone()))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let capabilities: Capabilities =
-        serde_json::from_value(row.capabilities_json).unwrap_or_default();
+    let capabilities: Capabilities = match serde_json::from_value(row.capabilities_json) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                "storage_backend '{}' has malformed capabilities_json; using default: {e}",
+                row.name
+            );
+            Capabilities::default()
+        }
+    };
     Ok(StorageBackend {
         id: row.id,
         name: row.name,

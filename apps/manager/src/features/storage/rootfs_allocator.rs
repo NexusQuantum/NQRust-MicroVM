@@ -5,10 +5,9 @@ use nexus_storage::{ControlPlaneBackend, CreateOpts, VolumeHandle};
 use std::path::Path;
 use uuid::Uuid;
 
-/// Outcome of allocating a rootfs from a source image. The `volume_handle` is
-/// always returned; `attached_for_caller` is `Some` only on the slow path
-/// where the caller still holds an attachment that should be reused for VM
-/// start (avoids detach/reattach round-trip).
+/// Outcome of allocating a rootfs from a source image. The `volume_handle`
+/// is always returned. Slow-path callers needing to reuse a populate-time
+/// attachment for VM start are introduced in Plan 2.
 #[allow(dead_code)]
 pub struct AllocOutcome {
     pub volume_handle: VolumeHandle,
