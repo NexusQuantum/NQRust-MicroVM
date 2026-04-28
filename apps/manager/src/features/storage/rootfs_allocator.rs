@@ -194,9 +194,7 @@ mod tests {
                     db_err.code()
                 );
             }
-            other => panic!(
-                "expected unique-violation 23505 for double attach, got {other:?}"
-            ),
+            other => panic!("expected unique-violation 23505 for double attach, got {other:?}"),
         }
 
         // Cleanup.

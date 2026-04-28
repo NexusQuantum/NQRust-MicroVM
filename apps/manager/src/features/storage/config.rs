@@ -32,8 +32,7 @@ pub struct ValidatedBackend {
 
 /// Parse a TOML string into raw entries.
 pub fn parse(toml_str: &str) -> Result<StorageBackendsToml> {
-    toml::from_str::<StorageBackendsToml>(toml_str)
-        .context("parsing storage_backend TOML")
+    toml::from_str::<StorageBackendsToml>(toml_str).context("parsing storage_backend TOML")
 }
 
 /// Validate per-kind shape and assign capabilities. The capabilities here are

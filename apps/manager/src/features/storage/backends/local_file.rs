@@ -86,10 +86,7 @@ impl ControlPlaneBackend for LocalFileControlPlaneBackend {
         // caller's job (rootfs_allocator), not ours.
         let source_size = tokio::fs::metadata(&dst).await?.len();
         let final_size = if opts.size_bytes > source_size {
-            let f = tokio::fs::OpenOptions::new()
-                .write(true)
-                .open(&dst)
-                .await?;
+            let f = tokio::fs::OpenOptions::new().write(true).open(&dst).await?;
             f.set_len(opts.size_bytes).await?;
             opts.size_bytes
         } else {

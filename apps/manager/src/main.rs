@@ -11,8 +11,8 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi as _;
 
-use anyhow::Context as _;
 use crate::features::storage::LocalStorage;
+use anyhow::Context as _;
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
 use features::licensing::license_service::{self, LicenseConfig, SharedLicenseState};

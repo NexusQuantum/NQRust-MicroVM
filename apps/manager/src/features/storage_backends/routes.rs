@@ -1,19 +1,14 @@
 use crate::features::storage_backends::repo::{StorageBackendRepository, StorageBackendRow};
 use crate::AppState;
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    response::IntoResponse,
-    Extension, Json,
-};
+use axum::{extract::Path, http::StatusCode, response::IntoResponse, Extension, Json};
 use nexus_types::{BackendKind, Capabilities, StorageBackend};
 use uuid::Uuid;
 
 fn row_to_wire(row: StorageBackendRow) -> Result<StorageBackend, StatusCode> {
     let kind: BackendKind = serde_json::from_value(serde_json::Value::String(row.kind.clone()))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let capabilities: Capabilities = serde_json::from_value(row.capabilities_json)
-        .unwrap_or_default();
+    let capabilities: Capabilities =
+        serde_json::from_value(row.capabilities_json).unwrap_or_default();
     Ok(StorageBackend {
         id: row.id,
         name: row.name,
@@ -46,14 +41,21 @@ pub async fn list(Extension(st): Extension<AppState>) -> impl IntoResponse {
             for r in rows {
                 match row_to_wire(r) {
                     Ok(w) => items.push(w),
-                    Err(s) => return (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response(),
+                    Err(s) => {
+                        return (s, Json(serde_json::json!({"error": "row deserialization"})))
+                            .into_response()
+                    }
                 }
             }
             (StatusCode::OK, Json(StorageBackendListResponse { items })).into_response()
         }
         Err(e) => {
             tracing::error!("storage_backends list failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "db"}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
         }
     }
 }
@@ -76,12 +78,22 @@ pub async fn get_one(
     match repo.get(id).await {
         Ok(Some(row)) => match row_to_wire(row) {
             Ok(w) => (StatusCode::OK, Json(w)).into_response(),
-            Err(s) => (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response(),
+            Err(s) => {
+                (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response()
+            }
         },
-        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not found"}))).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not found"})),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("storage_backends get failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "db"}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
         }
     }
 }

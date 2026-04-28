@@ -42,7 +42,9 @@ impl Registry {
 
         // Don't soft-delete localfile-default — it's the migration-seeded fallback.
         for existing in repo.list_active().await? {
-            if existing.name == "localfile-default" { continue; }
+            if existing.name == "localfile-default" {
+                continue;
+            }
             if !toml_names.contains(&existing.name) {
                 repo.soft_delete_by_name(&existing.name).await?;
                 tracing::warn!(
@@ -88,7 +90,9 @@ impl Registry {
         }
 
         if by_id.is_empty() {
-            return Err(anyhow!("no active storage backends — migration should have seeded localfile-default"));
+            return Err(anyhow!(
+                "no active storage backends — migration should have seeded localfile-default"
+            ));
         }
 
         Ok(Registry { by_id, default_id })
@@ -166,12 +170,11 @@ mod tests {
         .await
         .unwrap();
 
-        let host_id: Option<uuid::Uuid> =
-            sqlx::query_scalar(r#"SELECT id FROM host LIMIT 1"#)
-                .fetch_optional(&p)
-                .await
-                .unwrap()
-                .flatten();
+        let host_id: Option<uuid::Uuid> = sqlx::query_scalar(r#"SELECT id FROM host LIMIT 1"#)
+            .fetch_optional(&p)
+            .await
+            .unwrap()
+            .flatten();
 
         // Insert a simulated "legacy" volume row pointing at localfile-default.
         let vol_id = uuid::Uuid::new_v4();
@@ -189,14 +192,16 @@ mod tests {
         .unwrap();
 
         // Read it back. backend_id must point at localfile-default.
-        let row: (uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid) = sqlx::query_as(
-            r#"SELECT id, host_id, backend_id FROM volume WHERE id = $1"#,
-        )
-        .bind(vol_id)
-        .fetch_one(&p)
-        .await
-        .unwrap();
-        assert_eq!(row.2, backend_id, "backend_id must point at localfile-default");
+        let row: (uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid) =
+            sqlx::query_as(r#"SELECT id, host_id, backend_id FROM volume WHERE id = $1"#)
+                .bind(vol_id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            row.2, backend_id,
+            "backend_id must point at localfile-default"
+        );
 
         // Cleanup.
         sqlx::query("DELETE FROM volume WHERE id = $1")

@@ -7,10 +7,14 @@ use uuid::Uuid;
 pub struct BackendInstanceId(pub Uuid);
 
 impl From<Uuid> for BackendInstanceId {
-    fn from(u: Uuid) -> Self { Self(u) }
+    fn from(u: Uuid) -> Self {
+        Self(u)
+    }
 }
 impl From<BackendInstanceId> for Uuid {
-    fn from(id: BackendInstanceId) -> Self { id.0 }
+    fn from(id: BackendInstanceId) -> Self {
+        id.0
+    }
 }
 
 /// What kind of storage system a backend speaks. New variants are added when

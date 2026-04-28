@@ -137,10 +137,7 @@ mod tests {
             ) -> Result<VolumeHandle, StorageError> {
                 Err(StorageError::NotSupported("clone_from_snapshot".into()))
             }
-            async fn delete_snapshot(
-                &self,
-                _: VolumeSnapshotHandle,
-            ) -> Result<(), StorageError> {
+            async fn delete_snapshot(&self, _: VolumeSnapshotHandle) -> Result<(), StorageError> {
                 Ok(())
             }
         }

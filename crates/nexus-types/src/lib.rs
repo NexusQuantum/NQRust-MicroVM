@@ -1702,7 +1702,9 @@ pub struct MetricsQueryParams {
 
 // ── Storage backends ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
 pub enum BackendKind {
     #[serde(rename = "local_file")]
     LocalFile,
@@ -1712,7 +1714,17 @@ pub enum BackendKind {
     TrueNasIscsi,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
+)]
 pub struct Capabilities {
     pub supports_native_snapshots: bool,
     pub supports_concurrent_attach: bool,
