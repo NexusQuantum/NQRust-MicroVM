@@ -13,6 +13,7 @@ impl VolumeRepository {
         Self { pool }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         name: &str,
@@ -20,12 +21,13 @@ impl VolumeRepository {
         path: &str,
         size_bytes: i64,
         volume_type: &str,
-        host_id: Uuid,
+        host_id: Option<Uuid>,
+        backend_id: Uuid,
     ) -> sqlx::Result<VolumeRow> {
         sqlx::query_as::<_, VolumeRow>(
             r#"
-            INSERT INTO volume (name, description, path, size_bytes, type, status, host_id, created_by_user_id)
-            VALUES ($1, $2, $3, $4, $5, 'available', $6, $7)
+            INSERT INTO volume (name, description, path, size_bytes, type, status, host_id, backend_id, created_by_user_id)
+            VALUES ($1, $2, $3, $4, $5, 'available', $6, $7, $8)
             RETURNING *
             "#,
         )
@@ -35,6 +37,7 @@ impl VolumeRepository {
         .bind(size_bytes)
         .bind(volume_type)
         .bind(host_id)
+        .bind(backend_id)
         .bind(None as Option<Uuid>) // created_by_user_id - TODO: Set from authenticated user context
         .fetch_one(&self.pool)
         .await
@@ -135,26 +138,21 @@ impl VolumeRepository {
     }
 
     pub async fn detach(&self, volume_id: Uuid, vm_id: Uuid) -> sqlx::Result<()> {
-        // Delete attachment record
-        sqlx::query(r#"DELETE FROM volume_attachment WHERE volume_id = $1 AND vm_id = $2"#)
+        // Soft-detach: set detached_at to preserve audit trail
+        sqlx::query(
+            r#"UPDATE volume_attachment SET detached_at = now()
+               WHERE volume_id = $1 AND vm_id = $2 AND detached_at IS NULL"#,
+        )
+        .bind(volume_id)
+        .bind(vm_id)
+        .execute(&self.pool)
+        .await?;
+
+        // Update volume status to 'available'
+        sqlx::query(r#"UPDATE volume SET status = 'available' WHERE id = $1"#)
             .bind(volume_id)
-            .bind(vm_id)
             .execute(&self.pool)
             .await?;
-
-        // Update volume status to 'available' if no other attachments exist
-        let count: (i64,) =
-            sqlx::query_as(r#"SELECT COUNT(*) FROM volume_attachment WHERE volume_id = $1"#)
-                .bind(volume_id)
-                .fetch_one(&self.pool)
-                .await?;
-
-        if count.0 == 0 {
-            sqlx::query(r#"UPDATE volume SET status = 'available' WHERE id = $1"#)
-                .bind(volume_id)
-                .execute(&self.pool)
-                .await?;
-        }
 
         Ok(())
     }
@@ -177,7 +175,7 @@ impl VolumeRepository {
         let result: Option<(Uuid,)> = sqlx::query_as(
             r#"
             SELECT vm_id FROM volume_attachment
-            WHERE volume_id = $1
+            WHERE volume_id = $1 AND detached_at IS NULL
             LIMIT 1
             "#,
         )
