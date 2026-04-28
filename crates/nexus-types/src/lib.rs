@@ -587,6 +587,8 @@ pub struct RegisterHostRequest {
     pub addr: String,
     #[serde(default)]
     pub capabilities: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_backend_kinds: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
@@ -598,6 +600,8 @@ pub struct RegisterHostResponse {
 pub struct HostHeartbeatRequest {
     #[serde(default)]
     pub capabilities: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_backend_kinds: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]

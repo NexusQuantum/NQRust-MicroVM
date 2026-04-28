@@ -25,6 +25,7 @@ pub async fn register(
         name,
         addr,
         capabilities,
+        supported_backend_kinds,
     } = req;
 
     let row = st
@@ -35,6 +36,12 @@ pub async fn register(
             error!(?err, "failed to register host");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+
+    if let Some(kinds) = supported_backend_kinds {
+        if let Err(err) = st.hosts.update_supported_backend_kinds(row.id, kinds).await {
+            error!(?err, "failed to update host supported_backend_kinds on register");
+        }
+    }
 
     Ok(Json(RegisterHostResponse { id: row.id }))
 }
@@ -85,6 +92,12 @@ pub async fn heartbeat(
                 error!(error = ?err, "failed to update host metrics");
                 // Don't fail the heartbeat if metrics update fails
             }
+        }
+    }
+
+    if let Some(kinds) = req.supported_backend_kinds {
+        if let Err(err) = st.hosts.update_supported_backend_kinds(id, kinds).await {
+            error!(?err, "failed to update host supported_backend_kinds on heartbeat");
         }
     }
 
@@ -318,6 +331,7 @@ mod tests {
             name: "agent-1".into(),
             addr: "http://127.0.0.1:9090".into(),
             capabilities: json!({"cpus": 4}),
+            supported_backend_kinds: None,
         };
 
         let Json(response) = super::register(Extension(state), Json(req)).await.unwrap();
@@ -369,6 +383,7 @@ mod tests {
             name: "agent-2".into(),
             addr: "http://127.0.0.1:9191".into(),
             capabilities: json!({}),
+            supported_backend_kinds: None,
         };
 
         let Json(register_resp) = super::register(Extension(state.clone()), Json(req))
@@ -390,6 +405,7 @@ mod tests {
             }),
             Json(HostHeartbeatRequest {
                 capabilities: Some(json!({"memory": 8192})),
+                supported_backend_kinds: None,
             }),
         )
         .await

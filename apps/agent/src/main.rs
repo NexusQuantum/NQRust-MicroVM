@@ -68,12 +68,19 @@ async fn register_and_heartbeat(
 
     loop {
         let capabilities = gather_capabilities(&state);
+        let supported_backend_kinds: Vec<String> = state
+            .storage_registry
+            .supported_kinds()
+            .iter()
+            .map(|k| k.as_db_str().to_string())
+            .collect();
         match client
             .post(format!("{manager_base}/v1/hosts/register"))
             .json(&RegisterHostRequest {
                 name: name.clone(),
                 addr: addr.clone(),
                 capabilities,
+                supported_backend_kinds: Some(supported_backend_kinds),
             })
             .send()
             .await
@@ -111,10 +118,17 @@ async fn heartbeat_loop(
 
     loop {
         let capabilities = gather_capabilities(state);
+        let supported_backend_kinds: Vec<String> = state
+            .storage_registry
+            .supported_kinds()
+            .iter()
+            .map(|k| k.as_db_str().to_string())
+            .collect();
         match client
             .post(format!("{manager_base}/v1/hosts/{host_id}/heartbeat"))
             .json(&HostHeartbeatRequest {
                 capabilities: Some(capabilities),
+                supported_backend_kinds: Some(supported_backend_kinds),
             })
             .send()
             .await
