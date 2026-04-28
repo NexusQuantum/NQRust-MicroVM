@@ -270,6 +270,12 @@ mod tests {
     use axum::{extract::Path, Extension};
     use serde_json::json;
 
+    async fn test_registry(pool: &sqlx::PgPool) -> crate::features::storage::registry::Registry {
+        crate::features::storage::registry::Registry::load(pool, None)
+            .await
+            .expect("registry")
+    }
+
     #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn register_creates_host(pool: sqlx::PgPool) {
@@ -283,6 +289,7 @@ mod tests {
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let download_progress =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let registry = test_registry(&pool).await;
         let state = crate::AppState {
             db: pool.clone(),
             hosts: repo.clone(),
@@ -293,6 +300,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: true,
             storage,
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -332,6 +340,7 @@ mod tests {
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let download_progress =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let registry = test_registry(&pool).await;
         let state = crate::AppState {
             db: pool.clone(),
             hosts: repo.clone(),
@@ -342,6 +351,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: true,
             storage,
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),

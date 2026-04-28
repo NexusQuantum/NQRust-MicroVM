@@ -2351,6 +2351,12 @@ mod tests {
     use crate::features::vms::repo;
     use nexus_types::CreateImageReq;
     use serde_json::json;
+
+    async fn test_registry(pool: &sqlx::PgPool) -> crate::features::storage::registry::Registry {
+        crate::features::storage::registry::Registry::load(pool, None)
+            .await
+            .expect("registry")
+    }
     #[derive(Clone)]
     pub struct TestSnapshotLoad {
         vm_id: Uuid,
@@ -2414,6 +2420,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
@@ -2424,6 +2431,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -2488,6 +2496,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts,
@@ -2498,6 +2507,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -2559,6 +2569,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts,
@@ -2569,6 +2580,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -2632,6 +2644,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
@@ -2642,6 +2655,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
