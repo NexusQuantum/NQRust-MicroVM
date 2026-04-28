@@ -150,7 +150,7 @@ mod tests {
         let toml_str = r#"
             [[storage_backend]]
             name = "tn"
-            kind = "true_nas_iscsi"
+            kind = "truenas_iscsi"
             [storage_backend.config]
             api_key_env = "X"
         "#;

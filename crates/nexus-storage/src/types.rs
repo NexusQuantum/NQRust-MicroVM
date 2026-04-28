@@ -18,10 +18,12 @@ impl From<BackendInstanceId> for Uuid {
 /// snake_case string and are forward-compatible (unknown kinds at startup
 /// cause the registry to log and skip the row, not crash).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum BackendKind {
+    #[serde(rename = "local_file")]
     LocalFile,
+    #[serde(rename = "iscsi")]
     Iscsi,
+    #[serde(rename = "truenas_iscsi")]
     TrueNasIscsi,
 }
 

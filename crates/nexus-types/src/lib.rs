@@ -1703,10 +1703,12 @@ pub struct MetricsQueryParams {
 // ── Storage backends ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum BackendKind {
+    #[serde(rename = "local_file")]
     LocalFile,
+    #[serde(rename = "iscsi")]
     Iscsi,
+    #[serde(rename = "truenas_iscsi")]
     TrueNasIscsi,
 }
 
