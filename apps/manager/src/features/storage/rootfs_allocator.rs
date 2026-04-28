@@ -261,4 +261,33 @@ mod tests {
             .await
             .ok();
     }
+
+    #[tokio::test]
+    async fn detects_ext4_magic() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ext4.img");
+        // Write 1082 bytes: pad with zeros, then magic 0xEF53 at offset 1080.
+        let mut buf = vec![0u8; 1082];
+        buf[1080] = 0x53;
+        buf[1081] = 0xEF;
+        std::fs::write(&p, &buf).unwrap();
+        assert!(super::image_is_ext4_rootfs(&p).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn rejects_non_ext4() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("plain.bin");
+        std::fs::write(&p, vec![0u8; 4096]).unwrap();
+        assert!(!super::image_is_ext4_rootfs(&p).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn handles_short_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("short.bin");
+        std::fs::write(&p, b"too short").unwrap();
+        // Should return false, not panic
+        assert!(!super::image_is_ext4_rootfs(&p).await.unwrap());
+    }
 }
