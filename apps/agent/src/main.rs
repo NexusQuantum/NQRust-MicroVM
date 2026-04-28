@@ -26,6 +26,9 @@ async fn main() -> anyhow::Result<()> {
         nexus_storage::BackendKind::LocalFile,
         std::sync::Arc::new(features::storage::local_file::LocalFileHostBackend),
     );
+    let iscsi_host = std::sync::Arc::new(features::storage::iscsi::IscsiHostBackend);
+    storage_registry.register_for(nexus_storage::BackendKind::Iscsi, iscsi_host.clone());
+    storage_registry.register_for(nexus_storage::BackendKind::TrueNasIscsi, iscsi_host);
     let state = AppState {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),
