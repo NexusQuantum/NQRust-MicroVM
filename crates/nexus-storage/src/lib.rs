@@ -53,4 +53,16 @@ mod tests {
         assert_eq!(b.path(), std::path::Path::new("/dev/sdb"));
         assert_eq!(v.path(), std::path::Path::new("/run/spdk.sock"));
     }
+
+    #[test]
+    fn already_attached_displays_clearly() {
+        let e = StorageError::AlreadyAttached;
+        assert_eq!(e.to_string(), "volume already attached");
+    }
+
+    #[test]
+    fn not_supported_displays_clearly() {
+        let e = StorageError::NotSupported("clone_from_image".into());
+        assert!(e.to_string().contains("clone_from_image"));
+    }
 }
