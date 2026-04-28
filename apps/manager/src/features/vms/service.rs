@@ -136,7 +136,7 @@ pub async fn create_and_start(
         .unwrap_or_else(|| format!("vm-{}", &id.to_string()[..8]));
     let tags = req.tags.clone();
 
-    let spec = resolve_vm_spec(st, req, id, host.id).await?;
+    let spec = resolve_vm_spec(st, req, id, host.id, &host.addr).await?;
 
     // Inject credentials into rootfs BEFORE VM starts (while rootfs is not in use)
     // This is the fallback for images without cloud-init
@@ -1086,6 +1086,7 @@ async fn resolve_vm_spec(
     req: CreateVmReq,
     vm_id: Uuid,
     vm_host_id: Uuid,
+    host_addr: &str,
 ) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
@@ -1097,6 +1098,7 @@ async fn resolve_vm_spec(
         req.rootfs_size_mb,
         req.backend_id,
         vm_host_id,
+        host_addr,
     )
     .await?;
 
@@ -1137,6 +1139,7 @@ async fn resolve_image_path(
     Err(anyhow!("{field} requires an image id or host path"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn provision_rootfs(
     st: &AppState,
     image_id: Option<Uuid>,
@@ -1145,6 +1148,7 @@ async fn provision_rootfs(
     rootfs_size_mb: Option<u32>,
     req_backend_id: Option<Uuid>,
     vm_host_id: Uuid,
+    host_addr: &str,
 ) -> Result<(String, Option<u64>)> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
@@ -1195,6 +1199,7 @@ async fn provision_rootfs(
     let alloc = crate::features::storage::rootfs_allocator::allocate_rootfs(
         &st.registry,
         backend_id,
+        host_addr,
         std::path::Path::new(&source_path),
         target_bytes,
         &format!("rootfs-{vm_id}"),

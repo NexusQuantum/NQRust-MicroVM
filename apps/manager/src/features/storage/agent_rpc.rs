@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Context, Result};
 use nexus_storage::{AttachedPath, BackendKind, VolumeHandle};
 use reqwest::Client;
@@ -41,11 +39,13 @@ pub async fn agent_attach(host_addr: &str, volume: &VolumeHandle) -> Result<Atta
 }
 
 #[derive(Serialize)]
+#[allow(dead_code)]
 struct DetachReq<'a> {
     volume: &'a VolumeHandle,
     attached: &'a AttachedPath,
 }
 
+#[allow(dead_code)]
 pub async fn agent_detach(
     host_addr: &str,
     volume: &VolumeHandle,

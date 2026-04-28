@@ -1,32 +1,33 @@
 use crate::features::storage::registry::Registry;
 use anyhow::{anyhow, Context, Result};
 #[allow(unused_imports)]
-use nexus_storage::{ControlPlaneBackend, CreateOpts, VolumeHandle};
+use nexus_storage::{AttachedPath, ControlPlaneBackend, CreateOpts, VolumeHandle};
 use std::path::Path;
 use uuid::Uuid;
 
 /// Outcome of allocating a rootfs from a source image. The `volume_handle`
-/// is always returned. Slow-path callers needing to reuse a populate-time
-/// attachment for VM start are introduced in Plan 2.
+/// is always returned. When the slow path is taken (provision + agent
+/// attach/populate), `attached_for_caller` is `Some(...)` so the caller can
+/// reuse the attachment for VM start without a second agent round-trip.
+/// For the fast path (`clone_from_image`), `attached_for_caller` is `None`.
 #[allow(dead_code)]
 pub struct AllocOutcome {
     pub volume_handle: VolumeHandle,
+    pub attached_for_caller: Option<AttachedPath>,
 }
 
 /// Allocate a rootfs by:
-///   1. If backend supports clone_from_image → call it. Done.
-///   2. Otherwise → provision empty volume; caller is responsible for
-///      attach + populate_streaming + filesystem-aware resize on the agent.
-///
-/// **Filesystem-aware** here means: this function does NOT run `resize2fs`,
-/// `mkfs`, or `e2fsck`. Those are caller responsibilities that depend on the
-/// kind of source image (ext4 rootfs vs raw data disk vs qcow2 etc.). The
-/// trait is, by spec, agnostic to filesystem types — see
-/// `HostBackend::populate_streaming` doc.
+///   1. If backend supports clone_from_image → call it. `attached_for_caller`
+///      will be `None`.
+///   2. Otherwise (slow path) → provision empty volume, agent-attach it,
+///      agent-populate it from `source_image`, optionally run `resize2fs` if
+///      the image is an ext4 rootfs. `attached_for_caller` will be
+///      `Some(...)` so the caller can reuse the attachment.
 #[allow(dead_code)]
 pub async fn allocate_rootfs(
     registry: &Registry,
     backend_id: Uuid,
+    host_addr: &str,
     source_image: &Path,
     target_size_bytes: u64,
     opts_name: &str,
@@ -39,17 +40,62 @@ pub async fn allocate_rootfs(
         size_bytes: target_size_bytes,
         description: None,
     };
+
     if backend.capabilities().supports_clone_from_image {
         let h = backend
             .clone_from_image(source_image, opts)
             .await
             .with_context(|| format!("clone_from_image failed on backend {backend_id}"))?;
-        return Ok(AllocOutcome { volume_handle: h });
+        return Ok(AllocOutcome {
+            volume_handle: h,
+            attached_for_caller: None,
+        });
     }
-    // Slow path is implemented in Plan 2 once iSCSI exists. For now: refuse.
-    Err(anyhow!(
-        "backend {backend_id} does not support clone_from_image and the slow path is implemented in Plan 2"
-    ))
+
+    // Slow path: provision → agent attach → agent populate → optional resize2fs
+    let h = backend
+        .provision(opts)
+        .await
+        .with_context(|| format!("provision failed on backend {backend_id}"))?;
+    let attached = crate::features::storage::agent_rpc::agent_attach(host_addr, &h)
+        .await
+        .context("agent attach")?;
+    crate::features::storage::agent_rpc::agent_populate(
+        host_addr,
+        h.backend_kind,
+        &attached,
+        &source_image.to_path_buf(),
+        target_size_bytes,
+    )
+    .await
+    .context("agent populate_streaming")?;
+
+    if image_is_ext4_rootfs(source_image).await.unwrap_or(false) {
+        if let Err(e) =
+            crate::features::storage::agent_rpc::agent_resize2fs(host_addr, &attached).await
+        {
+            tracing::warn!("resize2fs failed (non-fatal): {e:#}");
+        }
+    }
+
+    Ok(AllocOutcome {
+        volume_handle: h,
+        attached_for_caller: Some(attached),
+    })
+}
+
+async fn image_is_ext4_rootfs(path: &Path) -> Result<bool> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+    let mut f = tokio::fs::File::open(path).await?;
+    if f.seek(SeekFrom::Start(1080)).await.is_err() {
+        return Ok(false);
+    }
+    let mut buf = [0u8; 2];
+    if f.read_exact(&mut buf).await.is_err() {
+        return Ok(false);
+    }
+    // ext4 magic 0xEF53, little-endian
+    Ok(buf[0] == 0x53 && buf[1] == 0xEF)
 }
 
 /// Provision a blank data disk on the chosen backend.
@@ -92,9 +138,16 @@ mod tests {
         std::fs::write(&src, vec![0u8; 4 * 1024 * 1024]).unwrap();
         std::env::set_var("MANAGER_STORAGE_ROOT", dir.path());
 
-        let out = allocate_rootfs(&reg, default_id, &src, 4 * 1024 * 1024, "test")
-            .await
-            .unwrap();
+        let out = allocate_rootfs(
+            &reg,
+            default_id,
+            "127.0.0.1:9090",
+            &src,
+            4 * 1024 * 1024,
+            "test",
+        )
+        .await
+        .unwrap();
         assert_eq!(out.volume_handle.size_bytes, 4 * 1024 * 1024);
         // T23: verify locator path actually exists on disk after allocation
         assert!(
