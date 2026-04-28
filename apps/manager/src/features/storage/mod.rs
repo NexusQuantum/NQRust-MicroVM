@@ -161,6 +161,7 @@ impl LocalStorage {
     }
 }
 
+pub mod agent_rpc;
 pub mod backends;
 pub mod config;
 pub mod registry;
