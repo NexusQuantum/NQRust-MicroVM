@@ -66,6 +66,8 @@ Design the trait so these fit cleanly later, but do **not** implement:
 - Read-only multi-attach (e.g., shared ISO volumes attached to many VMs) — separate axis, separate PR
 - Routing **functions** and **containers** rootfs through the backend abstraction. Hardcoded `/srv/images/{functions,containers}/<vm-id>.ext4` paths stay; runtime images (`container-runtime.ext4`, `python-runtime.ext4`, `bun-runtime.ext4`, `vmlinux-5.10.fc.bin`) stay on local `/srv/images`. A `// TODO(storage-backends): route through StorageBackend trait` comment is added at each call site (`apps/manager/src/features/functions/vm.rs:36` and `apps/manager/src/features/containers/vm.rs:34`).
 - VM checkpoint orchestration (memory + state + disk together). VM checkpoint code in `apps/agent/src/features/vm/snapshot.rs` is unchanged. Future composition: `vm_checkpoint(vm_id) = VmCheckpoint(memfile + state) + VolumeSnapshot(every_attached_volume)`.
+- **LocalFile volume placement across multiple agents in a clustered deployment.** This PR treats LocalFile as single-host: `volume.host_id` is set to the manager host, and there is no scheduling logic that picks which agent owns a new LocalFile volume. Multi-agent LocalFile placement (round-robin, capacity-aware, operator-pinned) is a future PR concern and depends on the clustered control plane.
+- **`rollback_to_snapshot`.** The trait exposes `clone_from_snapshot` (always creates a new volume); rolling an existing volume back to a snapshot's state is a separate operation with different blast radius and is deliberately omitted. Add it only if a concrete need arises.
 
 ## Architectural intent (constraints, not implementation)
 
@@ -88,15 +90,22 @@ pub trait ControlPlaneBackend: Send + Sync {
     fn provision(&self, opts: CreateOpts) -> Result<VolumeHandle, StorageError>;
     fn destroy(&self, handle: VolumeHandle) -> Result<(), StorageError>;
 
-    /// Optional fast path. None = "use the generic provision+stream fallback."
+    /// Fast path. Only valid to call when `capabilities().supports_clone_from_image == true`.
+    /// Calling it on a backend that doesn't support it returns `StorageError::NotSupported`.
     fn clone_from_image(
         &self,
         source_image: &Path,
         opts: CreateOpts,
-    ) -> Result<Option<VolumeHandle>, StorageError>;
+    ) -> Result<VolumeHandle, StorageError>;
 
     fn snapshot(&self, volume: &VolumeHandle, name: &str) -> Result<VolumeSnapshotHandle, StorageError>;
-    fn restore_snapshot(&self, snap: &VolumeSnapshotHandle) -> Result<VolumeHandle, StorageError>;
+
+    /// Always creates a NEW volume from the snapshot. Never mutates the source volume.
+    /// Backends that have a native rollback primitive (ZFS rollback, RBD snap rollback)
+    /// MUST NOT use it here — rollback is a different operation with a different blast
+    /// radius and will be added as `rollback_to_snapshot` in a future PR if needed.
+    fn clone_from_snapshot(&self, snap: &VolumeSnapshotHandle) -> Result<VolumeHandle, StorageError>;
+
     fn delete_snapshot(&self, snap: VolumeSnapshotHandle) -> Result<(), StorageError>;
 }
 
@@ -107,9 +116,11 @@ pub trait HostBackend: Send + Sync {
     fn attach(&self, volume: &VolumeHandle) -> Result<AttachedPath, StorageError>;
     fn detach(&self, volume: &VolumeHandle, attached: AttachedPath) -> Result<(), StorageError>;
 
-    /// Used by the generic populate fallback. Writes raw bytes from `source` into the
-    /// already-attached volume. Backend-agnostic implementation: open the AttachedPath
-    /// and stream.
+    /// Pure byte copy: open the AttachedPath, write `source` bytes into it, ensure the
+    /// underlying storage is at least `target_size_bytes` (sparse extension OK).
+    /// MUST NOT do filesystem-aware operations (no resize2fs, no fsck, no mkfs).
+    /// Filesystem-aware steps belong in the rootfs-allocation caller, not the trait —
+    /// the trait must remain agnostic to ext4/xfs/btrfs/qcow2/raw-without-fs.
     fn populate_streaming(
         &self,
         attached: &AttachedPath,
@@ -135,7 +146,7 @@ pub struct Capabilities {
     pub supports_native_snapshots: bool,
     pub supports_concurrent_attach: bool,  // false everywhere in this PR
     pub supports_live_migration: bool,     // false everywhere in this PR
-    pub supports_clone_from_image: bool,   // true if clone_from_image returns Some
+    pub supports_clone_from_image: bool,   // gate for calling clone_from_image
 }
 ```
 
@@ -143,27 +154,27 @@ pub struct Capabilities {
 
 ### Image population — generic streaming with optional fast path
 
-`alloc_rootfs` becomes:
+The rootfs-allocation flow lives in `apps/manager/src/features/storage/` (replacing the old `LocalStorage::alloc_rootfs`). It is the only place that knows about ext4 — the trait does not.
 
 ```
-1. control_plane.clone_from_image(source, opts)  // try fast path
-   → Some(volume) → done
-   → None → fall through
-2. control_plane.provision(opts) → empty volume
-3. host.attach(volume) → AttachedPath
-4. host.populate_streaming(attached, source, target_size) → writes bytes
-   - LocalFile impl: fs::copy + resize2fs
-   - Iscsi impl: open(BlockDevice path), stream image bytes, then resize2fs (in-guest filesystem)
-5. (volume stays attached if it's about to be used by a VM that's starting; otherwise detach)
+if backend.capabilities().supports_clone_from_image:
+    volume = control_plane.clone_from_image(source, opts)   // fast path: native clone
+else:
+    volume = control_plane.provision(opts)                  // empty volume
+    attached = host.attach(volume)                          // gain bytes-level access
+    host.populate_streaming(attached, source, target_size)  // pure byte copy
+    if rootfs_needs_filesystem_resize(image_kind):          // ext4-only branch
+        run resize2fs against attached path                 // caller, not trait
+    // attached stays for VM start; otherwise host.detach
 ```
 
-For LocalFile, `clone_from_image` returns `Some` (using `fs::copy` directly is faster than detour-through-stream and matches existing behavior bit-for-bit). For Iscsi in this PR, `clone_from_image` returns `None` — generic streaming path is used.
+`rootfs_needs_filesystem_resize` is `true` only when the source image is a known ext4 rootfs and the target size is larger than the source. xfs/btrfs/qcow2/raw-without-fs all skip this step. Future filesystem types add branches here without touching `HostBackend`.
+
+For LocalFile, `supports_clone_from_image` is `true` (using `fs::copy` directly is faster than detour-through-stream and matches existing behavior bit-for-bit; the LocalFile fast-path implementation does the `resize2fs` itself for backwards compatibility with the current code path). For Iscsi in this PR, `supports_clone_from_image` is `false` — generic streaming + caller-side resize is used.
 
 The streaming runs **on the agent that will host the VM**. Image source is agent-local (`/srv/images` is already populated per-agent by the install flow). Cross-host image distribution is a separate problem.
 
-For backends whose `AttachedPath` is `BlockDevice` (Iscsi), `populate_streaming` opens the block device, writes the image bytes, then runs `resize2fs` against the device path so the in-image ext4 filesystem fills the LUN. For `File` backends (LocalFile), the same logic applies but operates on the file path. The host backend abstracts the difference; callers don't branch on `AttachedPath` variants.
-
-Once populated, the volume stays attached if the VM is about to start; otherwise the caller calls `host.detach`.
+`AttachedPath` variants (`File` vs `BlockDevice`) differ only in the path string the caller hands to `resize2fs` and to Firecracker — both tools accept either. Callers do not branch on the variant for normal flow.
 
 ### Capabilities drives placement decisions (eventually)
 
@@ -179,11 +190,28 @@ A single deployment must support multiple backends simultaneously. `volume.backe
 
 ### `host_id` semantics for new volumes
 
-For LocalFile-backend volumes, the control-plane half sets `volume.host_id` at provision time to the host where the file lives (today: the manager host; future-clustered: the agent that owns the file). For Iscsi/network backends, `host_id` is left NULL. Existing rows are unaffected by this rule because the migration preserves their `host_id` values verbatim.
+For LocalFile-backend volumes, the control-plane half sets `volume.host_id` at provision time to the host where the file lives. In this PR LocalFile is single-host (the manager host); cross-agent placement is explicitly out of scope (see non-goals). For Iscsi/network backends, `host_id` is left NULL. Existing rows are unaffected: the migration preserves their `host_id` values verbatim.
+
+### `volume.path` semantics across backends
+
+The existing `volume.path TEXT NOT NULL` column stays. For LocalFile it is the canonical local file path (current behavior). For Iscsi/network backends it stores a backend-defined identifier (e.g., the iSCSI IQN + LUN number) — this is the same string the control-plane backend can later parse to reconstruct the resource on attach. Per-backend deserialization rules live in each backend's impl; the registry hands the volume row to the backend, the backend interprets `path` (and any backend-specific JSON in a future column if needed). The unique constraint on `path` stays — within a single backend instance the identifier is unique.
 
 ### VM start lifecycle through the trait
 
-On VM start, the manager iterates the VM's `volume_attachment` rows. For each, it resolves `volume.backend_id` to a `HostBackend` impl on the chosen agent, calls `attach`, and inserts the resulting `AttachedPath` into the Firecracker drive config the manager hands to the agent's spawn flow. On VM stop or delete, the manager calls `detach` for each attachment and updates `volume_attachment.detached_at`. If a VM is starting on the same host where a populate-streaming attach already happened, the existing attachment is reused (no detach/reattach round-trip).
+On VM start, the manager iterates the VM's `volume_attachment` rows. For each, it resolves `volume.backend_id` to a `HostBackend` impl on the chosen agent, calls `attach`, and inserts the resulting `AttachedPath` into the Firecracker drive config the manager hands to the agent's spawn flow. On VM stop or delete, the manager calls `detach` for each attachment and updates `volume_attachment.detached_at`.
+
+### `volume_attachment` row lifecycle vs populate-time attach
+
+These are deliberately distinct:
+
+- **Populate-time attach is in-memory only.** During `alloc_rootfs`, the host backend's `attach` returns an `AttachedPath` that exists only in the running process. No `volume_attachment` row is written. If the VM-create flow fails before VM start, the caller calls `host.detach` and the volume is left clean.
+- **`volume_attachment` rows are written by the VM lifecycle, not by storage operations.** A row is INSERTed only when `vm start` succeeds and Firecracker is running with the drive open. The partial unique index `WHERE detached_at IS NULL` therefore only constrains real, in-use attachments — not transient populate-time access.
+- **VM start reuses the existing populate-time attach when on the same host** (no detach/reattach round-trip). The agent process holds the `AttachedPath` from populate, hands it to spawn, and the manager INSERTs the `volume_attachment` row once spawn returns success.
+- **VM start on a different host** (e.g., volume populated on host A but VM scheduled on host B — not in this PR but the lifecycle must not preclude it) would call `host.detach` on A, then `host.attach` on B before INSERTing the row. The trait already supports this; the scheduling logic does not exist yet.
+
+### `AlreadyAttached` error translation
+
+The single-attach partial unique index returns Postgres error code `23505` (`unique_violation`). The volume-attach handler in the manager catches this specific error code via sqlx (`sqlx::Error::Database` with `code() == "23505"` and constraint name `volume_one_active_attachment`) and translates it to `StorageError::AlreadyAttached`, surfaced as HTTP `409 Conflict`. Without this explicit translation, callers see a generic database error and the contract leaks.
 
 ### Single-attach enforced cluster-wide
 
@@ -253,10 +281,12 @@ These are tactical decisions the implementer makes; flag them in the PR descript
 
 - Whether `IscsiBackend` and `TrueNasIscsiBackend` are one type with a provisioning sub-trait, or two separate types sharing an attach implementation. (Recommendation: separate types; share via composition over a `LunProvisioner` helper trait if it gets repetitive.)
 - Where iSCSI session state lives. (Recommendation: rely on `iscsid` daemon on each agent; the `HostBackend` impl runs `iscsiadm` and trusts the daemon for session persistence.)
-- How backend errors surface. (Recommendation: backend-specific error types behind a common `StorageError` enum with a `Backend(Box<dyn Error>)` variant for non-categorical failures; use `anyhow` only at the route layer.)
-- Lifecycle of the iSCSI session on host failure / VM stop. (Recommendation: detach eagerly on VM stop; keep `iscsid` session if other VMs on the host still need the same target — refcounted at the host backend level.)
+- How backend errors surface. (Recommendation: backend-specific error types behind a common `StorageError` enum with a `Backend(Box<dyn Error>)` variant for non-categorical failures; use `anyhow` only at the route layer. `StorageError` includes `AlreadyAttached`, `NotSupported`, `Backend(...)` at minimum.)
+- **iSCSI session lifecycle on VM stop.** (Recommendation: **aggressive logout** per-volume on detach. iSCSI login is ~100ms — the simplicity of zero state beats fragile in-process refcounting that gets lost across agent restarts. If profiling shows VM-start latency pain from repeat logins to the same target, revisit with a DB-driven refcount over `volume_attachment` rows on that host.)
 - Where TrueNAS API credentials live. (Recommendation: env-var reference in TOML — `api_key_env = "TRUENAS_PROD_API_KEY"` — manager reads env on startup; secrets never in the DB.)
 - CHAP authentication for generic iSCSI. (Recommendation: optional fields in TOML config_json, passed through to `iscsiadm`.)
+- **Agent handshake reports supported `BackendKind` set.** Both traits expose `kind()`, but nothing currently links "manager has Iscsi control-plane" to "agent N has Iscsi host backend." On agent registration (or heartbeat), the agent should report its installed `HostBackend` kinds; the manager refuses to route an `attach` call to an agent that doesn't have the matching kind. Implementation deferred to a future PR; for this PR, all agents are assumed to have `LocalFile` and `Iscsi` host backends compiled in. Document the seam in the PR description.
+- **`config_json` startup validation.** Each `BackendKind` defines the required shape of its `config_json` (TrueNAS: `endpoint`, `api_key_env`, `pool`, `target_iqn_prefix`; generic Iscsi: `target_iqn`, optional CHAP fields). The registry validates the JSON against the kind's schema at manager startup and refuses to boot if any backend is malformed. Per-backend schema lives next to each backend impl.
 
 Resolve these as you go; document the choices in the PR description.
 
@@ -269,7 +299,7 @@ Manager:
 - `apps/manager/src/features/storage/backends/iscsi.rs` (new) — control-plane half (TrueNAS REST + generic).
 - `apps/manager/src/features/storage_backends/` (new) — `mod.rs`, `routes.rs`, `repo.rs` for `GET /v1/storage_backends*`.
 - `apps/manager/src/features/storage/registry.rs` (new) — loads TOML, upserts `storage_backend`, hands out trait objects keyed by `backend_id`.
-- `apps/manager/src/features/vms/service.rs` — `create_vm` calls registry → `clone_from_image` or `provision`+`populate_streaming` instead of `LocalStorage::alloc_rootfs`.
+- `apps/manager/src/features/vms/service.rs` — `create_vm` calls a new `rootfs_allocator` helper that orchestrates: capability check → either `clone_from_image` (fast path) or `provision` + `host.attach` + `host.populate_streaming` + caller-side `resize2fs` (slow path). The `resize2fs` step is gated by image-kind detection and lives in the allocator, not in any backend impl. Replaces `LocalStorage::alloc_rootfs`.
 - `apps/manager/src/features/volumes/{routes,repo}.rs` — `create` accepts `backend_id`; lookup routes resolve via registry.
 - `apps/manager/migrations/0034_storage_backends.sql` (new).
 
@@ -309,15 +339,20 @@ Configuration:
 
 ## Testing strategy
 
-- **Unit tests** per backend impl: provision/destroy round-trip; snapshot/restore round-trip (LocalFile uses tmpdir; Iscsi tests gated behind `--ignored` and require a TrueNAS sim/instance).
+- **Unit tests** per backend impl: provision/destroy round-trip; snapshot + clone_from_snapshot round-trip (LocalFile uses tmpdir; Iscsi tests gated behind `--ignored` and require a TrueNAS sim/instance).
+- **Trait-purity test**: assert that calling `populate_streaming` on a fresh volume produces a byte-for-byte copy of the source image and does NOT modify any filesystem metadata (e.g., source ext4 image's free-block count is unchanged after populate).
+- **Capability gating test**: calling `clone_from_image` on a backend with `supports_clone_from_image == false` returns `StorageError::NotSupported`.
 - **Integration test** (`apps/manager/tests/storage_abstraction.rs`): boot manager + in-process LocalFile backend; create VM → verify Firecracker config sees correct rootfs path → verify volume_attachment row exists → stop VM → verify detached_at set.
+- **Populate-time attach test**: trigger a `create_vm` failure mid-populate (after `host.attach`, before VM start). Verify that no `volume_attachment` row was written, the volume is `host.detach`'d, and a retry creates a new clean volume.
 - **Migration test**: load a fixture with pre-migration `volume` rows, run migration, verify `backend_id` populated and `host_id` preserved.
-- **Single-attach test**: attempt double-attach, expect `409` + `AlreadyAttached`.
+- **Single-attach test**: attempt double-attach, expect `409` + `AlreadyAttached` (verifies the `23505` translation works end-to-end).
+- **Config validation test**: malformed `[[storage_backend]]` TOML entry (e.g., `kind = "truenas_iscsi"` missing `endpoint`) causes manager startup to fail with a clear error.
 - **No regression**: existing `cargo test -p manager` and `cargo test -p agent` suites pass without modification.
 
 ## Glossary
 
 - **VmCheckpoint** — Firecracker memfile + state file written by `apps/agent/src/features/vm/snapshot.rs`. Used for pause/resume of a *running* VM. Unchanged in this PR.
-- **VolumeSnapshot** — block-level point-in-time copy of a volume's bytes. The new trait's `snapshot` method creates these. ZFS/RBD/TrueNAS instant; LocalFile slow-but-correct.
+- **VolumeSnapshot** — block-level point-in-time copy of a volume's bytes. The new trait's `snapshot` method creates these (returning a `VolumeSnapshotHandle`). ZFS/RBD/TrueNAS instant; LocalFile slow-but-correct via `fs::copy`.
+- **clone_from_snapshot** — creates a NEW volume from a `VolumeSnapshotHandle`. Never mutates the source volume. Distinct from a future `rollback_to_snapshot` (out of scope).
 - **AttachedPath** — what the host backend hands back to whoever is going to feed it to Firecracker. File path, block device path, or future vhost-user socket path.
 - **Backend instance** — a row in `storage_backend`. Identified by `backend_id`. There can be multiple instances of the same kind (`truenas-prod`, `truenas-dr`).
