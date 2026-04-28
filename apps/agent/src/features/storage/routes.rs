@@ -136,7 +136,9 @@ pub async fn resize2fs(Json(req): Json<Resize2fsReq>) -> impl IntoResponse {
         .output()
         .await;
     match resize {
-        Ok(o) if o.status.success() => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Ok(o) if o.status.success() => {
+            (StatusCode::OK, Json(serde_json::json!({}))).into_response()
+        }
         Ok(o) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"stderr": String::from_utf8_lossy(&o.stderr).to_string()})),

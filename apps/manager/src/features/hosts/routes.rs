@@ -39,7 +39,10 @@ pub async fn register(
 
     if let Some(kinds) = supported_backend_kinds {
         if let Err(err) = st.hosts.update_supported_backend_kinds(row.id, kinds).await {
-            error!(?err, "failed to update host supported_backend_kinds on register");
+            error!(
+                ?err,
+                "failed to update host supported_backend_kinds on register"
+            );
         }
     }
 
@@ -97,7 +100,10 @@ pub async fn heartbeat(
 
     if let Some(kinds) = req.supported_backend_kinds {
         if let Err(err) = st.hosts.update_supported_backend_kinds(id, kinds).await {
-            error!(?err, "failed to update host supported_backend_kinds on heartbeat");
+            error!(
+                ?err,
+                "failed to update host supported_backend_kinds on heartbeat"
+            );
         }
     }
 

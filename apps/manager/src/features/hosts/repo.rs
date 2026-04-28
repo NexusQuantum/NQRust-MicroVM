@@ -182,12 +182,11 @@ impl HostRepository {
     }
 
     pub async fn supported_backend_kinds(&self, host_id: Uuid) -> sqlx::Result<Vec<String>> {
-        let v: serde_json::Value = sqlx::query_scalar(
-            r#"SELECT supported_backend_kinds FROM host WHERE id = $1"#,
-        )
-        .bind(host_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let v: serde_json::Value =
+            sqlx::query_scalar(r#"SELECT supported_backend_kinds FROM host WHERE id = $1"#)
+                .bind(host_id)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(v.as_array()
             .map(|a| {
                 a.iter()
@@ -202,7 +201,8 @@ impl HostRepository {
         host_id: Uuid,
         kinds: Vec<String>,
     ) -> sqlx::Result<()> {
-        let v = serde_json::Value::Array(kinds.into_iter().map(serde_json::Value::String).collect());
+        let v =
+            serde_json::Value::Array(kinds.into_iter().map(serde_json::Value::String).collect());
         sqlx::query(r#"UPDATE host SET supported_backend_kinds = $1 WHERE id = $2"#)
             .bind(v)
             .bind(host_id)

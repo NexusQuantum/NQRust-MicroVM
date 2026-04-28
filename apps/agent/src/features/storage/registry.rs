@@ -8,7 +8,9 @@ pub struct HostBackendRegistry {
 }
 
 impl HostBackendRegistry {
-    pub fn empty() -> Self { Self::default() }
+    pub fn empty() -> Self {
+        Self::default()
+    }
 
     pub fn register_for(&mut self, kind: BackendKind, backend: Arc<dyn HostBackend>) {
         self.by_kind.insert(kind, backend);
