@@ -328,4 +328,144 @@ mod tests {
         // Should return false, not panic
         assert!(!super::image_is_ext4_rootfs(&p).await.unwrap());
     }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Synthetic ControlPlaneBackend that:
+    /// - Reports supports_clone_from_image: false (forces slow path)
+    /// - Tracks how many times destroy() was called
+    ///
+    /// Used to verify allocate_rootfs's cleanup-on-populate-failure path.
+    struct CountingProvisionerBackend {
+        provision_returns: nexus_storage::VolumeHandle,
+        destroy_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl nexus_storage::ControlPlaneBackend for CountingProvisionerBackend {
+        fn kind(&self) -> nexus_storage::BackendKind {
+            nexus_storage::BackendKind::Iscsi
+        }
+        fn capabilities(&self) -> nexus_storage::Capabilities {
+            nexus_storage::Capabilities {
+                supports_clone_from_image: false,
+                ..Default::default()
+            }
+        }
+        async fn provision(
+            &self,
+            _opts: nexus_storage::CreateOpts,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Ok(self.provision_returns.clone())
+        }
+        async fn destroy(
+            &self,
+            _h: nexus_storage::VolumeHandle,
+        ) -> Result<(), nexus_storage::StorageError> {
+            self.destroy_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn clone_from_image(
+            &self,
+            _src: &std::path::Path,
+            _opts: nexus_storage::CreateOpts,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported(
+                "clone_from_image".into(),
+            ))
+        }
+        async fn snapshot(
+            &self,
+            _v: &nexus_storage::VolumeHandle,
+            _name: &str,
+        ) -> Result<nexus_storage::VolumeSnapshotHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported("snapshot".into()))
+        }
+        async fn clone_from_snapshot(
+            &self,
+            _s: &nexus_storage::VolumeSnapshotHandle,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported(
+                "clone_from_snapshot".into(),
+            ))
+        }
+        async fn delete_snapshot(
+            &self,
+            _s: nexus_storage::VolumeSnapshotHandle,
+        ) -> Result<(), nexus_storage::StorageError> {
+            Ok(())
+        }
+    }
+
+    /// Spec testing strategy item 5: when `agent_populate` fails after a
+    /// successful `agent_attach`, the slow path must call `agent_detach` AND
+    /// `backend.destroy()` so no orphaned LUN/file/iSCSI session is left
+    /// behind, and no `volume_attachment` row is written.
+    ///
+    /// We exercise this by standing up a mock agent that returns 200 on
+    /// attach and 500 on populate, plus a synthetic backend that counts
+    /// destroy() calls. The detach mock's expected hit count is then asserted
+    /// to confirm the cleanup detach round-trip happened.
+    #[tokio::test]
+    async fn populate_failure_calls_detach_and_destroy_for_cleanup() {
+        let mut server = mockito::Server::new_async().await;
+
+        let attach_mock = server
+            .mock("POST", "/v1/storage/attach")
+            .with_status(200)
+            .with_body(r#"{"attached":{"kind":"BlockDevice","path":"/dev/disk/by-path/test"}}"#)
+            .create_async()
+            .await;
+        let populate_mock = server
+            .mock("POST", "/v1/storage/populate")
+            .with_status(500)
+            .with_body(r#"{"error":"injected populate failure"}"#)
+            .create_async()
+            .await;
+        let detach_mock = server
+            .mock("POST", "/v1/storage/detach")
+            .with_status(200)
+            .with_body(r#"{}"#)
+            .expect(1) // cleanup detach must happen exactly once
+            .create_async()
+            .await;
+
+        let destroy_count = Arc::new(AtomicUsize::new(0));
+        let backend_id = uuid::Uuid::new_v4();
+        let provision_returns = nexus_storage::VolumeHandle {
+            volume_id: uuid::Uuid::new_v4(),
+            backend_id: nexus_storage::BackendInstanceId(backend_id),
+            backend_kind: nexus_storage::BackendKind::Iscsi,
+            locator: r#"{"iqn":"iqn.x:test","lun":0}"#.into(),
+            size_bytes: 1024,
+        };
+        let backend: Arc<dyn nexus_storage::ControlPlaneBackend> =
+            Arc::new(CountingProvisionerBackend {
+                provision_returns,
+                destroy_count: destroy_count.clone(),
+            });
+        let registry = Registry::test_only_with_backend(backend_id, backend);
+
+        // Source image (any non-empty file works; populate fails before reading it)
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("img.bin");
+        std::fs::write(&src, vec![0u8; 1024]).unwrap();
+
+        // Run the slow path. Expect Err.
+        let result =
+            allocate_rootfs(&registry, backend_id, &server.url(), &src, 1024, "test").await;
+
+        assert!(result.is_err(), "expected populate failure to bubble up");
+
+        // Cleanup: detach was called once, destroy was called once.
+        detach_mock.assert_async().await;
+        attach_mock.assert_async().await;
+        populate_mock.assert_async().await;
+        assert_eq!(
+            destroy_count.load(Ordering::SeqCst),
+            1,
+            "backend.destroy() must be called once during cleanup"
+        );
+    }
 }

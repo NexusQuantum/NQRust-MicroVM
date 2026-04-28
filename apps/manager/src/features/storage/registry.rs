@@ -158,6 +158,23 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
     }
 }
 
+impl Registry {
+    /// Test-only: build a Registry with a single pre-built backend keyed by id.
+    /// Bypasses TOML parsing and DB upsert. NOT for production use.
+    #[cfg(test)]
+    pub fn test_only_with_backend(
+        id: uuid::Uuid,
+        backend: std::sync::Arc<dyn nexus_storage::ControlPlaneBackend>,
+    ) -> Self {
+        let mut by_id = std::collections::HashMap::new();
+        by_id.insert(id, backend);
+        Registry {
+            by_id,
+            default_id: Some(id),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
