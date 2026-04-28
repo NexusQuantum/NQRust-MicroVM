@@ -22,6 +22,8 @@ hyperlocal = "0.9"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["client", "http1", "tokio"] }
 nexus-types = { path = "../../crates/nexus-types" }
+nexus-storage = { path = "../../crates/nexus-storage" }
+async-trait = "0.1"
 reqwest = { workspace = true }
 uuid = { workspace = true }
 futures = { workspace = true }

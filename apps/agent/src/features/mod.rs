@@ -4,6 +4,7 @@ use axum::{Extension, Router};
 pub mod health;
 pub mod inventory;
 pub mod networks;
+pub mod storage;
 pub mod tap;
 pub mod vm;
 
