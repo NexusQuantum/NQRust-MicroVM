@@ -74,6 +74,7 @@ export interface CreateVmReq {
   rootfs_size_mb?: number;
   network_id?: string;
   port_forwards?: CreatePortForwardReq[];
+  backend_id?: string;
 }
 
 export interface TemplateSpec {
