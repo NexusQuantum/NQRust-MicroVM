@@ -162,3 +162,5 @@ impl LocalStorage {
 }
 
 pub mod config;
+pub mod backends;
+pub mod registry;
