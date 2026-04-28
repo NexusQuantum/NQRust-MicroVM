@@ -97,5 +97,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.volume_handle.size_bytes, 4 * 1024 * 1024);
+        // T23: verify locator path actually exists on disk after allocation
+        assert!(
+            std::path::Path::new(&out.volume_handle.locator).exists(),
+            "locator path does not exist: {}",
+            out.volume_handle.locator
+        );
     }
 }

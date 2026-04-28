@@ -143,5 +143,8 @@ mod tests {
         let reg = Registry::load(&pool, None).await.unwrap();
         let default = reg.default_backend().expect("default backend present");
         assert!(matches!(default.kind(), BackendKind::LocalFile));
+        // T23: also verify capabilities are as expected for LocalFile
+        assert!(default.capabilities().supports_clone_from_image);
+        assert!(!default.capabilities().supports_native_snapshots);
     }
 }
