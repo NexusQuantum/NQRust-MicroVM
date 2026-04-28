@@ -164,3 +164,4 @@ impl LocalStorage {
 pub mod config;
 pub mod backends;
 pub mod registry;
+pub mod rootfs_allocator;
