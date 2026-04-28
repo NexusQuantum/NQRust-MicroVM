@@ -222,3 +222,70 @@ impl ControlPlaneBackend for TrueNasIscsiControlPlaneBackend {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexus_storage::CreateOpts;
+
+    #[tokio::test]
+    async fn truenas_provision_calls_create_zvol() {
+        let mut server = mockito::Server::new_async().await;
+
+        // The zvol endpoint: create_zvol checks status only, doesn't parse response body.
+        let zvol_mock = server
+            .mock("POST", "/api/v2.0/pool/dataset")
+            .with_status(200)
+            .with_body(r#"{"id":"tank/v-x","volsize":1048576}"#)
+            .create_async()
+            .await;
+
+        // The extent endpoint: create_lun_for_zvol parses {"id": N} to get the LUN.
+        let extent_mock = server
+            .mock("POST", "/api/v2.0/iscsi/extent")
+            .with_status(200)
+            .with_body(r#"{"id":42}"#)
+            .create_async()
+            .await;
+
+        let backend = TrueNasIscsiControlPlaneBackend {
+            id: BackendInstanceId(uuid::Uuid::new_v4()),
+            config: TrueNasConfig {
+                endpoint: server.url(),
+                api_key_env: "_unused_".into(),
+                pool: "tank".into(),
+                target_iqn_prefix: "iqn.x:tgt".into(),
+                portal: None,
+            },
+            api_key: "test".into(),
+            http: reqwest::Client::new(),
+        };
+
+        let h = backend
+            .provision(CreateOpts {
+                name: "x".into(),
+                size_bytes: 1024 * 1024,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(h.size_bytes, 1024 * 1024);
+        assert_eq!(h.backend_kind, BackendKind::TrueNasIscsi);
+
+        // Verify the locator JSON is well-formed and contains expected fields.
+        // The dataset name is `tank/v-<uuid>` (uuid allocated internally), so we
+        // only check the pool prefix and the IQN/LUN values that are deterministic.
+        let loc: LocatorJson = serde_json::from_str(&h.locator).unwrap();
+        assert_eq!(loc.iqn, "iqn.x:tgt");
+        assert_eq!(loc.lun, 42);
+        assert!(
+            loc.dataset.starts_with("tank/v-"),
+            "dataset should start with 'tank/v-', got: {}",
+            loc.dataset
+        );
+
+        zvol_mock.assert_async().await;
+        extent_mock.assert_async().await;
+    }
+}

@@ -92,6 +92,33 @@ pub async fn create_and_start(
         .await
         .context("no healthy hosts available")?;
 
+    // --- Task 12a: Scheduler filter — reject host if it doesn't support the requested backend ---
+    {
+        let backend_id = req.backend_id.or_else(|| st.registry.default_id());
+        if let Some(bid) = backend_id {
+            let backend_kind_str = st
+                .registry
+                .get(bid)
+                .map(|b| b.kind().as_db_str().to_string())
+                .unwrap_or_else(|| "local_file".to_string());
+            let host_repo = crate::features::hosts::repo::HostRepository::new(st.db.clone());
+            let kinds = host_repo
+                .supported_backend_kinds(host.id)
+                .await
+                .context("failed to query host supported_backend_kinds")?;
+            // If the host has declared supported kinds AND the requested kind is not among them,
+            // refuse.  An empty list means "unconfigured — allow any" for backward compat.
+            if !kinds.is_empty() && !kinds.iter().any(|k| k == &backend_kind_str) {
+                return Err(anyhow::anyhow!(
+                    "host {} does not support backend kind '{}'; supported: {:?}",
+                    host.id,
+                    backend_kind_str,
+                    kinds
+                ));
+            }
+        }
+    }
+
     // Resolve network: use explicit network_id if provided, else fall back to host capabilities
     let req_network_id = req.network_id;
     let req_port_forwards = std::mem::take(&mut req.port_forwards);
@@ -1234,10 +1261,22 @@ async fn provision_rootfs(
     .await
     .context("inserting volume_attachment row")?;
 
-    let vm_root = alloc.volume_handle.locator.clone();
+    // Task 12b: For slow-path backends (e.g. iSCSI), the locator is a JSON blob
+    // (IQN+LUN), not a real path.  Use the attached block-device path that the
+    // agent already prepared so Firecracker receives a real /dev/... path.
+    // For the fast path (LocalFile clone_from_image), attached_for_caller is None
+    // and the locator is already a valid file path — fall back to it.
+    //
+    // NOTE: data disks allocated via `allocate_data_disk` go through `provision`
+    // only and do not yet have an agent-attach step, so iSCSI data disks are
+    // not supported in Plan 2. See TODO in create_drive / provision_data_disk.
+    let firecracker_drive_path = match &alloc.attached_for_caller {
+        Some(attached) => attached.path().to_string_lossy().into_owned(),
+        None => alloc.volume_handle.locator.clone(),
+    };
     let size_bytes = alloc.volume_handle.size_bytes;
 
-    Ok((vm_root, Some(size_bytes)))
+    Ok((firecracker_drive_path, Some(size_bytes)))
 }
 
 fn ensure_allowed_path(st: &AppState, path: &str) -> Result<()> {
