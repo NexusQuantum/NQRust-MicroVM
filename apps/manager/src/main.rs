@@ -275,16 +275,10 @@ fn matches_ignore_case(value: &str) -> bool {
 
 impl AppState {
     /// Returns the `host_id` to record on a LocalFile-backed volume.
-    /// LocalFile volumes are host-pinned, so we use the most-recently-seen
-    /// host row as a stable id. Returns `None` if no hosts have registered
-    /// yet (test environments or bare manager with no agent).
-    pub async fn host_id_for_local_file(&self) -> Option<uuid::Uuid> {
-        sqlx::query_scalar::<_, uuid::Uuid>(
-            r#"SELECT id FROM host ORDER BY last_seen_at DESC LIMIT 1"#,
-        )
-        .fetch_optional(&self.db)
-        .await
-        .ok()
-        .flatten()
+    /// `vm_host_id` is the host the VM is being created on; LocalFile volumes
+    /// are host-pinned so we record exactly that host. For network-attached
+    /// backends `host_id` would be `None` — that evolution is handled in Plan 2.
+    pub fn host_id_for_local_file(&self, vm_host_id: uuid::Uuid) -> Option<uuid::Uuid> {
+        Some(vm_host_id)
     }
 }
