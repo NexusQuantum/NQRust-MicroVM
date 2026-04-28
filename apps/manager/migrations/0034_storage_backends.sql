@@ -53,6 +53,7 @@ ALTER TABLE volume_attachment ADD COLUMN IF NOT EXISTS detached_at TIMESTAMPTZ;
 -- The original unique constraint UNIQUE (volume_id, vm_id) does not prevent a
 -- volume being attached to a SECOND vm. The new partial unique index does:
 -- at most one row with detached_at IS NULL per volume.
+ALTER TABLE volume_attachment DROP CONSTRAINT IF EXISTS unique_volume_attachment;
 DROP INDEX IF EXISTS volume_one_active_attachment;
 CREATE UNIQUE INDEX volume_one_active_attachment
   ON volume_attachment(volume_id) WHERE detached_at IS NULL;
