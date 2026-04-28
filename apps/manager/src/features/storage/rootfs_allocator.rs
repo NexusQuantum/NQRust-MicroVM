@@ -52,31 +52,69 @@ pub async fn allocate_rootfs(
         });
     }
 
-    // Slow path: provision → agent attach → agent populate → optional resize2fs
+    // Slow path: provision → agent attach → agent populate → optional resize2fs.
+    // If anything after provision fails we must detach + destroy the volume so
+    // that no orphaned iSCSI session or provisioned-but-unused volume is left.
+    // Spec testing strategy item 5: trigger a create_vm failure mid-populate
+    // (after host.attach, before VM start). Verify no volume_attachment row was
+    // written, the volume is detached, and a retry creates a new clean volume.
     let h = backend
         .provision(opts)
         .await
         .with_context(|| format!("provision failed on backend {backend_id}"))?;
-    let attached = crate::features::storage::agent_rpc::agent_attach(host_addr, &h)
-        .await
-        .context("agent attach")?;
-    crate::features::storage::agent_rpc::agent_populate(
-        host_addr,
-        h.backend_kind,
-        &attached,
-        &source_image.to_path_buf(),
-        target_size_bytes,
-    )
-    .await
-    .context("agent populate_streaming")?;
 
-    if image_is_ext4_rootfs(source_image).await.unwrap_or(false) {
-        if let Err(e) =
-            crate::features::storage::agent_rpc::agent_resize2fs(host_addr, &attached).await
-        {
-            tracing::warn!("resize2fs failed (non-fatal): {e:#}");
+    let result: Result<AttachedPath> = async {
+        let attached = crate::features::storage::agent_rpc::agent_attach(host_addr, &h)
+            .await
+            .context("agent attach")?;
+
+        let populate_result = crate::features::storage::agent_rpc::agent_populate(
+            host_addr,
+            h.backend_kind,
+            &attached,
+            &source_image.to_path_buf(),
+            target_size_bytes,
+        )
+        .await
+        .context("agent populate_streaming");
+
+        match populate_result {
+            Ok(()) => {
+                if image_is_ext4_rootfs(source_image).await.unwrap_or(false) {
+                    if let Err(e) =
+                        crate::features::storage::agent_rpc::agent_resize2fs(host_addr, &attached)
+                            .await
+                    {
+                        tracing::warn!("resize2fs failed (non-fatal): {e:#}");
+                    }
+                }
+                Ok(attached)
+            }
+            Err(populate_err) => {
+                // Detach before destroying so the iSCSI session is closed first.
+                if let Err(e) =
+                    crate::features::storage::agent_rpc::agent_detach(host_addr, &h, &attached)
+                        .await
+                {
+                    tracing::warn!("agent_detach after failed populate failed: {e:#}");
+                }
+                Err(populate_err)
+            }
         }
     }
+    .await;
+
+    let attached = match result {
+        Ok(a) => a,
+        Err(e) => {
+            // Best-effort destroy. We don't propagate destroy errors over the
+            // populate error so the caller sees the original failure cause.
+            if let Err(de) = backend.destroy(h.clone()).await {
+                tracing::warn!("destroy after failed populate failed: {de:#}");
+            }
+            return Err(e);
+        }
+    };
 
     Ok(AllocOutcome {
         volume_handle: h,
