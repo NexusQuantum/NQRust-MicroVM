@@ -65,4 +65,12 @@ mod tests {
         let e = StorageError::NotSupported("clone_from_image".into());
         assert!(e.to_string().contains("clone_from_image"));
     }
+
+    /// A trait-shape compile test. If this compiles, the trait is object-safe
+    /// (the registry stores `Arc<dyn ControlPlaneBackend>`).
+    #[test]
+    fn control_plane_backend_is_object_safe() {
+        fn _assert<T: ControlPlaneBackend + ?Sized>() {}
+        _assert::<dyn ControlPlaneBackend>();
+    }
 }
