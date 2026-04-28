@@ -1056,3 +1056,30 @@ export interface LicenseActivateRequest {
 export interface LicenseUploadRequest {
   file_content: string;
 }
+
+// ========================================
+// Storage Backend Types
+// ========================================
+
+export type BackendKind = "local_file" | "iscsi" | "truenas_iscsi";
+
+export interface Capabilities {
+  supports_native_snapshots: boolean;
+  supports_concurrent_attach: boolean;
+  supports_live_migration: boolean;
+  supports_clone_from_image: boolean;
+}
+
+export interface StorageBackend {
+  id: string;
+  name: string;
+  kind: BackendKind;
+  capabilities: Capabilities;
+  is_default: boolean;
+  created_at: string;
+  deleted_at?: string | null;
+}
+
+export interface StorageBackendListResponse {
+  items: StorageBackend[];
+}
