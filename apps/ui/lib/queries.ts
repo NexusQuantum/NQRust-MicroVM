@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
-import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams, CreatePortForwardReq } from "@/lib/types"
+import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams, CreatePortForwardReq, StorageBackend } from "@/lib/types"
 import { useNotificationStore } from "@/lib/stores/notification-store"
 import { toast } from "sonner"
 
@@ -119,6 +119,9 @@ export const queryKeys = {
   hostMetrics: (id: string) => ["metrics", "hosts", id] as const,
   vmTimeMetrics: (id: string) => ["metrics", "vms", id] as const,
   containerTimeMetrics: (id: string) => ["metrics", "containers", id] as const,
+
+  // storage backends
+  storageBackends: () => ["storage_backends"] as const,
 }
 
 // Function Query
@@ -1392,5 +1395,20 @@ export function useActivateLicenseFile() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.licenseStatus });
     },
+  });
+}
+
+// ==============
+// Storage Backends
+// ==============
+
+export function useStorageBackends() {
+  return useQuery({
+    queryKey: queryKeys.storageBackends(),
+    queryFn: async (): Promise<StorageBackend[]> => {
+      const resp = await facadeApi.listStorageBackends();
+      return resp.items;
+    },
+    staleTime: 60_000,
   });
 }
