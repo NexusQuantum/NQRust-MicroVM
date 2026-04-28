@@ -8,6 +8,7 @@ use tracing::{info, warn};
 pub struct AppState {
     pub run_dir: String,
     pub bridge: String,
+    pub storage_registry: features::storage::registry::HostBackendRegistry,
 }
 
 #[tokio::main]
@@ -20,9 +21,15 @@ async fn main() -> anyhow::Result<()> {
     let manager_base =
         std::env::var("MANAGER_BASE").unwrap_or_else(|_| "http://127.0.0.1:18080".into());
     let host_name = std::env::var("AGENT_NAME").unwrap_or_else(|_| advertise_addr.clone());
+    let mut storage_registry = features::storage::registry::HostBackendRegistry::empty();
+    storage_registry.register_for(
+        nexus_storage::BackendKind::LocalFile,
+        std::sync::Arc::new(features::storage::local_file::LocalFileHostBackend),
+    );
     let state = AppState {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),
+        storage_registry,
     };
 
     let heartbeat_state = state.clone();
