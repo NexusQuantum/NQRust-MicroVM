@@ -1694,3 +1694,33 @@ pub struct MetricsQueryParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 }
+
+// ── Storage backends ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendKind {
+    LocalFile,
+    Iscsi,
+    TrueNasIscsi,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct Capabilities {
+    pub supports_native_snapshots: bool,
+    pub supports_concurrent_attach: bool,
+    pub supports_live_migration: bool,
+    pub supports_clone_from_image: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct StorageBackend {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub kind: BackendKind,
+    pub capabilities: Capabilities,
+    pub is_default: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+}
