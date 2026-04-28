@@ -692,6 +692,22 @@ pub async fn stop_only(
         .await?;
 
     response.error_for_status()?;
+
+    let vol_repo = crate::features::volumes::repo::VolumeRepository::new(st.db.clone());
+    let active = sqlx::query_scalar::<_, String>(
+        r#"SELECT drive_id FROM volume_attachment WHERE vm_id = $1 AND detached_at IS NULL"#,
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await
+    .context("listing active attachments")?;
+    for drive_id in active {
+        vol_repo
+            .mark_detached(id, &drive_id)
+            .await
+            .context("marking volume_attachment detached")?;
+    }
+
     super::repo::update_state(&st.db, id, "stopped").await?;
     let _ = audit::log_action(
         &st.db,
@@ -732,7 +748,7 @@ pub async fn stop_and_delete_with_user(
         info!(vm_id = %id, path = ?storage_path, "cleaned up VM storage directory");
     }
 
-    // Reset volume statuses before cascading delete removes the attachment rows
+    // Reset volume statuses and mark active attachments detached before cascading delete removes the rows
     let volume_repo = crate::features::volumes::repo::VolumeRepository::new(st.db.clone());
     let attached_vols: Vec<(Uuid,)> =
         sqlx::query_as("SELECT volume_id FROM volume_attachment WHERE vm_id = $1")
@@ -742,6 +758,16 @@ pub async fn stop_and_delete_with_user(
             .unwrap_or_default();
     for (vol_id,) in &attached_vols {
         let _ = volume_repo.update_status(*vol_id, "available").await;
+    }
+    let active_drives = sqlx::query_scalar::<_, String>(
+        r#"SELECT drive_id FROM volume_attachment WHERE vm_id = $1 AND detached_at IS NULL"#,
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await
+    .context("listing active attachments")?;
+    for drive_id in active_drives {
+        let _ = volume_repo.mark_detached(id, &drive_id).await;
     }
 
     // Delete from database (this cascades to vm_drive and vm_network_interface)

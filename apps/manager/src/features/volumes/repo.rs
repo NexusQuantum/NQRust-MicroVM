@@ -206,7 +206,6 @@ impl VolumeRepository {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub async fn mark_detached(&self, vm_id: Uuid, drive_id: &str) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"UPDATE volume_attachment SET detached_at = now()
