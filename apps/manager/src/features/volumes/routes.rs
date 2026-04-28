@@ -1,6 +1,11 @@
 use crate::features::volumes::repo::{VolumeRepository, VolumeRow};
 use crate::AppState;
-use axum::{extract::Path, http::StatusCode, Extension, Json};
+use axum::{
+    extract::Path,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Extension, Json,
+};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 use uuid::Uuid;
@@ -246,34 +251,51 @@ pub async fn attach(
     Extension(st): Extension<AppState>,
     Path(id): Path<Uuid>,
     Json(req): Json<AttachVolumeRequest>,
-) -> Result<Json<OkResponse>, StatusCode> {
+) -> Response {
     let volume_repo = VolumeRepository::new(st.db.clone());
 
     // Verify volume exists and is available
-    let volume = volume_repo.get(id).await.map_err(|err| match err {
-        sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
-        other => {
-            error!(error = ?other, "failed to get volume");
-            StatusCode::INTERNAL_SERVER_ERROR
+    let volume = match volume_repo.get(id).await {
+        Ok(v) => v,
+        Err(sqlx::Error::RowNotFound) => {
+            return StatusCode::NOT_FOUND.into_response();
         }
-    })?;
+        Err(other) => {
+            error!(error = ?other, "failed to get volume");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
 
     if volume.status != "available" {
-        return Err(StatusCode::CONFLICT);
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "volume already attached"})),
+        )
+            .into_response();
     }
 
     // Attach volume
-    volume_repo
-        .attach(id, req.vm_id, &req.drive_id)
-        .await
-        .map_err(|err| {
-            error!(?err, "failed to attach volume");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let res = volume_repo.attach(id, req.vm_id, &req.drive_id).await;
 
-    Ok(Json(OkResponse {
-        message: "Volume attached successfully".to_string(),
-    }))
+    match res {
+        Ok(_) => Json(OkResponse {
+            message: "Volume attached successfully".to_string(),
+        })
+        .into_response(),
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "volume already attached"})),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("attach failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
+    }
 }
 
 #[utoipa::path(
