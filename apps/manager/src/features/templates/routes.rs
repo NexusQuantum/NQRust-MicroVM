@@ -175,6 +175,101 @@ mod tests {
             .expect("registry")
     }
 
+    fn full_spec() -> TemplateSpec {
+        TemplateSpec {
+            vcpu: 4,
+            mem_mib: 4096,
+            kernel_image_id: Some(Uuid::new_v4()),
+            rootfs_image_id: Some(Uuid::new_v4()),
+            kernel_path: Some("/srv/kernel".into()),
+            rootfs_path: Some("/srv/rootfs".into()),
+            rootfs_size_mb: Some(2048),
+        }
+    }
+
+    #[test]
+    fn template_spec_into_vm_req_round_trips_all_fields() {
+        let spec = full_spec();
+        let kernel_image_id = spec.kernel_image_id;
+        let rootfs_image_id = spec.rootfs_image_id;
+        let kernel_path = spec.kernel_path.clone();
+        let rootfs_path = spec.rootfs_path.clone();
+        let rootfs_size_mb = spec.rootfs_size_mb;
+
+        let req = spec.into_vm_req("vm-from-template".into());
+
+        assert_eq!(req.name, "vm-from-template");
+        assert_eq!(req.vcpu, 4);
+        assert_eq!(req.mem_mib, 4096);
+        assert_eq!(req.kernel_image_id, kernel_image_id);
+        assert_eq!(req.rootfs_image_id, rootfs_image_id);
+        assert_eq!(req.kernel_path, kernel_path);
+        assert_eq!(req.rootfs_path, rootfs_path);
+        assert_eq!(req.rootfs_size_mb, rootfs_size_mb);
+    }
+
+    #[test]
+    fn template_spec_into_vm_req_blanks_non_template_fields() {
+        let req = full_spec().into_vm_req("any".into());
+
+        // Fields not carried by TemplateSpec must be defaulted, not derived
+        // from the template. This contract anchors the upcoming vmm_kind
+        // refactor: anything new added to the round-trip should be asserted
+        // explicitly here.
+        assert!(req.source_snapshot_id.is_none());
+        assert!(req.username.is_none());
+        assert!(req.password.is_none());
+        assert!(req.tags.is_empty());
+        assert!(req.network_id.is_none());
+        assert!(req.port_forwards.is_empty());
+    }
+
+    #[test]
+    fn template_spec_into_vm_req_with_minimal_spec_keeps_optional_fields_none() {
+        let spec = TemplateSpec {
+            vcpu: 1,
+            mem_mib: 256,
+            kernel_image_id: None,
+            rootfs_image_id: None,
+            kernel_path: None,
+            rootfs_path: None,
+            rootfs_size_mb: None,
+        };
+
+        let req = spec.into_vm_req("tiny-vm".into());
+
+        assert_eq!(req.name, "tiny-vm");
+        assert_eq!(req.vcpu, 1);
+        assert_eq!(req.mem_mib, 256);
+        assert!(req.kernel_image_id.is_none());
+        assert!(req.rootfs_image_id.is_none());
+        assert!(req.kernel_path.is_none());
+        assert!(req.rootfs_path.is_none());
+        assert!(req.rootfs_size_mb.is_none());
+    }
+
+    #[test]
+    fn template_spec_into_vm_req_propagates_name_verbatim() {
+        // The instantiate handler forwards the user-supplied name through
+        // into_vm_req unmodified; ensure trimming/casing/empty-string are
+        // not silently mutated by the conversion.
+        let spec = TemplateSpec {
+            vcpu: 2,
+            mem_mib: 1024,
+            kernel_image_id: None,
+            rootfs_image_id: None,
+            kernel_path: None,
+            rootfs_path: None,
+            rootfs_size_mb: None,
+        };
+        let weird_name = "  Mixed-Case Name  ".to_string();
+        let req = spec.clone().into_vm_req(weird_name.clone());
+        assert_eq!(req.name, weird_name);
+
+        let empty_req = spec.into_vm_req(String::new());
+        assert_eq!(empty_req.name, "");
+    }
+
     #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn instantiate_creates_vm_with_template(pool: sqlx::PgPool) {

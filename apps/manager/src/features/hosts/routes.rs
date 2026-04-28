@@ -1,11 +1,64 @@
+use crate::features::hosts::repo::HostRow;
 use crate::AppState;
 use axum::{extract::Path, http::StatusCode, Extension, Json};
+use chrono::{DateTime, Utc};
 use nexus_types::{
     HostHeartbeatRequest, HostPathParams, OkResponse, RegisterHostRequest, RegisterHostResponse,
 };
 use serde::Serialize;
 use tracing::error;
 use uuid::Uuid;
+
+/// Health status thresholds. A host is "healthy" if its last heartbeat was
+/// within `HEALTHY_THRESHOLD_SECONDS`, "degraded" if within
+/// `DEGRADED_THRESHOLD_SECONDS`, and "offline" otherwise.
+pub(crate) const HEALTHY_THRESHOLD_SECONDS: i64 = 30;
+pub(crate) const DEGRADED_THRESHOLD_SECONDS: i64 = 5 * 60;
+
+/// Pure-logic helper: compute the health status string for a host from its
+/// last-seen timestamp and a reference "now".
+pub(crate) fn compute_host_status(last_seen_at: DateTime<Utc>, now: DateTime<Utc>) -> &'static str {
+    if last_seen_at > now - chrono::Duration::seconds(HEALTHY_THRESHOLD_SECONDS) {
+        "healthy"
+    } else if last_seen_at > now - chrono::Duration::seconds(DEGRADED_THRESHOLD_SECONDS) {
+        "degraded"
+    } else {
+        "offline"
+    }
+}
+
+/// Pure-logic helper: extract the metric tuple `(cpus, total_memory_mb,
+/// total_disk_gb, used_disk_gb)` from a capabilities JSON blob. Returns
+/// `None` if any of the four numeric fields are missing or not an integer.
+pub(crate) fn extract_host_metrics(caps: &serde_json::Value) -> Option<(i32, i64, i64, i64)> {
+    let cpus = caps
+        .get("cpus")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32)?;
+    let memory = caps.get("total_memory_mb").and_then(|v| v.as_i64())?;
+    let total_disk = caps.get("total_disk_gb").and_then(|v| v.as_i64())?;
+    let used_disk = caps.get("used_disk_gb").and_then(|v| v.as_i64())?;
+    Some((cpus, memory, total_disk, used_disk))
+}
+
+/// Pure-logic helper: convert a `HostRow` into a `HostListItem`, given a
+/// pre-computed status string and VM count.
+pub(crate) fn host_row_to_list_item(row: HostRow, status: &str, vm_count: i64) -> HostListItem {
+    HostListItem {
+        id: row.id,
+        name: row.name,
+        addr: row.addr,
+        status: status.to_string(),
+        capabilities_json: row.capabilities_json,
+        total_cpus: row.total_cpus,
+        total_memory_mb: row.total_memory_mb,
+        total_disk_gb: row.total_disk_gb,
+        used_disk_gb: row.used_disk_gb,
+        vm_count,
+        last_seen_at: row.last_seen_at,
+        last_metrics_at: row.last_metrics_at,
+    }
+}
 
 #[utoipa::path(
     post,
@@ -80,12 +133,7 @@ pub async fn heartbeat(
 
     // Extract and save metrics if present in capabilities
     if let Some(caps) = req.capabilities {
-        if let (Some(cpus), Some(memory), Some(total_disk), Some(used_disk)) = (
-            caps.get("cpus").and_then(|v| v.as_i64()).map(|v| v as i32),
-            caps.get("total_memory_mb").and_then(|v| v.as_i64()),
-            caps.get("total_disk_gb").and_then(|v| v.as_i64()),
-            caps.get("used_disk_gb").and_then(|v| v.as_i64()),
-        ) {
+        if let Some((cpus, memory, total_disk, used_disk)) = extract_host_metrics(&caps) {
             // Update metrics in database
             if let Err(err) = st
                 .hosts
@@ -156,31 +204,12 @@ pub async fn list(
     let mut items = Vec::new();
     for host in hosts {
         // Determine health status based on last_seen_at
-        let status = if host.last_seen_at > chrono::Utc::now() - chrono::Duration::seconds(30) {
-            "healthy"
-        } else if host.last_seen_at > chrono::Utc::now() - chrono::Duration::minutes(5) {
-            "degraded"
-        } else {
-            "offline"
-        };
+        let status = compute_host_status(host.last_seen_at, chrono::Utc::now());
 
         // Get VM count for this host
         let vm_count = st.hosts.get_vm_count(host.id).await.unwrap_or(0);
 
-        items.push(HostListItem {
-            id: host.id,
-            name: host.name,
-            addr: host.addr,
-            status: status.to_string(),
-            capabilities_json: host.capabilities_json,
-            total_cpus: host.total_cpus,
-            total_memory_mb: host.total_memory_mb,
-            total_disk_gb: host.total_disk_gb,
-            used_disk_gb: host.used_disk_gb,
-            vm_count,
-            last_seen_at: host.last_seen_at,
-            last_metrics_at: host.last_metrics_at,
-        });
+        items.push(host_row_to_list_item(host, status, vm_count));
     }
 
     Ok(Json(HostListResponse { items }))
@@ -210,32 +239,13 @@ pub async fn get(
     })?;
 
     // Determine health status
-    let status = if host.last_seen_at > chrono::Utc::now() - chrono::Duration::seconds(30) {
-        "healthy"
-    } else if host.last_seen_at > chrono::Utc::now() - chrono::Duration::minutes(5) {
-        "degraded"
-    } else {
-        "offline"
-    };
+    let status = compute_host_status(host.last_seen_at, chrono::Utc::now());
 
     // Get VM count
     let vm_count = st.hosts.get_vm_count(id).await.unwrap_or(0);
 
     Ok(Json(HostDetailResponse {
-        item: HostListItem {
-            id: host.id,
-            name: host.name,
-            addr: host.addr,
-            status: status.to_string(),
-            capabilities_json: host.capabilities_json,
-            total_cpus: host.total_cpus,
-            total_memory_mb: host.total_memory_mb,
-            total_disk_gb: host.total_disk_gb,
-            used_disk_gb: host.used_disk_gb,
-            vm_count,
-            last_seen_at: host.last_seen_at,
-            last_metrics_at: host.last_metrics_at,
-        },
+        item: host_row_to_list_item(host, status, vm_count),
     }))
 }
 
@@ -287,12 +297,126 @@ pub async fn delete(
 mod tests {
     use super::*;
     use axum::{extract::Path, Extension};
+    use chrono::Utc;
     use serde_json::json;
 
     async fn test_registry(pool: &sqlx::PgPool) -> crate::features::storage::registry::Registry {
         crate::features::storage::registry::Registry::load(pool, None)
             .await
             .expect("registry")
+    }
+
+    fn sample_row(last_seen_at: chrono::DateTime<Utc>) -> HostRow {
+        HostRow {
+            id: Uuid::new_v4(),
+            name: "agent-x".into(),
+            addr: "http://10.0.0.5:9090".into(),
+            capabilities_json: json!({"cpus": 4}),
+            last_seen_at,
+            total_cpus: Some(8),
+            total_memory_mb: Some(16_384),
+            total_disk_gb: Some(500),
+            used_disk_gb: Some(120),
+            last_metrics_at: Some(last_seen_at),
+        }
+    }
+
+    // --- compute_host_status ---
+
+    #[test]
+    fn compute_host_status_recent_is_healthy() {
+        let now = Utc::now();
+        let last_seen = now - chrono::Duration::seconds(5);
+        assert_eq!(compute_host_status(last_seen, now), "healthy");
+    }
+
+    #[test]
+    fn compute_host_status_within_degraded_window_is_degraded() {
+        let now = Utc::now();
+        // Just past the 30s healthy threshold but well within the 5min window.
+        let last_seen = now - chrono::Duration::seconds(60);
+        assert_eq!(compute_host_status(last_seen, now), "degraded");
+    }
+
+    #[test]
+    fn compute_host_status_old_is_offline() {
+        let now = Utc::now();
+        let last_seen = now - chrono::Duration::hours(1);
+        assert_eq!(compute_host_status(last_seen, now), "offline");
+    }
+
+    #[test]
+    fn compute_host_status_at_healthy_boundary_is_degraded() {
+        // The original logic uses strict `>`: a last_seen exactly at the
+        // boundary falls through to the next bucket. This pins that
+        // behavior so the upcoming refactor cannot silently flip it.
+        let now = Utc::now();
+        let last_seen = now - chrono::Duration::seconds(HEALTHY_THRESHOLD_SECONDS);
+        assert_eq!(compute_host_status(last_seen, now), "degraded");
+
+        let last_seen_offline = now - chrono::Duration::seconds(DEGRADED_THRESHOLD_SECONDS);
+        assert_eq!(compute_host_status(last_seen_offline, now), "offline");
+    }
+
+    // --- extract_host_metrics ---
+
+    #[test]
+    fn extract_host_metrics_full_payload() {
+        let caps = json!({
+            "cpus": 4,
+            "total_memory_mb": 16384,
+            "total_disk_gb": 500,
+            "used_disk_gb": 120,
+            "extra": "ignored",
+        });
+        assert_eq!(extract_host_metrics(&caps), Some((4, 16_384, 500, 120)));
+    }
+
+    #[test]
+    fn extract_host_metrics_returns_none_when_field_missing() {
+        // Missing `used_disk_gb` -> the whole tuple is rejected.
+        let caps = json!({
+            "cpus": 4,
+            "total_memory_mb": 16384,
+            "total_disk_gb": 500,
+        });
+        assert!(extract_host_metrics(&caps).is_none());
+    }
+
+    #[test]
+    fn extract_host_metrics_returns_none_for_wrong_types() {
+        // Strings instead of numbers must not be accepted.
+        let caps = json!({
+            "cpus": "4",
+            "total_memory_mb": 16384,
+            "total_disk_gb": 500,
+            "used_disk_gb": 120,
+        });
+        assert!(extract_host_metrics(&caps).is_none());
+
+        // Empty object
+        assert!(extract_host_metrics(&json!({})).is_none());
+    }
+
+    // --- host_row_to_list_item ---
+
+    #[test]
+    fn host_row_to_list_item_preserves_fields_and_status() {
+        let now = Utc::now();
+        let row = sample_row(now);
+        let id = row.id;
+        let item = host_row_to_list_item(row, "healthy", 7);
+        assert_eq!(item.id, id);
+        assert_eq!(item.name, "agent-x");
+        assert_eq!(item.addr, "http://10.0.0.5:9090");
+        assert_eq!(item.status, "healthy");
+        assert_eq!(item.total_cpus, Some(8));
+        assert_eq!(item.total_memory_mb, Some(16_384));
+        assert_eq!(item.total_disk_gb, Some(500));
+        assert_eq!(item.used_disk_gb, Some(120));
+        assert_eq!(item.vm_count, 7);
+        assert_eq!(item.last_seen_at, now);
+        assert_eq!(item.capabilities_json, json!({"cpus": 4}));
     }
 
     #[ignore]

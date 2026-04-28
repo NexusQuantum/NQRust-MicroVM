@@ -33,3 +33,36 @@ async fn stop_vm(
     }
     Ok(Json(serde_json::json!({"ok": true})))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_req_round_trips() {
+        let payload = r#"{
+            "tap":"tap-vm01",
+            "sock":"/srv/fc/vms/vm01/sock/fc.sock",
+            "fc_unit":"fc-vm01.scope",
+            "storage_path":"/srv/fc/vms/vm01"
+        }"#;
+        let req: StopReq = serde_json::from_str(payload).expect("valid StopReq");
+        assert_eq!(req.tap, "tap-vm01");
+        assert_eq!(req.sock, "/srv/fc/vms/vm01/sock/fc.sock");
+        assert_eq!(req.fc_unit, "fc-vm01.scope");
+        assert_eq!(req.storage_path.as_deref(), Some("/srv/fc/vms/vm01"));
+
+        let encoded = serde_json::to_value(&req).unwrap();
+        assert_eq!(encoded["tap"], "tap-vm01");
+        assert_eq!(encoded["fc_unit"], "fc-vm01.scope");
+        assert_eq!(encoded["storage_path"], "/srv/fc/vms/vm01");
+    }
+
+    #[test]
+    fn stop_req_storage_path_optional() {
+        // storage_path uses #[serde(default)] — payload may omit it entirely.
+        let payload = r#"{"tap":"tap-x","sock":"/x.sock","fc_unit":"fc-x.scope"}"#;
+        let req: StopReq = serde_json::from_str(payload).expect("optional storage_path");
+        assert!(req.storage_path.is_none());
+    }
+}

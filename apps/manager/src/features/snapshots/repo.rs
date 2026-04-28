@@ -126,3 +126,92 @@ pub struct NewSnapshotRow {
     pub track_dirty_pages: bool,
     pub name: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_new_row() -> NewSnapshotRow {
+        NewSnapshotRow {
+            id: Uuid::new_v4(),
+            vm_id: Uuid::new_v4(),
+            snapshot_path: "/srv/fc/snap.bin".into(),
+            mem_path: "/srv/fc/mem.bin".into(),
+            size_bytes: 4096,
+            state: "available".into(),
+            snapshot_type: "Full".into(),
+            parent_id: None,
+            track_dirty_pages: false,
+            name: Some("nightly".into()),
+        }
+    }
+
+    #[test]
+    fn new_snapshot_row_is_clonable_and_field_accurate() {
+        let row = sample_new_row();
+        let cloned = row.clone();
+
+        assert_eq!(cloned.id, row.id);
+        assert_eq!(cloned.vm_id, row.vm_id);
+        assert_eq!(cloned.snapshot_path, "/srv/fc/snap.bin");
+        assert_eq!(cloned.mem_path, "/srv/fc/mem.bin");
+        assert_eq!(cloned.size_bytes, 4096);
+        assert_eq!(cloned.state, "available");
+        assert_eq!(cloned.snapshot_type, "Full");
+        assert_eq!(cloned.parent_id, None);
+        assert!(!cloned.track_dirty_pages);
+        assert_eq!(cloned.name.as_deref(), Some("nightly"));
+    }
+
+    #[test]
+    fn new_snapshot_row_supports_diff_with_parent() {
+        // Diff snapshots reference a parent and may have an empty mem_path
+        // (the manager zeroes it out before persisting). Confirm the struct
+        // can carry that combination.
+        let parent = Uuid::new_v4();
+        let row = NewSnapshotRow {
+            id: Uuid::new_v4(),
+            vm_id: Uuid::new_v4(),
+            snapshot_path: "/srv/fc/diff.bin".into(),
+            mem_path: String::new(),
+            size_bytes: 0,
+            state: "available".into(),
+            snapshot_type: "Diff".into(),
+            parent_id: Some(parent),
+            track_dirty_pages: true,
+            name: None,
+        };
+
+        assert_eq!(row.snapshot_type, "Diff");
+        assert_eq!(row.parent_id, Some(parent));
+        assert!(row.track_dirty_pages);
+        assert!(row.mem_path.is_empty());
+        assert!(row.name.is_none());
+    }
+
+    #[test]
+    fn snapshot_row_clone_round_trip_preserves_fields() {
+        let now = chrono::Utc::now();
+        let row = SnapshotRow {
+            id: Uuid::new_v4(),
+            vm_id: Uuid::new_v4(),
+            snapshot_path: "/srv/fc/snap.bin".into(),
+            mem_path: "/srv/fc/mem.bin".into(),
+            size_bytes: 9001,
+            state: "available".into(),
+            snapshot_type: "Full".into(),
+            parent_id: None,
+            track_dirty_pages: false,
+            name: Some("snap-a".into()),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let copy = row.clone();
+        assert_eq!(copy.id, row.id);
+        assert_eq!(copy.size_bytes, 9001);
+        assert_eq!(copy.snapshot_type, "Full");
+        assert_eq!(copy.created_at, now);
+        assert_eq!(copy.updated_at, now);
+    }
+}
