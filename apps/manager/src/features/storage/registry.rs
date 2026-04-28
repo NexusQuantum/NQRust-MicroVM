@@ -125,11 +125,34 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
         BackendKind::LocalFile => Ok(Arc::new(LocalFileControlPlaneBackend {
             id: BackendInstanceId(row.id),
         })),
-        BackendKind::Iscsi | BackendKind::TrueNasIscsi => {
-            // Implemented in Plan 2. For now, refuse to register.
-            Err(anyhow!(
-                "backend kind '{}' not implemented in this plan — use Plan 2",
-                kind.as_db_str()
+        BackendKind::Iscsi => {
+            let cfg: crate::features::storage::backends::iscsi_generic::IscsiGenericConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' iscsi config", row.name))?;
+            Ok(Arc::new(
+                crate::features::storage::backends::iscsi_generic::IscsiGenericControlPlaneBackend {
+                    id: BackendInstanceId(row.id),
+                    config: cfg,
+                },
+            ))
+        }
+        BackendKind::TrueNasIscsi => {
+            let cfg: crate::features::storage::backends::truenas_iscsi::TrueNasConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' truenas_iscsi config", row.name))?;
+            let api_key = std::env::var(&cfg.api_key_env).with_context(|| {
+                format!(
+                    "env var {} not set for backend '{}'",
+                    cfg.api_key_env, row.name
+                )
+            })?;
+            Ok(Arc::new(
+                crate::features::storage::backends::truenas_iscsi::TrueNasIscsiControlPlaneBackend {
+                    id: BackendInstanceId(row.id),
+                    config: cfg,
+                    api_key,
+                    http: reqwest::Client::new(),
+                },
             ))
         }
     }
