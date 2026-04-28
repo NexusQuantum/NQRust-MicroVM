@@ -42,4 +42,15 @@ mod tests {
         assert!(!c.supports_live_migration);
         assert!(!c.supports_clone_from_image);
     }
+
+    #[test]
+    fn attached_path_exposes_path_for_each_variant() {
+        use std::path::PathBuf;
+        let f = AttachedPath::File(PathBuf::from("/tmp/x"));
+        let b = AttachedPath::BlockDevice(PathBuf::from("/dev/sdb"));
+        let v = AttachedPath::VhostUserSock(PathBuf::from("/run/spdk.sock"));
+        assert_eq!(f.path(), std::path::Path::new("/tmp/x"));
+        assert_eq!(b.path(), std::path::Path::new("/dev/sdb"));
+        assert_eq!(v.path(), std::path::Path::new("/run/spdk.sock"));
+    }
 }
