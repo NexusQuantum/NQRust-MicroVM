@@ -4,7 +4,7 @@
 
 // Pre-existing patterns flagged by Rust 1.95's stricter clippy.
 // Not in the scope of the storage foundation PR.
-#![allow(clippy::collapsible_match)]
+#![allow(clippy::collapsible_match, clippy::unnecessary_sort_by)]
 
 mod app;
 mod installer;

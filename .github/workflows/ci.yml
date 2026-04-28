@@ -269,7 +269,11 @@ jobs:
         run: cargo install cargo-audit
 
       - name: Run security audit
-        run: cargo audit
+        # RUSTSEC-2026-0097: rand 0.9.x unsoundness only triggers when a
+        # custom logger calls rand::rng(). NQRust-MicroVM does not do that.
+        # Pulled in transitively via quinn-proto (reqwest HTTP/3) and mockito
+        # (test-only). Re-evaluate when rand ships a patched 0.9.x.
+        run: cargo audit --ignore RUSTSEC-2026-0097
 
   check-installer-syntax:
     name: Check Installer Syntax
