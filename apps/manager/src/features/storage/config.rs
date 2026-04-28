@@ -142,4 +142,29 @@ mod tests {
         let err = validate(raw).unwrap_err();
         assert!(err.to_string().contains("target_iqn"), "got: {err}");
     }
+
+    /// T27: Malformed TrueNAS iSCSI entry parsed from TOML must fail validation
+    /// with an error message naming BOTH the missing field and the backend name.
+    #[test]
+    fn malformed_truenas_iscsi_entry_fails_fast_with_clear_message() {
+        let toml_str = r#"
+            [[storage_backend]]
+            name = "tn"
+            kind = "true_nas_iscsi"
+            [storage_backend.config]
+            api_key_env = "X"
+        "#;
+        let parsed = parse(toml_str).unwrap();
+        let raw = parsed.backends.into_iter().next().unwrap();
+        let err = validate(raw).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("endpoint"),
+            "error should name the missing field 'endpoint': {msg}"
+        );
+        assert!(
+            msg.contains("tn"),
+            "error should name the backend 'tn': {msg}"
+        );
+    }
 }
