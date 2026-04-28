@@ -33,6 +33,8 @@ pub async fn create_function_vm(
     // 2. Guest agent installation modifies the rootfs
     // 3. Multiple VMs cannot share the same writable rootfs file
     let vm_id = Uuid::new_v4();
+    // TODO(storage-backends): route through StorageBackend trait. See
+    // docs/superpowers/specs/2026-04-28-storage-hci-design.md ("Out of scope").
     let function_rootfs_path = format!("/srv/images/functions/{}.ext4", vm_id);
 
     eprintln!(
@@ -86,6 +88,7 @@ pub async fn create_function_vm(
         rootfs_size_mb: None,
         network_id: None,
         port_forwards: vec![],
+        backend_id: None,
     };
 
     // Create and start VM

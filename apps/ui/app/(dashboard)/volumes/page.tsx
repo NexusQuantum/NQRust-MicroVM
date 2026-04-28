@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
+import { BackendSelector } from "@/components/storage/backend-selector"
 
 export default function VolumesPage() {
   const { data: volumes = [], isLoading, error, refetch, isFetching } = useVolumes()
@@ -33,9 +34,11 @@ export default function VolumesPage() {
     type: "ext4" as "raw" | "qcow2" | "ext4",
     host_id: "",
   })
+  const [backendId, setBackendId] = useState<string | undefined>(undefined)
 
   const resetForm = () => {
     setFormData({ name: "", description: "", size_gb: "", type: "ext4", host_id: "" })
+    setBackendId(undefined)
   }
 
   const handleCreate = () => {
@@ -46,6 +49,7 @@ export default function VolumesPage() {
         size_gb: parseInt(formData.size_gb, 10),
         type: formData.type,
         host_id: formData.host_id,
+        ...(backendId ? { backend_id: backendId } : {}),
       },
       {
         onSuccess: () => {
@@ -202,6 +206,11 @@ export default function VolumesPage() {
                 </SelectContent>
               </Select>
             </div>
+            <BackendSelector
+              id="vol-backend"
+              value={backendId}
+              onChange={setBackendId}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>

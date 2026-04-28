@@ -14,6 +14,7 @@ pub mod reconciler;
 pub mod snapshots;
 pub mod sso;
 pub mod storage;
+pub mod storage_backends;
 pub mod templates;
 pub mod users;
 pub mod vms; // A2 core
@@ -85,6 +86,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/v1/logs", logs::router())
         .nest("/v1/metrics", metrics::router())
         .nest("/v1/volumes", volumes::router())
+        .nest("/v1/storage_backends", storage_backends::router())
         // SSO public routes (no auth — these ARE the auth flow)
         .nest("/v1/sso", sso::public_router())
         // SSO admin routes (auth + admin required)

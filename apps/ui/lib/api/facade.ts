@@ -100,6 +100,7 @@ import type {
   VmMetric,
   ContainerMetric,
   MetricsQueryParams,
+  StorageBackendListResponse,
 } from "@/lib/types"
 
 /**
@@ -726,6 +727,14 @@ export class FacadeApi {
 
   async deleteVolume(id: string): Promise<void> {
     await apiClient.delete<OkResponse>(`/volumes/${id}`);
+  }
+
+  // ==============
+  // Storage Backends
+  // ==============
+
+  async listStorageBackends(): Promise<StorageBackendListResponse> {
+    return apiClient.get<StorageBackendListResponse>("/storage_backends");
   }
 
   // ==============

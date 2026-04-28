@@ -160,3 +160,9 @@ impl LocalStorage {
         Ok(())
     }
 }
+
+pub mod agent_rpc;
+pub mod backends;
+pub mod config;
+pub mod registry;
+pub mod rootfs_allocator;

@@ -25,6 +25,7 @@ pub async fn register(
         name,
         addr,
         capabilities,
+        supported_backend_kinds,
     } = req;
 
     let row = st
@@ -35,6 +36,15 @@ pub async fn register(
             error!(?err, "failed to register host");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+
+    if let Some(kinds) = supported_backend_kinds {
+        if let Err(err) = st.hosts.update_supported_backend_kinds(row.id, kinds).await {
+            error!(
+                ?err,
+                "failed to update host supported_backend_kinds on register"
+            );
+        }
+    }
 
     Ok(Json(RegisterHostResponse { id: row.id }))
 }
@@ -85,6 +95,15 @@ pub async fn heartbeat(
                 error!(error = ?err, "failed to update host metrics");
                 // Don't fail the heartbeat if metrics update fails
             }
+        }
+    }
+
+    if let Some(kinds) = req.supported_backend_kinds {
+        if let Err(err) = st.hosts.update_supported_backend_kinds(id, kinds).await {
+            error!(
+                ?err,
+                "failed to update host supported_backend_kinds on heartbeat"
+            );
         }
     }
 
@@ -270,6 +289,12 @@ mod tests {
     use axum::{extract::Path, Extension};
     use serde_json::json;
 
+    async fn test_registry(pool: &sqlx::PgPool) -> crate::features::storage::registry::Registry {
+        crate::features::storage::registry::Registry::load(pool, None)
+            .await
+            .expect("registry")
+    }
+
     #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn register_creates_host(pool: sqlx::PgPool) {
@@ -283,6 +308,7 @@ mod tests {
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let download_progress =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let registry = test_registry(&pool).await;
         let state = crate::AppState {
             db: pool.clone(),
             hosts: repo.clone(),
@@ -293,6 +319,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: true,
             storage,
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -310,6 +337,7 @@ mod tests {
             name: "agent-1".into(),
             addr: "http://127.0.0.1:9090".into(),
             capabilities: json!({"cpus": 4}),
+            supported_backend_kinds: None,
         };
 
         let Json(response) = super::register(Extension(state), Json(req)).await.unwrap();
@@ -332,6 +360,7 @@ mod tests {
         let shell_repo = crate::features::vms::shell::ShellRepository::new(pool.clone());
         let download_progress =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let registry = test_registry(&pool).await;
         let state = crate::AppState {
             db: pool.clone(),
             hosts: repo.clone(),
@@ -342,6 +371,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: true,
             storage,
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -359,6 +389,7 @@ mod tests {
             name: "agent-2".into(),
             addr: "http://127.0.0.1:9191".into(),
             capabilities: json!({}),
+            supported_backend_kinds: None,
         };
 
         let Json(register_resp) = super::register(Extension(state.clone()), Json(req))
@@ -380,6 +411,7 @@ mod tests {
             }),
             Json(HostHeartbeatRequest {
                 capabilities: Some(json!({"memory": 8192})),
+                supported_backend_kinds: None,
             }),
         )
         .await

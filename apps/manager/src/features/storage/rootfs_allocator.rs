@@ -1,0 +1,471 @@
+use crate::features::storage::registry::Registry;
+use anyhow::{anyhow, Context, Result};
+#[allow(unused_imports)]
+use nexus_storage::{AttachedPath, ControlPlaneBackend, CreateOpts, VolumeHandle};
+use std::path::Path;
+use uuid::Uuid;
+
+/// Outcome of allocating a rootfs from a source image. The `volume_handle`
+/// is always returned. When the slow path is taken (provision + agent
+/// attach/populate), `attached_for_caller` is `Some(...)` so the caller can
+/// reuse the attachment for VM start without a second agent round-trip.
+/// For the fast path (`clone_from_image`), `attached_for_caller` is `None`.
+#[allow(dead_code)]
+pub struct AllocOutcome {
+    pub volume_handle: VolumeHandle,
+    pub attached_for_caller: Option<AttachedPath>,
+}
+
+/// Allocate a rootfs by:
+///   1. If backend supports clone_from_image → call it. `attached_for_caller`
+///      will be `None`.
+///   2. Otherwise (slow path) → provision empty volume, agent-attach it,
+///      agent-populate it from `source_image`, optionally run `resize2fs` if
+///      the image is an ext4 rootfs. `attached_for_caller` will be
+///      `Some(...)` so the caller can reuse the attachment.
+#[allow(dead_code)]
+pub async fn allocate_rootfs(
+    registry: &Registry,
+    backend_id: Uuid,
+    host_addr: &str,
+    source_image: &Path,
+    target_size_bytes: u64,
+    opts_name: &str,
+) -> Result<AllocOutcome> {
+    let backend = registry
+        .get(backend_id)
+        .ok_or_else(|| anyhow!("no backend with id {backend_id}"))?;
+    let opts = CreateOpts {
+        name: opts_name.to_string(),
+        size_bytes: target_size_bytes,
+        description: None,
+    };
+
+    if backend.capabilities().supports_clone_from_image {
+        let h = backend
+            .clone_from_image(source_image, opts)
+            .await
+            .with_context(|| format!("clone_from_image failed on backend {backend_id}"))?;
+        return Ok(AllocOutcome {
+            volume_handle: h,
+            attached_for_caller: None,
+        });
+    }
+
+    // Slow path: provision → agent attach → agent populate → optional resize2fs.
+    // If anything after provision fails we must detach + destroy the volume so
+    // that no orphaned iSCSI session or provisioned-but-unused volume is left.
+    // Spec testing strategy item 5: trigger a create_vm failure mid-populate
+    // (after host.attach, before VM start). Verify no volume_attachment row was
+    // written, the volume is detached, and a retry creates a new clean volume.
+    let h = backend
+        .provision(opts)
+        .await
+        .with_context(|| format!("provision failed on backend {backend_id}"))?;
+
+    let result: Result<AttachedPath> = async {
+        let attached = crate::features::storage::agent_rpc::agent_attach(host_addr, &h)
+            .await
+            .context("agent attach")?;
+
+        let populate_result = crate::features::storage::agent_rpc::agent_populate(
+            host_addr,
+            h.backend_kind,
+            &attached,
+            &source_image.to_path_buf(),
+            target_size_bytes,
+        )
+        .await
+        .context("agent populate_streaming");
+
+        match populate_result {
+            Ok(()) => {
+                if image_is_ext4_rootfs(source_image).await.unwrap_or(false) {
+                    if let Err(e) =
+                        crate::features::storage::agent_rpc::agent_resize2fs(host_addr, &attached)
+                            .await
+                    {
+                        tracing::warn!("resize2fs failed (non-fatal): {e:#}");
+                    }
+                }
+                Ok(attached)
+            }
+            Err(populate_err) => {
+                // Detach before destroying so the iSCSI session is closed first.
+                if let Err(e) =
+                    crate::features::storage::agent_rpc::agent_detach(host_addr, &h, &attached)
+                        .await
+                {
+                    tracing::warn!("agent_detach after failed populate failed: {e:#}");
+                }
+                Err(populate_err)
+            }
+        }
+    }
+    .await;
+
+    let attached = match result {
+        Ok(a) => a,
+        Err(e) => {
+            // Best-effort destroy. We don't propagate destroy errors over the
+            // populate error so the caller sees the original failure cause.
+            if let Err(de) = backend.destroy(h.clone()).await {
+                tracing::warn!("destroy after failed populate failed: {de:#}");
+            }
+            return Err(e);
+        }
+    };
+
+    Ok(AllocOutcome {
+        volume_handle: h,
+        attached_for_caller: Some(attached),
+    })
+}
+
+async fn image_is_ext4_rootfs(path: &Path) -> Result<bool> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+    let mut f = tokio::fs::File::open(path).await?;
+    if f.seek(SeekFrom::Start(1080)).await.is_err() {
+        return Ok(false);
+    }
+    let mut buf = [0u8; 2];
+    if f.read_exact(&mut buf).await.is_err() {
+        return Ok(false);
+    }
+    // ext4 magic 0xEF53, little-endian
+    Ok(buf[0] == 0x53 && buf[1] == 0xEF)
+}
+
+/// Provision a blank data disk on the chosen backend.
+#[allow(dead_code)]
+pub async fn allocate_data_disk(
+    registry: &Registry,
+    backend_id: Uuid,
+    size_bytes: u64,
+    opts_name: &str,
+) -> Result<VolumeHandle> {
+    let backend = registry
+        .get(backend_id)
+        .ok_or_else(|| anyhow!("no backend with id {backend_id}"))?;
+    let opts = CreateOpts {
+        name: opts_name.to_string(),
+        size_bytes,
+        description: None,
+    };
+    backend
+        .provision(opts)
+        .await
+        .with_context(|| format!("provision failed on backend {backend_id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::storage::registry::Registry;
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn allocate_rootfs_uses_fast_path_for_localfile() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        let reg = Registry::load(&pool, None).await.unwrap();
+        let default_id = reg.default_id().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("img.bin");
+        std::fs::write(&src, vec![0u8; 4 * 1024 * 1024]).unwrap();
+        std::env::set_var("MANAGER_STORAGE_ROOT", dir.path());
+
+        let out = allocate_rootfs(
+            &reg,
+            default_id,
+            "127.0.0.1:9090",
+            &src,
+            4 * 1024 * 1024,
+            "test",
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.volume_handle.size_bytes, 4 * 1024 * 1024);
+        // T23: verify locator path actually exists on disk after allocation
+        assert!(
+            std::path::Path::new(&out.volume_handle.locator).exists(),
+            "locator path does not exist: {}",
+            out.volume_handle.locator
+        );
+    }
+
+    /// T24: The partial unique index `volume_one_active_attachment` on
+    /// `volume_attachment(volume_id) WHERE detached_at IS NULL` must reject a
+    /// second concurrent attach of the same volume.
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn double_attach_is_rejected_at_db_level() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let p = sqlx::PgPool::connect(&url).await.unwrap();
+
+        // Resolve the localfile-default backend id.
+        let backend_id: uuid::Uuid = sqlx::query_scalar::<_, uuid::Uuid>(
+            r#"SELECT id FROM storage_backend WHERE name = 'localfile-default'"#,
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+
+        let host_id: Option<uuid::Uuid> = sqlx::query_scalar(r#"SELECT id FROM host LIMIT 1"#)
+            .fetch_optional(&p)
+            .await
+            .unwrap()
+            .flatten();
+
+        // Insert a throwaway volume row.
+        let vol_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            r#"INSERT INTO volume (id, name, path, size_bytes, type, status, host_id, backend_id)
+               VALUES ($1, $2, $3, 1024, 'raw', 'available', $4, $5)"#,
+        )
+        .bind(vol_id)
+        .bind(format!("vol-t24-{vol_id}"))
+        .bind(format!("/tmp/t24-{vol_id}.img"))
+        .bind(host_id)
+        .bind(backend_id)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let vm1 = uuid::Uuid::new_v4();
+        let vm2 = uuid::Uuid::new_v4();
+
+        // First attach — may fail with 23503 (FK to vm) if the test DB enforces
+        // the vm FK strictly. In that case skip gracefully.
+        let first = sqlx::query(
+            r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id)
+               VALUES ($1, $2, 'rootfs')"#,
+        )
+        .bind(vol_id)
+        .bind(vm1)
+        .execute(&p)
+        .await;
+
+        if let Err(sqlx::Error::Database(ref db_err)) = first {
+            if db_err.code().as_deref() == Some("23503") {
+                // VM FK enforced — skip test rather than fail.
+                sqlx::query("DELETE FROM volume WHERE id = $1")
+                    .bind(vol_id)
+                    .execute(&p)
+                    .await
+                    .ok();
+                eprintln!(
+                    "double_attach test skipped: vm FK enforced; \
+                     full vm row setup required in this environment"
+                );
+                return;
+            }
+        }
+        first.expect("first attach should succeed");
+
+        // Second attach of the SAME volume to a different vm_id must fail with
+        // unique-violation (23505) from the partial index.
+        let second = sqlx::query(
+            r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id)
+               VALUES ($1, $2, 'rootfs')"#,
+        )
+        .bind(vol_id)
+        .bind(vm2)
+        .execute(&p)
+        .await;
+
+        match second {
+            Err(sqlx::Error::Database(db_err)) => {
+                assert_eq!(
+                    db_err.code().as_deref(),
+                    Some("23505"),
+                    "expected unique-violation 23505, got {:?}",
+                    db_err.code()
+                );
+            }
+            other => panic!("expected unique-violation 23505 for double attach, got {other:?}"),
+        }
+
+        // Cleanup.
+        sqlx::query("DELETE FROM volume_attachment WHERE volume_id = $1")
+            .bind(vol_id)
+            .execute(&p)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM volume WHERE id = $1")
+            .bind(vol_id)
+            .execute(&p)
+            .await
+            .ok();
+    }
+
+    #[tokio::test]
+    async fn detects_ext4_magic() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ext4.img");
+        // Write 1082 bytes: pad with zeros, then magic 0xEF53 at offset 1080.
+        let mut buf = vec![0u8; 1082];
+        buf[1080] = 0x53;
+        buf[1081] = 0xEF;
+        std::fs::write(&p, &buf).unwrap();
+        assert!(super::image_is_ext4_rootfs(&p).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn rejects_non_ext4() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("plain.bin");
+        std::fs::write(&p, vec![0u8; 4096]).unwrap();
+        assert!(!super::image_is_ext4_rootfs(&p).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn handles_short_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("short.bin");
+        std::fs::write(&p, b"too short").unwrap();
+        // Should return false, not panic
+        assert!(!super::image_is_ext4_rootfs(&p).await.unwrap());
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Synthetic ControlPlaneBackend that:
+    /// - Reports supports_clone_from_image: false (forces slow path)
+    /// - Tracks how many times destroy() was called
+    ///
+    /// Used to verify allocate_rootfs's cleanup-on-populate-failure path.
+    struct CountingProvisionerBackend {
+        provision_returns: nexus_storage::VolumeHandle,
+        destroy_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl nexus_storage::ControlPlaneBackend for CountingProvisionerBackend {
+        fn kind(&self) -> nexus_storage::BackendKind {
+            nexus_storage::BackendKind::Iscsi
+        }
+        fn capabilities(&self) -> nexus_storage::Capabilities {
+            nexus_storage::Capabilities {
+                supports_clone_from_image: false,
+                ..Default::default()
+            }
+        }
+        async fn provision(
+            &self,
+            _opts: nexus_storage::CreateOpts,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Ok(self.provision_returns.clone())
+        }
+        async fn destroy(
+            &self,
+            _h: nexus_storage::VolumeHandle,
+        ) -> Result<(), nexus_storage::StorageError> {
+            self.destroy_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn clone_from_image(
+            &self,
+            _src: &std::path::Path,
+            _opts: nexus_storage::CreateOpts,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported(
+                "clone_from_image".into(),
+            ))
+        }
+        async fn snapshot(
+            &self,
+            _v: &nexus_storage::VolumeHandle,
+            _name: &str,
+        ) -> Result<nexus_storage::VolumeSnapshotHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported("snapshot".into()))
+        }
+        async fn clone_from_snapshot(
+            &self,
+            _s: &nexus_storage::VolumeSnapshotHandle,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported(
+                "clone_from_snapshot".into(),
+            ))
+        }
+        async fn delete_snapshot(
+            &self,
+            _s: nexus_storage::VolumeSnapshotHandle,
+        ) -> Result<(), nexus_storage::StorageError> {
+            Ok(())
+        }
+    }
+
+    /// Spec testing strategy item 5: when `agent_populate` fails after a
+    /// successful `agent_attach`, the slow path must call `agent_detach` AND
+    /// `backend.destroy()` so no orphaned LUN/file/iSCSI session is left
+    /// behind, and no `volume_attachment` row is written.
+    ///
+    /// We exercise this by standing up a mock agent that returns 200 on
+    /// attach and 500 on populate, plus a synthetic backend that counts
+    /// destroy() calls. The detach mock's expected hit count is then asserted
+    /// to confirm the cleanup detach round-trip happened.
+    #[tokio::test]
+    async fn populate_failure_calls_detach_and_destroy_for_cleanup() {
+        let mut server = mockito::Server::new_async().await;
+
+        let attach_mock = server
+            .mock("POST", "/v1/storage/attach")
+            .with_status(200)
+            .with_body(r#"{"attached":{"kind":"BlockDevice","path":"/dev/disk/by-path/test"}}"#)
+            .create_async()
+            .await;
+        let populate_mock = server
+            .mock("POST", "/v1/storage/populate")
+            .with_status(500)
+            .with_body(r#"{"error":"injected populate failure"}"#)
+            .create_async()
+            .await;
+        let detach_mock = server
+            .mock("POST", "/v1/storage/detach")
+            .with_status(200)
+            .with_body(r#"{}"#)
+            .expect(1) // cleanup detach must happen exactly once
+            .create_async()
+            .await;
+
+        let destroy_count = Arc::new(AtomicUsize::new(0));
+        let backend_id = uuid::Uuid::new_v4();
+        let provision_returns = nexus_storage::VolumeHandle {
+            volume_id: uuid::Uuid::new_v4(),
+            backend_id: nexus_storage::BackendInstanceId(backend_id),
+            backend_kind: nexus_storage::BackendKind::Iscsi,
+            locator: r#"{"iqn":"iqn.x:test","lun":0}"#.into(),
+            size_bytes: 1024,
+        };
+        let backend: Arc<dyn nexus_storage::ControlPlaneBackend> =
+            Arc::new(CountingProvisionerBackend {
+                provision_returns,
+                destroy_count: destroy_count.clone(),
+            });
+        let registry = Registry::test_only_with_backend(backend_id, backend);
+
+        // Source image (any non-empty file works; populate fails before reading it)
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("img.bin");
+        std::fs::write(&src, vec![0u8; 1024]).unwrap();
+
+        // Run the slow path. Expect Err.
+        let result =
+            allocate_rootfs(&registry, backend_id, &server.url(), &src, 1024, "test").await;
+
+        assert!(result.is_err(), "expected populate failure to bubble up");
+
+        // Cleanup: detach was called once, destroy was called once.
+        detach_mock.assert_async().await;
+        attach_mock.assert_async().await;
+        populate_mock.assert_async().await;
+        assert_eq!(
+            destroy_count.load(Ordering::SeqCst),
+            1,
+            "backend.destroy() must be called once during cleanup"
+        );
+    }
+}

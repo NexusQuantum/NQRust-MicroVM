@@ -89,6 +89,10 @@ pub struct CreateVmReq {
     pub network_id: Option<uuid::Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub port_forwards: Vec<CreatePortForwardReq>,
+    /// Storage backend to use for rootfs/data-disk allocation. If None, the
+    /// registry's default backend is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -124,6 +128,7 @@ impl TemplateSpec {
             rootfs_size_mb: self.rootfs_size_mb,
             network_id: None,
             port_forwards: vec![],
+            backend_id: None,
         }
     }
 }
@@ -582,6 +587,8 @@ pub struct RegisterHostRequest {
     pub addr: String,
     #[serde(default)]
     pub capabilities: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_backend_kinds: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
@@ -593,6 +600,8 @@ pub struct RegisterHostResponse {
 pub struct HostHeartbeatRequest {
     #[serde(default)]
     pub capabilities: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_backend_kinds: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
@@ -1693,4 +1702,48 @@ pub struct MetricsQueryParams {
     pub to: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+}
+
+// ── Storage backends ─────────────────────────────────────────────────────
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+pub enum BackendKind {
+    #[serde(rename = "local_file")]
+    LocalFile,
+    #[serde(rename = "iscsi")]
+    Iscsi,
+    #[serde(rename = "truenas_iscsi")]
+    TrueNasIscsi,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
+)]
+pub struct Capabilities {
+    pub supports_native_snapshots: bool,
+    pub supports_concurrent_attach: bool,
+    pub supports_live_migration: bool,
+    pub supports_clone_from_image: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct StorageBackend {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub kind: BackendKind,
+    pub capabilities: Capabilities,
+    pub is_default: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
 }

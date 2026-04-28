@@ -92,6 +92,33 @@ pub async fn create_and_start(
         .await
         .context("no healthy hosts available")?;
 
+    // --- Task 12a: Scheduler filter — reject host if it doesn't support the requested backend ---
+    {
+        let backend_id = req.backend_id.or_else(|| st.registry.default_id());
+        if let Some(bid) = backend_id {
+            let backend_kind_str = st
+                .registry
+                .get(bid)
+                .map(|b| b.kind().as_db_str().to_string())
+                .unwrap_or_else(|| "local_file".to_string());
+            let host_repo = crate::features::hosts::repo::HostRepository::new(st.db.clone());
+            let kinds = host_repo
+                .supported_backend_kinds(host.id)
+                .await
+                .context("failed to query host supported_backend_kinds")?;
+            // If the host has declared supported kinds AND the requested kind is not among them,
+            // refuse.  An empty list means "unconfigured — allow any" for backward compat.
+            if !kinds.is_empty() && !kinds.iter().any(|k| k == &backend_kind_str) {
+                return Err(anyhow::anyhow!(
+                    "host {} does not support backend kind '{}'; supported: {:?}",
+                    host.id,
+                    backend_kind_str,
+                    kinds
+                ));
+            }
+        }
+    }
+
     // Resolve network: use explicit network_id if provided, else fall back to host capabilities
     let req_network_id = req.network_id;
     let req_port_forwards = std::mem::take(&mut req.port_forwards);
@@ -136,7 +163,7 @@ pub async fn create_and_start(
         .unwrap_or_else(|| format!("vm-{}", &id.to_string()[..8]));
     let tags = req.tags.clone();
 
-    let spec = resolve_vm_spec(st, req, id).await?;
+    let spec = resolve_vm_spec(st, req, id, host.id, &host.addr).await?;
 
     // Inject credentials into rootfs BEFORE VM starts (while rootfs is not in use)
     // This is the fallback for images without cloud-init
@@ -582,17 +609,86 @@ pub async fn create_from_snapshot(
     Ok(())
 }
 
+/// Resolve the rootfs block-device path to hand to Firecracker.
+///
+/// For LocalFile volumes the stored `vm.rootfs_path` is already a real
+/// filesystem path. For non-LocalFile volumes (e.g. iSCSI) the stored value
+/// is the backend locator string (IQN+LUN), which Firecracker cannot use
+/// directly. In that case we call `agent_attach` to log in to the LUN and
+/// obtain the kernel block-device path (e.g. `/dev/sdb`).
+///
+/// Falls back to `vm.rootfs_path` for legacy VMs that have no
+/// `volume_attachment` row, or whose backend_id is not in the registry.
+async fn resolve_rootfs_attached_path(st: &AppState, vm: &super::repo::VmRow) -> Result<String> {
+    use nexus_storage::BackendKind;
+
+    // Look up the rootfs volume row. The rootfs drive_id is "rootfs".
+    let row: Option<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx::query_as(
+        r#"SELECT v.id, v.path, v.backend_id
+           FROM volume v
+           JOIN volume_attachment va ON va.volume_id = v.id
+           WHERE va.vm_id = $1 AND va.drive_id = 'rootfs'
+           ORDER BY va.attached_at DESC
+           LIMIT 1"#,
+    )
+    .bind(vm.id)
+    .fetch_optional(&st.db)
+    .await
+    .context("looking up rootfs volume_attachment")?;
+
+    let Some((volume_id, locator, backend_id)) = row else {
+        // No volume_attachment row (legacy VM created before Plan 1) — fall
+        // back to the stored rootfs_path.
+        return Ok(vm.rootfs_path.clone());
+    };
+
+    let backend = match backend_id.and_then(|bid| st.registry.get(bid).cloned()) {
+        Some(b) => b,
+        None => return Ok(vm.rootfs_path.clone()),
+    };
+
+    if backend.kind() == BackendKind::LocalFile {
+        // LocalFile path is already a real filesystem path; no attach
+        // round-trip needed.
+        return Ok(vm.rootfs_path.clone());
+    }
+
+    // Non-LocalFile: ask the agent to attach the volume and return the actual
+    // device path. Build a minimal VolumeHandle from the volume row.
+    // safety: backend_id is Some — we returned earlier if it was None.
+    let bid = backend_id.unwrap();
+    let volume_handle = nexus_storage::VolumeHandle {
+        volume_id,
+        backend_id: nexus_storage::BackendInstanceId(bid),
+        backend_kind: backend.kind(),
+        locator,
+        size_bytes: 0, // not needed for attach
+    };
+    let attached = crate::features::storage::agent_rpc::agent_attach(&vm.host_addr, &volume_handle)
+        .await
+        .context("agent_attach during VM start")?;
+    Ok(attached.path().to_string_lossy().into_owned())
+}
+
 pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     let host = st.hosts.get(vm.host_id).await?;
     let paths = VmPaths::from_row(vm);
     ensure_allowed_path(st, &vm.kernel_path)?;
     ensure_allowed_path(st, &vm.rootfs_path)?;
+
+    // Resolve volume attachments through the registry. For non-LocalFile backends,
+    // we need to call host.attach to log into the LUN and get the actual block
+    // device path. For LocalFile, vm.rootfs_path is already correct.
+    let resolved_rootfs_path = resolve_rootfs_attached_path(st, vm)
+        .await
+        .context("resolving rootfs attached path")?;
+
     let spec = ResolvedVmSpec {
         name: vm.name.clone(),
         vcpu: vm.vcpu.try_into().context("stored vcpu exceeds u8")?,
         mem_mib: vm.mem_mib.try_into().context("stored mem_mib negative")?,
         kernel_path: vm.kernel_path.clone(),
-        rootfs_path: vm.rootfs_path.clone(),
+        rootfs_path: resolved_rootfs_path,
         rootfs_size_bytes: None,
     };
 
@@ -692,6 +788,85 @@ pub async fn stop_only(
         .await?;
 
     response.error_for_status()?;
+
+    // Detach non-LocalFile volumes (e.g. log out iSCSI sessions). LocalFile is
+    // a no-op at the agent level but we skip it to avoid an unnecessary RPC.
+    // We collect volume_id, locator, drive_id, and backend_id in one query so
+    // we can build a VolumeHandle for the detach call.
+    //
+    // NOTE: agent_detach accepts an AttachedPath. The agent's iSCSI backend
+    // uses the volume.locator (IQN+LUN) — not the AttachedPath — to identify
+    // the session for logout, so passing a placeholder PathBuf is safe for the
+    // current implementation. A future clean-up should make detach work from
+    // VolumeHandle alone and remove the AttachedPath parameter.
+    {
+        use nexus_storage::BackendKind;
+        let active_attachments: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>)> =
+            sqlx::query_as(
+                r#"SELECT v.id, v.path, va.drive_id, v.backend_id
+                   FROM volume v
+                   JOIN volume_attachment va ON va.volume_id = v.id
+                   WHERE va.vm_id = $1 AND va.detached_at IS NULL"#,
+            )
+            .bind(id)
+            .fetch_all(&st.db)
+            .await
+            .unwrap_or_default();
+
+        for (vol_id, locator, _drive_id, backend_id) in &active_attachments {
+            let Some(bid) = backend_id else {
+                continue;
+            };
+            let Some(backend) = st.registry.get(*bid).cloned() else {
+                continue;
+            };
+            let kind = backend.kind();
+            if kind == BackendKind::LocalFile {
+                continue;
+            }
+            let volume_handle = nexus_storage::VolumeHandle {
+                volume_id: *vol_id,
+                backend_id: nexus_storage::BackendInstanceId(*bid),
+                backend_kind: kind,
+                locator: locator.clone(),
+                size_bytes: 0,
+            };
+            // Placeholder AttachedPath: the agent identifies the session via
+            // the volume locator, not this path. Safe for iSCSI logout.
+            let placeholder_attached =
+                nexus_storage::AttachedPath::BlockDevice(std::path::PathBuf::new());
+            if let Err(e) = crate::features::storage::agent_rpc::agent_detach(
+                &vm.host_addr,
+                &volume_handle,
+                &placeholder_attached,
+            )
+            .await
+            {
+                tracing::warn!(
+                    vm_id = %id,
+                    volume_id = %vol_id,
+                    error = %e,
+                    "agent_detach failed; continuing with mark_detached"
+                );
+            }
+        }
+    }
+
+    let vol_repo = crate::features::volumes::repo::VolumeRepository::new(st.db.clone());
+    let active = sqlx::query_scalar::<_, String>(
+        r#"SELECT drive_id FROM volume_attachment WHERE vm_id = $1 AND detached_at IS NULL"#,
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await
+    .context("listing active attachments")?;
+    for drive_id in active {
+        vol_repo
+            .mark_detached(id, &drive_id)
+            .await
+            .context("marking volume_attachment detached")?;
+    }
+
     super::repo::update_state(&st.db, id, "stopped").await?;
     let _ = audit::log_action(
         &st.db,
@@ -732,7 +907,7 @@ pub async fn stop_and_delete_with_user(
         info!(vm_id = %id, path = ?storage_path, "cleaned up VM storage directory");
     }
 
-    // Reset volume statuses before cascading delete removes the attachment rows
+    // Reset volume statuses and mark active attachments detached before cascading delete removes the rows
     let volume_repo = crate::features::volumes::repo::VolumeRepository::new(st.db.clone());
     let attached_vols: Vec<(Uuid,)> =
         sqlx::query_as("SELECT volume_id FROM volume_attachment WHERE vm_id = $1")
@@ -742,6 +917,16 @@ pub async fn stop_and_delete_with_user(
             .unwrap_or_default();
     for (vol_id,) in &attached_vols {
         let _ = volume_repo.update_status(*vol_id, "available").await;
+    }
+    let active_drives = sqlx::query_scalar::<_, String>(
+        r#"SELECT drive_id FROM volume_attachment WHERE vm_id = $1 AND detached_at IS NULL"#,
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await
+    .context("listing active attachments")?;
+    for drive_id in active_drives {
+        let _ = volume_repo.mark_detached(id, &drive_id).await;
     }
 
     // Delete from database (this cascades to vm_drive and vm_network_interface)
@@ -1055,7 +1240,13 @@ struct ResolvedVmSpec {
     rootfs_size_bytes: Option<u64>,
 }
 
-async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result<ResolvedVmSpec> {
+async fn resolve_vm_spec(
+    st: &AppState,
+    req: CreateVmReq,
+    vm_id: Uuid,
+    vm_host_id: Uuid,
+    host_addr: &str,
+) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
     let (rootfs_path, rootfs_size_bytes) = provision_rootfs(
@@ -1064,6 +1255,9 @@ async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result
         req.rootfs_path,
         vm_id,
         req.rootfs_size_mb,
+        req.backend_id,
+        vm_host_id,
+        host_addr,
     )
     .await?;
 
@@ -1104,12 +1298,16 @@ async fn resolve_image_path(
     Err(anyhow!("{field} requires an image id or host path"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn provision_rootfs(
     st: &AppState,
     image_id: Option<Uuid>,
     direct_path: Option<String>,
     vm_id: Uuid,
     rootfs_size_mb: Option<u32>,
+    req_backend_id: Option<Uuid>,
+    vm_host_id: Uuid,
+    host_addr: &str,
 ) -> Result<(String, Option<u64>)> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
@@ -1143,15 +1341,74 @@ async fn provision_rootfs(
         return Ok((source_path, None));
     }
 
-    // For regular VMs: ALWAYS copy the rootfs to VM-specific storage
-    // This prevents VMs from sharing the same rootfs file and corrupting each other
-    let (vm_root, size_bytes) = st
-        .storage
-        .alloc_rootfs(vm_id, Path::new(&source_path), rootfs_size_mb)
-        .await
-        .context("failed to provision rootfs")?;
+    // For regular VMs: allocate rootfs through the storage Registry.
+    // This replaces the legacy LocalStorage::alloc_rootfs call.
+    let backend_id = req_backend_id
+        .or_else(|| st.registry.default_id())
+        .ok_or_else(|| anyhow::anyhow!("no storage backend selected and no default configured"))?;
 
-    Ok((vm_root, Some(size_bytes)))
+    let target_bytes: u64 = match rootfs_size_mb {
+        Some(mb) => (mb as u64) * 1024 * 1024,
+        None => tokio::fs::metadata(&source_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0),
+    };
+
+    let alloc = crate::features::storage::rootfs_allocator::allocate_rootfs(
+        &st.registry,
+        backend_id,
+        host_addr,
+        std::path::Path::new(&source_path),
+        target_bytes,
+        &format!("rootfs-{vm_id}"),
+    )
+    .await
+    .context("failed to provision rootfs via storage registry")?;
+
+    let host_id_for_volume = st.host_id_for_local_file(vm_host_id);
+
+    sqlx::query(
+        r#"INSERT INTO volume (id, name, path, size_bytes, type, status, host_id, backend_id)
+           VALUES ($1, $2, $3, $4, 'raw', 'available', $5, $6)
+           ON CONFLICT (path) DO NOTHING"#,
+    )
+    .bind(alloc.volume_handle.volume_id)
+    .bind(format!("rootfs-{vm_id}"))
+    .bind(&alloc.volume_handle.locator)
+    .bind(alloc.volume_handle.size_bytes as i64)
+    .bind(host_id_for_volume)
+    .bind(backend_id)
+    .execute(&st.db)
+    .await
+    .context("failed to record rootfs volume")?;
+
+    sqlx::query(
+        r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,
+    )
+    .bind(alloc.volume_handle.volume_id)
+    .bind(vm_id)
+    .bind("rootfs")
+    .execute(&st.db)
+    .await
+    .context("inserting volume_attachment row")?;
+
+    // Task 12b: For slow-path backends (e.g. iSCSI), the locator is a JSON blob
+    // (IQN+LUN), not a real path.  Use the attached block-device path that the
+    // agent already prepared so Firecracker receives a real /dev/... path.
+    // For the fast path (LocalFile clone_from_image), attached_for_caller is None
+    // and the locator is already a valid file path — fall back to it.
+    //
+    // NOTE: data disks allocated via `allocate_data_disk` go through `provision`
+    // only and do not yet have an agent-attach step, so iSCSI data disks are
+    // not supported in Plan 2. See TODO in create_drive / provision_data_disk.
+    let firecracker_drive_path = match &alloc.attached_for_caller {
+        Some(attached) => attached.path().to_string_lossy().into_owned(),
+        None => alloc.volume_handle.locator.clone(),
+    };
+    let size_bytes = alloc.volume_handle.size_bytes;
+
+    Ok((firecracker_drive_path, Some(size_bytes)))
 }
 
 fn ensure_allowed_path(st: &AppState, path: &str) -> Result<()> {
@@ -1184,8 +1441,8 @@ pub async fn create_drive(
     vm_id: Uuid,
     req: CreateDriveReq,
 ) -> Result<nexus_types::VmDrive> {
-    // Verify VM exists
-    let _vm = super::repo::get(&st.db, vm_id).await?;
+    // Verify VM exists and get its host assignment
+    let vm = super::repo::get(&st.db, vm_id).await?;
 
     // Determine path and size
     let (host_path, size_bytes) = if let Some(path) = req.path_on_host.as_ref() {
@@ -1193,10 +1450,48 @@ pub async fn create_drive(
         ensure_allowed_path(st, path)?;
         (path.clone(), None)
     } else {
-        // Auto-provision: create sparse disk file
+        // Auto-provision: create blank data disk through the storage Registry.
         let size = req.size_bytes.unwrap_or(10_737_418_240); // Default 10GB
-        let path = st.storage.alloc_data_disk(vm_id, size).await?;
-        (path, Some(size as i64))
+        let backend_id = st
+            .registry
+            .default_id()
+            .ok_or_else(|| anyhow::anyhow!("no default storage backend configured"))?;
+        let dh = crate::features::storage::rootfs_allocator::allocate_data_disk(
+            &st.registry,
+            backend_id,
+            size,
+            &format!("data-{vm_id}-{}", req.drive_id),
+        )
+        .await
+        .context("failed to provision data disk via storage registry")?;
+
+        let host_id_for_volume = st.host_id_for_local_file(vm.host_id);
+        sqlx::query(
+            r#"INSERT INTO volume (id, name, path, size_bytes, type, status, host_id, backend_id)
+               VALUES ($1, $2, $3, $4, 'raw', 'available', $5, $6)
+               ON CONFLICT (path) DO NOTHING"#,
+        )
+        .bind(dh.volume_id)
+        .bind(format!("data-{vm_id}-{}", req.drive_id))
+        .bind(&dh.locator)
+        .bind(dh.size_bytes as i64)
+        .bind(host_id_for_volume)
+        .bind(backend_id)
+        .execute(&st.db)
+        .await
+        .context("failed to record data disk volume")?;
+
+        sqlx::query(
+            r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,
+        )
+        .bind(dh.volume_id)
+        .bind(vm_id)
+        .bind(&req.drive_id)
+        .execute(&st.db)
+        .await
+        .context("inserting volume_attachment row")?;
+
+        (dh.locator, Some(size as i64))
     };
 
     // Check for duplicate drive_id
@@ -1227,7 +1522,6 @@ pub async fn create_drive(
           "Drive created in database, will be attached on next VM start");
 
     // Auto-register drive as a volume in the volume registry
-    let vm = super::repo::get(&st.db, vm_id).await?;
     if let Err(e) =
         ensure_data_drive_registered(st, vm_id, &host_path, &req.drive_id, vm.host_id).await
     {
@@ -2351,6 +2645,12 @@ mod tests {
     use crate::features::vms::repo;
     use nexus_types::CreateImageReq;
     use serde_json::json;
+
+    async fn test_registry(pool: &sqlx::PgPool) -> crate::features::storage::registry::Registry {
+        crate::features::storage::registry::Registry::load(pool, None)
+            .await
+            .expect("registry")
+    }
     #[derive(Clone)]
     pub struct TestSnapshotLoad {
         vm_id: Uuid,
@@ -2414,6 +2714,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
@@ -2424,6 +2725,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -2456,6 +2758,7 @@ mod tests {
                 rootfs_size_mb: None,
                 network_id: None,
                 port_forwards: vec![],
+                backend_id: None,
             },
             None,
             None,
@@ -2488,6 +2791,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts,
@@ -2498,6 +2802,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -2529,6 +2834,7 @@ mod tests {
                 rootfs_size_mb: None,
                 network_id: None,
                 port_forwards: vec![],
+                backend_id: None,
             },
             None,
             None,
@@ -2559,6 +2865,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts,
@@ -2569,6 +2876,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -2632,6 +2940,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let storage = crate::features::storage::LocalStorage::new();
         storage.init().await.unwrap();
+        let registry = test_registry(&pool).await;
         let state = AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
@@ -2642,6 +2951,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: false,
             storage: storage.clone(),
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
@@ -3465,6 +3775,11 @@ async fn ensure_data_drive_registered(
     let description_text = format!("Data drive '{}' for VM: {}", drive_id, vm_name);
     let description = Some(description_text.as_str());
 
+    let backend_id = st
+        .registry
+        .default_id()
+        .ok_or_else(|| anyhow::anyhow!("no default storage backend configured"))?;
+
     let volume = volume_repo
         .create(
             &name,
@@ -3472,7 +3787,8 @@ async fn ensure_data_drive_registered(
             drive_path,
             size_bytes,
             volume_type,
-            host_id,
+            Some(host_id),
+            backend_id,
         )
         .await?;
 
@@ -3555,6 +3871,11 @@ async fn ensure_volume_registered(
     let description_text = format!("Rootfs for VM: {}", vm_name);
     let description = Some(description_text.as_str());
 
+    let backend_id = st
+        .registry
+        .default_id()
+        .ok_or_else(|| anyhow::anyhow!("no default storage backend configured"))?;
+
     let volume = volume_repo
         .create(
             &name,
@@ -3562,7 +3883,8 @@ async fn ensure_volume_registered(
             rootfs_path,
             size_bytes,
             volume_type,
-            host_id,
+            Some(host_id),
+            backend_id,
         )
         .await?;
 

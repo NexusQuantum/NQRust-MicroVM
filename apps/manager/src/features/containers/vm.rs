@@ -31,6 +31,8 @@ pub async fn create_container_vm(
     // 2. Each container gets its own isolated filesystem
     // 3. Multiple VMs cannot share the same writable rootfs file
     let vm_id = Uuid::new_v4();
+    // TODO(storage-backends): route through StorageBackend trait. See
+    // docs/superpowers/specs/2026-04-28-storage-hci-design.md ("Out of scope").
     let container_rootfs_path = format!("/srv/images/containers/{}.ext4", vm_id);
 
     eprintln!(
@@ -88,6 +90,7 @@ pub async fn create_container_vm(
         rootfs_size_mb: None,
         network_id: None,
         port_forwards: vec![],
+        backend_id: None,
     };
 
     // Create and start VM

@@ -1,3 +1,7 @@
+// Pre-existing patterns flagged by Rust 1.95's stricter clippy.
+// Out of scope for the storage foundation PR.
+#![allow(clippy::collapsible_match, clippy::unnecessary_sort_by)]
+
 pub mod core;
 mod docs;
 mod features;
@@ -12,6 +16,7 @@ use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi as _;
 
 use crate::features::storage::LocalStorage;
+use anyhow::Context as _;
 use features::hosts::repo::HostRepository;
 use features::images::repo::ImageRepository;
 use features::licensing::license_service::{self, LicenseConfig, SharedLicenseState};
@@ -44,6 +49,7 @@ pub struct AppState {
     pub shell_repo: ShellRepository,
     pub allow_direct_image_paths: bool,
     pub storage: LocalStorage,
+    pub registry: crate::features::storage::registry::Registry,
     pub licensing: LicensingRepository,
     pub download_progress: DownloadProgressTracker,
     pub license_state: SharedLicenseState,
@@ -118,6 +124,21 @@ async fn main() -> anyhow::Result<()> {
             "insecure-default-key-change-me".to_string()
         }));
 
+    // Storage backend registry. TOML config path is optional; absence is treated
+    // as "no extra backends configured beyond the migration-seeded localfile-default".
+    let toml_path = std::env::var("MANAGER_STORAGE_TOML").ok();
+    let toml_str = match toml_path.as_deref() {
+        Some(p) => Some(
+            tokio::fs::read_to_string(p)
+                .await
+                .with_context(|| format!("reading MANAGER_STORAGE_TOML={p}"))?,
+        ),
+        None => None,
+    };
+    let registry = crate::features::storage::registry::Registry::load(&db, toml_str.as_deref())
+        .await
+        .context("loading storage registry")?;
+
     let state = AppState {
         db,
         hosts,
@@ -129,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
         download_progress,
         allow_direct_image_paths,
         storage: LocalStorage::new(),
+        registry,
         license_state,
         license_config,
         sso_providers,
@@ -253,4 +275,14 @@ fn matches_ignore_case(value: &str) -> bool {
         value.to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+impl AppState {
+    /// Returns the `host_id` to record on a LocalFile-backed volume.
+    /// `vm_host_id` is the host the VM is being created on; LocalFile volumes
+    /// are host-pinned so we record exactly that host. For network-attached
+    /// backends `host_id` would be `None` — that evolution is handled in Plan 2.
+    pub fn host_id_for_local_file(&self, vm_host_id: uuid::Uuid) -> Option<uuid::Uuid> {
+        Some(vm_host_id)
+    }
 }

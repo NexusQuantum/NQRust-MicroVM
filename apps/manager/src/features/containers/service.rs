@@ -965,6 +965,8 @@ async fn register_container_volumes(
 
         let volume_type = "container-bind";
 
+        let backend_id = st.registry.default_id().unwrap_or_default();
+
         match volume_repo
             .create(
                 &volume_name,
@@ -972,7 +974,8 @@ async fn register_container_volumes(
                 &volume_mount.host,
                 size_bytes,
                 volume_type,
-                host_id,
+                Some(host_id),
+                backend_id,
             )
             .await
         {

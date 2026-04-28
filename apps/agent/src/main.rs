@@ -8,6 +8,7 @@ use tracing::{info, warn};
 pub struct AppState {
     pub run_dir: String,
     pub bridge: String,
+    pub storage_registry: features::storage::registry::HostBackendRegistry,
 }
 
 #[tokio::main]
@@ -20,9 +21,18 @@ async fn main() -> anyhow::Result<()> {
     let manager_base =
         std::env::var("MANAGER_BASE").unwrap_or_else(|_| "http://127.0.0.1:18080".into());
     let host_name = std::env::var("AGENT_NAME").unwrap_or_else(|_| advertise_addr.clone());
+    let mut storage_registry = features::storage::registry::HostBackendRegistry::empty();
+    storage_registry.register_for(
+        nexus_storage::BackendKind::LocalFile,
+        std::sync::Arc::new(features::storage::local_file::LocalFileHostBackend),
+    );
+    let iscsi_host = std::sync::Arc::new(features::storage::iscsi::IscsiHostBackend);
+    storage_registry.register_for(nexus_storage::BackendKind::Iscsi, iscsi_host.clone());
+    storage_registry.register_for(nexus_storage::BackendKind::TrueNasIscsi, iscsi_host);
     let state = AppState {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),
+        storage_registry,
     };
 
     let heartbeat_state = state.clone();
@@ -61,12 +71,19 @@ async fn register_and_heartbeat(
 
     loop {
         let capabilities = gather_capabilities(&state);
+        let supported_backend_kinds: Vec<String> = state
+            .storage_registry
+            .supported_kinds()
+            .iter()
+            .map(|k| k.as_db_str().to_string())
+            .collect();
         match client
             .post(format!("{manager_base}/v1/hosts/register"))
             .json(&RegisterHostRequest {
                 name: name.clone(),
                 addr: addr.clone(),
                 capabilities,
+                supported_backend_kinds: Some(supported_backend_kinds),
             })
             .send()
             .await
@@ -104,10 +121,17 @@ async fn heartbeat_loop(
 
     loop {
         let capabilities = gather_capabilities(state);
+        let supported_backend_kinds: Vec<String> = state
+            .storage_registry
+            .supported_kinds()
+            .iter()
+            .map(|k| k.as_db_str().to_string())
+            .collect();
         match client
             .post(format!("{manager_base}/v1/hosts/{host_id}/heartbeat"))
             .json(&HostHeartbeatRequest {
                 capabilities: Some(capabilities),
+                supported_backend_kinds: Some(supported_backend_kinds),
             })
             .send()
             .await

@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react"
 import { useCreateVM, useNetworks } from "@/lib/queries"
 import type { CreateVmReq, CreatePortForwardReq } from "@/lib/types"
+import { BackendSelector } from "@/components/storage/backend-selector"
 
 const steps = ["Basic Info", "Credentials", "Machine Config", "Boot Source", "Network", "Review"]
 
@@ -67,6 +68,9 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
 
   // Load user preferences for VM defaults
   const { data: preferences } = usePreferences()
+
+  // Storage backend selection
+  const [backendId, setBackendId] = useState<string | undefined>(undefined)
 
   // Port forwarding rules
   const [portForwards, setPortForwards] = useState<CreatePortForwardReq[]>([])
@@ -339,6 +343,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
         network_id: data.networkId || undefined,
         port_forwards: portForwards.length > 0 ? portForwards : undefined,
+        ...(backendId ? { backend_id: backendId } : {}),
       }
 
       console.log('Submitting VM creation request:', vmReq)
@@ -595,6 +600,11 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                 <Label htmlFor="boot-args">Boot Arguments (Optional)</Label>
                 <Input id="boot-args" {...register("bootArgs")} />
               </div>
+              <BackendSelector
+                id="vm-backend"
+                value={backendId}
+                onChange={setBackendId}
+              />
             </>
           )}
 

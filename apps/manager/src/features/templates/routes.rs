@@ -169,6 +169,12 @@ mod tests {
     use serde_json::json;
     use std::convert::TryFrom;
 
+    async fn test_registry(pool: &sqlx::PgPool) -> crate::features::storage::registry::Registry {
+        crate::features::storage::registry::Registry::load(pool, None)
+            .await
+            .expect("registry")
+    }
+
     #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn instantiate_creates_vm_with_template(pool: sqlx::PgPool) {
@@ -188,6 +194,7 @@ mod tests {
         storage.init().await.unwrap();
         let download_progress =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let registry = test_registry(&pool).await;
         let state = crate::AppState {
             db: pool.clone(),
             hosts: hosts.clone(),
@@ -198,6 +205,7 @@ mod tests {
             licensing: crate::features::licensing::repo::LicensingRepository::new(pool.clone()),
             allow_direct_image_paths: true,
             storage,
+            registry,
             download_progress,
             license_state: std::sync::Arc::new(tokio::sync::RwLock::new(
                 nexus_types::LicenseState::default(),
