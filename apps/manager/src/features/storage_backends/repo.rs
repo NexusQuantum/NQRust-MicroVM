@@ -13,6 +13,7 @@ pub struct StorageBackendRow {
     pub id: Uuid,
     pub name: String,
     pub kind: String,
+    #[allow(dead_code)]
     pub config_json: JsonValue,
     pub capabilities_json: JsonValue,
     pub is_default: bool,
@@ -42,6 +43,7 @@ impl StorageBackendRepository {
         .await
     }
 
+    #[allow(dead_code)]
     pub async fn get_default(&self) -> sqlx::Result<Option<StorageBackendRow>> {
         sqlx::query_as::<_, StorageBackendRow>(
             r#"SELECT * FROM storage_backend WHERE is_default = true AND deleted_at IS NULL LIMIT 1"#,
@@ -51,6 +53,7 @@ impl StorageBackendRepository {
     }
 
     /// Upsert by name. Used by the registry on startup to reconcile TOML with DB.
+    #[allow(dead_code)]
     pub async fn upsert(
         &self,
         name: &str,
@@ -81,6 +84,7 @@ impl StorageBackendRepository {
         .await
     }
 
+    #[allow(dead_code)]
     pub async fn soft_delete_by_name(&self, name: &str) -> sqlx::Result<()> {
         sqlx::query(
             r#"UPDATE storage_backend SET deleted_at = now() WHERE name = $1 AND deleted_at IS NULL"#,
