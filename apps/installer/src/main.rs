@@ -2,6 +2,10 @@
 //!
 //! A TUI installer for NQR-MicroVM - Rust Firecracker MicroVM Platform by Nexus.
 
+// Pre-existing patterns flagged by Rust 1.95's stricter clippy.
+// Not in the scope of the storage foundation PR.
+#![allow(clippy::collapsible_match)]
+
 mod app;
 mod installer;
 mod theme;

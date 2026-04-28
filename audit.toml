@@ -1,0 +1,12 @@
+# cargo-audit configuration
+# https://docs.rs/cargo-audit/latest/cargo_audit/config/index.html
+
+[advisories]
+ignore = [
+  # rand 0.9.2 — unsoundness only when using a custom logger with rand::rng().
+  # Pulled in transitively via quinn-proto (reqwest's HTTP/3 stack) and mockito
+  # (test-only). NQRust-MicroVM does not install a custom logger that interacts
+  # with rand, so the unsound code path is unreachable. Re-evaluate when rand
+  # ships a patched 0.9.x or when reqwest/quinn upgrade.
+  "RUSTSEC-2026-0097",
+]
