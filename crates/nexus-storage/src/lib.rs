@@ -73,4 +73,10 @@ mod tests {
         fn _assert<T: ControlPlaneBackend + ?Sized>() {}
         _assert::<dyn ControlPlaneBackend>();
     }
+
+    #[test]
+    fn host_backend_is_object_safe() {
+        fn _assert<T: HostBackend + ?Sized>() {}
+        _assert::<dyn HostBackend>();
+    }
 }
