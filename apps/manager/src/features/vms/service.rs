@@ -609,17 +609,86 @@ pub async fn create_from_snapshot(
     Ok(())
 }
 
+/// Resolve the rootfs block-device path to hand to Firecracker.
+///
+/// For LocalFile volumes the stored `vm.rootfs_path` is already a real
+/// filesystem path. For non-LocalFile volumes (e.g. iSCSI) the stored value
+/// is the backend locator string (IQN+LUN), which Firecracker cannot use
+/// directly. In that case we call `agent_attach` to log in to the LUN and
+/// obtain the kernel block-device path (e.g. `/dev/sdb`).
+///
+/// Falls back to `vm.rootfs_path` for legacy VMs that have no
+/// `volume_attachment` row, or whose backend_id is not in the registry.
+async fn resolve_rootfs_attached_path(st: &AppState, vm: &super::repo::VmRow) -> Result<String> {
+    use nexus_storage::BackendKind;
+
+    // Look up the rootfs volume row. The rootfs drive_id is "rootfs".
+    let row: Option<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx::query_as(
+        r#"SELECT v.id, v.path, v.backend_id
+           FROM volume v
+           JOIN volume_attachment va ON va.volume_id = v.id
+           WHERE va.vm_id = $1 AND va.drive_id = 'rootfs'
+           ORDER BY va.attached_at DESC
+           LIMIT 1"#,
+    )
+    .bind(vm.id)
+    .fetch_optional(&st.db)
+    .await
+    .context("looking up rootfs volume_attachment")?;
+
+    let Some((volume_id, locator, backend_id)) = row else {
+        // No volume_attachment row (legacy VM created before Plan 1) — fall
+        // back to the stored rootfs_path.
+        return Ok(vm.rootfs_path.clone());
+    };
+
+    let backend = match backend_id.and_then(|bid| st.registry.get(bid).cloned()) {
+        Some(b) => b,
+        None => return Ok(vm.rootfs_path.clone()),
+    };
+
+    if backend.kind() == BackendKind::LocalFile {
+        // LocalFile path is already a real filesystem path; no attach
+        // round-trip needed.
+        return Ok(vm.rootfs_path.clone());
+    }
+
+    // Non-LocalFile: ask the agent to attach the volume and return the actual
+    // device path. Build a minimal VolumeHandle from the volume row.
+    // safety: backend_id is Some — we returned earlier if it was None.
+    let bid = backend_id.unwrap();
+    let volume_handle = nexus_storage::VolumeHandle {
+        volume_id,
+        backend_id: nexus_storage::BackendInstanceId(bid),
+        backend_kind: backend.kind(),
+        locator,
+        size_bytes: 0, // not needed for attach
+    };
+    let attached = crate::features::storage::agent_rpc::agent_attach(&vm.host_addr, &volume_handle)
+        .await
+        .context("agent_attach during VM start")?;
+    Ok(attached.path().to_string_lossy().into_owned())
+}
+
 pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     let host = st.hosts.get(vm.host_id).await?;
     let paths = VmPaths::from_row(vm);
     ensure_allowed_path(st, &vm.kernel_path)?;
     ensure_allowed_path(st, &vm.rootfs_path)?;
+
+    // Resolve volume attachments through the registry. For non-LocalFile backends,
+    // we need to call host.attach to log into the LUN and get the actual block
+    // device path. For LocalFile, vm.rootfs_path is already correct.
+    let resolved_rootfs_path = resolve_rootfs_attached_path(st, vm)
+        .await
+        .context("resolving rootfs attached path")?;
+
     let spec = ResolvedVmSpec {
         name: vm.name.clone(),
         vcpu: vm.vcpu.try_into().context("stored vcpu exceeds u8")?,
         mem_mib: vm.mem_mib.try_into().context("stored mem_mib negative")?,
         kernel_path: vm.kernel_path.clone(),
-        rootfs_path: vm.rootfs_path.clone(),
+        rootfs_path: resolved_rootfs_path,
         rootfs_size_bytes: None,
     };
 
@@ -719,6 +788,69 @@ pub async fn stop_only(
         .await?;
 
     response.error_for_status()?;
+
+    // Detach non-LocalFile volumes (e.g. log out iSCSI sessions). LocalFile is
+    // a no-op at the agent level but we skip it to avoid an unnecessary RPC.
+    // We collect volume_id, locator, drive_id, and backend_id in one query so
+    // we can build a VolumeHandle for the detach call.
+    //
+    // NOTE: agent_detach accepts an AttachedPath. The agent's iSCSI backend
+    // uses the volume.locator (IQN+LUN) — not the AttachedPath — to identify
+    // the session for logout, so passing a placeholder PathBuf is safe for the
+    // current implementation. A future clean-up should make detach work from
+    // VolumeHandle alone and remove the AttachedPath parameter.
+    {
+        use nexus_storage::BackendKind;
+        let active_attachments: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>)> =
+            sqlx::query_as(
+                r#"SELECT v.id, v.path, va.drive_id, v.backend_id
+                   FROM volume v
+                   JOIN volume_attachment va ON va.volume_id = v.id
+                   WHERE va.vm_id = $1 AND va.detached_at IS NULL"#,
+            )
+            .bind(id)
+            .fetch_all(&st.db)
+            .await
+            .unwrap_or_default();
+
+        for (vol_id, locator, _drive_id, backend_id) in &active_attachments {
+            let Some(bid) = backend_id else {
+                continue;
+            };
+            let Some(backend) = st.registry.get(*bid).cloned() else {
+                continue;
+            };
+            let kind = backend.kind();
+            if kind == BackendKind::LocalFile {
+                continue;
+            }
+            let volume_handle = nexus_storage::VolumeHandle {
+                volume_id: *vol_id,
+                backend_id: nexus_storage::BackendInstanceId(*bid),
+                backend_kind: kind,
+                locator: locator.clone(),
+                size_bytes: 0,
+            };
+            // Placeholder AttachedPath: the agent identifies the session via
+            // the volume locator, not this path. Safe for iSCSI logout.
+            let placeholder_attached =
+                nexus_storage::AttachedPath::BlockDevice(std::path::PathBuf::new());
+            if let Err(e) = crate::features::storage::agent_rpc::agent_detach(
+                &vm.host_addr,
+                &volume_handle,
+                &placeholder_attached,
+            )
+            .await
+            {
+                tracing::warn!(
+                    vm_id = %id,
+                    volume_id = %vol_id,
+                    error = %e,
+                    "agent_detach failed; continuing with mark_detached"
+                );
+            }
+        }
+    }
 
     let vol_repo = crate::features::volumes::repo::VolumeRepository::new(st.db.clone());
     let active = sqlx::query_scalar::<_, String>(
