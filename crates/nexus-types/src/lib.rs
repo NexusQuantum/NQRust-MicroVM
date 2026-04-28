@@ -89,6 +89,10 @@ pub struct CreateVmReq {
     pub network_id: Option<uuid::Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub port_forwards: Vec<CreatePortForwardReq>,
+    /// Storage backend to use for rootfs/data-disk allocation. If None, the
+    /// registry's default backend is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -124,6 +128,7 @@ impl TemplateSpec {
             rootfs_size_mb: self.rootfs_size_mb,
             network_id: None,
             port_forwards: vec![],
+            backend_id: None,
         }
     }
 }

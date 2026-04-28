@@ -1064,6 +1064,7 @@ async fn resolve_vm_spec(st: &AppState, req: CreateVmReq, vm_id: Uuid) -> Result
         req.rootfs_path,
         vm_id,
         req.rootfs_size_mb,
+        req.backend_id,
     )
     .await?;
 
@@ -1110,6 +1111,7 @@ async fn provision_rootfs(
     direct_path: Option<String>,
     vm_id: Uuid,
     rootfs_size_mb: Option<u32>,
+    req_backend_id: Option<Uuid>,
 ) -> Result<(String, Option<u64>)> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
@@ -1143,13 +1145,49 @@ async fn provision_rootfs(
         return Ok((source_path, None));
     }
 
-    // For regular VMs: ALWAYS copy the rootfs to VM-specific storage
-    // This prevents VMs from sharing the same rootfs file and corrupting each other
-    let (vm_root, size_bytes) = st
-        .storage
-        .alloc_rootfs(vm_id, Path::new(&source_path), rootfs_size_mb)
-        .await
-        .context("failed to provision rootfs")?;
+    // For regular VMs: allocate rootfs through the storage Registry.
+    // This replaces the legacy LocalStorage::alloc_rootfs call.
+    let backend_id = req_backend_id
+        .or_else(|| st.registry.default_id())
+        .ok_or_else(|| anyhow::anyhow!("no storage backend selected and no default configured"))?;
+
+    let target_bytes: u64 = match rootfs_size_mb {
+        Some(mb) => (mb as u64) * 1024 * 1024,
+        None => tokio::fs::metadata(&source_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0),
+    };
+
+    let alloc = crate::features::storage::rootfs_allocator::allocate_rootfs(
+        &st.registry,
+        backend_id,
+        std::path::Path::new(&source_path),
+        target_bytes,
+        &format!("rootfs-{vm_id}"),
+    )
+    .await
+    .context("failed to provision rootfs via storage registry")?;
+
+    let host_id_for_volume = st.host_id_for_local_file().await;
+
+    sqlx::query(
+        r#"INSERT INTO volume (id, name, path, size_bytes, type, status, host_id, backend_id)
+           VALUES ($1, $2, $3, $4, 'raw', 'available', $5, $6)
+           ON CONFLICT (path) DO NOTHING"#,
+    )
+    .bind(alloc.volume_handle.volume_id)
+    .bind(format!("rootfs-{vm_id}"))
+    .bind(&alloc.volume_handle.locator)
+    .bind(alloc.volume_handle.size_bytes as i64)
+    .bind(host_id_for_volume)
+    .bind(backend_id)
+    .execute(&st.db)
+    .await
+    .context("failed to record rootfs volume")?;
+
+    let vm_root = alloc.volume_handle.locator.clone();
+    let size_bytes = alloc.volume_handle.size_bytes;
 
     Ok((vm_root, Some(size_bytes)))
 }
@@ -1193,10 +1231,38 @@ pub async fn create_drive(
         ensure_allowed_path(st, path)?;
         (path.clone(), None)
     } else {
-        // Auto-provision: create sparse disk file
+        // Auto-provision: create blank data disk through the storage Registry.
         let size = req.size_bytes.unwrap_or(10_737_418_240); // Default 10GB
-        let path = st.storage.alloc_data_disk(vm_id, size).await?;
-        (path, Some(size as i64))
+        let backend_id = st
+            .registry
+            .default_id()
+            .ok_or_else(|| anyhow::anyhow!("no default storage backend configured"))?;
+        let dh = crate::features::storage::rootfs_allocator::allocate_data_disk(
+            &st.registry,
+            backend_id,
+            size,
+            &format!("data-{vm_id}-{}", req.drive_id),
+        )
+        .await
+        .context("failed to provision data disk via storage registry")?;
+
+        let host_id_for_volume = st.host_id_for_local_file().await;
+        sqlx::query(
+            r#"INSERT INTO volume (id, name, path, size_bytes, type, status, host_id, backend_id)
+               VALUES ($1, $2, $3, $4, 'raw', 'available', $5, $6)
+               ON CONFLICT (path) DO NOTHING"#,
+        )
+        .bind(dh.volume_id)
+        .bind(format!("data-{vm_id}-{}", req.drive_id))
+        .bind(&dh.locator)
+        .bind(dh.size_bytes as i64)
+        .bind(host_id_for_volume)
+        .bind(backend_id)
+        .execute(&st.db)
+        .await
+        .context("failed to record data disk volume")?;
+
+        (dh.locator, Some(size as i64))
     };
 
     // Check for duplicate drive_id
@@ -2464,6 +2530,7 @@ mod tests {
                 rootfs_size_mb: None,
                 network_id: None,
                 port_forwards: vec![],
+                backend_id: None,
             },
             None,
             None,
@@ -2539,6 +2606,7 @@ mod tests {
                 rootfs_size_mb: None,
                 network_id: None,
                 port_forwards: vec![],
+                backend_id: None,
             },
             None,
             None,

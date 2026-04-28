@@ -88,6 +88,7 @@ pub async fn create_container_vm(
         rootfs_size_mb: None,
         network_id: None,
         port_forwards: vec![],
+        backend_id: None,
     };
 
     // Create and start VM
