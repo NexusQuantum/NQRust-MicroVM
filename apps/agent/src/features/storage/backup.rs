@@ -70,14 +70,9 @@ pub async fn run_backup(
         bytes_written += ciphertext.len() as u64;
         if !exists {
             let cipher_len = ciphertext.len() as u64;
-            s3::put_object(
-                &s3,
-                &params.target.bucket,
-                &object_key,
-                ciphertext.clone(),
-            )
-            .await
-            .context("PUT chunk")?;
+            s3::put_object(&s3, &params.target.bucket, &object_key, ciphertext.clone())
+                .await
+                .context("PUT chunk")?;
             bytes_unique += cipher_len;
         }
 
@@ -140,8 +135,7 @@ pub async fn run_restore(params: RestoreParams) -> Result<RestoreOutcome> {
         .await
         .context("GET manifest")?;
     let compressed = decrypt_manifest(&key, &blob).context("decrypt manifest")?;
-    let manifest =
-        Manifest::deserialize_compressed(&compressed).context("deserialize manifest")?;
+    let manifest = Manifest::deserialize_compressed(&compressed).context("deserialize manifest")?;
 
     let mut dst = tokio::fs::OpenOptions::new()
         .write(true)
@@ -156,8 +150,8 @@ pub async fn run_restore(params: RestoreParams) -> Result<RestoreOutcome> {
         let ciphertext = s3::get_object(&s3, &params.target.bucket, &object_key)
             .await
             .with_context(|| format!("GET chunk {}", hex::encode(chunk_ref.chunk_id)))?;
-        let plaintext = decrypt_chunk(&key, &ciphertext, &chunk_ref.plaintext_hash)
-            .context("decrypt chunk")?;
+        let plaintext =
+            decrypt_chunk(&key, &ciphertext, &chunk_ref.plaintext_hash).context("decrypt chunk")?;
         dst.seek(std::io::SeekFrom::Start(chunk_ref.plaintext_offset))
             .await?;
         dst.write_all(&plaintext).await?;
