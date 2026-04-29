@@ -29,6 +29,36 @@ async fn main() -> anyhow::Result<()> {
     let iscsi_host = std::sync::Arc::new(features::storage::iscsi::IscsiHostBackend);
     storage_registry.register_for(nexus_storage::BackendKind::Iscsi, iscsi_host.clone());
     storage_registry.register_for(nexus_storage::BackendKind::TrueNasIscsi, iscsi_host);
+    if let Ok(rpc_socket) = std::env::var("AGENT_SPDK_RPC_SOCKET") {
+        let vhost_socket_dir =
+            std::env::var("AGENT_SPDK_VHOST_SOCKET_DIR").unwrap_or_else(|_| "/var/tmp".into());
+        let nbd_devices = std::env::var("AGENT_SPDK_NBD_DEVICES")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|devices| !devices.is_empty())
+            .unwrap_or_else(|| {
+                vec![std::path::PathBuf::from(
+                    std::env::var("AGENT_SPDK_IMPORT_NBD_DEVICE")
+                        .unwrap_or_else(|_| "/dev/nbd0".into()),
+                )]
+            });
+        storage_registry.register_for(
+            nexus_storage::BackendKind::SpdkLvol,
+            std::sync::Arc::new(
+                features::storage::spdk_lvol::SpdkLvolHostBackend::with_nbd_devices(
+                    rpc_socket,
+                    vhost_socket_dir,
+                    nbd_devices,
+                ),
+            ),
+        );
+    }
     let state = AppState {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),

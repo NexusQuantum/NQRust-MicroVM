@@ -123,30 +123,26 @@ pub async fn populate(
 
 #[derive(Deserialize)]
 pub struct Resize2fsReq {
+    pub backend_kind: BackendKind,
     pub attached: AttachedPath,
 }
 
-pub async fn resize2fs(Json(req): Json<Resize2fsReq>) -> impl IntoResponse {
-    let path = req.attached.path();
-    let _ = tokio::process::Command::new("e2fsck")
-        .args(["-f", "-y"])
-        .arg(path)
-        .output()
-        .await
-        .ok();
-    let resize = tokio::process::Command::new("resize2fs")
-        .arg(path)
-        .output()
-        .await;
-    match resize {
-        Ok(o) if o.status.success() => {
-            (StatusCode::OK, Json(serde_json::json!({}))).into_response()
+pub async fn resize2fs(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<Resize2fsReq>,
+) -> impl IntoResponse {
+    let backend = match s.registry.get(req.backend_kind) {
+        Some(b) => b,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "unsupported backend kind"})),
+            )
+                .into_response()
         }
-        Ok(o) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"stderr": String::from_utf8_lossy(&o.stderr).to_string()})),
-        )
-            .into_response(),
+    };
+    match backend.resize2fs(&req.attached).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

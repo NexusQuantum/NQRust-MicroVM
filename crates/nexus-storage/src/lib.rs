@@ -8,12 +8,14 @@ pub mod control_plane;
 pub mod error;
 pub mod handle;
 pub mod host;
+pub mod spdk;
 pub mod types;
 
 pub use control_plane::ControlPlaneBackend;
 pub use error::StorageError;
 pub use handle::{AttachedPath, VolumeHandle, VolumeSnapshotHandle};
 pub use host::HostBackend;
+pub use spdk::{spdk_vhost_controller_name, SpdkJsonRpcClient, SpdkLvolLocator};
 pub use types::{BackendInstanceId, BackendKind, Capabilities, CreateOpts};
 
 #[cfg(test)]
@@ -26,6 +28,7 @@ mod tests {
             BackendKind::LocalFile,
             BackendKind::Iscsi,
             BackendKind::TrueNasIscsi,
+            BackendKind::SpdkLvol,
         ];
         for k in kinds {
             let json = serde_json::to_string(&k).unwrap();

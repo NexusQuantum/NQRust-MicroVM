@@ -34,6 +34,10 @@ pub trait HostBackend: Send + Sync {
         target_size_bytes: u64,
     ) -> Result<(), StorageError>;
 
+    /// Filesystem-aware ext4 growth hook used only by rootfs allocation after
+    /// the caller has already identified the source image as ext4.
+    async fn resize2fs(&self, attached: &AttachedPath) -> Result<(), StorageError>;
+
     /// Open a snapshot for reading. Returns a stream of bytes representing
     /// the volume contents at snapshot time. Used by the backup pipeline.
     ///

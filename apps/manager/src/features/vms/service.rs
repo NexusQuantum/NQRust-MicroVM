@@ -435,6 +435,7 @@ pub async fn create_from_snapshot(
             .context("stored mem_mib negative")?,
         kernel_path: source_vm.kernel_path.clone(),
         rootfs_path: source_vm.rootfs_path.clone(),
+        rootfs_is_vhost_user: false,
         rootfs_size_bytes: None,
     };
 
@@ -619,7 +620,10 @@ pub async fn create_from_snapshot(
 ///
 /// Falls back to `vm.rootfs_path` for legacy VMs that have no
 /// `volume_attachment` row, or whose backend_id is not in the registry.
-async fn resolve_rootfs_attached_path(st: &AppState, vm: &super::repo::VmRow) -> Result<String> {
+async fn resolve_rootfs_attached_path(
+    st: &AppState,
+    vm: &super::repo::VmRow,
+) -> Result<(String, bool)> {
     use nexus_storage::BackendKind;
 
     // Look up the rootfs volume row. The rootfs drive_id is "rootfs".
@@ -639,18 +643,18 @@ async fn resolve_rootfs_attached_path(st: &AppState, vm: &super::repo::VmRow) ->
     let Some((volume_id, locator, backend_id)) = row else {
         // No volume_attachment row (legacy VM created before Plan 1) — fall
         // back to the stored rootfs_path.
-        return Ok(vm.rootfs_path.clone());
+        return Ok((vm.rootfs_path.clone(), false));
     };
 
     let backend = match backend_id.and_then(|bid| st.registry.get(bid).cloned()) {
         Some(b) => b,
-        None => return Ok(vm.rootfs_path.clone()),
+        None => return Ok((vm.rootfs_path.clone(), false)),
     };
 
     if backend.kind() == BackendKind::LocalFile {
         // LocalFile path is already a real filesystem path; no attach
         // round-trip needed.
-        return Ok(vm.rootfs_path.clone());
+        return Ok((vm.rootfs_path.clone(), false));
     }
 
     // Non-LocalFile: ask the agent to attach the volume and return the actual
@@ -667,21 +671,27 @@ async fn resolve_rootfs_attached_path(st: &AppState, vm: &super::repo::VmRow) ->
     let attached = crate::features::storage::agent_rpc::agent_attach(&vm.host_addr, &volume_handle)
         .await
         .context("agent_attach during VM start")?;
-    Ok(attached.path().to_string_lossy().into_owned())
+    let is_vhost_user = matches!(attached, nexus_storage::AttachedPath::VhostUserSock(_));
+    Ok((
+        attached.path().to_string_lossy().into_owned(),
+        is_vhost_user,
+    ))
 }
 
 pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     let host = st.hosts.get(vm.host_id).await?;
     let paths = VmPaths::from_row(vm);
     ensure_allowed_path(st, &vm.kernel_path)?;
-    ensure_allowed_path(st, &vm.rootfs_path)?;
 
     // Resolve volume attachments through the registry. For non-LocalFile backends,
     // we need to call host.attach to log into the LUN and get the actual block
     // device path. For LocalFile, vm.rootfs_path is already correct.
-    let resolved_rootfs_path = resolve_rootfs_attached_path(st, vm)
+    let (resolved_rootfs_path, rootfs_is_vhost_user) = resolve_rootfs_attached_path(st, vm)
         .await
         .context("resolving rootfs attached path")?;
+    if !rootfs_is_vhost_user {
+        ensure_allowed_path(st, &resolved_rootfs_path)?;
+    }
 
     let spec = ResolvedVmSpec {
         name: vm.name.clone(),
@@ -689,6 +699,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
         mem_mib: vm.mem_mib.try_into().context("stored mem_mib negative")?,
         kernel_path: vm.kernel_path.clone(),
         rootfs_path: resolved_rootfs_path,
+        rootfs_is_vhost_user,
         rootfs_size_bytes: None,
     };
 
@@ -1236,6 +1247,8 @@ struct ResolvedVmSpec {
     mem_mib: u32,
     kernel_path: String,
     rootfs_path: String,
+    #[cfg_attr(test, allow(dead_code))]
+    rootfs_is_vhost_user: bool,
     #[allow(dead_code)]
     rootfs_size_bytes: Option<u64>,
 }
@@ -1267,6 +1280,7 @@ async fn resolve_vm_spec(
         mem_mib: req.mem_mib,
         kernel_path,
         rootfs_path,
+        rootfs_is_vhost_user: false,
         rootfs_size_bytes,
     })
 }
@@ -3385,6 +3399,30 @@ async fn spawn_firecracker(_: &AppState, _: &str, _: Uuid, _: &VmPaths) -> Resul
     Ok(())
 }
 
+#[cfg_attr(test, allow(dead_code))]
+fn firecracker_drive_config(
+    drive_id: &str,
+    path_or_socket: &str,
+    is_root_device: bool,
+    is_read_only: bool,
+    is_vhost_user: bool,
+) -> Value {
+    if is_vhost_user {
+        json!({
+            "drive_id": drive_id,
+            "socket": path_or_socket,
+            "is_root_device": is_root_device
+        })
+    } else {
+        json!({
+            "drive_id": drive_id,
+            "path_on_host": path_or_socket,
+            "is_root_device": is_root_device,
+            "is_read_only": is_read_only
+        })
+    }
+}
+
 #[cfg(not(test))]
 async fn configure_vm(
     st: &AppState,
@@ -3430,12 +3468,13 @@ async fn configure_vm(
 
         info!(vm_id=%id, step="drives", rootfs_path=%spec.rootfs_path, "attaching rootfs drive");
         http.put(format!("{base}/drives/rootfs{qs}"))
-            .json(&json!({
-                "drive_id": "rootfs",
-                "path_on_host": spec.rootfs_path,
-                "is_root_device": true,
-                "is_read_only": false
-            }))
+            .json(&firecracker_drive_config(
+                "rootfs",
+                &spec.rootfs_path,
+                true,
+                false,
+                spec.rootfs_is_vhost_user,
+            ))
             .send()
             .await
             .context("drives request failed to send")?

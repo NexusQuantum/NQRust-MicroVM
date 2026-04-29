@@ -166,6 +166,10 @@ impl HostBackend for IscsiHostBackend {
         Ok(())
     }
 
+    async fn resize2fs(&self, attached: &AttachedPath) -> Result<(), StorageError> {
+        run_resize2fs(attached.path()).await
+    }
+
     async fn read_snapshot(
         &self,
         snap: &VolumeSnapshotHandle,
@@ -200,6 +204,27 @@ impl HostBackend for IscsiHostBackend {
             )
             .into(),
         ))
+    }
+}
+
+async fn run_resize2fs(path: &Path) -> Result<(), StorageError> {
+    let _ = tokio::process::Command::new("e2fsck")
+        .args(["-f", "-y"])
+        .arg(path)
+        .output()
+        .await?;
+    let out = tokio::process::Command::new("resize2fs")
+        .arg(path)
+        .output()
+        .await?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(StorageError::InvalidLocator(format!(
+            "resize2fs {} failed: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr)
+        )))
     }
 }
 

@@ -117,6 +117,7 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
         "local_file" => BackendKind::LocalFile,
         "iscsi" => BackendKind::Iscsi,
         "truenas_iscsi" => BackendKind::TrueNasIscsi,
+        "spdk_lvol" => BackendKind::SpdkLvol,
         other => {
             return Err(anyhow!("unknown backend kind '{other}'"));
         }
@@ -153,6 +154,17 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
                     api_key,
                     http: reqwest::Client::new(),
                 },
+            ))
+        }
+        BackendKind::SpdkLvol => {
+            let cfg: crate::features::storage::backends::spdk_lvol::SpdkLvolConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' spdk_lvol config", row.name))?;
+            Ok(Arc::new(
+                crate::features::storage::backends::spdk_lvol::SpdkLvolControlPlaneBackend::new(
+                    BackendInstanceId(row.id),
+                    cfg,
+                ),
             ))
         }
     }

@@ -23,3 +23,12 @@ pub enum StorageError {
     #[error("backend error: {0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
+
+impl StorageError {
+    pub fn backend<E>(err: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::Backend(Box::new(err))
+    }
+}

@@ -77,6 +77,18 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 supports_clone_from_image: false,
             }
         }
+        BackendKind::SpdkLvol => {
+            require_str(&raw.config, "rpc_socket")
+                .map_err(|e| anyhow!("backend '{}' (kind=spdk_lvol): {e}", raw.name))?;
+            require_str(&raw.config, "lvs_name")
+                .map_err(|e| anyhow!("backend '{}' (kind=spdk_lvol): {e}", raw.name))?;
+            Capabilities {
+                supports_native_snapshots: true,
+                supports_concurrent_attach: false,
+                supports_live_migration: false,
+                supports_clone_from_image: false,
+            }
+        }
     };
 
     Ok(ValidatedBackend {
@@ -140,6 +152,18 @@ mod tests {
         };
         let err = validate(raw).unwrap_err();
         assert!(err.to_string().contains("target_iqn"), "got: {err}");
+    }
+
+    #[test]
+    fn spdk_lvol_requires_rpc_socket_and_lvs_name() {
+        let raw = RawBackendEntry {
+            name: "spdk".into(),
+            kind: BackendKind::SpdkLvol,
+            is_default: false,
+            config: serde_json::json!({"rpc_socket": "/run/spdk/rpc.sock"}),
+        };
+        let err = validate(raw).unwrap_err();
+        assert!(err.to_string().contains("lvs_name"), "got: {err}");
     }
 
     /// T27: Malformed TrueNAS iSCSI entry parsed from TOML must fail validation
