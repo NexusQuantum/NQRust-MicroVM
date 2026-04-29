@@ -7,10 +7,8 @@ use anyhow::{anyhow, Context, Result};
 const NONCE_LEN: usize = 12;
 
 fn cipher() -> Result<Aes256Gcm> {
-    let raw = std::env::var("MANAGER_ENVELOPE_KEY")
-        .context("MANAGER_ENVELOPE_KEY not set")?;
-    let bytes = hex::decode(raw)
-        .context("MANAGER_ENVELOPE_KEY must be hex-encoded")?;
+    let raw = std::env::var("MANAGER_ENVELOPE_KEY").context("MANAGER_ENVELOPE_KEY not set")?;
+    let bytes = hex::decode(raw).context("MANAGER_ENVELOPE_KEY must be hex-encoded")?;
     if bytes.len() != 32 {
         return Err(anyhow!(
             "MANAGER_ENVELOPE_KEY must be 32 bytes (64 hex chars), got {}",
@@ -27,35 +25,45 @@ pub fn wrap(plaintext: &[u8]) -> Result<Vec<u8>> {
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let ct = c.encrypt(nonce, plaintext).map_err(|e| anyhow!("aes-gcm encrypt: {e}"))?;
+    let ct = c
+        .encrypt(nonce, plaintext)
+        .map_err(|e| anyhow!("aes-gcm encrypt: {e}"))?;
     let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ct);
     Ok(out)
 }
 
+#[allow(dead_code)]
 pub fn unwrap_to_string(blob: &[u8]) -> Result<String> {
     let bytes = unwrap(blob)?;
     String::from_utf8(bytes).context("decrypted secret is not utf-8")
 }
 
+#[allow(dead_code)]
 pub fn unwrap_to_array<const N: usize>(blob: &[u8]) -> Result<[u8; N]> {
     let bytes = unwrap(blob)?;
     if bytes.len() != N {
-        return Err(anyhow!("decrypted blob is {} bytes, expected {}", bytes.len(), N));
+        return Err(anyhow!(
+            "decrypted blob is {} bytes, expected {}",
+            bytes.len(),
+            N
+        ));
     }
     let mut out = [0u8; N];
     out.copy_from_slice(&bytes);
     Ok(out)
 }
 
+#[allow(dead_code)]
 fn unwrap(blob: &[u8]) -> Result<Vec<u8>> {
     if blob.len() < NONCE_LEN {
         return Err(anyhow!("envelope blob too short"));
     }
     let c = cipher()?;
     let nonce = Nonce::from_slice(&blob[..NONCE_LEN]);
-    c.decrypt(nonce, &blob[NONCE_LEN..]).map_err(|_| anyhow!("envelope decrypt: auth failed"))
+    c.decrypt(nonce, &blob[NONCE_LEN..])
+        .map_err(|_| anyhow!("envelope decrypt: auth failed"))
 }
 
 #[cfg(test)]

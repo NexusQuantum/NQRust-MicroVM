@@ -88,6 +88,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/v1/metrics", metrics::router())
         .nest("/v1/volumes", volumes::router())
         .nest("/v1/storage_backends", storage_backends::router())
+        .nest("/v1/backup_targets", backup_targets::router())
         // SSO public routes (no auth — these ARE the auth flow)
         .nest("/v1/sso", sso::public_router())
         // SSO admin routes (auth + admin required)
