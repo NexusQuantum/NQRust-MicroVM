@@ -44,7 +44,8 @@ cargo test -p nexus-raft-block
 ## Task 3: Real Raft Library Selection
 
 Status: partially complete. `nexus-raft-block` now has serializable `BlockCommand`/`BlockResponse`
-types and a durable file-backed local replica store. Openraft itself is still pending.
+types, a durable file-backed local replica store, and a pinned Openraft 0.9.24 type/config boundary.
+The full Openraft log/state-machine/network adapter is still pending.
 
 Compare `openraft` and `tikv-raft-rs` against the model:
 

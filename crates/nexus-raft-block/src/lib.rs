@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Cursor;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -16,6 +17,33 @@ use thiserror::Error;
 pub type NodeId = u64;
 pub type LogIndex = u64;
 pub type Term = u64;
+pub const OPENRAFT_VERSION: &str = "0.9.24";
+
+openraft::declare_raft_types!(
+    pub BlockRaftTypeConfig:
+        D = BlockCommand,
+        R = BlockResponse,
+        NodeId = NodeId,
+        Node = openraft::BasicNode,
+        Entry = openraft::Entry<BlockRaftTypeConfig>,
+        SnapshotData = Cursor<Vec<u8>>,
+        Responder = openraft::impls::OneshotResponder<BlockRaftTypeConfig>,
+        AsyncRuntime = openraft::TokioRuntime,
+);
+
+pub fn default_openraft_config() -> Result<std::sync::Arc<openraft::Config>, RaftBlockError> {
+    let config = openraft::Config {
+        cluster_name: "nqrust-raft-block".into(),
+        heartbeat_interval: 100,
+        election_timeout_min: 500,
+        election_timeout_max: 1000,
+        ..Default::default()
+    };
+    config
+        .validate()
+        .map(std::sync::Arc::new)
+        .map_err(|e| RaftBlockError::Store(format!("invalid Openraft config: {e}")))
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RaftBlockError {
@@ -822,6 +850,14 @@ mod tests {
         };
         assert_eq!(offset, 0);
         assert_eq!(bytes, vec![4; 512]);
+    }
+
+    #[test]
+    fn openraft_type_config_is_pinned_and_valid() {
+        assert_eq!(OPENRAFT_VERSION, "0.9.24");
+        let config = default_openraft_config().unwrap();
+        assert_eq!(config.cluster_name, "nqrust-raft-block");
+        assert!(config.election_timeout_min < config.election_timeout_max);
     }
 
     #[test]
