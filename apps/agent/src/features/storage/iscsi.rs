@@ -6,7 +6,9 @@
 //! Locator format (JSON): {"iqn":"...","lun":N,"dataset":"...","portal":"..."}
 //! `dataset` is ignored on the host side; it's a control-plane concern.
 
-use nexus_storage::{AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle};
+use nexus_storage::{
+    AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle,
+};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -149,7 +151,11 @@ impl HostBackend for IscsiHostBackend {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         Err(StorageError::Backend(
-            format!("snapshot device {} did not appear after iscsi login", dev.display()).into(),
+            format!(
+                "snapshot device {} did not appear after iscsi login",
+                dev.display()
+            )
+            .into(),
         ))
     }
 }

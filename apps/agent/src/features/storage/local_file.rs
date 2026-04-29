@@ -1,4 +1,6 @@
-use nexus_storage::{AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle};
+use nexus_storage::{
+    AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle,
+};
 use std::path::{Path, PathBuf};
 
 /// Agent-side LocalFile backend. Trivial: the locator IS the file path.
