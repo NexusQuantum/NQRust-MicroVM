@@ -26,8 +26,8 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn serialize_compressed(&self) -> Result<Vec<u8>, BackupError> {
-        let bytes = bincode::serialize(self)
-            .map_err(|e| BackupError::Manifest(format!("bincode: {e}")))?;
+        let bytes =
+            bincode::serialize(self).map_err(|e| BackupError::Manifest(format!("bincode: {e}")))?;
         let compressed = zstd::stream::encode_all(&bytes[..], 3)
             .map_err(|e| BackupError::Manifest(format!("zstd: {e}")))?;
         Ok(compressed)
@@ -39,7 +39,10 @@ impl Manifest {
         let manifest: Manifest = bincode::deserialize(&bytes)
             .map_err(|e| BackupError::Manifest(format!("bincode decode: {e}")))?;
         if manifest.version != MANIFEST_VERSION {
-            return Err(BackupError::ManifestVersion { got: manifest.version, expected: MANIFEST_VERSION });
+            return Err(BackupError::ManifestVersion {
+                got: manifest.version,
+                expected: MANIFEST_VERSION,
+            });
         }
         Ok(manifest)
     }
@@ -50,7 +53,12 @@ pub fn chunk_object_key(prefix: &str, chunk_id: &[u8; 32]) -> String {
     if prefix.is_empty() {
         format!("chunks/{}/{}", &hex[..2], hex)
     } else {
-        format!("{}/chunks/{}/{}", prefix.trim_end_matches('/'), &hex[..2], hex)
+        format!(
+            "{}/chunks/{}/{}",
+            prefix.trim_end_matches('/'),
+            &hex[..2],
+            hex
+        )
     }
 }
 
@@ -58,7 +66,11 @@ pub fn manifest_object_key(prefix: &str, backup_id: &Uuid) -> String {
     if prefix.is_empty() {
         format!("manifests/{}.bin", backup_id)
     } else {
-        format!("{}/manifests/{}.bin", prefix.trim_end_matches('/'), backup_id)
+        format!(
+            "{}/manifests/{}.bin",
+            prefix.trim_end_matches('/'),
+            backup_id
+        )
     }
 }
 
@@ -76,13 +88,17 @@ mod tests {
             created_at_unix_seconds: 1735689600,
             chunks: vec![
                 ChunkRef {
-                    plaintext_offset: 0, plaintext_length: 4096,
-                    plaintext_hash: [1u8; 32], chunk_id: [2u8; 32],
+                    plaintext_offset: 0,
+                    plaintext_length: 4096,
+                    plaintext_hash: [1u8; 32],
+                    chunk_id: [2u8; 32],
                     ciphertext_length: 4128,
                 },
                 ChunkRef {
-                    plaintext_offset: 4096, plaintext_length: 8192,
-                    plaintext_hash: [3u8; 32], chunk_id: [4u8; 32],
+                    plaintext_offset: 4096,
+                    plaintext_length: 8192,
+                    plaintext_hash: [3u8; 32],
+                    chunk_id: [4u8; 32],
                     ciphertext_length: 8224,
                 },
             ],
@@ -103,7 +119,13 @@ mod tests {
         m.version = 999;
         let blob = m.serialize_compressed().unwrap();
         let err = Manifest::deserialize_compressed(&blob).unwrap_err();
-        assert!(matches!(err, BackupError::ManifestVersion { got: 999, expected: 1 }));
+        assert!(matches!(
+            err,
+            BackupError::ManifestVersion {
+                got: 999,
+                expected: 1
+            }
+        ));
     }
 
     #[test]
@@ -120,7 +142,13 @@ mod tests {
     #[test]
     fn manifest_key_format() {
         let id = Uuid::nil();
-        assert_eq!(manifest_object_key("", &id), format!("manifests/{}.bin", id));
-        assert_eq!(manifest_object_key("p/", &id), format!("p/manifests/{}.bin", id));
+        assert_eq!(
+            manifest_object_key("", &id),
+            format!("manifests/{}.bin", id)
+        );
+        assert_eq!(
+            manifest_object_key("p/", &id),
+            format!("p/manifests/{}.bin", id)
+        );
     }
 }

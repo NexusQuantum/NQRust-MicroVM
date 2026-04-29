@@ -10,7 +10,11 @@ pub struct ChunkerParams {
 
 impl Default for ChunkerParams {
     fn default() -> Self {
-        Self { min_size: 4 * 1024, avg_size: 64 * 1024, max_size: 1024 * 1024 }
+        Self {
+            min_size: 4 * 1024,
+            avg_size: 64 * 1024,
+            max_size: 1024 * 1024,
+        }
     }
 }
 
@@ -43,7 +47,10 @@ impl<R: AsyncRead + Unpin> Chunker<R> {
         while self.buf.len() < target && !self.eof {
             let mut tmp = vec![0u8; (target - self.buf.len()).max(64 * 1024)];
             let n = self.reader.read(&mut tmp).await?;
-            if n == 0 { self.eof = true; break; }
+            if n == 0 {
+                self.eof = true;
+                break;
+            }
             tmp.truncate(n);
             self.buf.extend_from_slice(&tmp);
         }
@@ -52,7 +59,9 @@ impl<R: AsyncRead + Unpin> Chunker<R> {
 
     pub async fn next_chunk(&mut self) -> Result<Option<Chunk>, BackupError> {
         self.fill_until(self.params.max_size as usize).await?;
-        if self.buf.is_empty() { return Ok(None); }
+        if self.buf.is_empty() {
+            return Ok(None);
+        }
 
         let cdc = fastcdc::v2020::FastCDC::new(
             &self.buf,
@@ -86,7 +95,9 @@ mod tests {
         let mut v = vec![0u8; size];
         let mut s: u64 = 0xdeadbeefu64;
         for byte in v.iter_mut() {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             *byte = (s >> 33) as u8;
         }
         v
@@ -117,8 +128,12 @@ mod tests {
 
         let mut h1 = Vec::new();
         let mut h2 = Vec::new();
-        while let Some(chunk) = c1.next_chunk().await.unwrap() { h1.push(blake3::hash(&chunk.plaintext_bytes)); }
-        while let Some(chunk) = c2.next_chunk().await.unwrap() { h2.push(blake3::hash(&chunk.plaintext_bytes)); }
+        while let Some(chunk) = c1.next_chunk().await.unwrap() {
+            h1.push(blake3::hash(&chunk.plaintext_bytes));
+        }
+        while let Some(chunk) = c2.next_chunk().await.unwrap() {
+            h2.push(blake3::hash(&chunk.plaintext_bytes));
+        }
         assert_eq!(h1, h2, "FastCDC must be deterministic for the same input");
     }
 
