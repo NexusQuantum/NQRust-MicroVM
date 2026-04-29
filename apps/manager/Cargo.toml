@@ -50,6 +50,13 @@ samael = "0.0.17"
 openssl = { version = "0.10", features = ["vendored"] }
 aes-gcm = "0.10"
 url = "2"
+nexus-backup = { path = "../../crates/nexus-backup" }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
+aws-credential-types = "1"
+aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
+aws-types = "1"
+aws-smithy-types = "1"
+cron = "0.12"
 
 [dev-dependencies]
 wiremock = "0.6"
