@@ -248,7 +248,7 @@ pub async fn restore_backup(
     match agent_rpc::agent_restore(&host.addr, req).await {
         Ok(_) => {
             let volume_repo = VolumeRepository::new(st.db.clone());
-            volume_repo
+            let inserted = volume_repo
                 .create(
                     &format!("restore-{}", backup_id),
                     Some(&format!("Restored from backup {backup_id}")),
@@ -259,7 +259,7 @@ pub async fn restore_backup(
                     target_backend_id,
                 )
                 .await?;
-            Ok(new_volume.volume_id)
+            Ok(inserted.id)
         }
         Err(e) => {
             let _ = agent_rpc::agent_detach(&host.addr, &new_volume, &attached).await;
