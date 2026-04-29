@@ -34,6 +34,7 @@ aws-credential-types = "1"
 aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
 aws-types = "1"
 hex = "0.4"
+blake3 = "1"
 
 [dev-dependencies]
 tempfile = "3"

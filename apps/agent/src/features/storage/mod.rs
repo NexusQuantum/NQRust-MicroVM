@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod iscsi;
 pub mod local_file;
 pub mod registry;
