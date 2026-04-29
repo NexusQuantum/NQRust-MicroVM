@@ -1,5 +1,5 @@
 use crate::error::StorageError;
-use crate::handle::{AttachedPath, VolumeHandle};
+use crate::handle::{AttachedPath, VolumeHandle, VolumeSnapshotHandle};
 use crate::types::BackendKind;
 use async_trait::async_trait;
 use std::path::Path;
@@ -33,4 +33,19 @@ pub trait HostBackend: Send + Sync {
         source: &Path,
         target_size_bytes: u64,
     ) -> Result<(), StorageError>;
+
+    /// Open a snapshot for reading. Returns a stream of bytes representing
+    /// the volume contents at snapshot time. Used by the backup pipeline.
+    ///
+    /// Implementations:
+    /// - LocalFile: open the snapshot file from disk.
+    /// - Iscsi/TrueNasIscsi: attach the snapshot LUN read-only and return
+    ///   a File handle over the block device.
+    ///
+    /// Returns `StorageError::NotSupported("read_snapshot")` if the backend
+    /// can't expose a snapshot for streaming reads.
+    async fn read_snapshot(
+        &self,
+        snap: &VolumeSnapshotHandle,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StorageError>;
 }
