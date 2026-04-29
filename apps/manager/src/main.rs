@@ -240,6 +240,30 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Backup GC loop: daily mark-and-sweep per target.
+    {
+        let pool = state.db.clone();
+        tokio::spawn(async move {
+            crate::features::backups::gc::gc_loop(pool).await;
+        });
+    }
+
+    // Backup reconciler: ages stuck 'running' rows after 24h.
+    {
+        let pool = state.db.clone();
+        tokio::spawn(async move {
+            crate::features::backups::reconciler::reconcile_loop(pool).await;
+        });
+    }
+
+    // Backup scheduler: per-volume cron-triggered backups.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            crate::features::backups::scheduler::schedule_loop(st).await;
+        });
+    }
+
     let openapi = docs::ApiDoc::openapi();
     if let Err(err) = docs::write_openapi_yaml(&openapi).await {
         warn!(error = ?err, "failed to write OpenAPI specification to disk");

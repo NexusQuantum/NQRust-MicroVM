@@ -182,12 +182,38 @@ pub async fn soft_delete(
 }
 
 pub async fn trigger_gc(
-    Extension(_st): Extension<AppState>,
-    Path(_id): Path<Uuid>,
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
-    // Wired by Task B.T17 once the GC task exists.
+    let target_repo =
+        crate::features::backup_targets::repo::BackupTargetRepository::new(st.db.clone());
+    let target = match target_repo.get(id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error":"not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("backup_targets trigger_gc lookup: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error":"db"})),
+            )
+                .into_response();
+        }
+    };
+    let pool = st.db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::features::backups::gc::run_gc(&pool, &target).await {
+            tracing::error!("ad-hoc GC failed: {e:#}");
+        }
+    });
     (
         StatusCode::ACCEPTED,
         Json(serde_json::json!({"queued": true})),
     )
+        .into_response()
 }
