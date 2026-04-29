@@ -141,15 +141,79 @@ pub async fn delete_one(
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
     let repo = BackupRepository::new(st.db.clone());
+    let backup = match repo.get(id).await {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error":"not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("backups delete lookup: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error":"db"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Mark pruning so concurrent operations see the intent.
     sqlx::query(r#"UPDATE backup SET status = 'pruning', updated_at = now() WHERE id = $1"#)
         .bind(id)
         .execute(&st.db)
         .await
         .ok();
+
+    // Delete the manifest from S3 first so GC can reclaim the chunks on its
+    // next pass. If S3 delete fails, log a warning but still drop the DB row;
+    // the rebuild tool can detect orphan manifests later.
+    if let Some(mkey) = backup.manifest_object_key.as_deref() {
+        if let Ok(Some(target)) =
+            crate::features::backup_targets::repo::BackupTargetRepository::new(st.db.clone())
+                .get(backup.target_id)
+                .await
+        {
+            if let Ok(secret) = crate::features::backup_targets::envelope::unwrap_to_string(
+                &target.encrypted_secret_access_key,
+            ) {
+                let creds = aws_credential_types::Credentials::new(
+                    &target.access_key_id,
+                    &secret,
+                    None,
+                    None,
+                    "nqrust-mgr-delete",
+                );
+                let region = aws_sdk_s3::config::Region::new(
+                    target.region.clone().unwrap_or_else(|| "us-east-1".into()),
+                );
+                let s3_cfg = aws_sdk_s3::config::Builder::new()
+                    .behavior_version_latest()
+                    .endpoint_url(&target.endpoint)
+                    .credentials_provider(creds)
+                    .region(region)
+                    .force_path_style(true)
+                    .build();
+                let client = aws_sdk_s3::Client::from_conf(s3_cfg);
+                if let Err(e) = client
+                    .delete_object()
+                    .bucket(&target.bucket)
+                    .key(mkey)
+                    .send()
+                    .await
+                {
+                    tracing::warn!(backup_id=%id, manifest=%mkey, "S3 manifest delete failed: {e:#}");
+                }
+            }
+        }
+    }
+
     match repo.delete_row(id).await {
         Ok(()) => (StatusCode::NO_CONTENT, ()).into_response(),
         Err(e) => {
-            tracing::error!("backups delete: {e}");
+            tracing::error!("backups delete row: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error":"db"})),
