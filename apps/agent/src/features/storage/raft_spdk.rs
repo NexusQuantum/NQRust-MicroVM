@@ -1,25 +1,34 @@
 //! Agent-side raft_spdk scaffold.
 //!
 //! The real B-II data path must run through raftblk, not directly through an
-//! SPDK vhost controller. This backend exposes the future attach shape while
-//! guarding all byte-mutating operations until the Openraft/raftblk service is
-//! implemented.
+//! SPDK vhost controller. This backend starts the local durable raft-block group
+//! before returning the future raftblk socket path.
 
+use crate::features::raft_block::RaftBlockState;
 use nexus_storage::{
     raftblk_socket_path, AttachedPath, BackendKind, HostBackend, RaftSpdkLocator, StorageError,
     VolumeHandle, VolumeSnapshotHandle,
 };
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct RaftSpdkHostBackend {
     socket_dir: PathBuf,
+    local_node_id: u64,
+    raft_block: Arc<RaftBlockState>,
 }
 
 impl RaftSpdkHostBackend {
-    pub fn new(socket_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        socket_dir: impl Into<PathBuf>,
+        local_node_id: u64,
+        raft_block: Arc<RaftBlockState>,
+    ) -> Self {
         Self {
             socket_dir: socket_dir.into(),
+            local_node_id,
+            raft_block,
         }
     }
 
@@ -36,6 +45,25 @@ impl HostBackend for RaftSpdkHostBackend {
 
     async fn attach(&self, volume: &VolumeHandle) -> Result<AttachedPath, StorageError> {
         let locator = RaftSpdkLocator::from_locator_str(&volume.locator)?;
+        if !locator
+            .replicas
+            .iter()
+            .any(|replica| replica.node_id == self.local_node_id)
+        {
+            return Err(StorageError::InvalidLocator(format!(
+                "raft_spdk local node {} is not a replica for group {}",
+                self.local_node_id, locator.group_id
+            )));
+        }
+        self.raft_block
+            .ensure_group(
+                locator.group_id,
+                self.local_node_id,
+                locator.size_bytes,
+                locator.block_size,
+            )
+            .await
+            .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
         Ok(AttachedPath::VhostUserSock(
             self.socket_path_for_locator(&locator),
         ))
@@ -111,7 +139,8 @@ mod tests {
 
     #[tokio::test]
     async fn attach_returns_raftblk_vhost_socket() {
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk");
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state.clone());
         let group_id = locator().group_id;
         let volume = VolumeHandle {
             volume_id: Uuid::new_v4(),
@@ -126,11 +155,29 @@ mod tests {
             panic!("expected raftblk vhost-user socket");
         };
         assert_eq!(path, raftblk_socket_path("/run/nqrust/raftblk", group_id));
+        assert_eq!(state.status(group_id).await.state, "started");
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_non_member_node() {
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 9, state);
+        let volume = VolumeHandle {
+            volume_id: Uuid::new_v4(),
+            backend_id: BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::RaftSpdk,
+            locator: locator().to_locator_string().unwrap(),
+            size_bytes: 4096,
+        };
+
+        let err = backend.attach(&volume).await.unwrap_err();
+        assert!(err.to_string().contains("not a replica"), "got: {err}");
     }
 
     #[tokio::test]
     async fn populate_is_guarded_until_raftblk_exists() {
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk");
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state);
         let err = backend
             .populate_streaming(
                 &AttachedPath::VhostUserSock("/tmp/raft.sock".into()),

@@ -11,7 +11,6 @@ pub mod tap;
 pub mod vm;
 
 pub fn router(state: AppState) -> Router {
-    let raft_block_state = Arc::new(raft_block::RaftBlockState::new(state.run_dir.clone()));
     let storage_state = Arc::new(storage::routes::StorageState {
         registry: state.storage_registry.clone(),
     });
@@ -20,7 +19,10 @@ pub fn router(state: AppState) -> Router {
         .merge(inventory::router())
         .nest("/agent/v1/vms", vm::router().merge(tap::router()))
         .nest("/agent/v1/networks", networks::router())
-        .nest("/v1/raft_block", raft_block::router(raft_block_state))
+        .nest(
+            "/v1/raft_block",
+            raft_block::router(state.raft_block_state.clone()),
+        )
         .nest("/v1/storage", storage::routes::router(storage_state))
         .layer(Extension(state))
 }

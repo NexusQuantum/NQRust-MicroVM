@@ -115,6 +115,9 @@ mod tests {
             run_dir: run_dir.to_string_lossy().to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            raft_block_state: std::sync::Arc::new(
+                crate::features::raft_block::RaftBlockState::new(&run_dir),
+            ),
         };
 
         let resolved = resolve_socket_path(&st, id, sock_file.to_str().unwrap())
@@ -140,6 +143,9 @@ mod tests {
             run_dir: run_dir.to_string_lossy().to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            raft_block_state: std::sync::Arc::new(
+                crate::features::raft_block::RaftBlockState::new(&run_dir),
+            ),
         };
 
         let nested = run_dir.join("vms").join("vm-abc").join("sock");
@@ -168,6 +174,9 @@ mod tests {
             run_dir: run_dir.to_string_lossy().to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            raft_block_state: std::sync::Arc::new(
+                crate::features::raft_block::RaftBlockState::new(&run_dir),
+            ),
         };
 
         let err = resolve_socket_path(&st, "vm-other", sock.to_str().unwrap())

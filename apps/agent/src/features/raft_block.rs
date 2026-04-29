@@ -15,10 +15,18 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RaftBlockState {
     base_dir: PathBuf,
     groups: Arc<Mutex<HashMap<Uuid, PersistentReplica>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RaftBlockStatus {
+    pub group_id: Uuid,
+    pub state: &'static str,
+    pub data_path: &'static str,
+    pub applied_entries: u64,
 }
 
 impl RaftBlockState {
@@ -36,6 +44,22 @@ impl RaftBlockState {
                 .join(group_id.to_string())
                 .join(format!("node-{node_id}.json")),
         )
+    }
+
+    pub async fn ensure_group(
+        &self,
+        group_id: Uuid,
+        node_id: u64,
+        capacity_bytes: u64,
+        block_size: u64,
+    ) -> Result<(), RaftBlockError> {
+        self.create_group(CreateGroupReq {
+            group_id,
+            node_id,
+            capacity_bytes,
+            block_size,
+        })
+        .await
     }
 
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
@@ -73,7 +97,7 @@ impl RaftBlockState {
         replica.install_snapshot(&req.snapshot)
     }
 
-    async fn status(&self, group_id: Uuid) -> RaftBlockStatus {
+    pub async fn status(&self, group_id: Uuid) -> RaftBlockStatus {
         let groups = self.groups.lock().await;
         if let Some(replica) = groups.get(&group_id) {
             RaftBlockStatus {
@@ -112,14 +136,6 @@ pub struct AppendReq {
 pub struct InstallSnapshotReq {
     pub group_id: Uuid,
     pub snapshot: BlockSnapshot,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RaftBlockStatus {
-    pub group_id: Uuid,
-    pub state: &'static str,
-    pub data_path: &'static str,
-    pub applied_entries: u64,
 }
 
 #[derive(Debug, Deserialize)]

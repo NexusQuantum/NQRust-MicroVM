@@ -9,6 +9,7 @@ pub struct AppState {
     pub run_dir: String,
     pub bridge: String,
     pub storage_registry: features::storage::registry::HostBackendRegistry,
+    pub raft_block_state: std::sync::Arc<features::raft_block::RaftBlockState>,
 }
 
 #[tokio::main]
@@ -21,6 +22,9 @@ async fn main() -> anyhow::Result<()> {
     let manager_base =
         std::env::var("MANAGER_BASE").unwrap_or_else(|_| "http://127.0.0.1:18080".into());
     let host_name = std::env::var("AGENT_NAME").unwrap_or_else(|_| advertise_addr.clone());
+    let run_dir = std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into());
+    let raft_block_state =
+        std::sync::Arc::new(features::raft_block::RaftBlockState::new(run_dir.clone()));
     let mut storage_registry = features::storage::registry::HostBackendRegistry::empty();
     storage_registry.register_for(
         nexus_storage::BackendKind::LocalFile,
@@ -60,17 +64,24 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     if let Ok(socket_dir) = std::env::var("AGENT_RAFTBLK_SOCKET_DIR") {
+        let local_node_id = std::env::var("AGENT_RAFT_NODE_ID")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(1);
         storage_registry.register_for(
             nexus_storage::BackendKind::RaftSpdk,
             std::sync::Arc::new(features::storage::raft_spdk::RaftSpdkHostBackend::new(
                 socket_dir,
+                local_node_id,
+                raft_block_state.clone(),
             )),
         );
     }
     let state = AppState {
-        run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
+        run_dir,
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),
         storage_registry,
+        raft_block_state,
     };
 
     let heartbeat_state = state.clone();
