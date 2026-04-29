@@ -548,11 +548,31 @@ impl FakeRaftBlockCluster {
         bytes: Vec<u8>,
         reachable: &[NodeId],
     ) -> Result<CommitOutcome, RaftBlockError> {
+        self.propose_write_from(self.leader_id, offset, bytes, reachable)
+    }
+
+    pub fn propose_write_from(
+        &mut self,
+        proposer: NodeId,
+        offset: u64,
+        bytes: Vec<u8>,
+        reachable: &[NodeId],
+    ) -> Result<CommitOutcome, RaftBlockError> {
+        self.ensure_leader(proposer)?;
         let entry = LogEntry::write(self.current_term, self.next_index, offset, bytes)?;
         self.commit_entry(entry, reachable)
     }
 
     pub fn propose_flush(&mut self, reachable: &[NodeId]) -> Result<CommitOutcome, RaftBlockError> {
+        self.propose_flush_from(self.leader_id, reachable)
+    }
+
+    pub fn propose_flush_from(
+        &mut self,
+        proposer: NodeId,
+        reachable: &[NodeId],
+    ) -> Result<CommitOutcome, RaftBlockError> {
+        self.ensure_leader(proposer)?;
         let entry = LogEntry::flush(self.current_term, self.next_index);
         self.commit_entry(entry, reachable)
     }
@@ -608,6 +628,17 @@ impl FakeRaftBlockCluster {
             .find(|id| *id != self.leader_id)
             .unwrap_or(self.leader_id);
         self.current_term
+    }
+
+    fn ensure_leader(&self, node_id: NodeId) -> Result<(), RaftBlockError> {
+        if node_id == self.leader_id {
+            Ok(())
+        } else {
+            Err(RaftBlockError::NotLeader {
+                node_id,
+                leader_id: self.leader_id,
+            })
+        }
     }
 
     fn commit_entry(
@@ -814,6 +845,45 @@ mod tests {
                 leader_id: 1
             }
         );
+    }
+
+    #[test]
+    fn non_leader_proposals_are_rejected_without_mutation() {
+        let mut cluster = cluster3();
+        let err = cluster
+            .propose_write_from(2, 0, vec![6; 512], &[1, 2])
+            .unwrap_err();
+        assert_eq!(
+            err,
+            RaftBlockError::NotLeader {
+                node_id: 2,
+                leader_id: 1
+            }
+        );
+        assert!(cluster.committed_entries().is_empty());
+        assert_eq!(cluster.replica(1).unwrap().read_all(), &[0; 4096]);
+        assert_eq!(cluster.replica(2).unwrap().read_all(), &[0; 4096]);
+    }
+
+    #[test]
+    fn old_leader_is_fenced_after_term_advance() {
+        let mut cluster = cluster3();
+        cluster
+            .propose_write_from(1, 0, vec![1; 512], &[1, 2])
+            .unwrap();
+        cluster.advance_term();
+
+        let err = cluster
+            .propose_flush_from(1, &[1, 2])
+            .expect_err("old leader must be fenced");
+        assert_eq!(
+            err,
+            RaftBlockError::NotLeader {
+                node_id: 1,
+                leader_id: 2
+            }
+        );
+        cluster.propose_flush_from(2, &[1, 2]).unwrap();
     }
 
     #[test]
