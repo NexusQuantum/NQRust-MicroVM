@@ -1,6 +1,6 @@
 # Raft Block Prototype Implementation Plan
 
-**Status:** First correctness slice implemented
+**Status:** Correctness model plus raft_spdk guardrail scaffold implemented
 **Spec:** `docs/superpowers/specs/2026-04-29-spdk-raft-hci-design.md`
 **Scope:** B-II correctness prototype only. This is not a production storage backend and does not attach VM disks.
 
@@ -23,8 +23,8 @@ cargo test -p nexus-raft-block
 ## Task 2: Failure Model Expansion
 
 Status: partially complete. Covered cases are quorum loss, duplicate acknowledgements, follower repair,
-stale term rejection, checksum mismatch, out-of-bounds writes, and no partial mutation when quorum
-validation fails.
+stale term rejection, checksum mismatch, out-of-bounds writes, simulated disk-full, leader-only reads,
+snapshot install after compaction, and no partial mutation when quorum validation fails.
 
 Add deterministic tests before any production integration:
 
@@ -43,6 +43,8 @@ cargo test -p nexus-raft-block
 
 ## Task 3: Real Raft Library Selection
 
+Status: pending. `raft_spdk` is intentionally fail-closed until an Openraft adapter is implemented.
+
 Compare `openraft` and `tikv-raft-rs` against the model:
 
 - async integration with agent runtime;
@@ -55,6 +57,9 @@ Compare `openraft` and `tikv-raft-rs` against the model:
 Do not wire either library into VM disks until Task 1 and Task 2 are stable.
 
 ## Task 4: Prototype Transport Boundary
+
+Status: scaffolded in the agent. Routes exist and return explicit 501 responses until the Openraft
+network adapter is wired.
 
 Define an agent-internal transport for block log replication:
 
@@ -69,7 +74,7 @@ The first transport can be in-process test doubles. Production HTTP/gRPC is a la
 ## Non-Goals
 
 - No SPDK writes through the replicated path yet.
-- No `BackendKind::RaftSpdk` yet.
+- `BackendKind::RaftSpdk` exists only as a guarded scaffold. It does not provision production volumes yet.
 - No dynamic membership.
 - No follower reads.
 - No live migration claim.

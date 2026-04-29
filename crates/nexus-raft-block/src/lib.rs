@@ -26,6 +26,8 @@ pub enum RaftBlockError {
     EmptyWrite,
     #[error("write extends past replica capacity")]
     OutOfBounds,
+    #[error("replica has no remaining simulated disk capacity")]
+    DiskFull,
     #[error("entry checksum mismatch")]
     ChecksumMismatch,
     #[error("entry term {entry_term} is stale; node has seen term {seen_term}")]
@@ -34,6 +36,8 @@ pub enum RaftBlockError {
     NoQuorum { acks: usize, quorum: usize },
     #[error("node {0} not found")]
     NodeNotFound(NodeId),
+    #[error("node {node_id} is not the current leader {leader_id}")]
+    NotLeader { node_id: NodeId, leader_id: NodeId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +101,7 @@ pub struct Replica {
     bytes: Vec<u8>,
     highest_term_seen: Term,
     applied: BTreeSet<LogIndex>,
+    fail_after_applied_entries: Option<usize>,
 }
 
 impl Replica {
@@ -113,6 +118,7 @@ impl Replica {
             bytes: vec![0; capacity_bytes as usize],
             highest_term_seen: 0,
             applied: BTreeSet::new(),
+            fail_after_applied_entries: None,
         })
     }
 
@@ -126,6 +132,33 @@ impl Replica {
 
     pub fn read_all(&self) -> &[u8] {
         &self.bytes
+    }
+
+    pub fn applied_indexes(&self) -> &BTreeSet<LogIndex> {
+        &self.applied
+    }
+
+    pub fn fail_after_applied_entries(&mut self, entries: usize) {
+        self.fail_after_applied_entries = Some(entries);
+    }
+
+    pub fn snapshot(&self, last_included_index: LogIndex) -> BlockSnapshot {
+        BlockSnapshot {
+            replica_id: self.id,
+            last_included_index,
+            highest_term_seen: self.highest_term_seen,
+            bytes: self.bytes.clone(),
+        }
+    }
+
+    pub fn install_snapshot(&mut self, snapshot: &BlockSnapshot) -> Result<(), RaftBlockError> {
+        if snapshot.bytes.len() != self.bytes.len() {
+            return Err(RaftBlockError::InvalidCapacity);
+        }
+        self.bytes.clone_from(&snapshot.bytes);
+        self.observe_term(snapshot.highest_term_seen);
+        self.applied = (1..=snapshot.last_included_index).collect();
+        Ok(())
     }
 
     pub fn validate_entry(&self, entry: &LogEntry) -> Result<(), RaftBlockError> {
@@ -164,6 +197,12 @@ impl Replica {
         if self.applied.contains(&entry.index) {
             return Ok(false);
         }
+        if self
+            .fail_after_applied_entries
+            .is_some_and(|limit| self.applied.len() >= limit)
+        {
+            return Err(RaftBlockError::DiskFull);
+        }
 
         if let BlockOp::Write { offset, bytes, .. } = &entry.op {
             let start = *offset as usize;
@@ -174,6 +213,14 @@ impl Replica {
         self.applied.insert(entry.index);
         Ok(true)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockSnapshot {
+    pub replica_id: NodeId,
+    pub last_included_index: LogIndex,
+    pub highest_term_seen: Term,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +235,8 @@ pub struct FakeRaftBlockCluster {
     committed: Vec<LogEntry>,
     next_index: LogIndex,
     current_term: Term,
+    leader_id: NodeId,
+    compacted_through: LogIndex,
 }
 
 impl FakeRaftBlockCluster {
@@ -205,6 +254,8 @@ impl FakeRaftBlockCluster {
             committed: Vec::new(),
             next_index: 1,
             current_term: 1,
+            leader_id: 1,
+            compacted_through: 0,
         })
     }
 
@@ -214,6 +265,10 @@ impl FakeRaftBlockCluster {
 
     pub fn committed_entries(&self) -> &[LogEntry] {
         &self.committed
+    }
+
+    pub fn compacted_through(&self) -> LogIndex {
+        self.compacted_through
     }
 
     pub fn replica(&self, id: NodeId) -> Result<&Replica, RaftBlockError> {
@@ -255,8 +310,44 @@ impl FakeRaftBlockCluster {
         Ok(applied)
     }
 
+    pub fn read_from(
+        &self,
+        node_id: NodeId,
+        offset: u64,
+        len: usize,
+    ) -> Result<Vec<u8>, RaftBlockError> {
+        if node_id != self.leader_id {
+            return Err(RaftBlockError::NotLeader {
+                node_id,
+                leader_id: self.leader_id,
+            });
+        }
+        let replica = self.replica(node_id)?;
+        let end = offset
+            .checked_add(len as u64)
+            .ok_or(RaftBlockError::OutOfBounds)?;
+        if end > replica.read_all().len() as u64 {
+            return Err(RaftBlockError::OutOfBounds);
+        }
+        Ok(replica.read_all()[offset as usize..end as usize].to_vec())
+    }
+
+    pub fn compact_through(&mut self, index: LogIndex) -> Result<BlockSnapshot, RaftBlockError> {
+        let leader = self.replica(self.leader_id)?;
+        let snapshot = leader.snapshot(index);
+        self.committed.retain(|entry| entry.index > index);
+        self.compacted_through = self.compacted_through.max(index);
+        Ok(snapshot)
+    }
+
     pub fn advance_term(&mut self) -> Term {
         self.current_term += 1;
+        self.leader_id = self
+            .replicas
+            .keys()
+            .copied()
+            .find(|id| *id != self.leader_id)
+            .unwrap_or(self.leader_id);
         self.current_term
     }
 
@@ -419,6 +510,20 @@ mod tests {
     }
 
     #[test]
+    fn simulated_disk_full_rejects_without_mutation() {
+        let mut replica = Replica::new(1, 4096, 512).unwrap();
+        replica.fail_after_applied_entries(1);
+        let first = LogEntry::write(1, 1, 0, vec![1; 512]).unwrap();
+        let second = LogEntry::write(1, 2, 512, vec![2; 512]).unwrap();
+
+        assert!(replica.apply(&first).unwrap());
+        let err = replica.apply(&second).unwrap_err();
+        assert_eq!(err, RaftBlockError::DiskFull);
+        assert_eq!(&replica.read_all()[0..512], &[1; 512]);
+        assert_eq!(&replica.read_all()[512..1024], &[0; 512]);
+    }
+
+    #[test]
     fn failed_quorum_validation_does_not_partially_mutate_prefix() {
         let mut cluster = cluster3();
         cluster.replica_mut(2).unwrap().observe_term(3);
@@ -434,6 +539,40 @@ mod tests {
         assert!(cluster.committed_entries().is_empty());
         assert_eq!(cluster.replica(1).unwrap().read_all(), &[0; 4096]);
         assert_eq!(cluster.replica(2).unwrap().read_all(), &[0; 4096]);
+    }
+
+    #[test]
+    fn leader_only_reads_reject_follower_reads() {
+        let mut cluster = cluster3();
+        cluster.propose_write(0, vec![9; 512], &[1, 2]).unwrap();
+
+        assert_eq!(cluster.read_from(1, 0, 512).unwrap(), vec![9; 512]);
+        let err = cluster.read_from(2, 0, 512).unwrap_err();
+        assert_eq!(
+            err,
+            RaftBlockError::NotLeader {
+                node_id: 2,
+                leader_id: 1
+            }
+        );
+    }
+
+    #[test]
+    fn snapshot_install_repairs_compacted_history() {
+        let mut cluster = cluster3();
+        cluster.propose_write(0, vec![1; 512], &[1, 2]).unwrap();
+        cluster.propose_write(512, vec![2; 512], &[1, 2]).unwrap();
+
+        let snapshot = cluster.compact_through(2).unwrap();
+        assert_eq!(cluster.compacted_through(), 2);
+        assert!(cluster.committed_entries().is_empty());
+
+        let replica = cluster.replica_mut(3).unwrap();
+        replica.install_snapshot(&snapshot).unwrap();
+        assert_eq!(&replica.read_all()[0..512], &[1; 512]);
+        assert_eq!(&replica.read_all()[512..1024], &[2; 512]);
+        assert!(replica.applied_indexes().contains(&1));
+        assert!(replica.applied_indexes().contains(&2));
     }
 
     proptest! {

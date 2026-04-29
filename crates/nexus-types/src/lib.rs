@@ -1716,6 +1716,10 @@ pub enum BackendKind {
     Iscsi,
     #[serde(rename = "truenas_iscsi")]
     TrueNasIscsi,
+    #[serde(rename = "spdk_lvol")]
+    SpdkLvol,
+    #[serde(rename = "raft_spdk")]
+    RaftSpdk,
 }
 
 #[derive(

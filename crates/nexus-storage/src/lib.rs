@@ -8,6 +8,7 @@ pub mod control_plane;
 pub mod error;
 pub mod handle;
 pub mod host;
+pub mod raft_spdk;
 pub mod spdk;
 pub mod types;
 
@@ -15,6 +16,10 @@ pub use control_plane::ControlPlaneBackend;
 pub use error::StorageError;
 pub use handle::{AttachedPath, VolumeHandle, VolumeSnapshotHandle};
 pub use host::HostBackend;
+pub use raft_spdk::{
+    raftblk_socket_path, RaftSpdkLocator, RaftSpdkReplicaLocator, RAFT_SPDK_DEFAULT_BLOCK_SIZE,
+    RAFT_SPDK_STATIC_REPLICA_COUNT,
+};
 pub use spdk::{spdk_vhost_controller_name, SpdkJsonRpcClient, SpdkLvolLocator};
 pub use types::{BackendInstanceId, BackendKind, Capabilities, CreateOpts};
 
@@ -29,6 +34,7 @@ mod tests {
             BackendKind::Iscsi,
             BackendKind::TrueNasIscsi,
             BackendKind::SpdkLvol,
+            BackendKind::RaftSpdk,
         ];
         for k in kinds {
             let json = serde_json::to_string(&k).unwrap();

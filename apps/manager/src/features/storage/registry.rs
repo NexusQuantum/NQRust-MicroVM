@@ -118,6 +118,7 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
         "iscsi" => BackendKind::Iscsi,
         "truenas_iscsi" => BackendKind::TrueNasIscsi,
         "spdk_lvol" => BackendKind::SpdkLvol,
+        "raft_spdk" => BackendKind::RaftSpdk,
         other => {
             return Err(anyhow!("unknown backend kind '{other}'"));
         }
@@ -165,6 +166,18 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
                     BackendInstanceId(row.id),
                     cfg,
                 ),
+            ))
+        }
+        BackendKind::RaftSpdk => {
+            let cfg: crate::features::storage::backends::raft_spdk::RaftSpdkConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' raft_spdk config", row.name))?;
+            Ok(Arc::new(
+                crate::features::storage::backends::raft_spdk::RaftSpdkControlPlaneBackend::new(
+                    BackendInstanceId(row.id),
+                    cfg,
+                )
+                .map_err(|e| anyhow!(e.to_string()))?,
             ))
         }
     }

@@ -5,6 +5,7 @@ use std::sync::Arc;
 pub mod health;
 pub mod inventory;
 pub mod networks;
+pub mod raft_block;
 pub mod storage;
 pub mod tap;
 pub mod vm;
@@ -18,6 +19,7 @@ pub fn router(state: AppState) -> Router {
         .merge(inventory::router())
         .nest("/agent/v1/vms", vm::router().merge(tap::router()))
         .nest("/agent/v1/networks", networks::router())
+        .nest("/v1/raft_block", raft_block::router())
         .nest("/v1/storage", storage::routes::router(storage_state))
         .layer(Extension(state))
 }

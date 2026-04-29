@@ -59,6 +59,14 @@ async fn main() -> anyhow::Result<()> {
             ),
         );
     }
+    if let Ok(socket_dir) = std::env::var("AGENT_RAFTBLK_SOCKET_DIR") {
+        storage_registry.register_for(
+            nexus_storage::BackendKind::RaftSpdk,
+            std::sync::Arc::new(features::storage::raft_spdk::RaftSpdkHostBackend::new(
+                socket_dir,
+            )),
+        );
+    }
     let state = AppState {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),
