@@ -1,4 +1,5 @@
 pub mod gc;
+pub mod index_rebuild;
 pub mod reconciler;
 pub mod repo;
 pub mod routes;
