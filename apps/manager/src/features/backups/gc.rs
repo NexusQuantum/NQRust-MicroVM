@@ -8,7 +8,7 @@ use aws_sdk_s3::{
     types::{Delete, ObjectIdentifier},
     Client,
 };
-use chrono::{Timelike, Utc};
+use chrono::{TimeZone as _, Timelike, Utc};
 use nexus_backup::{decrypt_manifest, ChunkKey, Manifest};
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -16,8 +16,14 @@ use std::collections::HashSet;
 pub async fn gc_loop(pool: PgPool) {
     loop {
         let now = Utc::now();
-        let next_check = (60 - now.minute()) as u64 * 60 - now.second() as u64;
-        tokio::time::sleep(std::time::Duration::from_secs(next_check.max(60))).await;
+        // Sleep to the next minute boundary so we check every minute.
+        let secs_to_next_minute = (60 - now.second() as u64) % 60;
+        let sleep_for = if secs_to_next_minute == 0 {
+            60
+        } else {
+            secs_to_next_minute
+        };
+        tokio::time::sleep(std::time::Duration::from_secs(sleep_for)).await;
 
         let now = Utc::now();
         let repo = BackupTargetRepository::new(pool.clone());
@@ -25,6 +31,26 @@ pub async fn gc_loop(pool: PgPool) {
             Ok(targets) => {
                 for t in targets {
                     if (t.gc_hour as u32) == now.hour() {
+                        // Dedupe: only run once per target per gc_hour window.
+                        let today_at_hour = now
+                            .date_naive()
+                            .and_hms_opt(t.gc_hour as u32, 0, 0)
+                            .map(|dt| Utc.from_utc_datetime(&dt))
+                            .unwrap_or(now);
+                        let existing: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+                            r#"SELECT started_at FROM backup_gc_run
+                                   WHERE target_id = $1 AND started_at >= $2
+                                   ORDER BY started_at DESC LIMIT 1"#,
+                        )
+                        .bind(t.id)
+                        .bind(today_at_hour)
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
+                        if existing.is_some() {
+                            continue;
+                        }
                         if let Err(e) = run_gc(&pool, &t).await {
                             tracing::error!(target=%t.name, "GC run failed: {e:#}");
                         }
