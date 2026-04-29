@@ -10,6 +10,49 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 use uuid::Uuid;
 
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct PatchBackupScheduleRequest {
+    pub cron: Option<String>,
+    pub retain_count: Option<i32>,
+    pub target_id: Option<uuid::Uuid>,
+}
+
+pub async fn patch_backup_schedule(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    Json(req): Json<PatchBackupScheduleRequest>,
+) -> impl IntoResponse {
+    use std::str::FromStr as _;
+    if let Some(c) = &req.cron {
+        if let Err(e) = cron::Schedule::from_str(c) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("invalid cron: {e}")})),
+            )
+                .into_response();
+        }
+    }
+    let res = sqlx::query(
+        r#"UPDATE volume SET backup_cron = COALESCE($1, backup_cron),
+                              backup_retain_count = COALESCE($2, backup_retain_count),
+                              backup_target_id = COALESCE($3, backup_target_id)
+           WHERE id = $4"#,
+    )
+    .bind(req.cron)
+    .bind(req.retain_count)
+    .bind(req.target_id)
+    .bind(id)
+    .execute(&st.db)
+    .await;
+    match res {
+        Ok(_) => (StatusCode::NO_CONTENT, ()).into_response(),
+        Err(e) => {
+            tracing::error!("patch_backup_schedule: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db"}))).into_response()
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateVolumeRequest {
     pub name: String,
