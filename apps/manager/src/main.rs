@@ -77,9 +77,13 @@ async fn main() -> anyhow::Result<()> {
         }
         let target_id: uuid::Uuid = match args[4].parse() {
             Ok(u) => u,
-            Err(e) => { eprintln!("bad uuid: {e}"); std::process::exit(2); }
+            Err(e) => {
+                eprintln!("bad uuid: {e}");
+                std::process::exit(2);
+            }
         };
-        let database_url = std::env::var("DATABASE_URL").map_err(|e| anyhow::anyhow!("DATABASE_URL: {e}"))?;
+        let database_url =
+            std::env::var("DATABASE_URL").map_err(|e| anyhow::anyhow!("DATABASE_URL: {e}"))?;
         let pool = sqlx::PgPool::connect(&database_url).await?;
         crate::features::backups::index_rebuild::run(pool, target_id).await?;
         return Ok(());

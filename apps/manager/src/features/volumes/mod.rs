@@ -12,8 +12,5 @@ pub fn router() -> Router {
         .route("/:id", get(routes::get).delete(routes::delete))
         .route("/:id/attach", post(routes::attach))
         .route("/:id/detach", post(routes::detach))
-        .route(
-            "/:id/backup_schedule",
-            patch(routes::patch_backup_schedule),
-        )
+        .route("/:id/backup_schedule", patch(routes::patch_backup_schedule))
 }

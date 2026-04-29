@@ -48,7 +48,11 @@ pub async fn patch_backup_schedule(
         Ok(_) => (StatusCode::NO_CONTENT, ()).into_response(),
         Err(e) => {
             tracing::error!("patch_backup_schedule: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"db"}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error":"db"})),
+            )
+                .into_response()
         }
     }
 }
