@@ -1085,3 +1085,52 @@ export interface StorageBackend {
 export interface StorageBackendListResponse {
   items: StorageBackend[];
 }
+
+// ========================================
+// Backup Types
+// ========================================
+
+export type BackupStatus = "running" | "completed" | "failed" | "pruning";
+
+export interface BackupTarget {
+  id: string;
+  name: string;
+  endpoint: string;
+  region?: string;
+  bucket: string;
+  prefix: string;
+  access_key_id: string;
+  gc_hour: number;
+  created_at: string;
+  deleted_at?: string | null;
+}
+
+export interface CreateBackupTargetRequest {
+  name: string;
+  endpoint: string;
+  region?: string;
+  bucket: string;
+  prefix?: string;
+  access_key_id: string;
+  secret_access_key: string;
+  gc_hour?: number;
+}
+
+export interface Backup {
+  id: string;
+  source_volume_id?: string;
+  target_id: string;
+  size_bytes: number;
+  unique_bytes: number;
+  chunk_count: number;
+  status: BackupStatus;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface BackupSchedule {
+  cron: string;
+  retain_count: number;
+  target_id: string;
+}
