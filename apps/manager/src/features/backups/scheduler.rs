@@ -29,7 +29,11 @@ async fn tick(st: &AppState) -> anyhow::Result<()> {
         r#"SELECT v.id, v.backup_cron, v.backup_target_id,
                   (SELECT MAX(created_at) FROM backup b WHERE b.source_volume_id = v.id) AS last_backup
            FROM volume v
-           WHERE v.backup_cron IS NOT NULL AND v.backup_target_id IS NOT NULL"#,
+           WHERE v.backup_cron IS NOT NULL AND v.backup_target_id IS NOT NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM backup b2
+                 WHERE b2.source_volume_id = v.id AND b2.status = 'running'
+             )"#,
     )
     .fetch_all(&st.db)
     .await?;
