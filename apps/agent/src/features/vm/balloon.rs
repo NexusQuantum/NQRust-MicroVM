@@ -118,3 +118,64 @@ async fn get_balloon_statistics(
 fn int<E: std::fmt::Display>(err: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with(run_dir: &str) -> AppState {
+        AppState {
+            run_dir: run_dir.to_string(),
+            bridge: "fcbr0".into(),
+            storage_registry: Default::default(),
+        }
+    }
+
+    #[test]
+    fn config_dir_layout_is_stable() {
+        let st = state_with("/srv/fc");
+        let dir = config_dir(&st, "vm-42");
+        assert_eq!(dir, std::path::PathBuf::from("/srv/fc/vms/vm-42/config"));
+    }
+
+    #[test]
+    fn balloon_config_round_trips_with_optional_field() {
+        // stats_polling_interval_s should be omitted from output when None
+        // (skip_serializing_if = "Option::is_none").
+        let cfg = BalloonConfig {
+            amount_mib: 256,
+            deflate_on_oom: true,
+            stats_polling_interval_s: None,
+        };
+        let encoded = serde_json::to_string(&cfg).unwrap();
+        assert!(encoded.contains("\"amount_mib\":256"));
+        assert!(encoded.contains("\"deflate_on_oom\":true"));
+        assert!(
+            !encoded.contains("stats_polling_interval_s"),
+            "None field must be skipped, got {encoded}"
+        );
+
+        // With a value present, round-trip preserves it.
+        let cfg2 = BalloonConfig {
+            amount_mib: 512,
+            deflate_on_oom: false,
+            stats_polling_interval_s: Some(5),
+        };
+        let json = serde_json::to_string(&cfg2).unwrap();
+        let decoded: BalloonConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.amount_mib, 512);
+        assert!(!decoded.deflate_on_oom);
+        assert_eq!(decoded.stats_polling_interval_s, Some(5));
+    }
+
+    #[test]
+    fn balloon_stats_config_defaults_empty() {
+        // Empty JSON object must deserialize cleanly thanks to #[serde(default)].
+        let cfg: BalloonStatsConfig = serde_json::from_str("{}").expect("empty stats config");
+        assert!(cfg.stats_polling_interval_s.is_none());
+
+        // And the empty-omitted field stays out on serialize.
+        let encoded = serde_json::to_string(&cfg).unwrap();
+        assert_eq!(encoded, "{}");
+    }
+}

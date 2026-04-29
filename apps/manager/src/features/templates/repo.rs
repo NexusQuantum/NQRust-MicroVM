@@ -110,3 +110,88 @@ pub async fn delete(db: &PgPool, id: Uuid) -> sqlx::Result<()> {
         .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample_row(id: Uuid, spec_json: serde_json::Value) -> TemplateRow {
+        let now = chrono::Utc::now();
+        TemplateRow {
+            id,
+            name: "ubuntu".into(),
+            spec_json,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn template_row_try_from_decodes_full_spec() {
+        let id = Uuid::new_v4();
+        let kernel_image_id = Uuid::new_v4();
+        let rootfs_image_id = Uuid::new_v4();
+        let row = sample_row(
+            id,
+            json!({
+                "vcpu": 4,
+                "mem_mib": 4096,
+                "kernel_image_id": kernel_image_id,
+                "rootfs_image_id": rootfs_image_id,
+                "kernel_path": "/srv/k",
+                "rootfs_path": "/srv/r",
+                "rootfs_size_mb": 8192,
+            }),
+        );
+
+        let template: Template = row.try_into().expect("decode should succeed");
+        assert_eq!(template.id, id);
+        assert_eq!(template.name, "ubuntu");
+        assert_eq!(template.spec.vcpu, 4);
+        assert_eq!(template.spec.mem_mib, 4096);
+        assert_eq!(template.spec.kernel_image_id, Some(kernel_image_id));
+        assert_eq!(template.spec.rootfs_image_id, Some(rootfs_image_id));
+        assert_eq!(template.spec.kernel_path.as_deref(), Some("/srv/k"));
+        assert_eq!(template.spec.rootfs_path.as_deref(), Some("/srv/r"));
+        assert_eq!(template.spec.rootfs_size_mb, Some(8192));
+    }
+
+    #[test]
+    fn template_row_try_from_decodes_minimal_spec_with_defaults() {
+        let row = sample_row(
+            Uuid::new_v4(),
+            json!({
+                "vcpu": 1,
+                "mem_mib": 256,
+            }),
+        );
+
+        let template: Template = row.try_into().expect("minimal spec should decode");
+        assert_eq!(template.spec.vcpu, 1);
+        assert_eq!(template.spec.mem_mib, 256);
+        assert!(template.spec.kernel_image_id.is_none());
+        assert!(template.spec.rootfs_image_id.is_none());
+        assert!(template.spec.kernel_path.is_none());
+        assert!(template.spec.rootfs_path.is_none());
+        assert!(template.spec.rootfs_size_mb.is_none());
+    }
+
+    #[test]
+    fn template_row_try_from_rejects_malformed_spec_json() {
+        let row = sample_row(
+            Uuid::new_v4(),
+            json!({
+                "mem_mib": 512,
+            }),
+        );
+
+        let result: Result<Template, _> = row.try_into();
+        assert!(result.is_err(), "missing required vcpu must fail decode");
+        match result {
+            Err(sqlx::Error::Decode(_)) => {}
+            Err(other) => panic!("expected Decode error, got {other:?}"),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+}

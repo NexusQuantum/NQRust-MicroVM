@@ -50,3 +50,34 @@ fn config_path(run_dir: &str, vm_id: &str, file: &str) -> std::path::PathBuf {
 fn internal_error<E: std::fmt::Display>(err: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_path_layout_is_stable() {
+        let path = config_path("/srv/fc", "vm-123", "serial.json");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/srv/fc/vms/vm-123/config/serial.json")
+        );
+    }
+
+    #[test]
+    fn serial_req_round_trips() {
+        let req = SerialReq {
+            output_path: Some("/var/log/fc/serial.log".into()),
+        };
+        let encoded = serde_json::to_string(&req).unwrap();
+        let decoded: SerialReq = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            decoded.output_path.as_deref(),
+            Some("/var/log/fc/serial.log")
+        );
+
+        // Empty payload must succeed because output_path is #[serde(default)].
+        let empty: SerialReq = serde_json::from_str("{}").expect("default output_path");
+        assert!(empty.output_path.is_none());
+    }
+}

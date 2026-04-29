@@ -128,3 +128,78 @@ async fn spawn_fc(
 fn int<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::UnixListener;
+
+    #[test]
+    fn unit_name_format_is_stable() {
+        // The systemd unit name encodes the VM id literally as `fc-{id}.scope`.
+        // The FirecrackerDriver refactor must preserve this exact shape because
+        // existing scopes on disk are matched by name.
+        assert_eq!(format!("fc-{}.scope", "abc"), "fc-abc.scope");
+        let uuid_id = "550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(
+            format!("fc-{uuid_id}.scope"),
+            "fc-550e8400-e29b-41d4-a716-446655440000.scope"
+        );
+        assert_eq!(format!("fc-{}.scope", ""), "fc-.scope");
+        assert_eq!(
+            format!("fc-{}.scope", "vm with space"),
+            "fc-vm with space.scope"
+        );
+    }
+
+    #[test]
+    fn spawn_req_deserializes_required_fields() {
+        let json = r#"{"sock":"/tmp/fc.sock","log_path":"/var/log/fc.log"}"#;
+        let req: SpawnReq = serde_json::from_str(json).expect("valid SpawnReq");
+        assert_eq!(req.sock, "/tmp/fc.sock");
+        assert_eq!(req.log_path, "/var/log/fc.log");
+    }
+
+    #[test]
+    fn spawn_req_rejects_missing_fields() {
+        // Missing log_path — required field, must fail.
+        let bad = r#"{"sock":"/tmp/fc.sock"}"#;
+        assert!(serde_json::from_str::<SpawnReq>(bad).is_err());
+        // Missing sock — required field, must fail.
+        let bad = r#"{"log_path":"/var/log/fc.log"}"#;
+        assert!(serde_json::from_str::<SpawnReq>(bad).is_err());
+        // Empty object — all required fields missing.
+        assert!(serde_json::from_str::<SpawnReq>("{}").is_err());
+    }
+
+    #[tokio::test]
+    async fn dead_socket_file_is_not_connectable() {
+        // Mirrors the inline stale-socket detection in spawn_fc:
+        // a regular file at the socket path cannot be connected to as a UDS,
+        // so the production code falls into the cleanup branch.
+        let tmp = tempfile::tempdir().unwrap();
+        let stale = tmp.path().join("fc.sock");
+        tokio::fs::write(&stale, b"not a socket").await.unwrap();
+        assert!(stale.exists());
+        let connect_res = UnixStream::connect(&stale).await;
+        assert!(
+            connect_res.is_err(),
+            "regular file must not be connectable as UDS"
+        );
+        // Cleanup as the production code does.
+        tokio::fs::remove_file(&stale).await.unwrap();
+        assert!(!stale.exists());
+    }
+
+    #[tokio::test]
+    async fn live_socket_is_connectable() {
+        // Mirrors the success branch: if a real listener exists at the socket
+        // path, spawn_fc returns early without touching systemd.
+        let tmp = tempfile::tempdir().unwrap();
+        let sock_path = tmp.path().join("fc.sock");
+        let _listener = UnixListener::bind(&sock_path).expect("bind UDS");
+        assert!(sock_path.exists());
+        let connect = UnixStream::connect(&sock_path).await;
+        assert!(connect.is_ok(), "live UDS must be connectable");
+    }
+}

@@ -764,3 +764,74 @@ fn derive_dhcp_range(cidr: &str) -> Result<(String, String)> {
     let end = format!("{}.{}.{}.250", octets[0], octets[1], octets[2]);
     Ok((start, end))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_gateway_returns_first_usable_address() {
+        // Happy path: standard /24 subnet gives the .1 host.
+        assert_eq!(derive_gateway("10.0.2.0/24").unwrap(), "10.0.2.1");
+        assert_eq!(derive_gateway("192.168.50.0/24").unwrap(), "192.168.50.1");
+
+        // Boundary: prefix length isn't validated, only octet count is.
+        // Capture this current behavior so refactors flag any change.
+        assert_eq!(derive_gateway("10.0.2.0/16").unwrap(), "10.0.2.1");
+    }
+
+    #[test]
+    fn derive_gateway_rejects_malformed_cidr() {
+        // No slash → only one part after split.
+        assert!(derive_gateway("10.0.2.0").is_err());
+        // Wrong number of octets.
+        assert!(derive_gateway("10.0.2/24").is_err());
+        assert!(derive_gateway("10.0.2.0.5/24").is_err());
+        // Empty input.
+        assert!(derive_gateway("").is_err());
+    }
+
+    #[test]
+    fn derive_dhcp_range_returns_tenth_to_two_fifty() {
+        // Happy path: third octet is preserved, host portion replaced.
+        let (start, end) = derive_dhcp_range("10.0.2.0/24").unwrap();
+        assert_eq!(start, "10.0.2.10");
+        assert_eq!(end, "10.0.2.250");
+
+        // Different subnet, same shape.
+        let (start, end) = derive_dhcp_range("172.16.5.0/24").unwrap();
+        assert_eq!(start, "172.16.5.10");
+        assert_eq!(end, "172.16.5.250");
+    }
+
+    #[test]
+    fn derive_dhcp_range_rejects_bad_octet_count() {
+        // Invalid: too few octets.
+        assert!(derive_dhcp_range("10.0.0/24").is_err());
+        // Invalid: too many octets.
+        assert!(derive_dhcp_range("10.0.0.0.0/24").is_err());
+    }
+
+    #[test]
+    fn parse_host_ip_strips_scheme_and_port() {
+        // http URL with port.
+        assert_eq!(parse_host_ip("http://10.0.0.5:9090").unwrap(), "10.0.0.5");
+        // https URL with port.
+        assert_eq!(
+            parse_host_ip("https://192.168.1.10:9090").unwrap(),
+            "192.168.1.10"
+        );
+        // Bare ip:port (no scheme).
+        assert_eq!(parse_host_ip("10.0.0.5:9090").unwrap(), "10.0.0.5");
+        // Bare ip (no scheme, no port).
+        assert_eq!(parse_host_ip("10.0.0.5").unwrap(), "10.0.0.5");
+    }
+
+    #[test]
+    fn parse_host_ip_rejects_empty_input() {
+        // Empty string yields empty IP.
+        assert!(parse_host_ip("").is_err());
+        // Scheme-only string also resolves to empty.
+        assert!(parse_host_ip("http://").is_err());
+    }
+}

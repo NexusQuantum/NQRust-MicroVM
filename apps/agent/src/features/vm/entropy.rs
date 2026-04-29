@@ -43,3 +43,38 @@ fn config_path(run_dir: &str, vm_id: &str, file: &str) -> std::path::PathBuf {
 fn internal_error<E: std::fmt::Display>(err: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_path_layout_is_stable() {
+        let path = config_path("/srv/fc", "vm-xyz", "entropy.json");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/srv/fc/vms/vm-xyz/config/entropy.json")
+        );
+    }
+
+    #[test]
+    fn entropy_req_round_trips() {
+        // Default: rate_limiter omitted entirely.
+        let req: EntropyReq = serde_json::from_str("{}").expect("default rate_limiter");
+        assert!(req.rate_limiter.is_none());
+
+        // With a value: opaque JSON forwarded as-is to Firecracker.
+        let payload = r#"{"rate_limiter":{"bandwidth":{"size":1000,"refill_time":100}}}"#;
+        let req: EntropyReq = serde_json::from_str(payload).unwrap();
+        let limiter = req.rate_limiter.expect("rate_limiter present");
+        assert_eq!(limiter["bandwidth"]["size"], 1000);
+        assert_eq!(limiter["bandwidth"]["refill_time"], 100);
+
+        // Round-trip back to JSON keeps the inner object intact.
+        let encoded = serde_json::to_string(&EntropyReq {
+            rate_limiter: Some(limiter),
+        })
+        .unwrap();
+        assert!(encoded.contains("\"size\":1000"));
+    }
+}
