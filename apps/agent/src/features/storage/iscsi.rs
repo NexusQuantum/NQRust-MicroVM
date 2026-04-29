@@ -20,6 +20,39 @@ struct LocatorJson {
     portal: Option<String>,
 }
 
+/// An `AsyncRead` wrapper around a `tokio::fs::File` opened on an iSCSI block
+/// device. On drop it spawns a best-effort logout so the session is cleaned up
+/// even if the caller forgets to call `detach`.
+struct IscsiSnapshotReader {
+    inner: tokio::fs::File,
+    iqn: String,
+    portal: String,
+}
+
+impl tokio::io::AsyncRead for IscsiSnapshotReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl Drop for IscsiSnapshotReader {
+    fn drop(&mut self) {
+        // Best-effort logout. We cannot await in Drop so spawn a detached task.
+        let iqn = std::mem::take(&mut self.iqn);
+        let portal = std::mem::take(&mut self.portal);
+        tokio::spawn(async move {
+            let _ = tokio::process::Command::new("iscsiadm")
+                .args(["-m", "node", "-T", &iqn, "-p", &portal, "--logout"])
+                .output()
+                .await;
+        });
+    }
+}
+
 pub struct IscsiHostBackend;
 
 impl IscsiHostBackend {
@@ -143,13 +176,23 @@ impl HostBackend for IscsiHostBackend {
         let loc = Self::parse_locator(&snap.locator)?;
         Self::iscsiadm_login(&loc).await?;
         let dev = Self::block_device_path(&loc);
+        let portal = loc
+            .portal
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
         for _ in 0..30 {
             if dev.exists() {
                 let f = tokio::fs::File::open(&dev).await?;
-                return Ok(Box::new(f));
+                return Ok(Box::new(IscsiSnapshotReader {
+                    inner: f,
+                    iqn: loc.iqn.clone(),
+                    portal,
+                }));
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+        // No device appeared — log out before erroring so we don't leak the session.
+        Self::iscsiadm_logout(&loc).await.ok();
         Err(StorageError::Backend(
             format!(
                 "snapshot device {} did not appear after iscsi login",
