@@ -127,7 +127,6 @@ impl BackupRepository {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub async fn list_stale_running(
         &self,
         older_than_minutes: i64,
