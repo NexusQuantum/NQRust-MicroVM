@@ -1,3 +1,4 @@
+use crate::features::backups::types::{BackupReq, BackupResp, RestoreReq, RestoreResp};
 use anyhow::{anyhow, Context, Result};
 use nexus_storage::{AttachedPath, BackendKind, VolumeHandle};
 use reqwest::Client;
@@ -113,4 +114,34 @@ pub async fn agent_resize2fs(host_addr: &str, attached: &AttachedPath) -> Result
         return Err(anyhow!("agent resize2fs: {}", resp.status()));
     }
     Ok(())
+}
+
+pub async fn agent_backup(host_addr: &str, req: BackupReq) -> Result<BackupResp> {
+    let resp = Client::new()
+        .post(agent_url(host_addr, "/v1/storage/backup"))
+        .json(&req)
+        .send()
+        .await
+        .with_context(|| format!("POST /v1/storage/backup to {host_addr}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("agent backup: {s}: {body}"));
+    }
+    Ok(resp.json::<BackupResp>().await?)
+}
+
+pub async fn agent_restore(host_addr: &str, req: RestoreReq) -> Result<RestoreResp> {
+    let resp = Client::new()
+        .post(agent_url(host_addr, "/v1/storage/restore"))
+        .json(&req)
+        .send()
+        .await
+        .with_context(|| format!("POST /v1/storage/restore to {host_addr}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("agent restore: {s}: {body}"));
+    }
+    Ok(resp.json::<RestoreResp>().await?)
 }

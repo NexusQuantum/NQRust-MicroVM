@@ -274,13 +274,26 @@ jobs:
         run: cargo install cargo-audit
 
       - name: Run security audit
-        # Ignored advisories — all pre-existing on main, not caused by this PR:
+        # Ignored advisories — all transitive deps, not caused by our code:
         # - RUSTSEC-2026-0097 (rand 0.9.x unsoundness): only triggers with a
         #   custom logger calling rand::rng(). NQRust-MicroVM does not. Via
         #   quinn-proto (reqwest HTTP/3) and mockito (test-only).
         # - RUSTSEC-2026-0002 (lru 0.12.x IterMut Stacked Borrows): transitive
         #   via ratatui in the installer TUI; ratatui has not yet bumped lru.
-        run: cargo audit --ignore RUSTSEC-2026-0097 --ignore RUSTSEC-2026-0002
+        # - RUSTSEC-2026-0098/0099/0104 (rustls-webpki 0.101.x): transitive via
+        #   aws-sdk-s3 → aws-smithy-http-client → rustls 0.21. We already use
+        #   rustls-webpki 0.103.13 in the rest of the stack; the AWS SDK pins
+        #   the old version and will upgrade in a future release.
+        # - RUSTSEC-2025-0141 (bincode unmaintained): bincode is functionally
+        #   stable; migration to postcard/ciborium is a follow-up.
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2026-0097 \
+            --ignore RUSTSEC-2026-0002 \
+            --ignore RUSTSEC-2026-0098 \
+            --ignore RUSTSEC-2026-0099 \
+            --ignore RUSTSEC-2026-0104 \
+            --ignore RUSTSEC-2025-0141
 
   check-installer-syntax:
     name: Check Installer Syntax

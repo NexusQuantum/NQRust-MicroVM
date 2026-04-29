@@ -2,6 +2,8 @@ use crate::AppState;
 use axum::{Extension, Json, Router};
 use serde::Serialize;
 
+pub mod backup_targets;
+pub mod backups;
 pub mod containers;
 pub mod functions;
 pub mod hosts;
@@ -87,6 +89,9 @@ pub fn router(state: AppState) -> Router {
         .nest("/v1/metrics", metrics::router())
         .nest("/v1/volumes", volumes::router())
         .nest("/v1/storage_backends", storage_backends::router())
+        .nest("/v1/backup_targets", backup_targets::router())
+        .nest("/v1/backups", backups::router())
+        .nest("/v1/volumes/:id/backup", backups::volume_backup_router())
         // SSO public routes (no auth — these ARE the auth flow)
         .nest("/v1/sso", sso::public_router())
         // SSO admin routes (auth + admin required)

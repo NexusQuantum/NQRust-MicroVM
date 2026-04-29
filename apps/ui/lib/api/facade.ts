@@ -101,6 +101,10 @@ import type {
   ContainerMetric,
   MetricsQueryParams,
   StorageBackendListResponse,
+  BackupTarget,
+  CreateBackupTargetRequest,
+  Backup,
+  BackupSchedule,
 } from "@/lib/types"
 
 /**
@@ -914,6 +918,47 @@ export class FacadeApi {
 
   async activateLicenseFile(fileContent: string): Promise<import("@/lib/types").LicenseState> {
     return apiClient.post<import("@/lib/types").LicenseState>("/licensing/license/activate-file", { file_content: fileContent });
+  }
+
+  // ==============
+  // Backup Targets
+  // ==============
+
+  async listBackupTargets(): Promise<{ items: BackupTarget[] }> {
+    return apiClient.get<{ items: BackupTarget[] }>("/backup_targets");
+  }
+
+  async createBackupTarget(req: CreateBackupTargetRequest): Promise<BackupTarget> {
+    return apiClient.post<BackupTarget>("/backup_targets", req);
+  }
+
+  async deleteBackupTarget(id: string): Promise<void> {
+    return apiClient.delete<void>(`/backup_targets/${id}`);
+  }
+
+  // ==============
+  // Backups
+  // ==============
+
+  async listBackups(volumeId?: string): Promise<{ items: Backup[] }> {
+    const q = volumeId ? `?volume_id=${volumeId}` : "";
+    return apiClient.get<{ items: Backup[] }>(`/backups${q}`);
+  }
+
+  async createBackup(volumeId: string, targetId: string): Promise<{ backup_id: string }> {
+    return apiClient.post<{ backup_id: string }>(`/volumes/${volumeId}/backup`, { target_id: targetId });
+  }
+
+  async restoreBackup(backupId: string, targetBackendId: string): Promise<{ volume_id: string }> {
+    return apiClient.post<{ volume_id: string }>(`/backups/${backupId}/restore`, { target_backend_id: targetBackendId });
+  }
+
+  async deleteBackup(backupId: string): Promise<void> {
+    return apiClient.delete<void>(`/backups/${backupId}`);
+  }
+
+  async patchBackupSchedule(volumeId: string, req: Partial<BackupSchedule>): Promise<void> {
+    return apiClient.patch<void>(`/volumes/${volumeId}/backup_schedule`, req);
   }
 }
 

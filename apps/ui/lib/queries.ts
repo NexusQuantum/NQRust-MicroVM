@@ -122,6 +122,10 @@ export const queryKeys = {
 
   // storage backends
   storageBackends: () => ["storage_backends"] as const,
+
+  // backups
+  backupTargets: () => ["backup_targets"] as const,
+  backups: (vid?: string) => ["backups", vid ?? "all"] as const,
 }
 
 // Function Query
@@ -1410,5 +1414,24 @@ export function useStorageBackends() {
       return resp.items;
     },
     staleTime: 60_000,
+  });
+}
+
+// ==============
+// Backups
+// ==============
+
+export function useBackupTargets() {
+  return useQuery({
+    queryKey: queryKeys.backupTargets(),
+    queryFn: async () => (await facadeApi.listBackupTargets()).items,
+  });
+}
+
+export function useBackups(volumeId?: string) {
+  return useQuery({
+    queryKey: queryKeys.backups(volumeId),
+    queryFn: async () => (await facadeApi.listBackups(volumeId)).items,
+    refetchInterval: 5_000, // for in-progress backups
   });
 }

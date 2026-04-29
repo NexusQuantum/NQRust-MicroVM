@@ -69,6 +69,26 @@ async fn main() -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 4 && args[1] == "backup" && args[2] == "index-rebuild" {
+        if args.len() != 5 || args[3] != "--target" {
+            eprintln!("usage: manager backup index-rebuild --target <uuid>");
+            std::process::exit(2);
+        }
+        let target_id: uuid::Uuid = match args[4].parse() {
+            Ok(u) => u,
+            Err(e) => {
+                eprintln!("bad uuid: {e}");
+                std::process::exit(2);
+            }
+        };
+        let database_url =
+            std::env::var("DATABASE_URL").map_err(|e| anyhow::anyhow!("DATABASE_URL: {e}"))?;
+        let pool = sqlx::PgPool::connect(&database_url).await?;
+        crate::features::backups::index_rebuild::run(pool, target_id).await?;
+        return Ok(());
+    }
+
     let db = PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
 
@@ -237,6 +257,30 @@ async fn main() -> anyhow::Result<()> {
                     _ => {}
                 }
             }
+        });
+    }
+
+    // Backup GC loop: daily mark-and-sweep per target.
+    {
+        let pool = state.db.clone();
+        tokio::spawn(async move {
+            crate::features::backups::gc::gc_loop(pool).await;
+        });
+    }
+
+    // Backup reconciler: ages stuck 'running' rows after 24h.
+    {
+        let pool = state.db.clone();
+        tokio::spawn(async move {
+            crate::features::backups::reconciler::reconcile_loop(pool).await;
+        });
+    }
+
+    // Backup scheduler: per-volume cron-triggered backups.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            crate::features::backups::scheduler::schedule_loop(st).await;
         });
     }
 

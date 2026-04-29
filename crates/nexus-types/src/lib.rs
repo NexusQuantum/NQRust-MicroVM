@@ -1747,3 +1747,88 @@ pub struct StorageBackend {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
 }
+
+// ── Backup pipeline ──────────────────────────────────────────────────────
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum BackupStatus {
+    Running,
+    Completed,
+    Failed,
+    Pruning,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct BackupTarget {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub bucket: String,
+    #[serde(default)]
+    pub prefix: String,
+    pub access_key_id: String,
+    /// gc_hour 0-23 (UTC).
+    pub gc_hour: u8,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct CreateBackupTargetRequest {
+    pub name: String,
+    pub endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub bucket: String,
+    #[serde(default)]
+    pub prefix: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    #[serde(default = "default_backup_gc_hour")]
+    pub gc_hour: u8,
+}
+
+fn default_backup_gc_hour() -> u8 {
+    3
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct Backup {
+    pub id: uuid::Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_volume_id: Option<uuid::Uuid>,
+    pub target_id: uuid::Uuid,
+    pub size_bytes: i64,
+    pub unique_bytes: i64,
+    pub chunk_count: i64,
+    pub status: BackupStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct BackupSchedule {
+    /// Standard 5-field cron expression in UTC.
+    pub cron: String,
+    pub retain_count: i32,
+    pub target_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct CreateBackupRequest {
+    pub target_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct RestoreRequest {
+    pub target_backend_id: uuid::Uuid,
+}
