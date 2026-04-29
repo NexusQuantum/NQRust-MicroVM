@@ -2978,6 +2978,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-raft-block"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "nexus-storage"
 version = "0.1.0"
 dependencies = [

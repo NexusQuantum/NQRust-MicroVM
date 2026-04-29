@@ -4,6 +4,7 @@ members = [
 "apps/manager",
 "apps/installer",
 "crates/nexus-backup",
+"crates/nexus-raft-block",
 "crates/nexus-storage",
 "crates/nexus-types",
 ]
