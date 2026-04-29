@@ -1,4 +1,4 @@
-use nexus_storage::{AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle};
+use nexus_storage::{AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle};
 use std::path::{Path, PathBuf};
 
 /// Agent-side LocalFile backend. Trivial: the locator IS the file path.
@@ -45,6 +45,15 @@ impl HostBackend for LocalFileHostBackend {
         dst.flush().await?;
         Ok(())
     }
+
+    async fn read_snapshot(
+        &self,
+        snap: &VolumeSnapshotHandle,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StorageError> {
+        let path = std::path::PathBuf::from(&snap.locator);
+        let f = tokio::fs::File::open(&path).await?;
+        Ok(Box::new(f))
+    }
 }
 
 #[cfg(test)]
@@ -82,5 +91,30 @@ mod tests {
         assert_eq!(&written[..8 * 1024], &data[..]);
         // File extended to target size (sparse tail OK).
         assert_eq!(std::fs::metadata(&dst).unwrap().len(), 16 * 1024);
+    }
+
+    #[tokio::test]
+    async fn read_snapshot_returns_file_contents() {
+        use nexus_storage::{BackendInstanceId, VolumeSnapshotHandle};
+        use tokio::io::AsyncReadExt;
+        use uuid::Uuid;
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("snap.img");
+        std::fs::write(&p, b"snapshot-bytes").unwrap();
+
+        let snap = VolumeSnapshotHandle {
+            snapshot_id: Uuid::new_v4(),
+            source_volume_id: Uuid::new_v4(),
+            backend_id: BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::LocalFile,
+            locator: p.display().to_string(),
+        };
+
+        let backend = LocalFileHostBackend;
+        let mut reader = backend.read_snapshot(&snap).await.unwrap();
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, b"snapshot-bytes");
     }
 }
