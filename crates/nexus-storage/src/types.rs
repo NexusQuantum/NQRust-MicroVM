@@ -29,6 +29,8 @@ pub enum BackendKind {
     Iscsi,
     #[serde(rename = "truenas_iscsi")]
     TrueNasIscsi,
+    #[serde(rename = "spdk_lvol")]
+    SpdkLvol,
 }
 
 impl BackendKind {
@@ -37,6 +39,7 @@ impl BackendKind {
             BackendKind::LocalFile => "local_file",
             BackendKind::Iscsi => "iscsi",
             BackendKind::TrueNasIscsi => "truenas_iscsi",
+            BackendKind::SpdkLvol => "spdk_lvol",
         }
     }
 }

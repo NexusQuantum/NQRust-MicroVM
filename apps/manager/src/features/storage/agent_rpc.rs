@@ -100,13 +100,21 @@ pub async fn agent_populate(
 
 #[derive(Serialize)]
 struct Resize2fsReq<'a> {
+    backend_kind: BackendKind,
     attached: &'a AttachedPath,
 }
 
-pub async fn agent_resize2fs(host_addr: &str, attached: &AttachedPath) -> Result<()> {
+pub async fn agent_resize2fs(
+    host_addr: &str,
+    backend_kind: BackendKind,
+    attached: &AttachedPath,
+) -> Result<()> {
     let resp = Client::new()
         .post(agent_url(host_addr, "/v1/storage/resize2fs"))
-        .json(&Resize2fsReq { attached })
+        .json(&Resize2fsReq {
+            backend_kind,
+            attached,
+        })
         .send()
         .await
         .with_context(|| format!("POST /v1/storage/resize2fs to {host_addr}"))?;

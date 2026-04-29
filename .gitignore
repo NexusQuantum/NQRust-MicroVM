@@ -76,6 +76,7 @@ scripts/airgap/output/
 
 # Runtime data
 .data/
+.worktrees/
 
 # Internal dev notes
 notes/

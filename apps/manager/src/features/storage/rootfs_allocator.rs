@@ -81,9 +81,12 @@ pub async fn allocate_rootfs(
         match populate_result {
             Ok(()) => {
                 if image_is_ext4_rootfs(source_image).await.unwrap_or(false) {
-                    if let Err(e) =
-                        crate::features::storage::agent_rpc::agent_resize2fs(host_addr, &attached)
-                            .await
+                    if let Err(e) = crate::features::storage::agent_rpc::agent_resize2fs(
+                        host_addr,
+                        h.backend_kind,
+                        &attached,
+                    )
+                    .await
                     {
                         tracing::warn!("resize2fs failed (non-fatal): {e:#}");
                     }
