@@ -64,15 +64,49 @@ pub async fn run_backup(
         let chunk_id: [u8; 32] = *blake3::hash(&ciphertext).as_bytes();
         let object_key = chunk_object_key(&params.target.prefix, &chunk_id);
 
-        let exists = s3::head_object(&s3, &params.target.bucket, &object_key)
-            .await
-            .context("HEAD chunk")?;
+        let exists = {
+            let mut attempt = 0u32;
+            loop {
+                match s3::head_object(&s3, &params.target.bucket, &object_key).await {
+                    Ok(v) => break v,
+                    Err(e) if attempt < 4 => {
+                        let backoff_ms = 200u64 * (1u64 << attempt);
+                        tracing::warn!(
+                            "HEAD chunk attempt {} failed: {e}; retrying in {backoff_ms}ms",
+                            attempt + 1
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        attempt += 1;
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("HEAD chunk failed after 5 attempts: {e}"))
+                    }
+                }
+            }
+        };
         bytes_written += ciphertext.len() as u64;
         if !exists {
             let cipher_len = ciphertext.len() as u64;
-            s3::put_object(&s3, &params.target.bucket, &object_key, ciphertext.clone())
-                .await
-                .context("PUT chunk")?;
+            let mut attempt = 0u32;
+            loop {
+                match s3::put_object(&s3, &params.target.bucket, &object_key, ciphertext.clone())
+                    .await
+                {
+                    Ok(()) => break,
+                    Err(e) if attempt < 4 => {
+                        let backoff_ms = 200u64 * (1u64 << attempt);
+                        tracing::warn!(
+                            "PUT chunk attempt {} failed: {e}; retrying in {backoff_ms}ms",
+                            attempt + 1
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        attempt += 1;
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("PUT chunk failed after 5 attempts: {e}"))
+                    }
+                }
+            }
             bytes_unique += cipher_len;
         }
 
@@ -100,9 +134,24 @@ pub async fn run_backup(
         .context("manifest serialize")?;
     let manifest_blob = encrypt_manifest(&key, &manifest_compressed).context("encrypt manifest")?;
     let mkey = manifest_object_key(&params.target.prefix, &params.backup_id);
-    s3::put_object(&s3, &params.target.bucket, &mkey, manifest_blob)
-        .await
-        .context("PUT manifest")?;
+    {
+        let mut attempt = 0u32;
+        loop {
+            match s3::put_object(&s3, &params.target.bucket, &mkey, manifest_blob.clone()).await {
+                Ok(()) => break,
+                Err(e) if attempt < 4 => {
+                    let backoff_ms = 200u64 * (1u64 << attempt);
+                    tracing::warn!(
+                        "PUT manifest attempt {} failed: {e}; retrying in {backoff_ms}ms",
+                        attempt + 1
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(anyhow::anyhow!("PUT manifest failed after 5 attempts: {e}")),
+            }
+        }
+    }
 
     Ok(BackupOutcome {
         manifest_object_key: mkey,
@@ -131,9 +180,24 @@ pub async fn run_restore(params: RestoreParams) -> Result<RestoreOutcome> {
     let s3 = s3::make_client(&params.target);
     let key = ChunkKey::from_bytes(params.encryption_key);
 
-    let blob = s3::get_object(&s3, &params.target.bucket, &params.manifest_object_key)
-        .await
-        .context("GET manifest")?;
+    let blob = {
+        let mut attempt = 0u32;
+        loop {
+            match s3::get_object(&s3, &params.target.bucket, &params.manifest_object_key).await {
+                Ok(v) => break v,
+                Err(e) if attempt < 4 => {
+                    let backoff_ms = 200u64 * (1u64 << attempt);
+                    tracing::warn!(
+                        "GET manifest attempt {} failed: {e}; retrying in {backoff_ms}ms",
+                        attempt + 1
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(anyhow::anyhow!("GET manifest failed after 5 attempts: {e}")),
+            }
+        }
+    };
     let compressed = decrypt_manifest(&key, &blob).context("decrypt manifest")?;
     let manifest = Manifest::deserialize_compressed(&compressed).context("deserialize manifest")?;
 
@@ -147,9 +211,30 @@ pub async fn run_restore(params: RestoreParams) -> Result<RestoreOutcome> {
     let mut bytes_written: u64 = 0;
     for chunk_ref in &manifest.chunks {
         let object_key = chunk_object_key(&params.target.prefix, &chunk_ref.chunk_id);
-        let ciphertext = s3::get_object(&s3, &params.target.bucket, &object_key)
-            .await
-            .with_context(|| format!("GET chunk {}", hex::encode(chunk_ref.chunk_id)))?;
+        let ciphertext = {
+            let mut attempt = 0u32;
+            loop {
+                match s3::get_object(&s3, &params.target.bucket, &object_key).await {
+                    Ok(v) => break v,
+                    Err(e) if attempt < 4 => {
+                        let backoff_ms = 200u64 * (1u64 << attempt);
+                        tracing::warn!(
+                            "GET chunk {} attempt {} failed: {e}; retrying in {backoff_ms}ms",
+                            hex::encode(chunk_ref.chunk_id),
+                            attempt + 1
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        attempt += 1;
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "GET chunk {} failed after 5 attempts: {e}",
+                            hex::encode(chunk_ref.chunk_id)
+                        ))
+                    }
+                }
+            }
+        };
         let plaintext =
             decrypt_chunk(&key, &ciphertext, &chunk_ref.plaintext_hash).context("decrypt chunk")?;
         dst.seek(std::io::SeekFrom::Start(chunk_ref.plaintext_offset))
