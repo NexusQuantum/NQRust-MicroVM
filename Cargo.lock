@@ -74,6 +74,7 @@ dependencies = [
  "hyperlocal",
  "libc",
  "nexus-backup",
+ "nexus-raft-block",
  "nexus-storage",
  "nexus-types",
  "num_cpus",
@@ -2982,7 +2983,10 @@ name = "nexus-raft-block"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "serde",
+ "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 

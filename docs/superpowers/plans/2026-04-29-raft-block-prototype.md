@@ -43,7 +43,8 @@ cargo test -p nexus-raft-block
 
 ## Task 3: Real Raft Library Selection
 
-Status: pending. `raft_spdk` is intentionally fail-closed until an Openraft adapter is implemented.
+Status: partially complete. `nexus-raft-block` now has serializable `BlockCommand`/`BlockResponse`
+types and a durable file-backed local replica store. Openraft itself is still pending.
 
 Compare `openraft` and `tikv-raft-rs` against the model:
 
@@ -58,8 +59,9 @@ Do not wire either library into VM disks until Task 1 and Task 2 are stable.
 
 ## Task 4: Prototype Transport Boundary
 
-Status: scaffolded in the agent. Routes exist and return explicit 501 responses until the Openraft
-network adapter is wired.
+Status: partially scaffolded in the agent. A local durable replica can be created and appended to through
+`/v1/raft_block/create` and `/v1/raft_block/append`; vote/heartbeat/install-snapshot still return
+explicit 501 responses until the Openraft network adapter is wired.
 
 Define an agent-internal transport for block log replication:
 

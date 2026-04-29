@@ -6,8 +6,11 @@
 //! model grows enough failure coverage to catch ordering, replay, and stale
 //! leader bugs.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub type NodeId = u64;
@@ -38,9 +41,11 @@ pub enum RaftBlockError {
     NodeNotFound(NodeId),
     #[error("node {node_id} is not the current leader {leader_id}")]
     NotLeader { node_id: NodeId, leader_id: NodeId },
+    #[error("persistent store error: {0}")]
+    Store(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockOp {
     Write {
         offset: u64,
@@ -64,7 +69,7 @@ impl BlockOp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogEntry {
     pub term: Term,
     pub index: LogIndex,
@@ -215,12 +220,238 @@ impl Replica {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockSnapshot {
     pub replica_id: NodeId,
     pub last_included_index: LogIndex,
     pub highest_term_seen: Term,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlockCommand {
+    Write { offset: u64, bytes: Vec<u8> },
+    Flush,
+}
+
+impl BlockCommand {
+    pub fn into_entry(self, term: Term, index: LogIndex) -> Result<LogEntry, RaftBlockError> {
+        match self {
+            BlockCommand::Write { offset, bytes } => LogEntry::write(term, index, offset, bytes),
+            BlockCommand::Flush => Ok(LogEntry::flush(term, index)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockResponse {
+    pub applied_index: LogIndex,
+    pub bytes_written: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistentReplicaState {
+    pub node_id: NodeId,
+    pub capacity_bytes: u64,
+    pub block_size: u64,
+    pub highest_term_seen: Term,
+    pub applied_indexes: Vec<LogIndex>,
+    pub bytes: Vec<u8>,
+    pub log: Vec<LogEntry>,
+    pub compacted_through: LogIndex,
+}
+
+impl PersistentReplicaState {
+    pub fn from_replica(
+        replica: &Replica,
+        log: Vec<LogEntry>,
+        compacted_through: LogIndex,
+    ) -> Self {
+        Self {
+            node_id: replica.id,
+            capacity_bytes: replica.bytes.len() as u64,
+            block_size: replica.block_size,
+            highest_term_seen: replica.highest_term_seen,
+            applied_indexes: replica.applied.iter().copied().collect(),
+            bytes: replica.bytes.clone(),
+            log,
+            compacted_through,
+        }
+    }
+
+    pub fn into_replica(self) -> Result<(Replica, Vec<LogEntry>, LogIndex), RaftBlockError> {
+        let mut replica = Replica::new(self.node_id, self.capacity_bytes, self.block_size)?;
+        if self.bytes.len() != replica.bytes.len() {
+            return Err(RaftBlockError::InvalidCapacity);
+        }
+        replica.bytes = self.bytes;
+        replica.highest_term_seen = self.highest_term_seen;
+        replica.applied = self.applied_indexes.into_iter().collect();
+        Ok((replica, self.log, self.compacted_through))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileReplicaStore {
+    path: PathBuf,
+}
+
+impl FileReplicaStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn load(&self) -> Result<Option<PersistentReplicaState>, RaftBlockError> {
+        if !self.path.exists() {
+            return Ok(None);
+        }
+        let mut file = std::fs::File::open(&self.path)
+            .map_err(|e| RaftBlockError::Store(format!("open {:?}: {e}", self.path)))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|e| RaftBlockError::Store(format!("read {:?}: {e}", self.path)))?;
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| RaftBlockError::Store(format!("decode {:?}: {e}", self.path)))
+    }
+
+    pub fn save(&self, state: &PersistentReplicaState) -> Result<(), RaftBlockError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| RaftBlockError::Store(format!("create {parent:?}: {e}")))?;
+        }
+        let tmp_path = tmp_path_for(&self.path);
+        let encoded = serde_json::to_vec(state)
+            .map_err(|e| RaftBlockError::Store(format!("encode {:?}: {e}", self.path)))?;
+        {
+            let mut file = std::fs::File::create(&tmp_path)
+                .map_err(|e| RaftBlockError::Store(format!("create {tmp_path:?}: {e}")))?;
+            file.write_all(&encoded)
+                .map_err(|e| RaftBlockError::Store(format!("write {tmp_path:?}: {e}")))?;
+            file.sync_all()
+                .map_err(|e| RaftBlockError::Store(format!("sync {tmp_path:?}: {e}")))?;
+        }
+        std::fs::rename(&tmp_path, &self.path)
+            .map_err(|e| RaftBlockError::Store(format!("rename {tmp_path:?}: {e}")))?;
+        Ok(())
+    }
+}
+
+fn tmp_path_for(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("replica-state");
+    path.with_file_name(format!("{file_name}.tmp"))
+}
+
+#[derive(Debug, Clone)]
+pub struct PersistentReplica {
+    replica: Replica,
+    log: Vec<LogEntry>,
+    compacted_through: LogIndex,
+    next_index: LogIndex,
+    store: FileReplicaStore,
+}
+
+impl PersistentReplica {
+    pub fn create(
+        store: FileReplicaStore,
+        node_id: NodeId,
+        capacity_bytes: u64,
+        block_size: u64,
+    ) -> Result<Self, RaftBlockError> {
+        let replica = Replica::new(node_id, capacity_bytes, block_size)?;
+        let out = Self {
+            replica,
+            log: Vec::new(),
+            compacted_through: 0,
+            next_index: 1,
+            store,
+        };
+        out.persist()?;
+        Ok(out)
+    }
+
+    pub fn open(store: FileReplicaStore) -> Result<Option<Self>, RaftBlockError> {
+        let Some(state) = store.load()? else {
+            return Ok(None);
+        };
+        let (replica, log, compacted_through) = state.into_replica()?;
+        let next_index = log
+            .iter()
+            .map(|entry| entry.index)
+            .max()
+            .unwrap_or(compacted_through)
+            + 1;
+        Ok(Some(Self {
+            replica,
+            log,
+            compacted_through,
+            next_index,
+            store,
+        }))
+    }
+
+    pub fn append_command(
+        &mut self,
+        term: Term,
+        command: BlockCommand,
+    ) -> Result<BlockResponse, RaftBlockError> {
+        let entry = command.into_entry(term, self.next_index)?;
+        self.append_entry(entry)
+    }
+
+    pub fn append_entry(&mut self, entry: LogEntry) -> Result<BlockResponse, RaftBlockError> {
+        self.replica.apply(&entry)?;
+        let bytes_written = match &entry.op {
+            BlockOp::Write { bytes, .. } => bytes.len() as u64,
+            BlockOp::Flush => 0,
+        };
+        self.next_index = self.next_index.max(entry.index + 1);
+        self.log.push(entry.clone());
+        self.persist()?;
+        Ok(BlockResponse {
+            applied_index: entry.index,
+            bytes_written,
+        })
+    }
+
+    pub fn install_snapshot(&mut self, snapshot: &BlockSnapshot) -> Result<(), RaftBlockError> {
+        self.replica.install_snapshot(snapshot)?;
+        self.log
+            .retain(|entry| entry.index > snapshot.last_included_index);
+        self.compacted_through = self.compacted_through.max(snapshot.last_included_index);
+        self.next_index = self.next_index.max(snapshot.last_included_index + 1);
+        self.persist()
+    }
+
+    pub fn snapshot(&self) -> BlockSnapshot {
+        let last_applied = self
+            .replica
+            .applied_indexes()
+            .iter()
+            .next_back()
+            .copied()
+            .unwrap_or(self.compacted_through);
+        self.replica.snapshot(last_applied)
+    }
+
+    pub fn read_all(&self) -> &[u8] {
+        self.replica.read_all()
+    }
+
+    pub fn log(&self) -> &[LogEntry] {
+        &self.log
+    }
+
+    fn persist(&self) -> Result<(), RaftBlockError> {
+        self.store.save(&PersistentReplicaState::from_replica(
+            &self.replica,
+            self.log.clone(),
+            self.compacted_through,
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -573,6 +804,89 @@ mod tests {
         assert_eq!(&replica.read_all()[512..1024], &[2; 512]);
         assert!(replica.applied_indexes().contains(&1));
         assert!(replica.applied_indexes().contains(&2));
+    }
+
+    #[test]
+    fn block_command_maps_to_log_entry_and_response() {
+        let entry = BlockCommand::Write {
+            offset: 0,
+            bytes: vec![4; 512],
+        }
+        .into_entry(2, 7)
+        .unwrap();
+
+        assert_eq!(entry.term, 2);
+        assert_eq!(entry.index, 7);
+        let BlockOp::Write { offset, bytes, .. } = entry.op else {
+            panic!("expected write");
+        };
+        assert_eq!(offset, 0);
+        assert_eq!(bytes, vec![4; 512]);
+    }
+
+    #[test]
+    fn persistent_replica_reopens_with_applied_bytes_and_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let mut replica = PersistentReplica::create(store.clone(), 1, 4096, 512).unwrap();
+
+        let response = replica
+            .append_command(
+                1,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![8; 512],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            response,
+            BlockResponse {
+                applied_index: 1,
+                bytes_written: 512
+            }
+        );
+        drop(replica);
+
+        let reopened = PersistentReplica::open(store).unwrap().unwrap();
+        assert_eq!(&reopened.read_all()[0..512], &[8; 512]);
+        assert_eq!(reopened.log().len(), 1);
+        assert_eq!(reopened.log()[0].index, 1);
+    }
+
+    #[test]
+    fn persistent_replica_install_snapshot_compacts_replayed_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let mut replica = PersistentReplica::create(store.clone(), 1, 4096, 512).unwrap();
+        replica
+            .append_command(
+                1,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![1; 512],
+                },
+            )
+            .unwrap();
+        replica
+            .append_command(
+                1,
+                BlockCommand::Write {
+                    offset: 512,
+                    bytes: vec![2; 512],
+                },
+            )
+            .unwrap();
+
+        let snapshot = replica.snapshot();
+        replica.install_snapshot(&snapshot).unwrap();
+        assert!(replica.log().is_empty());
+        drop(replica);
+
+        let reopened = PersistentReplica::open(store).unwrap().unwrap();
+        assert_eq!(&reopened.read_all()[0..512], &[1; 512]);
+        assert_eq!(&reopened.read_all()[512..1024], &[2; 512]);
+        assert!(reopened.log().is_empty());
     }
 
     proptest! {

@@ -29,6 +29,7 @@ uuid = { workspace = true }
 futures = { workspace = true }
 libc = "0.2"
 nexus-backup = { path = "../../crates/nexus-backup" }
+nexus-raft-block = { path = "../../crates/nexus-raft-block" }
 aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
 aws-credential-types = "1"
 aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
