@@ -2,6 +2,7 @@ use crate::AppState;
 use axum::{Extension, Json, Router};
 use serde::Serialize;
 
+pub mod backup_targets;
 pub mod containers;
 pub mod functions;
 pub mod hosts;
