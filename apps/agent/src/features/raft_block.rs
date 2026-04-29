@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use nexus_raft_block::{
-    BlockCommand, BlockResponse, FileReplicaStore, PersistentReplica, RaftBlockError,
+    BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore, PersistentReplica, RaftBlockError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -57,6 +57,22 @@ impl RaftBlockState {
         replica.append_command(req.term, req.command)
     }
 
+    async fn snapshot(&self, group_id: Uuid) -> Result<BlockSnapshot, RaftBlockError> {
+        let groups = self.groups.lock().await;
+        let replica = groups
+            .get(&group_id)
+            .ok_or_else(|| RaftBlockError::Store(format!("group {group_id} not started")))?;
+        Ok(replica.snapshot())
+    }
+
+    async fn install_snapshot(&self, req: InstallSnapshotReq) -> Result<(), RaftBlockError> {
+        let mut groups = self.groups.lock().await;
+        let replica = groups
+            .get_mut(&req.group_id)
+            .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
+        replica.install_snapshot(&req.snapshot)
+    }
+
     async fn status(&self, group_id: Uuid) -> RaftBlockStatus {
         let groups = self.groups.lock().await;
         if let Some(replica) = groups.get(&group_id) {
@@ -90,6 +106,12 @@ pub struct AppendReq {
     pub group_id: Uuid,
     pub term: u64,
     pub command: BlockCommand,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstallSnapshotReq {
+    pub group_id: Uuid,
+    pub snapshot: BlockSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -132,12 +154,28 @@ pub async fn append(
     }
 }
 
+pub async fn snapshot(
+    State(state): State<Arc<RaftBlockState>>,
+    Path(group_id): Path<Uuid>,
+) -> impl IntoResponse {
+    match state.snapshot(group_id).await {
+        Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
 pub async fn vote(Json(req): Json<RaftBlockRpcEnvelope>) -> impl IntoResponse {
     not_implemented(req.group_id, "vote")
 }
 
-pub async fn install_snapshot(Json(req): Json<RaftBlockRpcEnvelope>) -> impl IntoResponse {
-    not_implemented(req.group_id, "install_snapshot")
+pub async fn install_snapshot(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<InstallSnapshotReq>,
+) -> impl IntoResponse {
+    match state.install_snapshot(req).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
 }
 
 pub async fn heartbeat(Json(req): Json<RaftBlockRpcEnvelope>) -> impl IntoResponse {
@@ -169,6 +207,7 @@ fn error_response(status: StatusCode, err: RaftBlockError) -> axum::response::Re
 pub fn router(state: Arc<RaftBlockState>) -> Router {
     Router::new()
         .route("/:group_id/status", get(status))
+        .route("/:group_id/snapshot", get(snapshot))
         .route("/create", post(create))
         .route("/append", post(append))
         .route("/vote", post(vote))
@@ -259,6 +298,92 @@ mod tests {
         let status: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(status["state"], "started");
         assert_eq!(status["applied_entries"], 1);
+    }
+
+    #[tokio::test]
+    async fn snapshot_and_install_snapshot_are_durable() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_group = Uuid::new_v4();
+        let target_group = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id: source_group,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = append(
+            State(state.clone()),
+            Json(AppendReq {
+                group_id: source_group,
+                term: 1,
+                command: BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![7; 512],
+                },
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = snapshot(State(state.clone()), Path(source_group))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let source_snapshot: BlockSnapshot = serde_json::from_slice(&body).unwrap();
+
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id: target_group,
+                node_id: 2,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = install_snapshot(
+            State(state.clone()),
+            Json(InstallSnapshotReq {
+                group_id: target_group,
+                snapshot: source_snapshot,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        drop(state);
+
+        let restarted = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(restarted.clone()),
+            Json(CreateGroupReq {
+                group_id: target_group,
+                node_id: 2,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = snapshot(State(restarted), Path(target_group))
+            .await
+            .into_response();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let snapshot: BlockSnapshot = serde_json::from_slice(&body).unwrap();
+        assert_eq!(&snapshot.bytes[0..512], &[7; 512]);
     }
 
     #[tokio::test]

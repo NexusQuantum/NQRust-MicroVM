@@ -60,8 +60,9 @@ Do not wire either library into VM disks until Task 1 and Task 2 are stable.
 ## Task 4: Prototype Transport Boundary
 
 Status: partially scaffolded in the agent. A local durable replica can be created and appended to through
-`/v1/raft_block/create` and `/v1/raft_block/append`; vote/heartbeat/install-snapshot still return
-explicit 501 responses until the Openraft network adapter is wired.
+`/v1/raft_block/create`, `/v1/raft_block/append`, `/:group_id/snapshot`, and
+`/v1/raft_block/install_snapshot`; vote/heartbeat still return explicit 501 responses until the
+Openraft network adapter is wired.
 
 Define an agent-internal transport for block log replication:
 
