@@ -6,7 +6,7 @@
 //! Locator format (JSON): {"iqn":"...","lun":N,"dataset":"...","portal":"..."}
 //! `dataset` is ignored on the host side; it's a control-plane concern.
 
-use nexus_storage::{AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle};
+use nexus_storage::{AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -129,6 +129,28 @@ impl HostBackend for IscsiHostBackend {
         // by the control plane at provision time. target_size_bytes is informational.
         let _ = target_size_bytes;
         Ok(())
+    }
+
+    async fn read_snapshot(
+        &self,
+        snap: &VolumeSnapshotHandle,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StorageError> {
+        // Snapshot's locator has the same JSON shape as a volume's locator —
+        // {iqn, lun, portal, dataset?} — but the LUN refers to the read-only
+        // snapshot extent.
+        let loc = Self::parse_locator(&snap.locator)?;
+        Self::iscsiadm_login(&loc).await?;
+        let dev = Self::block_device_path(&loc);
+        for _ in 0..30 {
+            if dev.exists() {
+                let f = tokio::fs::File::open(&dev).await?;
+                return Ok(Box::new(f));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Err(StorageError::Backend(
+            format!("snapshot device {} did not appear after iscsi login", dev.display()).into(),
+        ))
     }
 }
 
