@@ -116,7 +116,6 @@ pub async fn agent_resize2fs(host_addr: &str, attached: &AttachedPath) -> Result
     Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn agent_backup(host_addr: &str, req: BackupReq) -> Result<BackupResp> {
     let resp = Client::new()
         .post(agent_url(host_addr, "/v1/storage/backup"))
@@ -132,7 +131,6 @@ pub async fn agent_backup(host_addr: &str, req: BackupReq) -> Result<BackupResp>
     Ok(resp.json::<BackupResp>().await?)
 }
 
-#[allow(dead_code)]
 pub async fn agent_restore(host_addr: &str, req: RestoreReq) -> Result<RestoreResp> {
     let resp = Client::new()
         .post(agent_url(host_addr, "/v1/storage/restore"))
