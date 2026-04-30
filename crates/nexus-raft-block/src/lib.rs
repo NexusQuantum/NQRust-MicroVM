@@ -296,6 +296,14 @@ pub struct BlockResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoteOutcome {
+    pub granted: bool,
+    pub term: Term,
+    pub voted_for: Option<NodeId>,
+    pub committed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistentReplicaState {
     pub node_id: NodeId,
     pub capacity_bytes: u64,
@@ -775,6 +783,46 @@ impl InMemoryOpenraftBlockStore {
         Ok(responses)
     }
 
+    pub fn request_vote(
+        &self,
+        term: Term,
+        candidate_id: NodeId,
+    ) -> Result<VoteOutcome, RaftBlockError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        let requested = openraft::Vote::new(term, candidate_id);
+        let granted = match inner.vote {
+            Some(current)
+                if current.leader_id.term == term
+                    && current.leader_id.voted_for().is_some()
+                    && current.leader_id.voted_for() != Some(candidate_id) =>
+            {
+                false
+            }
+            None => {
+                inner.vote = Some(requested);
+                true
+            }
+            Some(current) if requested > current => {
+                inner.vote = Some(requested);
+                true
+            }
+            Some(current) if requested == current => true,
+            Some(_) => false,
+        };
+        Ok(vote_outcome(inner.vote.unwrap_or_default(), granted))
+    }
+
+    pub fn current_vote(&self) -> Result<VoteOutcome, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(vote_outcome(inner.vote.unwrap_or_default(), false))
+    }
+
     pub fn block_snapshot(&self) -> Result<BlockSnapshot, RaftBlockError> {
         let inner = self
             .inner
@@ -850,6 +898,15 @@ impl InMemoryOpenraftBlockStore {
             .lock()
             .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
         Ok(inner.logs.len() as u64)
+    }
+}
+
+fn vote_outcome(vote: openraft::Vote<NodeId>, granted: bool) -> VoteOutcome {
+    VoteOutcome {
+        granted,
+        term: vote.leader_id.term,
+        voted_for: vote.leader_id.voted_for(),
+        committed: vote.committed,
     }
 }
 
@@ -1677,6 +1734,41 @@ mod tests {
         assert_eq!(reopened.retained_log_entries().unwrap(), 1);
         assert_eq!(reopened.last_applied_index().unwrap(), 1);
         assert_eq!(reopened.read_range(0, 512).unwrap(), vec![6; 512]);
+    }
+
+    #[test]
+    fn openraft_storage_harness_rejects_conflicting_vote() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let store = InMemoryOpenraftBlockStore::create(store_path, 1, 4096, 512).unwrap();
+
+        assert_eq!(
+            store.request_vote(2, 2).unwrap(),
+            VoteOutcome {
+                granted: true,
+                term: 2,
+                voted_for: Some(2),
+                committed: false,
+            }
+        );
+        assert_eq!(
+            store.request_vote(2, 3).unwrap(),
+            VoteOutcome {
+                granted: false,
+                term: 2,
+                voted_for: Some(2),
+                committed: false,
+            }
+        );
+        assert_eq!(
+            store.request_vote(3, 3).unwrap(),
+            VoteOutcome {
+                granted: true,
+                term: 3,
+                voted_for: Some(3),
+                committed: false,
+            }
+        );
     }
 
     #[test]

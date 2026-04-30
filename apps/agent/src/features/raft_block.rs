@@ -7,7 +7,7 @@ use axum::{
 };
 use nexus_raft_block::{
     openraft_entry, BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore,
-    InMemoryOpenraftBlockStore, RaftBlockError,
+    InMemoryOpenraftBlockStore, RaftBlockError, VoteOutcome,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -142,6 +142,14 @@ impl RaftBlockState {
         replica.install_block_snapshot(&req.snapshot)
     }
 
+    async fn vote(&self, req: VoteReq) -> Result<VoteOutcome, RaftBlockError> {
+        let groups = self.groups.lock().await;
+        let replica = groups
+            .get(&req.group_id)
+            .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
+        replica.request_vote(req.term, req.candidate_id)
+    }
+
     pub async fn status(&self, group_id: Uuid) -> RaftBlockStatus {
         let groups = self.groups.lock().await;
         if let Some(replica) = groups.get(&group_id) {
@@ -246,6 +254,13 @@ pub struct HeartbeatReq {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct VoteReq {
+    pub group_id: Uuid,
+    pub term: u64,
+    pub candidate_id: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ReadReq {
     pub group_id: Uuid,
     pub offset: u64,
@@ -255,11 +270,6 @@ pub struct ReadReq {
 #[derive(Debug, Clone, Serialize)]
 pub struct ReadResp {
     pub bytes: Vec<u8>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RaftBlockRpcEnvelope {
-    pub group_id: Uuid,
 }
 
 pub async fn create(
@@ -331,8 +341,14 @@ pub async fn read(
     }
 }
 
-pub async fn vote(Json(req): Json<RaftBlockRpcEnvelope>) -> impl IntoResponse {
-    not_implemented(req.group_id, "vote")
+pub async fn vote(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<VoteReq>,
+) -> impl IntoResponse {
+    match state.vote(req).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
 }
 
 pub async fn install_snapshot(
@@ -363,18 +379,6 @@ pub async fn heartbeat(
             "term": req.term,
             "leader_id": req.leader_id,
             "status": status
-        })),
-    )
-        .into_response()
-}
-
-fn not_implemented(group_id: Uuid, rpc: &'static str) -> axum::response::Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "group_id": group_id,
-            "rpc": rpc,
-            "error": "raft_block transport awaits Openraft adapter"
         })),
     )
         .into_response()
@@ -865,12 +869,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vote_is_explicitly_not_implemented() {
-        let response = vote(Json(RaftBlockRpcEnvelope {
-            group_id: Uuid::new_v4(),
-        }))
+    async fn vote_grants_once_and_rejects_conflicting_same_term_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
         .await
         .into_response();
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = vote(
+            State(state.clone()),
+            Json(VoteReq {
+                group_id,
+                term: 2,
+                candidate_id: 2,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["granted"], true);
+        assert_eq!(response["term"], 2);
+        assert_eq!(response["voted_for"], 2);
+
+        let response = vote(
+            State(state),
+            Json(VoteReq {
+                group_id,
+                term: 2,
+                candidate_id: 3,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["granted"], false);
+        assert_eq!(response["voted_for"], 2);
     }
 }
