@@ -73,13 +73,19 @@ impl RaftBlockState {
     }
 
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
+        let mut groups = self.groups.lock().await;
+        if let Some(existing) = groups.get(&req.group_id) {
+            validate_existing_group(existing, &req)?;
+            return Ok(());
+        }
         let store = self.store_for(req.group_id, req.node_id);
         let replica = if let Some(existing) = OpenraftEntryApplier::open(store.clone())? {
+            validate_existing_group(&existing, &req)?;
             existing
         } else {
             OpenraftEntryApplier::create(store, req.node_id, req.capacity_bytes, req.block_size)?
         };
-        self.groups.lock().await.insert(req.group_id, replica);
+        groups.insert(req.group_id, replica);
         Ok(())
     }
 
@@ -148,6 +154,28 @@ impl RaftBlockState {
             }
         }
     }
+}
+
+fn validate_existing_group(
+    existing: &OpenraftEntryApplier,
+    req: &CreateGroupReq,
+) -> Result<(), RaftBlockError> {
+    if existing.node_id() != req.node_id
+        || existing.replica().capacity_bytes() != req.capacity_bytes
+        || existing.replica().block_size() != req.block_size
+    {
+        return Err(RaftBlockError::Store(format!(
+            "group {} already exists with node_id={}, capacity_bytes={}, block_size={}; requested node_id={}, capacity_bytes={}, block_size={}",
+            req.group_id,
+            existing.node_id(),
+            existing.replica().capacity_bytes(),
+            existing.replica().block_size(),
+            req.node_id,
+            req.capacity_bytes,
+            req.block_size
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -394,6 +422,52 @@ mod tests {
         assert_eq!(status["retained_log_entries"], 1);
         assert_eq!(status["last_applied_index"], 1);
         assert_eq!(status["node_id"], 1);
+    }
+
+    #[tokio::test]
+    async fn create_rejects_mismatched_existing_group_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 8192,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let restarted = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(restarted),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 8192,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
