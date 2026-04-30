@@ -22,18 +22,145 @@ pub struct RaftBlockState {
     groups: Arc<Mutex<HashMap<Uuid, InMemoryOpenraftBlockStore>>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RaftBlockStatus {
     pub group_id: Uuid,
-    pub state: &'static str,
-    pub data_path: &'static str,
-    pub transport: &'static str,
+    pub state: String,
+    pub data_path: String,
+    pub transport: String,
     pub node_id: Option<u64>,
     pub capacity_bytes: Option<u64>,
     pub block_size: Option<u64>,
     pub last_applied_index: Option<u64>,
     pub compacted_through: Option<u64>,
     pub retained_log_entries: u64,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct RaftBlockHttpClient {
+    client: reqwest::Client,
+    base_url: String,
+}
+
+#[allow(dead_code)]
+impl RaftBlockHttpClient {
+    pub fn new(base_url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: normalize_base_url(base_url.into()),
+        }
+    }
+
+    pub fn with_client(client: reqwest::Client, base_url: impl Into<String>) -> Self {
+        Self {
+            client,
+            base_url: normalize_base_url(base_url.into()),
+        }
+    }
+
+    pub async fn create_group(&self, req: &CreateGroupReq) -> Result<(), RaftBlockTransportError> {
+        self.post_empty("create", req).await
+    }
+
+    pub async fn append_entries(
+        &self,
+        req: &AppendEntriesReq,
+    ) -> Result<Vec<BlockResponse>, RaftBlockTransportError> {
+        self.post_json("append_entries", req).await
+    }
+
+    pub async fn vote(&self, req: &VoteReq) -> Result<VoteOutcome, RaftBlockTransportError> {
+        self.post_json("vote", req).await
+    }
+
+    pub async fn install_snapshot(
+        &self,
+        req: &InstallSnapshotReq,
+    ) -> Result<(), RaftBlockTransportError> {
+        self.post_empty("install_snapshot", req).await
+    }
+
+    pub async fn snapshot(&self, group_id: Uuid) -> Result<BlockSnapshot, RaftBlockTransportError> {
+        let url = self.url(&format!("{group_id}/snapshot"));
+        self.decode_response(self.client.get(url).send().await?)
+            .await
+    }
+
+    pub async fn heartbeat(
+        &self,
+        req: &HeartbeatReq,
+    ) -> Result<serde_json::Value, RaftBlockTransportError> {
+        self.post_json("heartbeat", req).await
+    }
+
+    pub async fn status(&self, group_id: Uuid) -> Result<RaftBlockStatus, RaftBlockTransportError> {
+        let url = self.url(&format!("{group_id}/status"));
+        self.decode_response(self.client.get(url).send().await?)
+            .await
+    }
+
+    pub async fn read(&self, req: &ReadReq) -> Result<ReadResp, RaftBlockTransportError> {
+        self.post_json("read", req).await
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}/{}", self.base_url, path.trim_start_matches('/'))
+    }
+
+    async fn post_empty<T: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<(), RaftBlockTransportError> {
+        let _: serde_json::Value = self.post_json(path, body).await?;
+        Ok(())
+    }
+
+    async fn post_json<T, R>(&self, path: &str, body: &T) -> Result<R, RaftBlockTransportError>
+    where
+        T: Serialize + ?Sized,
+        R: for<'de> Deserialize<'de>,
+    {
+        let url = self.url(path);
+        let response = self.client.post(url).json(body).send().await?;
+        self.decode_response(response).await
+    }
+
+    async fn decode_response<R>(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<R, RaftBlockTransportError>
+    where
+        R: for<'de> Deserialize<'de>,
+    {
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(RaftBlockTransportError::Remote { status, body });
+        }
+        Ok(response.json().await?)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
+pub enum RaftBlockTransportError {
+    #[error("raft block transport request failed: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("raft block remote returned {status}: {body}")]
+    Remote {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+}
+
+#[allow(dead_code)]
+fn normalize_base_url(mut base_url: String) -> String {
+    while base_url.ends_with('/') {
+        base_url.pop();
+    }
+    base_url
 }
 
 impl RaftBlockState {
@@ -231,9 +358,9 @@ impl RaftBlockState {
         if let Some(replica) = groups.get(&group_id) {
             RaftBlockStatus {
                 group_id,
-                state: "started",
-                data_path: "persistent_local_replica",
-                transport: "openraft_entry_local",
+                state: "started".into(),
+                data_path: "persistent_local_replica".into(),
+                transport: "openraft_entry_local".into(),
                 node_id: replica.node_id().ok(),
                 capacity_bytes: replica.capacity_bytes().ok(),
                 block_size: replica.block_size().ok(),
@@ -244,9 +371,9 @@ impl RaftBlockState {
         } else {
             RaftBlockStatus {
                 group_id,
-                state: "not_started",
-                data_path: "raftblk_pending",
-                transport: "not_started",
+                state: "not_started".into(),
+                data_path: "raftblk_pending".into(),
+                transport: "not_started".into(),
                 node_id: None,
                 capacity_bytes: None,
                 block_size: None,
@@ -280,7 +407,7 @@ fn validate_existing_group(
     Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateGroupReq {
     pub group_id: Uuid,
     pub node_id: u64,
@@ -288,7 +415,7 @@ pub struct CreateGroupReq {
     pub block_size: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppendReq {
     pub group_id: Uuid,
     pub term: u64,
@@ -297,7 +424,7 @@ pub struct AppendReq {
     pub command: BlockCommand,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppendEntriesReq {
     pub group_id: Uuid,
     pub term: u64,
@@ -305,45 +432,45 @@ pub struct AppendEntriesReq {
     pub entries: Vec<AppendEntryReq>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppendEntryReq {
     pub index: u64,
     pub command: BlockCommand,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallSnapshotReq {
     pub group_id: Uuid,
     pub snapshot: BlockSnapshot,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StopGroupReq {
     pub group_id: Uuid,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatReq {
     pub group_id: Uuid,
     pub term: u64,
     pub leader_id: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoteReq {
     pub group_id: Uuid,
     pub term: u64,
     pub candidate_id: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadReq {
     pub group_id: Uuid,
     pub offset: u64,
     pub len: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadResp {
     pub bytes: Vec<u8>,
 }
@@ -1048,5 +1175,138 @@ mod tests {
         let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(response["granted"], false);
         assert_eq!(response["voted_for"], 2);
+    }
+
+    #[tokio::test]
+    async fn http_client_drives_remote_group_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(state)).await.unwrap();
+        });
+        let client =
+            RaftBlockHttpClient::with_client(reqwest::Client::new(), format!("http://{addr}"));
+
+        client
+            .create_group(&CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            })
+            .await
+            .unwrap();
+        let vote = client
+            .vote(&VoteReq {
+                group_id,
+                term: 2,
+                candidate_id: 2,
+            })
+            .await
+            .unwrap();
+        assert!(vote.granted);
+
+        let response = client
+            .append_entries(&AppendEntriesReq {
+                group_id,
+                term: 2,
+                leader_id: 1,
+                entries: vec![AppendEntryReq {
+                    index: 1,
+                    command: BlockCommand::Write {
+                        offset: 0,
+                        bytes: vec![9; 512],
+                    },
+                }],
+            })
+            .await
+            .unwrap();
+        assert_eq!(response[0].applied_index, 1);
+        let read = client
+            .read(&ReadReq {
+                group_id,
+                offset: 0,
+                len: 512,
+            })
+            .await
+            .unwrap();
+        assert_eq!(read.bytes[0], 9);
+
+        let status = client.status(group_id).await.unwrap();
+        assert_eq!(status.state, "started");
+        assert_eq!(status.transport, "openraft_entry_local");
+
+        let heartbeat = client
+            .heartbeat(&HeartbeatReq {
+                group_id,
+                term: 2,
+                leader_id: 1,
+            })
+            .await
+            .unwrap();
+        assert_eq!(heartbeat["status"]["state"], "started");
+
+        let snapshot = client.snapshot(group_id).await.unwrap();
+        let target_group = Uuid::new_v4();
+        client
+            .create_group(&CreateGroupReq {
+                group_id: target_group,
+                node_id: 2,
+                capacity_bytes: 4096,
+                block_size: 512,
+            })
+            .await
+            .unwrap();
+        client
+            .install_snapshot(&InstallSnapshotReq {
+                group_id: target_group,
+                snapshot,
+            })
+            .await
+            .unwrap();
+        let restored = client
+            .read(&ReadReq {
+                group_id: target_group,
+                offset: 0,
+                len: 512,
+            })
+            .await
+            .unwrap();
+        assert_eq!(restored.bytes[0], 9);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_client_surfaces_remote_errors() {
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(state)).await.unwrap();
+        });
+        let client = RaftBlockHttpClient::new(format!("http://{addr}/"));
+
+        let err = client
+            .append_entries(&AppendEntriesReq {
+                group_id: Uuid::new_v4(),
+                term: 1,
+                leader_id: 1,
+                entries: vec![],
+            })
+            .await
+            .unwrap_err();
+        match err {
+            RaftBlockTransportError::Remote { status, body } => {
+                assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+                assert!(body.contains("not started"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        server.abort();
     }
 }

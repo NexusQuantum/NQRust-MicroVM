@@ -1,7 +1,7 @@
 # Raft Block Prototype Implementation Plan
 
-**Status:** Correctness model, durable local replica lifecycle, Openraft storage harness, and
-raft_spdk guardrail scaffold implemented
+**Status:** Correctness model, durable local replica lifecycle, Openraft storage harness,
+HTTP transport client scaffold, and raft_spdk guardrail scaffold implemented
 **Spec:** `docs/superpowers/specs/2026-04-29-spdk-raft-hci-design.md`
 **Scope:** B-II correctness prototype only. This is not a production storage backend and does not attach VM disks.
 
@@ -72,7 +72,10 @@ not a separate direct-entry map. `/v1/raft_block/append_entries` accepts a guard
 batch shape and rejects index gaps before applying entries. `/v1/raft_block/heartbeat` reports
 started-group status for local liveness checks. `/v1/raft_block/vote` performs conservative local
 vote fencing: first vote in a term is granted, conflicting same-term candidates are rejected, and a
-higher term can advance the vote.
+higher term can advance the vote. A `RaftBlockHttpClient` now exercises the live HTTP route boundary
+for create, append_entries, vote, heartbeat, snapshot fetch, install_snapshot, status, read, and
+remote error propagation. The remaining gap is wiring this boundary into a real Openraft network
+adapter/runtime instead of calling it from route-level tests.
 
 Define an agent-internal transport for block log replication:
 
@@ -82,7 +85,7 @@ Define an agent-internal transport for block log replication:
 - heartbeat/lease metadata;
 - repair stream.
 
-The first transport can be in-process test doubles. Production HTTP/gRPC is a later slice.
+The first production transport is HTTP/JSON. gRPC is deliberately deferred.
 
 ## Task 5: Agent Lifecycle Guardrails
 
@@ -113,7 +116,7 @@ cargo test -p agent raft_spdk
 Do not start B-III until these are complete:
 
 - Run the upstream Openraft storage test suite against the promoted storage harness.
-- Implement Openraft HTTP network adapter for append, vote, heartbeat, and install-snapshot.
+- Promote the tested HTTP client/routes into an Openraft network adapter and real Raft node runtime.
 - Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
 - Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.
 - Implement manager-side replica provisioning and bootstrap for static three-node groups.
