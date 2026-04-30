@@ -9,8 +9,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Debug;
 use std::io::Cursor;
 use std::io::{Read, Write};
+use std::ops::{Bound, RangeBounds};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -642,6 +644,273 @@ impl OpenraftEntryApplier {
 }
 
 #[derive(Debug, Clone)]
+pub struct OpenraftBlockSnapshotBuilder {
+    store: InMemoryOpenraftBlockStore,
+}
+
+#[derive(Debug, Clone)]
+pub struct InMemoryOpenraftBlockStore {
+    inner: std::sync::Arc<std::sync::Mutex<InMemoryOpenraftBlockStoreInner>>,
+}
+
+#[derive(Debug)]
+struct InMemoryOpenraftBlockStoreInner {
+    vote: Option<openraft::Vote<NodeId>>,
+    committed: Option<openraft::LogId<NodeId>>,
+    logs: BTreeMap<LogIndex, openraft::Entry<BlockRaftTypeConfig>>,
+    last_purged_log_id: Option<openraft::LogId<NodeId>>,
+    applier: OpenraftEntryApplier,
+}
+
+impl InMemoryOpenraftBlockStore {
+    pub fn create(
+        store: FileReplicaStore,
+        node_id: NodeId,
+        capacity_bytes: u64,
+        block_size: u64,
+    ) -> Result<Self, RaftBlockError> {
+        Ok(Self {
+            inner: std::sync::Arc::new(std::sync::Mutex::new(InMemoryOpenraftBlockStoreInner {
+                vote: None,
+                committed: None,
+                logs: BTreeMap::new(),
+                last_purged_log_id: None,
+                applier: OpenraftEntryApplier::create(store, node_id, capacity_bytes, block_size)?,
+            })),
+        })
+    }
+
+    pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        inner.applier.replica().read_range(offset, len)
+    }
+}
+
+impl openraft::storage::RaftLogReader<BlockRaftTypeConfig> for InMemoryOpenraftBlockStore {
+    async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + openraft::OptionalSend>(
+        &mut self,
+        range: RB,
+    ) -> Result<Vec<openraft::Entry<BlockRaftTypeConfig>>, openraft::StorageError<NodeId>> {
+        let inner = self.inner.lock().map_err(openraft_lock_error)?;
+        Ok(inner
+            .logs
+            .iter()
+            .filter(|(index, _)| range_contains(&range, **index))
+            .map(|(_, entry)| entry.clone())
+            .collect())
+    }
+}
+
+impl openraft::storage::RaftStorage<BlockRaftTypeConfig> for InMemoryOpenraftBlockStore {
+    type LogReader = Self;
+    type SnapshotBuilder = OpenraftBlockSnapshotBuilder;
+
+    async fn save_vote(
+        &mut self,
+        vote: &openraft::Vote<NodeId>,
+    ) -> Result<(), openraft::StorageError<NodeId>> {
+        self.inner.lock().map_err(openraft_lock_error)?.vote = Some(*vote);
+        Ok(())
+    }
+
+    async fn read_vote(
+        &mut self,
+    ) -> Result<Option<openraft::Vote<NodeId>>, openraft::StorageError<NodeId>> {
+        Ok(self.inner.lock().map_err(openraft_lock_error)?.vote)
+    }
+
+    async fn save_committed(
+        &mut self,
+        committed: Option<openraft::LogId<NodeId>>,
+    ) -> Result<(), openraft::StorageError<NodeId>> {
+        self.inner.lock().map_err(openraft_lock_error)?.committed = committed;
+        Ok(())
+    }
+
+    async fn read_committed(
+        &mut self,
+    ) -> Result<Option<openraft::LogId<NodeId>>, openraft::StorageError<NodeId>> {
+        Ok(self.inner.lock().map_err(openraft_lock_error)?.committed)
+    }
+
+    async fn get_log_state(
+        &mut self,
+    ) -> Result<openraft::storage::LogState<BlockRaftTypeConfig>, openraft::StorageError<NodeId>>
+    {
+        let inner = self.inner.lock().map_err(openraft_lock_error)?;
+        let last_log_id = inner
+            .logs
+            .values()
+            .next_back()
+            .map(|entry| entry.log_id)
+            .or(inner.last_purged_log_id);
+        Ok(openraft::storage::LogState {
+            last_purged_log_id: inner.last_purged_log_id,
+            last_log_id,
+        })
+    }
+
+    async fn get_log_reader(&mut self) -> Self::LogReader {
+        self.clone()
+    }
+
+    async fn append_to_log<I>(&mut self, entries: I) -> Result<(), openraft::StorageError<NodeId>>
+    where
+        I: IntoIterator<Item = openraft::Entry<BlockRaftTypeConfig>> + openraft::OptionalSend,
+    {
+        let mut inner = self.inner.lock().map_err(openraft_lock_error)?;
+        for entry in entries {
+            inner.logs.insert(entry.log_id.index, entry);
+        }
+        Ok(())
+    }
+
+    async fn delete_conflict_logs_since(
+        &mut self,
+        log_id: openraft::LogId<NodeId>,
+    ) -> Result<(), openraft::StorageError<NodeId>> {
+        self.inner
+            .lock()
+            .map_err(openraft_lock_error)?
+            .logs
+            .split_off(&log_id.index);
+        Ok(())
+    }
+
+    async fn purge_logs_upto(
+        &mut self,
+        log_id: openraft::LogId<NodeId>,
+    ) -> Result<(), openraft::StorageError<NodeId>> {
+        let mut inner = self.inner.lock().map_err(openraft_lock_error)?;
+        inner.logs.retain(|index, _| *index > log_id.index);
+        inner.last_purged_log_id = Some(log_id);
+        Ok(())
+    }
+
+    async fn last_applied_state(
+        &mut self,
+    ) -> Result<
+        (
+            Option<openraft::LogId<NodeId>>,
+            openraft::StoredMembership<NodeId, openraft::BasicNode>,
+        ),
+        openraft::StorageError<NodeId>,
+    > {
+        let inner = self.inner.lock().map_err(openraft_lock_error)?;
+        Ok((
+            inner.applier.last_applied_log_id(),
+            inner.applier.last_membership().clone(),
+        ))
+    }
+
+    async fn apply_to_state_machine(
+        &mut self,
+        entries: &[openraft::Entry<BlockRaftTypeConfig>],
+    ) -> Result<Vec<BlockResponse>, openraft::StorageError<NodeId>> {
+        self.inner
+            .lock()
+            .map_err(openraft_lock_error)?
+            .applier
+            .apply_entries(entries.iter().cloned())
+            .map_err(openraft_store_error)
+    }
+
+    async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
+        OpenraftBlockSnapshotBuilder {
+            store: self.clone(),
+        }
+    }
+
+    async fn begin_receiving_snapshot(
+        &mut self,
+    ) -> Result<Box<Cursor<Vec<u8>>>, openraft::StorageError<NodeId>> {
+        Ok(Box::new(Cursor::new(Vec::new())))
+    }
+
+    async fn install_snapshot(
+        &mut self,
+        meta: &openraft::SnapshotMeta<NodeId, openraft::BasicNode>,
+        snapshot: Box<Cursor<Vec<u8>>>,
+    ) -> Result<(), openraft::StorageError<NodeId>> {
+        let block_snapshot: BlockSnapshot =
+            serde_json::from_slice(&snapshot.into_inner()).map_err(openraft_store_error)?;
+        let mut inner = self.inner.lock().map_err(openraft_lock_error)?;
+        inner
+            .applier
+            .install_snapshot(&block_snapshot)
+            .map_err(openraft_store_error)?;
+        inner.applier.last_membership = meta.last_membership.clone();
+        Ok(())
+    }
+
+    async fn get_current_snapshot(
+        &mut self,
+    ) -> Result<Option<openraft::Snapshot<BlockRaftTypeConfig>>, openraft::StorageError<NodeId>>
+    {
+        let mut builder = self.get_snapshot_builder().await;
+        openraft::storage::RaftSnapshotBuilder::build_snapshot(&mut builder)
+            .await
+            .map(Some)
+    }
+}
+
+impl openraft::storage::RaftSnapshotBuilder<BlockRaftTypeConfig> for OpenraftBlockSnapshotBuilder {
+    async fn build_snapshot(
+        &mut self,
+    ) -> Result<openraft::Snapshot<BlockRaftTypeConfig>, openraft::StorageError<NodeId>> {
+        let inner = self.store.inner.lock().map_err(openraft_lock_error)?;
+        let block_snapshot = inner.applier.replica().snapshot();
+        let encoded = serde_json::to_vec(&block_snapshot).map_err(openraft_store_error)?;
+        let meta = openraft::SnapshotMeta {
+            last_log_id: inner.applier.last_applied_log_id(),
+            last_membership: inner.applier.last_membership().clone(),
+            snapshot_id: format!(
+                "{}-{}",
+                inner.applier.node_id(),
+                block_snapshot.last_included_index
+            ),
+        };
+        Ok(openraft::Snapshot {
+            meta,
+            snapshot: Box::new(Cursor::new(encoded)),
+        })
+    }
+}
+
+fn range_contains<RB: RangeBounds<u64>>(range: &RB, index: u64) -> bool {
+    let after_start = match range.start_bound() {
+        Bound::Included(start) => index >= *start,
+        Bound::Excluded(start) => index > *start,
+        Bound::Unbounded => true,
+    };
+    let before_end = match range.end_bound() {
+        Bound::Included(end) => index <= *end,
+        Bound::Excluded(end) => index < *end,
+        Bound::Unbounded => true,
+    };
+    after_start && before_end
+}
+
+fn openraft_lock_error<T>(_err: std::sync::PoisonError<T>) -> openraft::StorageError<NodeId> {
+    openraft::StorageError::from_io_error(
+        openraft::ErrorSubject::Store,
+        openraft::ErrorVerb::Read,
+        std::io::Error::other("openraft block store lock poisoned"),
+    )
+}
+
+fn openraft_store_error(err: impl std::fmt::Display) -> openraft::StorageError<NodeId> {
+    openraft::StorageError::from_io_error(
+        openraft::ErrorSubject::Store,
+        openraft::ErrorVerb::Write,
+        std::io::Error::other(err.to_string()),
+    )
+}
+
+#[derive(Debug, Clone)]
 pub struct CommitOutcome {
     pub entry: LogEntry,
     pub acknowledgements: Vec<NodeId>,
@@ -1159,6 +1428,52 @@ mod tests {
             Some(&openraft_log_id(2, 2, 4))
         );
         assert_eq!(applier.replica().read_all(), &[0; 4096]);
+    }
+
+    #[tokio::test]
+    async fn openraft_storage_harness_appends_applies_and_snapshots() {
+        use openraft::storage::{RaftLogReader, RaftSnapshotBuilder, RaftStorage};
+
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let mut store = InMemoryOpenraftBlockStore::create(store_path, 1, 4096, 512).unwrap();
+        let entry = openraft_entry(
+            1,
+            1,
+            1,
+            BlockCommand::Write {
+                offset: 0,
+                bytes: vec![8; 512],
+            },
+        );
+
+        store.append_to_log([entry.clone()]).await.unwrap();
+        assert_eq!(
+            store.get_log_state().await.unwrap().last_log_id,
+            Some(entry.log_id)
+        );
+        assert_eq!(
+            store.try_get_log_entries(1..2).await.unwrap(),
+            vec![entry.clone()]
+        );
+
+        let responses = store.apply_to_state_machine(&[entry]).await.unwrap();
+        assert_eq!(
+            responses,
+            vec![BlockResponse {
+                applied_index: 1,
+                bytes_written: 512
+            }]
+        );
+        assert_eq!(store.read_range(0, 512).unwrap(), vec![8; 512]);
+
+        let snapshot = store
+            .get_snapshot_builder()
+            .await
+            .build_snapshot()
+            .await
+            .unwrap();
+        assert_eq!(snapshot.meta.last_log_id, Some(openraft_log_id(1, 1, 1)));
     }
 
     #[test]
