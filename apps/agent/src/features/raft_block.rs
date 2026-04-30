@@ -158,6 +158,22 @@ impl RaftBlockState {
         )
     }
 
+    pub async fn append_command(
+        &self,
+        group_id: Uuid,
+        term: u64,
+        leader_id: Option<u64>,
+        command: BlockCommand,
+    ) -> Result<BlockResponse, RaftBlockError> {
+        self.append(AppendReq {
+            group_id,
+            term,
+            leader_id,
+            command,
+        })
+        .await
+    }
+
     async fn append_entries(
         &self,
         req: AppendEntriesReq,

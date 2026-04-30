@@ -5,18 +5,23 @@
 //! before returning the future raftblk socket path.
 
 use crate::features::raft_block::RaftBlockState;
+use nexus_raft_block::BlockCommand;
 use nexus_storage::{
     raftblk_socket_path, AttachedPath, BackendKind, HostBackend, RaftSpdkLocator, StorageError,
     VolumeHandle, VolumeSnapshotHandle,
 };
+use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct RaftSpdkHostBackend {
     socket_dir: PathBuf,
     local_node_id: u64,
     raft_block: Arc<RaftBlockState>,
+    active_groups: Arc<Mutex<HashMap<PathBuf, RaftSpdkLocator>>>,
 }
 
 impl RaftSpdkHostBackend {
@@ -29,6 +34,7 @@ impl RaftSpdkHostBackend {
             socket_dir: socket_dir.into(),
             local_node_id,
             raft_block,
+            active_groups: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -73,9 +79,12 @@ impl HostBackend for RaftSpdkHostBackend {
             )
             .await
             .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
-        Ok(AttachedPath::VhostUserSock(
-            self.socket_path_for_locator(&locator),
-        ))
+        let socket_path = self.socket_path_for_locator(&locator);
+        self.active_groups
+            .lock()
+            .await
+            .insert(socket_path.clone(), locator);
+        Ok(AttachedPath::VhostUserSock(socket_path))
     }
 
     async fn detach(
@@ -85,18 +94,65 @@ impl HostBackend for RaftSpdkHostBackend {
     ) -> Result<(), StorageError> {
         let locator = RaftSpdkLocator::from_locator_str(&volume.locator)?;
         self.raft_block.stop_group(locator.group_id).await;
+        self.active_groups.lock().await.remove(_attached.path());
         Ok(())
     }
 
     async fn populate_streaming(
         &self,
-        _attached: &AttachedPath,
-        _source: &Path,
-        _target_size_bytes: u64,
+        attached: &AttachedPath,
+        source: &Path,
+        target_size_bytes: u64,
     ) -> Result<(), StorageError> {
-        Err(StorageError::NotSupported(
-            "raft_spdk populate_streaming must write through raftblk proposals".into(),
-        ))
+        let locator = self
+            .active_groups
+            .lock()
+            .await
+            .get(attached.path())
+            .cloned()
+            .ok_or_else(|| {
+                StorageError::InvalidLocator(format!(
+                    "raft_spdk attached path {} is not active",
+                    attached.path().display()
+                ))
+            })?;
+        if target_size_bytes > locator.size_bytes {
+            return Err(StorageError::InvalidLocator(format!(
+                "target size {} exceeds raft_spdk volume size {}",
+                target_size_bytes, locator.size_bytes
+            )));
+        }
+        let mut file = std::fs::File::open(source)?;
+        let block_size = locator.block_size as usize;
+        let mut offset = 0_u64;
+        let mut remaining = target_size_bytes;
+        while remaining > 0 {
+            let chunk_len = block_size.min(remaining as usize);
+            let mut block = vec![0; block_size];
+            let mut filled = 0;
+            while filled < chunk_len {
+                let n = file.read(&mut block[filled..chunk_len])?;
+                if n == 0 {
+                    break;
+                }
+                filled += n;
+            }
+            self.raft_block
+                .append_command(
+                    locator.group_id,
+                    1,
+                    Some(self.local_node_id),
+                    BlockCommand::Write {
+                        offset,
+                        bytes: block,
+                    },
+                )
+                .await
+                .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
+            offset += block_size as u64;
+            remaining = remaining.saturating_sub(block_size as u64);
+        }
+        Ok(())
     }
 
     async fn resize2fs(&self, _attached: &AttachedPath) -> Result<(), StorageError> {
@@ -238,7 +294,52 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, StorageError::NotSupported(_)));
+        assert!(matches!(err, StorageError::InvalidLocator(_)));
+    }
+
+    #[tokio::test]
+    async fn populate_streaming_writes_through_raft_block() {
+        use axum::response::IntoResponse;
+        use tokio::io::AsyncReadExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.img");
+        std::fs::write(&source, vec![9; 700]).unwrap();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state);
+        let volume = VolumeHandle {
+            volume_id: Uuid::new_v4(),
+            backend_id: BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::RaftSpdk,
+            locator: locator().to_locator_string().unwrap(),
+            size_bytes: 4096,
+        };
+        let attached = backend.attach(&volume).await.unwrap();
+        backend
+            .populate_streaming(&attached, &source, 1024)
+            .await
+            .unwrap();
+
+        let snap = VolumeSnapshotHandle {
+            snapshot_id: Uuid::new_v4(),
+            source_volume_id: volume.volume_id,
+            backend_id: volume.backend_id,
+            backend_kind: BackendKind::RaftSpdk,
+            locator: locator().to_locator_string().unwrap(),
+        };
+        let mut reader = backend.read_snapshot(&snap).await.unwrap();
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[0..700], &[9; 700]);
+        assert_eq!(&bytes[700..1024], &[0; 324]);
+
+        let response = crate::features::raft_block::status(
+            axum::extract::State(backend.raft_block.clone()),
+            axum::extract::Path(locator().group_id),
+        )
+        .await
+        .into_response();
+        assert!(response.status().is_success());
     }
 
     #[tokio::test]
