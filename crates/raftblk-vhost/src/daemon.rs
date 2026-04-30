@@ -61,7 +61,7 @@ use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use vhost::vhost_user::message::VhostUserProtocolFeatures;
+use vhost::vhost_user::message::{VhostUserProtocolFeatures, VhostUserVirtioFeatures};
 use vhost_user_backend::{VhostUserBackend, VringRwLock, VringT};
 use virtio_bindings::bindings::virtio_blk::*;
 use virtio_bindings::bindings::virtio_config::VIRTIO_F_VERSION_1;
@@ -142,7 +142,14 @@ impl<B: BlockBackend> VhostUserBackend for RaftBlkVhostBackend<B> {
         MAX_QUEUE_SIZE as usize
     }
     fn features(&self) -> u64 {
-        (1u64 << VIRTIO_F_VERSION_1)
+        // VHOST_USER_F_PROTOCOL_FEATURES (bit 30) MUST be set for the
+        // daemon to negotiate protocol-level features (REPLY_ACK,
+        // VRING_ENABLE flow, etc.). Without it the master can connect
+        // but cannot activate vrings; vhost-user-backend's set_vring_enable
+        // hook returns "inactive feature: 1073741824" and the device
+        // never comes online.
+        VhostUserVirtioFeatures::PROTOCOL_FEATURES.bits()
+            | (1u64 << VIRTIO_F_VERSION_1)
             | (1u64 << VIRTIO_BLK_F_BLK_SIZE)
             | (1u64 << VIRTIO_BLK_F_FLUSH)
             | (1u64 << VIRTIO_BLK_F_SEG_MAX)
