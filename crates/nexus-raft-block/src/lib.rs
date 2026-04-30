@@ -713,13 +713,22 @@ impl InMemoryOpenraftBlockStore {
                 block_size
             )));
         }
+        Ok(Self::from_applier(applier))
+    }
+
+    pub fn open_existing(store: FileReplicaStore) -> Result<Option<Self>, RaftBlockError> {
+        OpenraftEntryApplier::open(store).map(|applier| applier.map(Self::from_applier))
+    }
+
+    fn from_applier(applier: OpenraftEntryApplier) -> Self {
+        let node_id = applier.node_id();
         let logs = applier
             .replica()
             .log()
             .iter()
             .map(|entry| (entry.index, block_log_entry_to_openraft(entry, node_id)))
             .collect();
-        Ok(Self {
+        Self {
             inner: std::sync::Arc::new(std::sync::Mutex::new(InMemoryOpenraftBlockStoreInner {
                 vote: None,
                 committed: applier.last_applied_log_id(),
@@ -735,7 +744,7 @@ impl InMemoryOpenraftBlockStore {
                 },
                 applier,
             })),
-        })
+        }
     }
 
     pub fn append_command(

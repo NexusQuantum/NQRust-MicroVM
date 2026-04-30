@@ -73,6 +73,62 @@ impl RaftBlockState {
         self.groups.lock().await.remove(&group_id).is_some()
     }
 
+    pub async fn load_existing_groups(&self) -> Result<usize, RaftBlockError> {
+        let root = self.base_dir.join("raft-block");
+        if !root.exists() {
+            return Ok(0);
+        }
+        let mut loaded = 0;
+        let mut groups = self.groups.lock().await;
+        let dirs = std::fs::read_dir(&root)
+            .map_err(|e| RaftBlockError::Store(format!("read {root:?}: {e}")))?;
+        for dir in dirs {
+            let dir = dir.map_err(|e| RaftBlockError::Store(format!("read {root:?}: {e}")))?;
+            if !dir
+                .file_type()
+                .map_err(|e| RaftBlockError::Store(format!("stat {:?}: {e}", dir.path())))?
+                .is_dir()
+            {
+                continue;
+            }
+            let Some(group_id) = dir
+                .file_name()
+                .to_str()
+                .and_then(|raw| Uuid::parse_str(raw).ok())
+            else {
+                continue;
+            };
+            if groups.contains_key(&group_id) {
+                continue;
+            }
+            let files = std::fs::read_dir(dir.path())
+                .map_err(|e| RaftBlockError::Store(format!("read {:?}: {e}", dir.path())))?;
+            for file in files {
+                let file =
+                    file.map_err(|e| RaftBlockError::Store(format!("read {:?}: {e}", dir.path())))?;
+                if !file
+                    .file_type()
+                    .map_err(|e| RaftBlockError::Store(format!("stat {:?}: {e}", file.path())))?
+                    .is_file()
+                {
+                    continue;
+                }
+                if !file.file_name().to_string_lossy().starts_with("node-") {
+                    continue;
+                }
+                let Some(store) =
+                    InMemoryOpenraftBlockStore::open_existing(FileReplicaStore::new(file.path()))?
+                else {
+                    continue;
+                };
+                groups.insert(group_id, store);
+                loaded += 1;
+                break;
+            }
+        }
+        Ok(loaded)
+    }
+
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
         let mut groups = self.groups.lock().await;
         if let Some(existing) = groups.get(&req.group_id) {
@@ -495,6 +551,60 @@ mod tests {
         assert_eq!(status["retained_log_entries"], 1);
         assert_eq!(status["last_applied_index"], 1);
         assert_eq!(status["node_id"], 1);
+    }
+
+    #[tokio::test]
+    async fn startup_loads_existing_group_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = append(
+            State(state),
+            Json(AppendReq {
+                group_id,
+                term: 1,
+                leader_id: None,
+                command: BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![5; 512],
+                },
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let restarted = Arc::new(RaftBlockState::new(dir.path()));
+        assert_eq!(restarted.load_existing_groups().await.unwrap(), 1);
+        let status = restarted.status(group_id).await;
+        assert_eq!(status.state, "started");
+        assert_eq!(status.retained_log_entries, 1);
+        assert_eq!(status.last_applied_index, Some(1));
+        let response = read(
+            State(restarted),
+            Json(ReadReq {
+                group_id,
+                offset: 0,
+                len: 512,
+            }),
+        )
+        .await
+        .into_response();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["bytes"].as_array().unwrap()[0], 5);
     }
 
     #[tokio::test]

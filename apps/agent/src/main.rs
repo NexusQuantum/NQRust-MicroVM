@@ -25,6 +25,11 @@ async fn main() -> anyhow::Result<()> {
     let run_dir = std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into());
     let raft_block_state =
         std::sync::Arc::new(features::raft_block::RaftBlockState::new(run_dir.clone()));
+    match raft_block_state.load_existing_groups().await {
+        Ok(loaded) if loaded > 0 => info!(loaded, "loaded durable raft block groups"),
+        Ok(_) => {}
+        Err(err) => warn!(?err, "failed to load durable raft block groups"),
+    }
     let mut storage_registry = features::storage::registry::HostBackendRegistry::empty();
     storage_registry.register_for(
         nexus_storage::BackendKind::LocalFile,
