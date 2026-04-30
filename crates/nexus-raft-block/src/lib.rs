@@ -45,6 +45,22 @@ pub fn default_openraft_config() -> Result<std::sync::Arc<openraft::Config>, Raf
         .map_err(|e| RaftBlockError::Store(format!("invalid Openraft config: {e}")))
 }
 
+pub fn openraft_log_id(term: Term, leader_id: NodeId, index: LogIndex) -> openraft::LogId<NodeId> {
+    openraft::LogId::new(openraft::CommittedLeaderId::new(term, leader_id), index)
+}
+
+pub fn openraft_entry(
+    term: Term,
+    leader_id: NodeId,
+    index: LogIndex,
+    command: BlockCommand,
+) -> openraft::Entry<BlockRaftTypeConfig> {
+    openraft::Entry {
+        log_id: openraft_log_id(term, leader_id, index),
+        payload: openraft::EntryPayload::Normal(command),
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RaftBlockError {
     #[error("block size must be nonzero")]
@@ -518,6 +534,86 @@ impl PersistentReplica {
 }
 
 #[derive(Debug, Clone)]
+pub struct OpenraftEntryApplier {
+    replica: PersistentReplica,
+    last_applied_log_id: Option<openraft::LogId<NodeId>>,
+    last_membership: openraft::StoredMembership<NodeId, openraft::BasicNode>,
+}
+
+impl OpenraftEntryApplier {
+    pub fn create(
+        store: FileReplicaStore,
+        node_id: NodeId,
+        capacity_bytes: u64,
+        block_size: u64,
+    ) -> Result<Self, RaftBlockError> {
+        Ok(Self {
+            replica: PersistentReplica::create(store, node_id, capacity_bytes, block_size)?,
+            last_applied_log_id: None,
+            last_membership: openraft::StoredMembership::default(),
+        })
+    }
+
+    pub fn open(store: FileReplicaStore) -> Result<Option<Self>, RaftBlockError> {
+        let Some(replica) = PersistentReplica::open(store)? else {
+            return Ok(None);
+        };
+        let last_applied_log_id = replica
+            .log()
+            .last()
+            .map(|entry| openraft_log_id(entry.term, replica.node_id(), entry.index));
+        Ok(Some(Self {
+            replica,
+            last_applied_log_id,
+            last_membership: openraft::StoredMembership::default(),
+        }))
+    }
+
+    pub fn apply_entries<I>(&mut self, entries: I) -> Result<Vec<BlockResponse>, RaftBlockError>
+    where
+        I: IntoIterator<Item = openraft::Entry<BlockRaftTypeConfig>>,
+    {
+        let mut responses = Vec::new();
+        for entry in entries {
+            let response = match entry.payload {
+                openraft::EntryPayload::Blank => BlockResponse {
+                    applied_index: entry.log_id.index,
+                    bytes_written: 0,
+                },
+                openraft::EntryPayload::Normal(command) => {
+                    let block_entry =
+                        command.into_entry(entry.log_id.leader_id.term, entry.log_id.index)?;
+                    self.replica.append_entry(block_entry)?
+                }
+                openraft::EntryPayload::Membership(membership) => {
+                    self.last_membership =
+                        openraft::StoredMembership::new(Some(entry.log_id), membership);
+                    BlockResponse {
+                        applied_index: entry.log_id.index,
+                        bytes_written: 0,
+                    }
+                }
+            };
+            self.last_applied_log_id = Some(entry.log_id);
+            responses.push(response);
+        }
+        Ok(responses)
+    }
+
+    pub fn last_applied_log_id(&self) -> Option<openraft::LogId<NodeId>> {
+        self.last_applied_log_id
+    }
+
+    pub fn last_membership(&self) -> &openraft::StoredMembership<NodeId, openraft::BasicNode> {
+        &self.last_membership
+    }
+
+    pub fn replica(&self) -> &PersistentReplica {
+        &self.replica
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CommitOutcome {
     pub entry: LogEntry,
     pub acknowledgements: Vec<NodeId>,
@@ -963,6 +1059,78 @@ mod tests {
         let config = default_openraft_config().unwrap();
         assert_eq!(config.cluster_name, "nqrust-raft-block");
         assert!(config.election_timeout_min < config.election_timeout_max);
+    }
+
+    #[test]
+    fn openraft_entries_apply_normal_commands_to_persistent_replica() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let mut applier = OpenraftEntryApplier::create(store.clone(), 1, 4096, 512).unwrap();
+
+        let responses = applier
+            .apply_entries([
+                openraft::Entry {
+                    log_id: openraft_log_id(1, 1, 1),
+                    payload: openraft::EntryPayload::Blank,
+                },
+                openraft_entry(
+                    1,
+                    1,
+                    2,
+                    BlockCommand::Write {
+                        offset: 0,
+                        bytes: vec![9; 512],
+                    },
+                ),
+                openraft_entry(1, 1, 3, BlockCommand::Flush),
+            ])
+            .unwrap();
+
+        assert_eq!(responses.len(), 3);
+        assert_eq!(responses[0].bytes_written, 0);
+        assert_eq!(responses[1].bytes_written, 512);
+        assert_eq!(responses[2].bytes_written, 0);
+        assert_eq!(
+            applier.last_applied_log_id(),
+            Some(openraft_log_id(1, 1, 3))
+        );
+        assert_eq!(&applier.replica().read_all()[0..512], &[9; 512]);
+        drop(applier);
+
+        let reopened = OpenraftEntryApplier::open(store).unwrap().unwrap();
+        assert_eq!(&reopened.replica().read_all()[0..512], &[9; 512]);
+    }
+
+    #[test]
+    fn openraft_membership_entry_tracks_membership_without_mutating_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let mut applier = OpenraftEntryApplier::create(store, 1, 4096, 512).unwrap();
+        let membership = openraft::Membership::new(vec![BTreeSet::from([1, 2, 3])], ());
+
+        let responses = applier
+            .apply_entries([openraft::Entry {
+                log_id: openraft_log_id(2, 2, 4),
+                payload: openraft::EntryPayload::Membership(membership),
+            }])
+            .unwrap();
+
+        assert_eq!(
+            responses,
+            vec![BlockResponse {
+                applied_index: 4,
+                bytes_written: 0
+            }]
+        );
+        assert_eq!(
+            applier.last_applied_log_id(),
+            Some(openraft_log_id(2, 2, 4))
+        );
+        assert_eq!(
+            applier.last_membership().log_id().as_ref(),
+            Some(&openraft_log_id(2, 2, 4))
+        );
+        assert_eq!(applier.replica().read_all(), &[0; 4096]);
     }
 
     #[test]
