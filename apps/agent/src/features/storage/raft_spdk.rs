@@ -55,6 +55,15 @@ impl HostBackend for RaftSpdkHostBackend {
                 self.local_node_id, locator.group_id
             )));
         }
+        if locator
+            .leader_hint
+            .is_some_and(|leader| leader != self.local_node_id)
+        {
+            return Err(StorageError::NotSupported(format!(
+                "raft_spdk leader-only attach refused on node {}; leader hint is {:?}",
+                self.local_node_id, locator.leader_hint
+            )));
+        }
         self.raft_block
             .ensure_group(
                 locator.group_id,
@@ -172,6 +181,22 @@ mod tests {
 
         let err = backend.attach(&volume).await.unwrap_err();
         assert!(err.to_string().contains("not a replica"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_follower_when_leader_hint_points_elsewhere() {
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 2, state);
+        let volume = VolumeHandle {
+            volume_id: Uuid::new_v4(),
+            backend_id: BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::RaftSpdk,
+            locator: locator().to_locator_string().unwrap(),
+            size_bytes: 4096,
+        };
+
+        let err = backend.attach(&volume).await.unwrap_err();
+        assert!(err.to_string().contains("leader-only"), "got: {err}");
     }
 
     #[tokio::test]
