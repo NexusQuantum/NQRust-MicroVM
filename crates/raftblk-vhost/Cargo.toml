@@ -26,3 +26,4 @@ log = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+virtio-queue = { version = "0.17", features = ["test-utils"] }
