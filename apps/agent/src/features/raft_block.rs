@@ -20,6 +20,13 @@ use uuid::Uuid;
 pub struct RaftBlockState {
     base_dir: PathBuf,
     groups: Arc<Mutex<HashMap<Uuid, InMemoryOpenraftBlockStore>>>,
+    /// Per-group Openraft runtimes. A group present in `runtimes` is in
+    /// real-Raft mode: the openraft_* routes dispatch incoming RPCs through
+    /// `Raft::append_entries`/`Raft::vote`/`Raft::install_snapshot` and writes
+    /// flow through `Raft::client_write`. A group present in `groups` but
+    /// not `runtimes` is in legacy storage-only mode (existing prototype
+    /// tests, `populate_streaming` direct-replica path).
+    runtimes: Arc<Mutex<HashMap<Uuid, RaftBlockRuntime>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -413,6 +420,17 @@ pub struct RaftBlockRuntime {
     pub store: InMemoryOpenraftBlockStore,
 }
 
+impl std::fmt::Debug for RaftBlockRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaftBlockRuntime")
+            .field("group_id", &self.group_id)
+            .field("node_id", &self.node_id)
+            .field("raft", &"<openraft::Raft handle>")
+            .field("store", &self.store)
+            .finish()
+    }
+}
+
 #[allow(dead_code)]
 impl RaftBlockRuntime {
     /// Build a runtime that talks to a static set of peers via HTTP.
@@ -435,6 +453,32 @@ impl RaftBlockRuntime {
             capacity_bytes,
             block_size,
         )?;
+        let factory = RaftBlockNetworkFactory::new(group_id, peers);
+        let config = nexus_raft_block::default_openraft_config()?;
+        let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
+        let raft = openraft::Raft::new(node_id, config, factory, log_store, state_machine)
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::new: {e}")))?;
+        Ok(Self {
+            group_id,
+            node_id,
+            raft,
+            store,
+        })
+    }
+
+    /// Build a runtime from a pre-existing storage handle (the agent's
+    /// `RaftBlockState` already created and persisted the replica via the
+    /// `create` route, and the runtime registers atop that same storage so
+    /// the existing prototype data path is preserved). The storage handle is
+    /// `Arc`-backed and cloned cheaply; both the runtime and the legacy
+    /// `RaftBlockState::groups` map share the same backing replica.
+    pub async fn from_existing(
+        group_id: Uuid,
+        node_id: u64,
+        store: InMemoryOpenraftBlockStore,
+        peers: HashMap<u64, String>,
+    ) -> Result<Self, RaftBlockError> {
         let factory = RaftBlockNetworkFactory::new(group_id, peers);
         let config = nexus_raft_block::default_openraft_config()?;
         let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
@@ -538,7 +582,98 @@ impl RaftBlockState {
         Self {
             base_dir: base_dir.into(),
             groups: Arc::new(Mutex::new(HashMap::new())),
+            runtimes: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Start an Openraft runtime for an existing group. The group's storage
+    /// must already exist (created via `create_group`/`ensure_group`). Once a
+    /// runtime is started, the openraft_* routes dispatch through it; calling
+    /// it twice is a no-op.
+    pub async fn start_runtime(
+        &self,
+        group_id: Uuid,
+        peers: HashMap<u64, String>,
+    ) -> Result<(), RaftBlockError> {
+        {
+            let runtimes = self.runtimes.lock().await;
+            if runtimes.contains_key(&group_id) {
+                return Ok(());
+            }
+        }
+        let store = {
+            let groups = self.groups.lock().await;
+            groups
+                .get(&group_id)
+                .cloned()
+                .ok_or_else(|| RaftBlockError::Store(format!("group {group_id} not started")))?
+        };
+        let node_id = store.node_id()?;
+        let runtime = RaftBlockRuntime::from_existing(group_id, node_id, store, peers).await?;
+        self.runtimes.lock().await.insert(group_id, runtime);
+        Ok(())
+    }
+
+    /// Initialize this node as the bootstrap member of the cluster. For
+    /// single-node groups pass a single-entry membership; for static
+    /// three-node groups pass all three node ids. Only the bootstrap leader
+    /// calls this; followers learn membership via append_entries.
+    pub async fn initialize_runtime(
+        &self,
+        group_id: Uuid,
+        members: std::collections::BTreeMap<u64, openraft::BasicNode>,
+    ) -> Result<(), RaftBlockError> {
+        let runtime = self
+            .runtime_for(group_id)
+            .await
+            .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
+        runtime.initialize_membership(members).await
+    }
+
+    /// Submit a `BlockCommand` through Raft. Returns once the command is
+    /// committed and applied. Only the leader accepts writes.
+    pub async fn runtime_client_write(
+        &self,
+        group_id: Uuid,
+        command: BlockCommand,
+    ) -> Result<BlockResponse, RaftBlockError> {
+        let runtime = self
+            .runtime_for(group_id)
+            .await
+            .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
+        runtime.client_write(command).await
+    }
+
+    /// Stop a runtime, leaving the underlying storage intact. Used by
+    /// `RaftSpdkHostBackend::detach`.
+    pub async fn stop_runtime(&self, group_id: Uuid) -> Result<bool, RaftBlockError> {
+        let removed = self.runtimes.lock().await.remove(&group_id);
+        if let Some(runtime) = removed {
+            runtime.shutdown().await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Cheap snapshot of a runtime handle (Raft is Arc-backed).
+    pub async fn runtime_for(&self, group_id: Uuid) -> Option<RaftBlockRuntime> {
+        self.runtimes.lock().await.get(&group_id).cloned()
+    }
+
+    /// Block until this node is observed as leader for `group_id`, or
+    /// `timeout` elapses. Convenience wrapper for tests and the bootstrap
+    /// flow.
+    pub async fn await_leader(
+        &self,
+        group_id: Uuid,
+        timeout: std::time::Duration,
+    ) -> Result<(), RaftBlockError> {
+        let runtime = self
+            .runtime_for(group_id)
+            .await
+            .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
+        runtime.await_leader(timeout).await
     }
 
     fn store_for(&self, group_id: Uuid, node_id: u64) -> FileReplicaStore {
@@ -691,6 +826,18 @@ impl RaftBlockState {
         group_id: Uuid,
         req: openraft::raft::AppendEntriesRequest<BlockRaftTypeConfig>,
     ) -> Result<openraft::raft::AppendEntriesResponse<u64>, RaftBlockError> {
+        // Real Raft mode: a runtime is registered for this group, dispatch
+        // through Openraft's incoming-RPC handler so leader election, term
+        // tracking, and log replication go through the production state
+        // machine. Falls back to direct-storage append when no runtime is
+        // registered (legacy prototype tests, populate_streaming path).
+        if let Some(runtime) = self.runtime_for(group_id).await {
+            return runtime
+                .raft
+                .append_entries(req)
+                .await
+                .map_err(|e| RaftBlockError::Store(format!("Raft::append_entries: {e}")));
+        }
         let groups = self.groups.lock().await;
         let replica = groups
             .get(&group_id)
@@ -735,6 +882,14 @@ impl RaftBlockState {
         group_id: Uuid,
         req: openraft::raft::InstallSnapshotRequest<BlockRaftTypeConfig>,
     ) -> Result<openraft::raft::InstallSnapshotResponse<u64>, RaftBlockError> {
+        if let Some(runtime) = self.runtime_for(group_id).await {
+            #[allow(deprecated)]
+            return runtime
+                .raft
+                .install_snapshot(req)
+                .await
+                .map_err(|e| RaftBlockError::Store(format!("Raft::install_snapshot: {e}")));
+        }
         let groups = self.groups.lock().await;
         let replica = groups
             .get(&group_id)
@@ -763,6 +918,13 @@ impl RaftBlockState {
         group_id: Uuid,
         req: openraft::raft::VoteRequest<u64>,
     ) -> Result<openraft::raft::VoteResponse<u64>, RaftBlockError> {
+        if let Some(runtime) = self.runtime_for(group_id).await {
+            return runtime
+                .raft
+                .vote(req)
+                .await
+                .map_err(|e| RaftBlockError::Store(format!("Raft::vote: {e}")));
+        }
         let groups = self.groups.lock().await;
         let replica = groups
             .get(&group_id)
@@ -2199,5 +2361,380 @@ mod tests {
         }
 
         server.abort();
+    }
+
+    // -------------------------------------------------------------------
+    // Three-node integration tests.
+    //
+    // These start three in-process Openraft groups (one per simulated agent),
+    // wired via the production HTTP transport (RaftBlockNetworkFactory ->
+    // /openraft/* routes). They prove:
+    //  - leader election in a static three-member group;
+    //  - committed writes replicate to all replicas;
+    //  - leader kill triggers failover and a new leader accepts writes
+    //    that propagate to remaining replicas;
+    //  - quorum loss (two of three down) prevents new commits but the
+    //    survivor's earlier committed state is intact.
+    //
+    // These tests are real Raft, not the storage harness. They exercise the
+    // RaftBlockRuntime + RaftNetworkFactory adapter end-to-end.
+    // -------------------------------------------------------------------
+
+    /// One node in the in-process three-node test cluster: its server task,
+    /// its `RaftBlockState`, its base URL, and the dir backing its storage.
+    struct TestNode {
+        node_id: u64,
+        state: Arc<RaftBlockState>,
+        #[allow(dead_code)]
+        url: String,
+        server: tokio::task::JoinHandle<()>,
+        _dir: tempfile::TempDir,
+    }
+
+    impl TestNode {
+        async fn shutdown_runtime(&self, group_id: Uuid) {
+            let _ = self.state.stop_runtime(group_id).await;
+        }
+    }
+
+    /// Spin up `count` agents, each with its own RaftBlockState, axum router,
+    /// and tempdir. Returns the nodes + a node_id -> url map suitable for
+    /// passing to `start_runtime`.
+    async fn spawn_cluster(count: u64) -> (Vec<TestNode>, HashMap<u64, String>) {
+        let mut nodes = Vec::with_capacity(count as usize);
+        let mut peer_map = HashMap::new();
+        for node_id in 1..=count {
+            let dir = tempfile::tempdir().unwrap();
+            let state = Arc::new(RaftBlockState::new(dir.path()));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let url = format!("http://{addr}");
+            let state_for_server = state.clone();
+            let server = tokio::spawn(async move {
+                let _ = axum::serve(listener, router(state_for_server)).await;
+            });
+            peer_map.insert(node_id, url.clone());
+            nodes.push(TestNode {
+                node_id,
+                state,
+                url,
+                server,
+                _dir: dir,
+            });
+        }
+        (nodes, peer_map)
+    }
+
+    /// Bring up a real three-node Raft group across three in-process agents:
+    /// create the group on each, start a runtime on each with the full peer
+    /// URL map, then initialize membership on node 1 as the bootstrap leader.
+    /// Returns the cluster + the elected leader id.
+    async fn bootstrap_three_node_cluster(
+        group_id: Uuid,
+        capacity_bytes: u64,
+        block_size: u64,
+    ) -> (Vec<TestNode>, HashMap<u64, String>, u64) {
+        let (nodes, peer_map) = spawn_cluster(3).await;
+
+        for node in &nodes {
+            node.state
+                .ensure_group(group_id, node.node_id, capacity_bytes, block_size)
+                .await
+                .unwrap();
+            node.state
+                .start_runtime(group_id, peer_map.clone())
+                .await
+                .unwrap();
+        }
+
+        // Bootstrap membership on node 1 with all three members. Followers
+        // learn membership through subsequent append_entries.
+        let mut members = std::collections::BTreeMap::new();
+        for node in &nodes {
+            members.insert(node.node_id, openraft::BasicNode::default());
+        }
+        nodes[0]
+            .state
+            .initialize_runtime(group_id, members)
+            .await
+            .unwrap();
+        nodes[0]
+            .state
+            .await_leader(group_id, std::time::Duration::from_secs(5))
+            .await
+            .unwrap();
+
+        (nodes, peer_map, 1)
+    }
+
+    /// Wait for `from_node` to observe a leader that is NOT in `excluded`
+    /// (used after a kill to find the new leader, ignoring the dead one
+    /// while it's still cached in the watch channel). Returns the new
+    /// leader's node_id, or None on timeout.
+    async fn find_new_leader_from(
+        from_node: &TestNode,
+        group_id: Uuid,
+        excluded: &[u64],
+        timeout: std::time::Duration,
+    ) -> Option<u64> {
+        let runtime = from_node.state.runtime_for(group_id).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut metrics = runtime.metrics();
+        loop {
+            let snapshot = metrics.borrow().clone();
+            if let Some(leader) = snapshot.current_leader {
+                if !excluded.contains(&leader) {
+                    return Some(leader);
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return None;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => return None,
+                changed = metrics.changed() => {
+                    if changed.is_err() {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// All three replicas commit a write through the leader and converge to
+    /// the same applied bytes.
+    #[tokio::test]
+    async fn three_node_cluster_replicates_committed_write() {
+        let group_id = Uuid::new_v4();
+        let (nodes, _peers, leader_id) = bootstrap_three_node_cluster(group_id, 4096, 512).await;
+        let leader = &nodes[(leader_id - 1) as usize];
+
+        let resp = leader
+            .state
+            .runtime_client_write(
+                group_id,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![0xaa; 512],
+                },
+            )
+            .await
+            .expect("leader accepts write");
+        assert_eq!(resp.applied_index, 2, "write commits at index 2");
+
+        // Give followers a moment to apply the entry. Openraft's
+        // commit-replicate-apply pipeline is async; the leader's response
+        // returns as soon as quorum acks, but follower application may lag.
+        for _ in 0..50 {
+            let mut all_have_bytes = true;
+            for node in &nodes {
+                let groups = node.state.groups.lock().await;
+                if let Some(replica) = groups.get(&group_id) {
+                    match replica.read_range(0, 512) {
+                        Ok(bytes) if bytes[0] == 0xaa => {}
+                        _ => {
+                            all_have_bytes = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if all_have_bytes {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        for node in &nodes {
+            let groups = node.state.groups.lock().await;
+            let replica = groups.get(&group_id).expect("replica exists");
+            let bytes = replica.read_range(0, 512).expect("read bytes");
+            assert_eq!(
+                bytes[0], 0xaa,
+                "node {} did not converge to committed value",
+                node.node_id
+            );
+        }
+
+        for node in &nodes {
+            node.shutdown_runtime(group_id).await;
+            node.server.abort();
+        }
+    }
+
+    /// After the leader is removed, the remaining two nodes elect a new
+    /// leader within the election timeout window and accept further writes
+    /// that propagate to the surviving follower.
+    #[tokio::test]
+    async fn three_node_cluster_fails_over_when_leader_is_killed() {
+        let group_id = Uuid::new_v4();
+        let (mut nodes, _peers, leader_id) =
+            bootstrap_three_node_cluster(group_id, 4096, 512).await;
+
+        // Leader writes the first byte before the kill.
+        let leader = &nodes[(leader_id - 1) as usize];
+        leader
+            .state
+            .runtime_client_write(
+                group_id,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![0x11; 512],
+                },
+            )
+            .await
+            .expect("first write commits");
+
+        // Kill node 1 (the bootstrap leader). Stopping the runtime drops the
+        // Raft instance; aborting the server breaks any remote calls aimed at
+        // it. The remaining two members must form a quorum, time out an
+        // election, and elect a new leader.
+        nodes[0].shutdown_runtime(group_id).await;
+        nodes[0].server.abort();
+
+        // Find the new leader from one of the survivors. With two members
+        // remaining, election must succeed within ~3x election_timeout_max.
+        // The watch channel may transiently still report the killed leader
+        // until election timeout fires; `find_new_leader_from` ignores any
+        // leader id in `excluded`.
+        let new_leader = find_new_leader_from(
+            &nodes[1],
+            group_id,
+            &[1],
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("survivors elect a new leader");
+        assert!(
+            new_leader == 2 || new_leader == 3,
+            "new leader is a survivor (got {new_leader})"
+        );
+
+        // The new leader accepts a follow-up write. It may take a moment for
+        // the elected node to complete its leadership transition (apply
+        // blank-payload entry); retry a few times before failing.
+        let new_leader_node = &nodes[(new_leader - 1) as usize];
+        let mut attempts = 0;
+        let resp = loop {
+            attempts += 1;
+            match new_leader_node
+                .state
+                .runtime_client_write(
+                    group_id,
+                    BlockCommand::Write {
+                        offset: 512,
+                        bytes: vec![0x22; 512],
+                    },
+                )
+                .await
+            {
+                Ok(r) => break r,
+                Err(e) if attempts < 30 => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    let _ = e;
+                }
+                Err(e) => panic!("post-failover write failed after retries: {e}"),
+            }
+        };
+        assert!(resp.applied_index >= 3, "post-failover write commits");
+
+        // The other survivor replicates the post-failover bytes.
+        let other_survivor_id = if new_leader == 2 { 3 } else { 2 };
+        let other_survivor = &nodes[(other_survivor_id - 1) as usize];
+        for _ in 0..50 {
+            let groups = other_survivor.state.groups.lock().await;
+            if let Some(replica) = groups.get(&group_id) {
+                if let Ok(bytes) = replica.read_range(512, 512) {
+                    if bytes[0] == 0x22 {
+                        drop(groups);
+                        for node in &mut nodes[1..] {
+                            node.shutdown_runtime(group_id).await;
+                            node.server.abort();
+                        }
+                        return;
+                    }
+                }
+            }
+            drop(groups);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("survivor did not replicate post-failover bytes");
+    }
+
+    /// Quorum loss: two of three down means no new writes commit. The lone
+    /// survivor must reject `client_write` (cannot reach majority), but its
+    /// previously committed bytes remain readable from local storage.
+    #[tokio::test]
+    async fn three_node_cluster_blocks_writes_under_quorum_loss() {
+        let group_id = Uuid::new_v4();
+        let (mut nodes, _peers, leader_id) =
+            bootstrap_three_node_cluster(group_id, 4096, 512).await;
+
+        // Commit a write while quorum is healthy.
+        let leader = &nodes[(leader_id - 1) as usize];
+        leader
+            .state
+            .runtime_client_write(
+                group_id,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![0x33; 512],
+                },
+            )
+            .await
+            .expect("pre-failure write commits");
+        // Allow follower to apply.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Kill two nodes, leaving only one alive. The surviving node, which
+        // may or may not be the previous leader, cannot form a quorum with
+        // itself alone, so future client_write attempts must fail or time out.
+        let survivor_id = 3u64;
+        for n in &mut nodes {
+            if n.node_id != survivor_id {
+                n.shutdown_runtime(group_id).await;
+                n.server.abort();
+            }
+        }
+
+        // Give time for the survivor to notice peers are gone (election
+        // timeouts may flap; we just want to assert "no progress on writes").
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        let survivor = &nodes[(survivor_id - 1) as usize];
+
+        // A write attempt with a bounded timeout must not commit. We expect
+        // either an explicit error (NoQuorum-shaped) or a timeout.
+        let attempt = tokio::time::timeout(
+            std::time::Duration::from_millis(800),
+            survivor.state.runtime_client_write(
+                group_id,
+                BlockCommand::Write {
+                    offset: 1024,
+                    bytes: vec![0x44; 512],
+                },
+            ),
+        )
+        .await;
+        match attempt {
+            Err(_elapsed) => {
+                // Timeout - expected when there's no quorum.
+            }
+            Ok(Err(_)) => {
+                // Explicit error - also acceptable; Openraft may surface a
+                // ChangeMembership / forward-to-leader / no-leader shape.
+            }
+            Ok(Ok(_)) => panic!("write committed without quorum"),
+        }
+
+        // The pre-failure committed bytes must still be readable on the
+        // survivor's storage even though it's lost quorum.
+        let groups = survivor.state.groups.lock().await;
+        let replica = groups.get(&group_id).expect("replica exists");
+        let bytes = replica.read_range(0, 512).expect("read pre-failure bytes");
+        assert_eq!(bytes[0], 0x33, "pre-failure committed bytes survived");
+        drop(groups);
+
+        survivor.shutdown_runtime(group_id).await;
+        survivor.server.abort();
     }
 }
