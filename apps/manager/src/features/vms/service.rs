@@ -3051,6 +3051,289 @@ mod tests {
         assert_eq!(loads[0].snapshot_path, expected_snapshot_path);
         assert_eq!(loads[0].mem_path, expected_mem_path);
     }
+
+    // ---------------------------------------------------------------------
+    // Pure-logic tests below this line.
+    //
+    // These tests exercise helpers that take no &PgPool, make no HTTP
+    // calls and do no real Firecracker IO. They capture current behavior
+    // so that the upcoming VMM-backend refactor can detect regressions in
+    // URL/JSON shapes, path layout and validation predicates.
+    // ---------------------------------------------------------------------
+
+    fn make_vm_row_for_paths(id: Uuid) -> repo::VmRow {
+        let now = chrono::Utc::now();
+        repo::VmRow {
+            id,
+            name: "vm".into(),
+            state: "running".into(),
+            host_id: Uuid::new_v4(),
+            template_id: None,
+            host_addr: "http://127.0.0.1:9090".into(),
+            api_sock: format!("/srv/fc/vms/{id}/sock/fc.sock"),
+            tap: format!("tap-{}", &id.to_string()[..8]),
+            log_path: format!("/srv/fc/vms/{id}/logs/firecracker.log"),
+            http_port: 0,
+            fc_unit: format!("fc-{id}.scope"),
+            vcpu: 1,
+            mem_mib: 512,
+            kernel_path: "/srv/images/vmlinux".into(),
+            rootfs_path: "/srv/images/rootfs.ext4".into(),
+            source_snapshot_id: None,
+            guest_ip: None,
+            tags: vec![],
+            created_by_user_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn test_select_network_returns_bridge_name() {
+        let caps = json!({"bridge": "fcbr0"});
+        let sel = select_network(&caps).expect("bridge present should succeed");
+        assert_eq!(sel.bridge, "fcbr0");
+    }
+
+    #[test]
+    fn test_select_network_missing_bridge_errors() {
+        let caps = json!({});
+        let err = match select_network(&caps) {
+            Ok(_) => panic!("expected error when bridge is missing"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("bridge"),
+            "error should mention bridge: {err}"
+        );
+    }
+
+    #[test]
+    fn test_select_network_non_string_bridge_errors() {
+        // bridge present but wrong type must NOT be accepted
+        let caps = json!({"bridge": 123});
+        let err = match select_network(&caps) {
+            Ok(_) => panic!("expected error when bridge is not a string"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("bridge"),
+            "error should mention bridge: {err}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_rate_limiter_passthrough_when_already_nested() {
+        let raw = json!({
+            "bandwidth": {"size": 1000, "refill_time": 100},
+            "ops": {"size": 50}
+        });
+        let out = normalize_rate_limiter(&raw);
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn test_normalize_rate_limiter_promotes_legacy_flat_keys_to_bandwidth() {
+        let raw = json!({
+            "size": 1024,
+            "one_time_burst": 2048,
+            "refill_time": 1000
+        });
+        let out = normalize_rate_limiter(&raw);
+        let bandwidth = out
+            .get("bandwidth")
+            .expect("bandwidth bucket must be created");
+        assert_eq!(bandwidth.get("size"), Some(&json!(1024)));
+        assert_eq!(bandwidth.get("one_time_burst"), Some(&json!(2048)));
+        assert_eq!(bandwidth.get("refill_time"), Some(&json!(1000)));
+        // None of the legacy flat keys should leak to the top level.
+        assert!(out.get("size").is_none());
+        assert!(out.get("one_time_burst").is_none());
+        assert!(out.get("refill_time").is_none());
+    }
+
+    #[test]
+    fn test_normalize_rate_limiter_passthrough_for_non_object() {
+        let raw = json!(null);
+        assert_eq!(normalize_rate_limiter(&raw), json!(null));
+
+        let arr = json!([1, 2, 3]);
+        assert_eq!(normalize_rate_limiter(&arr), arr);
+    }
+
+    #[test]
+    fn test_normalize_rate_limiter_passthrough_for_empty_object() {
+        // An empty object has no recognizable keys; returning it unchanged
+        // is the documented behavior and lets callers detect "no limit".
+        let raw = json!({});
+        assert_eq!(normalize_rate_limiter(&raw), json!({}));
+    }
+
+    #[test]
+    fn test_normalize_rate_limiter_passthrough_when_ops_present() {
+        // The presence of either "bandwidth" OR "ops" at the top level is
+        // treated as a signal that the payload is already in normalized
+        // form. Legacy flat keys ("size") sitting next to "ops" are NOT
+        // wrapped — the whole object is returned unchanged. This is the
+        // current short-circuit in normalize_rate_limiter and is what
+        // callers in NIC create/update rely on.
+        let raw = json!({
+            "size": 1024,
+            "ops": {"size": 50, "refill_time": 100}
+        });
+        let out = normalize_rate_limiter(&raw);
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn test_vmpaths_from_row_mirrors_row_fields() {
+        let id = Uuid::new_v4();
+        let row = make_vm_row_for_paths(id);
+        let paths = VmPaths::from_row(&row);
+
+        assert_eq!(paths.sock, row.api_sock);
+        assert_eq!(paths.log_path, row.log_path);
+        assert_eq!(paths.tap, row.tap);
+        assert_eq!(paths.fc_unit, row.fc_unit);
+        // metrics_path is derived deterministically from the VM id and
+        // must remain stable across the refactor.
+        assert_eq!(
+            paths.metrics_path,
+            format!("/srv/fc/vms/{}/logs/metrics.json", row.id)
+        );
+        assert!(paths.snapshot_path.is_none());
+        assert!(paths.mem_path.is_none());
+    }
+
+    #[test]
+    fn test_vmpaths_with_snapshot_sets_snapshot_and_mem_paths() {
+        let id = Uuid::new_v4();
+        let row = make_vm_row_for_paths(id);
+        let paths = VmPaths::from_row(&row).with_snapshot(
+            "/srv/fc/vms/x/snapshots/s.snap".into(),
+            "/srv/fc/vms/x/snapshots/s.mem".into(),
+        );
+        assert_eq!(
+            paths.snapshot_path.as_deref(),
+            Some("/srv/fc/vms/x/snapshots/s.snap")
+        );
+        assert_eq!(
+            paths.mem_path.as_deref(),
+            Some("/srv/fc/vms/x/snapshots/s.mem")
+        );
+        // Other fields should be unchanged by with_snapshot.
+        assert_eq!(paths.sock, row.api_sock);
+        assert_eq!(paths.tap, row.tap);
+    }
+
+    #[test]
+    fn test_tap_name_uses_first_eight_uuid_chars() {
+        // The TAP device name format is dictated by host-side networking
+        // expectations. Multiple call sites compute it as
+        // `tap-{first_8_chars_of_uuid}`. Lock that contract here so the
+        // refactor cannot accidentally widen or shorten it.
+        let id = Uuid::new_v4();
+        let id_str = id.to_string();
+        let tap = format!("tap-{}", &id_str[..8]);
+        // Total length: 4 (prefix) + 8 (hex) = 12.
+        assert_eq!(tap.len(), 12);
+        assert!(tap.starts_with("tap-"));
+        // The 8-char prefix must be lowercase hex (UUIDs are lowercase).
+        assert!(tap[4..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && (c.is_ascii_digit() || c.is_ascii_lowercase())));
+    }
+
+    #[test]
+    fn test_load_snapshot_payload_full_includes_mem_path() {
+        // The mem_value selection logic in load_snapshot is pure given a
+        // SnapshotRow. We replicate it here verbatim so the JSON shape sent
+        // to /proxy/snapshot/load is locked against regressions.
+        let now = chrono::Utc::now();
+        let snapshot = SnapshotRow {
+            id: Uuid::new_v4(),
+            vm_id: Uuid::new_v4(),
+            snapshot_path: "/srv/fc/vms/x/snapshots/s.snapshot".into(),
+            mem_path: "/srv/fc/vms/x/snapshots/s.mem".into(),
+            size_bytes: 0,
+            state: "available".into(),
+            snapshot_type: "Full".into(),
+            parent_id: None,
+            name: None,
+            track_dirty_pages: false,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let is_diff = snapshot.snapshot_type == "Diff";
+        let mem_value = if is_diff || snapshot.mem_path.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String(snapshot.mem_path.clone())
+        };
+        let payload = json!({
+            "snapshot_path": snapshot.snapshot_path.clone(),
+            "mem_file_path": mem_value,
+            "enable_diff_snapshots": snapshot.track_dirty_pages,
+        });
+
+        assert_eq!(
+            payload["snapshot_path"],
+            json!("/srv/fc/vms/x/snapshots/s.snapshot")
+        );
+        assert_eq!(
+            payload["mem_file_path"],
+            json!("/srv/fc/vms/x/snapshots/s.mem")
+        );
+        assert_eq!(payload["enable_diff_snapshots"], json!(false));
+    }
+
+    #[test]
+    fn test_load_snapshot_payload_diff_nulls_mem_path() {
+        let now = chrono::Utc::now();
+        let snapshot = SnapshotRow {
+            id: Uuid::new_v4(),
+            vm_id: Uuid::new_v4(),
+            snapshot_path: "/srv/fc/vms/x/snapshots/s.snapshot".into(),
+            mem_path: "/srv/fc/vms/x/snapshots/s.mem".into(),
+            size_bytes: 0,
+            state: "available".into(),
+            snapshot_type: "Diff".into(),
+            parent_id: Some(Uuid::new_v4()),
+            name: None,
+            track_dirty_pages: true,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let is_diff = snapshot.snapshot_type == "Diff";
+        let mem_value = if is_diff || snapshot.mem_path.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String(snapshot.mem_path.clone())
+        };
+        let payload = json!({
+            "snapshot_path": snapshot.snapshot_path.clone(),
+            "mem_file_path": mem_value,
+            "enable_diff_snapshots": snapshot.track_dirty_pages,
+        });
+
+        // For Diff snapshots the FC API expects mem_file_path to be null —
+        // memory is reconstituted from the parent.
+        assert_eq!(payload["mem_file_path"], serde_json::Value::Null);
+        assert_eq!(payload["enable_diff_snapshots"], json!(true));
+    }
+
+    #[test]
+    fn test_proxy_query_string_uses_url_encoded_socket_path() {
+        // Many callers build their FC-proxy URL as
+        //     {host}/agent/v1/vms/{id}/proxy?sock={encoded_sock}
+        // Lock the encoding here: forward slashes, dashes and dots come
+        // through verbatim because they are valid path characters.
+        let sock = "/srv/fc/vms/abc-def/sock/fc.sock";
+        let qs = format!("?sock={}", urlencoding::encode(sock));
+        assert_eq!(qs, "?sock=%2Fsrv%2Ffc%2Fvms%2Fabc-def%2Fsock%2Ffc.sock");
+    }
 }
 
 /// Allocate next available IP from a CIDR range

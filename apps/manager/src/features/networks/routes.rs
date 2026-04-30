@@ -456,3 +456,78 @@ pub async fn list_interfaces(
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::networks::repo::NetworkRow;
+    use chrono::Utc;
+
+    fn make_row(type_: &str) -> NetworkRow {
+        let now = Utc::now();
+        NetworkRow {
+            id: Uuid::new_v4(),
+            name: "net-a".to_string(),
+            description: Some("desc".to_string()),
+            type_: type_.to_string(),
+            vlan_id: Some(42),
+            bridge_name: "nqbr1".to_string(),
+            host_id: Some(Uuid::new_v4()),
+            cidr: Some("10.0.2.0/24".to_string()),
+            gateway: Some("10.0.2.1".to_string()),
+            status: "active".to_string(),
+            error_message: None,
+            managed: true,
+            dhcp_enabled: true,
+            dhcp_range_start: Some("10.0.2.10".to_string()),
+            dhcp_range_end: Some("10.0.2.250".to_string()),
+            created_by_user_id: None,
+            vni: None,
+            uplink_interface: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn network_to_list_item_maps_all_fields() {
+        // Happy path: every NetworkRow field maps onto NetworkListItem and
+        // the supplied auxiliary data (host_name, vm_count, participating_hosts)
+        // is propagated verbatim.
+        let row = make_row("nat");
+        let host_name = Some("host-1".to_string());
+        let item = network_to_list_item(&row, host_name.clone(), 7, None);
+
+        assert_eq!(item.id, row.id);
+        assert_eq!(item.name, row.name);
+        assert_eq!(item.description, row.description);
+        assert_eq!(item.network_type, row.type_);
+        assert_eq!(item.vlan_id, row.vlan_id);
+        assert_eq!(item.vni, row.vni);
+        assert_eq!(item.bridge_name, row.bridge_name);
+        assert_eq!(item.host_id, row.host_id);
+        assert_eq!(item.host_name, host_name);
+        assert_eq!(item.cidr, row.cidr);
+        assert_eq!(item.gateway, row.gateway);
+        assert_eq!(item.status, row.status);
+        assert_eq!(item.managed, row.managed);
+        assert_eq!(item.dhcp_enabled, row.dhcp_enabled);
+        assert_eq!(item.dhcp_range_start, row.dhcp_range_start);
+        assert_eq!(item.dhcp_range_end, row.dhcp_range_end);
+        assert_eq!(item.vm_count, 7);
+        assert_eq!(item.participating_hosts, None);
+        assert_eq!(item.created_at, row.created_at);
+        assert_eq!(item.updated_at, row.updated_at);
+    }
+
+    #[test]
+    fn network_to_list_item_includes_participating_hosts_for_vxlan() {
+        // VXLAN networks track participating hosts; non-VXLAN networks set None.
+        // Here we just verify the helper passes the value through unchanged.
+        let row = make_row("vxlan");
+        let item = network_to_list_item(&row, None, 0, Some(3));
+        assert_eq!(item.participating_hosts, Some(3));
+        assert_eq!(item.network_type, "vxlan");
+        assert!(item.host_name.is_none());
+    }
+}
