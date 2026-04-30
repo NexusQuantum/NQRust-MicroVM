@@ -16,12 +16,39 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Tracks a spawned raftblk-vhost daemon process per group so detach can
+/// stop it cleanly.
+#[derive(Debug)]
+struct DaemonHandle {
+    child: tokio::process::Child,
+}
+
 #[derive(Debug, Clone)]
 pub struct RaftSpdkHostBackend {
     socket_dir: PathBuf,
     local_node_id: u64,
     raft_block: Arc<RaftBlockState>,
     active_groups: Arc<Mutex<HashMap<PathBuf, RaftSpdkLocator>>>,
+    /// raftblk-vhost daemon processes spawned for each active group.
+    /// Stored as `tokio::process::Child` so detach can `.kill().await`
+    /// cleanly. Keyed by group_id (Uuid stringified) so reattach finds
+    /// any existing process.
+    daemons: Arc<Mutex<HashMap<uuid::Uuid, DaemonHandle>>>,
+    /// Path to the raftblk-vhost binary. Defaults to "raftblk-vhost"
+    /// (in PATH); operators can override via `AGENT_RAFTBLK_VHOST_BIN`
+    /// at agent startup.
+    daemon_bin: PathBuf,
+    /// Local agent base URL the daemon will dial (e.g.
+    /// "http://127.0.0.1:9090/v1/raft_block"). Operators set
+    /// `AGENT_RAFTBLK_AGENT_URL` at agent startup.
+    daemon_agent_url: String,
+    /// When false, attach() does NOT spawn the raftblk-vhost daemon —
+    /// it just returns the expected socket path. Used by unit tests
+    /// (which don't have the daemon binary available) and by operator
+    /// setups that manage the daemon out-of-band via systemd. Default
+    /// true; override at agent startup with
+    /// `AGENT_RAFTBLK_DISABLE_AUTOSPAWN=1`.
+    autospawn_enabled: bool,
 }
 
 impl RaftSpdkHostBackend {
@@ -35,11 +62,103 @@ impl RaftSpdkHostBackend {
             local_node_id,
             raft_block,
             active_groups: Arc::new(Mutex::new(HashMap::new())),
+            daemons: Arc::new(Mutex::new(HashMap::new())),
+            daemon_bin: std::env::var("AGENT_RAFTBLK_VHOST_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("raftblk-vhost")),
+            daemon_agent_url: std::env::var("AGENT_RAFTBLK_AGENT_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:9090/v1/raft_block".to_string()),
+            autospawn_enabled: std::env::var("AGENT_RAFTBLK_DISABLE_AUTOSPAWN").is_err(),
         }
+    }
+
+    /// Test-only constructor that disables the daemon auto-spawn so
+    /// `attach()` returns the expected socket path without trying to
+    /// exec the raftblk-vhost binary.
+    #[cfg(test)]
+    pub fn new_no_autospawn(
+        socket_dir: impl Into<PathBuf>,
+        local_node_id: u64,
+        raft_block: Arc<RaftBlockState>,
+    ) -> Self {
+        let mut backend = Self::new(socket_dir, local_node_id, raft_block);
+        backend.autospawn_enabled = false;
+        backend
     }
 
     fn socket_path_for_locator(&self, locator: &RaftSpdkLocator) -> PathBuf {
         raftblk_socket_path(&self.socket_dir, locator.group_id)
+    }
+
+    /// Start a raftblk-vhost daemon for `locator` on `socket_path` if
+    /// one isn't already running for the group. Waits up to 5s for the
+    /// socket to bind so the caller can return AttachedPath::VhostUserSock
+    /// confidently. If the daemon binary is missing, returns an error
+    /// rather than silently leaving an empty socket path.
+    async fn ensure_daemon(
+        &self,
+        locator: &RaftSpdkLocator,
+        socket_path: &Path,
+    ) -> Result<(), StorageError> {
+        {
+            let daemons = self.daemons.lock().await;
+            if daemons.contains_key(&locator.group_id) {
+                return Ok(());
+            }
+        }
+        if let Some(parent) = socket_path.parent() {
+            std::fs::create_dir_all(parent).map_err(StorageError::backend)?;
+        }
+        // If a stale socket file is left behind from a previous crash,
+        // remove it so the new daemon's bind succeeds.
+        let _ = std::fs::remove_file(socket_path);
+
+        let child = tokio::process::Command::new(&self.daemon_bin)
+            .arg("--socket")
+            .arg(socket_path)
+            .arg("--agent-base-url")
+            .arg(&self.daemon_agent_url)
+            .arg("--group-id")
+            .arg(locator.group_id.to_string())
+            .arg("--block-size")
+            .arg(locator.block_size.to_string())
+            .arg("--capacity-bytes")
+            .arg(locator.size_bytes.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                StorageError::backend(std::io::Error::other(format!(
+                    "spawn raftblk-vhost ({:?}): {e}",
+                    self.daemon_bin
+                )))
+            })?;
+
+        // Wait up to 5s for the daemon to bind the socket.
+        for _ in 0..50 {
+            if socket_path.exists() {
+                self.daemons
+                    .lock()
+                    .await
+                    .insert(locator.group_id, DaemonHandle { child });
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        // Timed out — kill the child to avoid orphan, return error.
+        let mut killed_child = child;
+        let _ = killed_child.kill().await;
+        Err(StorageError::backend(std::io::Error::other(format!(
+            "raftblk-vhost daemon for group {} did not bind {} within 5s",
+            locator.group_id,
+            socket_path.display()
+        ))))
+    }
+
+    async fn stop_daemon(&self, group_id: uuid::Uuid) {
+        if let Some(mut handle) = self.daemons.lock().await.remove(&group_id) {
+            let _ = handle.child.kill().await;
+        }
     }
 }
 
@@ -80,6 +199,14 @@ impl HostBackend for RaftSpdkHostBackend {
             .await
             .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
         let socket_path = self.socket_path_for_locator(&locator);
+        // Spawn the raftblk-vhost daemon if it isn't already running for
+        // this group. Returns once the socket is bound so Firecracker can
+        // immediately use the path. Skipped when autospawn_enabled is
+        // false (tests, or operator setups that manage the daemon
+        // out-of-band via systemd).
+        if self.autospawn_enabled {
+            self.ensure_daemon(&locator, &socket_path).await?;
+        }
         self.active_groups
             .lock()
             .await
@@ -93,8 +220,10 @@ impl HostBackend for RaftSpdkHostBackend {
         _attached: AttachedPath,
     ) -> Result<(), StorageError> {
         let locator = RaftSpdkLocator::from_locator_str(&volume.locator)?;
+        self.stop_daemon(locator.group_id).await;
         self.raft_block.stop_group(locator.group_id).await;
         self.active_groups.lock().await.remove(_attached.path());
+        let _ = std::fs::remove_file(_attached.path());
         Ok(())
     }
 
@@ -211,7 +340,8 @@ mod tests {
     #[tokio::test]
     async fn attach_returns_raftblk_vhost_socket() {
         let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state.clone());
+        let backend =
+            RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 1, state.clone());
         let group_id = locator().group_id;
         let volume = VolumeHandle {
             volume_id: Uuid::new_v4(),
@@ -232,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn attach_rejects_non_member_node() {
         let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 9, state);
+        let backend = RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 9, state);
         let volume = VolumeHandle {
             volume_id: Uuid::new_v4(),
             backend_id: BackendInstanceId(Uuid::new_v4()),
@@ -248,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn attach_rejects_follower_when_leader_hint_points_elsewhere() {
         let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 2, state);
+        let backend = RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 2, state);
         let volume = VolumeHandle {
             volume_id: Uuid::new_v4(),
             backend_id: BackendInstanceId(Uuid::new_v4()),
@@ -264,7 +394,8 @@ mod tests {
     #[tokio::test]
     async fn detach_stops_group_without_destroying_state() {
         let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state.clone());
+        let backend =
+            RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 1, state.clone());
         let group_id = locator().group_id;
         let volume = VolumeHandle {
             volume_id: Uuid::new_v4(),
@@ -285,7 +416,7 @@ mod tests {
     #[tokio::test]
     async fn populate_is_guarded_until_raftblk_exists() {
         let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state);
+        let backend = RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 1, state);
         let err = backend
             .populate_streaming(
                 &AttachedPath::VhostUserSock("/tmp/raft.sock".into()),
@@ -306,7 +437,7 @@ mod tests {
         let source = dir.path().join("source.img");
         std::fs::write(&source, vec![9; 700]).unwrap();
         let state = Arc::new(RaftBlockState::new(dir.path()));
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state);
+        let backend = RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 1, state);
         let volume = VolumeHandle {
             volume_id: Uuid::new_v4(),
             backend_id: BackendInstanceId(Uuid::new_v4()),
@@ -348,7 +479,8 @@ mod tests {
         use tokio::io::AsyncReadExt;
 
         let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
-        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state.clone());
+        let backend =
+            RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 1, state.clone());
         let group_id = locator().group_id;
         let volume = VolumeHandle {
             volume_id: Uuid::new_v4(),
