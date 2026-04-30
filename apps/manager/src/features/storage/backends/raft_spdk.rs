@@ -17,8 +17,20 @@ use uuid::Uuid;
 pub struct RaftSpdkConfig {
     #[serde(default = "default_block_size")]
     pub block_size: u64,
+    /// B-II prototype path: `provision` creates raft-block groups on each
+    /// agent but does NOT start the Openraft runtime. The locator carries
+    /// `prototype_replica: true` so attach refuses to forward guest writes.
+    /// Only set this for the harness test.
     #[serde(default)]
     pub prototype_provisioning_enabled: bool,
+    /// B-II production path: `provision` creates raft-block groups, starts
+    /// an Openraft runtime on each agent with the full peer URL map,
+    /// initializes membership on the leader, and waits for the leader to
+    /// elect itself. The locator does NOT carry `prototype_replica`, so
+    /// attach forwards guest writes through the production raftblk daemon
+    /// (when wired). This is the real B-II provisioning path.
+    #[serde(default)]
+    pub production_provisioning_enabled: bool,
     pub replicas: Vec<RaftSpdkReplicaConfig>,
 }
 
@@ -95,6 +107,69 @@ impl RaftSpdkControlPlaneBackend {
             .send()
             .await;
     }
+
+    /// Start an Openraft runtime on `replica` for `group_id`, with the full
+    /// peer URL map. Followers learn membership from the leader's
+    /// initialize call; this just gets the runtime registered atop the
+    /// pre-existing storage so it can receive append_entries/vote RPCs.
+    async fn start_remote_runtime(
+        &self,
+        replica: &RaftSpdkReplicaConfig,
+        group_id: Uuid,
+        peers: &std::collections::HashMap<u64, String>,
+    ) -> Result<(), StorageError> {
+        let req = serde_json::json!({
+            "group_id": group_id,
+            "peers": peers,
+        });
+        let response = self
+            .http
+            .post(Self::raft_block_url(replica, "runtime_start"))
+            .json(&req)
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "raft_spdk runtime_start on node {} failed with {status}: {body}",
+                replica.node_id
+            ))));
+        }
+        Ok(())
+    }
+
+    /// Bootstrap the cluster's membership on `replica`. Must only be called
+    /// on the chosen leader (typically `replicas[0]`); followers learn
+    /// membership through subsequent append_entries.
+    async fn initialize_remote_membership(
+        &self,
+        replica: &RaftSpdkReplicaConfig,
+        group_id: Uuid,
+        members: &[u64],
+    ) -> Result<(), StorageError> {
+        let req = serde_json::json!({
+            "group_id": group_id,
+            "members": members,
+        });
+        let response = self
+            .http
+            .post(Self::raft_block_url(replica, "runtime_initialize"))
+            .json(&req)
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "raft_spdk runtime_initialize on node {} failed with {status}: {body}",
+                replica.node_id
+            ))));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -113,12 +188,19 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
     }
 
     async fn provision(&self, opts: CreateOpts) -> Result<VolumeHandle, StorageError> {
-        if !self.config.prototype_provisioning_enabled {
+        let prototype = self.config.prototype_provisioning_enabled;
+        let production = self.config.production_provisioning_enabled;
+        if !prototype && !production {
             return Err(StorageError::NotSupported(format!(
-                "raft_spdk backend {} with {} replicas awaits production raftblk/Openraft group bootstrap; set prototype_provisioning_enabled only for B-II harness testing",
+                "raft_spdk backend {} with {} replicas awaits provisioning; set production_provisioning_enabled to bootstrap a real Openraft group, or prototype_provisioning_enabled for the B-II harness path",
                 self.id.0,
                 self.config.replicas.len()
             )));
+        }
+        if prototype && production {
+            return Err(StorageError::InvalidLocator(
+                "raft_spdk: prototype_provisioning_enabled and production_provisioning_enabled are mutually exclusive".into(),
+            ));
         }
         if opts.size_bytes == 0 || !opts.size_bytes.is_multiple_of(self.config.block_size) {
             return Err(StorageError::InvalidLocator(format!(
@@ -142,6 +224,39 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
             created.push(replica);
         }
 
+        // Production path: also bootstrap the Openraft runtime + membership.
+        if production {
+            let peers: std::collections::HashMap<u64, String> = self
+                .config
+                .replicas
+                .iter()
+                .map(|r| (r.node_id, r.agent_base_url.clone()))
+                .collect();
+            for replica in &self.config.replicas {
+                if let Err(err) = self.start_remote_runtime(replica, group_id, &peers).await {
+                    for created_replica in &created {
+                        self.stop_remote_group(created_replica, group_id).await;
+                    }
+                    return Err(err);
+                }
+            }
+            // Bootstrap membership on the first replica (node_id is whatever
+            // the operator put first in the TOML config). Followers learn
+            // through subsequent append_entries.
+            let leader = &self.config.replicas[0];
+            let members: Vec<u64> = self.config.replicas.iter().map(|r| r.node_id).collect();
+            if let Err(err) = self
+                .initialize_remote_membership(leader, group_id, &members)
+                .await
+            {
+                for created_replica in &created {
+                    self.stop_remote_group(created_replica, group_id).await;
+                }
+                return Err(err);
+            }
+        }
+
+        let prototype_marker = prototype;
         let locator = RaftSpdkLocator::new(
             group_id,
             opts.size_bytes,
@@ -152,11 +267,19 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
                 .map(|replica| RaftSpdkReplicaLocator {
                     node_id: replica.node_id,
                     agent_base_url: replica.agent_base_url.clone(),
-                    spdk_lvol_locator: serde_json::json!({
-                        "spdk_backend_id": replica.spdk_backend_id,
-                        "prototype_replica": true
-                    })
-                    .to_string(),
+                    spdk_lvol_locator: if prototype_marker {
+                        serde_json::json!({
+                            "spdk_backend_id": replica.spdk_backend_id,
+                            "prototype_replica": true
+                        })
+                        .to_string()
+                    } else {
+                        serde_json::json!({
+                            "spdk_backend_id": replica.spdk_backend_id,
+                            "production_replica": true
+                        })
+                        .to_string()
+                    },
                 })
                 .collect(),
             self.config.replicas.first().map(|replica| replica.node_id),
@@ -272,6 +395,7 @@ mod tests {
         RaftSpdkConfig {
             block_size: 512,
             prototype_provisioning_enabled: false,
+            production_provisioning_enabled: false,
             replicas: vec![
                 RaftSpdkReplicaConfig {
                     node_id: 1,
@@ -382,5 +506,137 @@ mod tests {
         server1.abort();
         server2.abort();
         server3.abort();
+    }
+
+    /// Production provisioning calls create -> runtime_start (on each
+    /// replica) -> runtime_initialize (on the leader, with the full
+    /// membership). The locator does NOT carry `prototype_replica`.
+    type CallLog = std::sync::Arc<tokio::sync::Mutex<Vec<(String, serde_json::Value)>>>;
+
+    #[tokio::test]
+    async fn production_provisioning_creates_groups_starts_runtimes_initializes_leader() {
+        async fn record(
+            axum::extract::State(calls): axum::extract::State<CallLog>,
+            uri: axum::extract::OriginalUri,
+            axum::Json(body): axum::Json<serde_json::Value>,
+        ) -> axum::Json<serde_json::Value> {
+            calls.lock().await.push((uri.0.path().to_string(), body));
+            axum::Json(serde_json::json!({}))
+        }
+
+        async fn spawn_agent() -> (String, CallLog, tokio::task::JoinHandle<()>) {
+            let calls = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+            let app = axum::Router::new()
+                .route("/v1/raft_block/create", axum::routing::post(record))
+                .route("/v1/raft_block/stop", axum::routing::post(record))
+                .route("/v1/raft_block/runtime_start", axum::routing::post(record))
+                .route(
+                    "/v1/raft_block/runtime_initialize",
+                    axum::routing::post(record),
+                )
+                .with_state(calls.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            (format!("http://{addr}"), calls, handle)
+        }
+
+        let (url1, calls1, server1) = spawn_agent().await;
+        let (url2, calls2, server2) = spawn_agent().await;
+        let (url3, calls3, server3) = spawn_agent().await;
+        let mut cfg = cfg();
+        cfg.production_provisioning_enabled = true;
+        cfg.replicas[0].agent_base_url = url1;
+        cfg.replicas[1].agent_base_url = url2;
+        cfg.replicas[2].agent_base_url = url3;
+        let backend =
+            RaftSpdkControlPlaneBackend::new(BackendInstanceId(uuid::Uuid::new_v4()), cfg).unwrap();
+
+        let handle = backend
+            .provision(CreateOpts {
+                name: "vol".into(),
+                size_bytes: 4096,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(handle.backend_kind, BackendKind::RaftSpdk);
+        let locator = RaftSpdkLocator::from_locator_str(&handle.locator).unwrap();
+        assert_eq!(locator.replicas.len(), RAFT_SPDK_STATIC_REPLICA_COUNT);
+        assert_eq!(locator.leader_hint, Some(1));
+
+        // Locator must NOT carry prototype_replica in production mode.
+        for replica in &locator.replicas {
+            let parsed: serde_json::Value =
+                serde_json::from_str(&replica.spdk_lvol_locator).unwrap();
+            assert!(parsed.get("prototype_replica").is_none());
+            assert_eq!(parsed["production_replica"], true);
+        }
+
+        // Each replica saw create + runtime_start.
+        for calls in [&calls1, &calls2, &calls3] {
+            let recorded = calls.lock().await;
+            let paths: Vec<String> = recorded.iter().map(|(p, _)| p.clone()).collect();
+            assert!(
+                paths.contains(&"/v1/raft_block/create".to_string()),
+                "missing create call: {paths:?}"
+            );
+            assert!(
+                paths.contains(&"/v1/raft_block/runtime_start".to_string()),
+                "missing runtime_start call: {paths:?}"
+            );
+        }
+        // Only the leader (replica 0) saw runtime_initialize.
+        let calls1_recorded = calls1.lock().await;
+        let leader_paths: Vec<String> = calls1_recorded.iter().map(|(p, _)| p.clone()).collect();
+        assert!(
+            leader_paths.contains(&"/v1/raft_block/runtime_initialize".to_string()),
+            "leader missing runtime_initialize: {leader_paths:?}"
+        );
+        let initialize_body = calls1_recorded
+            .iter()
+            .find(|(p, _)| p == "/v1/raft_block/runtime_initialize")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        let members: Vec<u64> = serde_json::from_value(initialize_body["members"].clone()).unwrap();
+        assert_eq!(members, vec![1, 2, 3]);
+        drop(calls1_recorded);
+
+        // Followers should NOT have received runtime_initialize.
+        for calls in [&calls2, &calls3] {
+            let recorded = calls.lock().await;
+            let paths: Vec<String> = recorded.iter().map(|(p, _)| p.clone()).collect();
+            assert!(
+                !paths.contains(&"/v1/raft_block/runtime_initialize".to_string()),
+                "follower wrongly saw runtime_initialize: {paths:?}"
+            );
+        }
+
+        server1.abort();
+        server2.abort();
+        server3.abort();
+    }
+
+    /// Setting both prototype and production flags is rejected up front.
+    #[tokio::test]
+    async fn provisioning_rejects_both_flags_set() {
+        let mut cfg = cfg();
+        cfg.prototype_provisioning_enabled = true;
+        cfg.production_provisioning_enabled = true;
+        let backend =
+            RaftSpdkControlPlaneBackend::new(BackendInstanceId(uuid::Uuid::new_v4()), cfg).unwrap();
+        let err = backend
+            .provision(CreateOpts {
+                name: "vol".into(),
+                size_bytes: 4096,
+                description: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StorageError::InvalidLocator(_)));
+        assert!(err.to_string().contains("mutually exclusive"));
     }
 }
