@@ -38,9 +38,15 @@
 //! plugging in the protocol layer is bounded work.
 
 use clap::Parser;
-use raftblk_vhost::{BlockBackend, BlockRequestKind, RaftBlockBackend, RaftBlockBackendConfig};
+use raftblk_vhost::{
+    BlockBackend, BlockRequestKind, RaftBlkVhostBackend, RaftBlockBackend, RaftBlockBackendConfig,
+};
 use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
+use vhost_user_backend::VhostUserDaemon;
+use vm_memory::{GuestMemoryAtomic, GuestMemoryMmap};
+use vmm_sys_util::eventfd::EventFd;
 
 #[derive(Parser, Debug)]
 #[command(name = "raftblk-vhost")]
@@ -106,21 +112,60 @@ async fn main() -> anyhow::Result<()> {
     }
     tracing::info!(group_id = %cli.group_id, "backend reachable; GET_ID round-trip OK");
 
-    // Stage 2 (vhost-user protocol daemon) goes here. See the operator
-    // runbook for the full integration requirements (kernel modules,
-    // hugepages, vfio, Firecracker drive config). The data-plane backend
-    // is fully tested in raftblk-vhost::tests; the daemon is the only
-    // remaining wedge.
-    tracing::warn!(
-        socket = ?cli.socket,
-        "vhost-user-backend daemon not yet implemented; backend is reachable and ready. \
-         See docs/runbooks/raftblk-vhost-smoke.md for next steps."
-    );
+    // Stage 2 — wire the backend into a vhost-user-backend daemon.
+    //
+    // The trait surface is correctly implemented in
+    // `raftblk_vhost::daemon::RaftBlkVhostBackend` (features, config
+    // space, exit_event). The `handle_event` body still requires
+    // descriptor-chain processing that has to be validated against a
+    // real vhost-user-master; until the operator runbook lands, the
+    // daemon will start, accept the connection, advertise the right
+    // features, but log a warning when guest I/O arrives.
+    //
+    // The advantage of this shape: `cargo build` succeeds on any host;
+    // the runtime degradation only manifests when a guest tries to
+    // perform virtio-blk I/O, where the warning explains exactly what's
+    // missing.
+    let backend = Arc::new(backend);
+    let exit_event = EventFd::new(0)?;
+    let runtime = tokio::runtime::Handle::current();
+    // RaftBlkVhostBackend implements `VhostUserBackend` (interior
+    // mutability), so wrap in `Arc<T>` (vhost-user-backend's blanket
+    // impl makes `Arc<T>` implement the trait when T does).
+    let raftblk_backend = Arc::new(RaftBlkVhostBackend::new(
+        backend.clone(),
+        runtime.clone(),
+        exit_event.try_clone()?,
+    ));
 
-    // Park forever so systemd/operator-controlled processes can keep this
-    // process alive while they bring in the daemon layer. Press Ctrl-C to
-    // exit; tests use a timeout instead of running this binary.
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("raftblk-vhost shutting down");
+    if let Some(parent) = cli.socket.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if cli.socket.exists() {
+        std::fs::remove_file(&cli.socket)?;
+    }
+
+    let mem: GuestMemoryAtomic<GuestMemoryMmap<()>> =
+        GuestMemoryAtomic::new(GuestMemoryMmap::new());
+    let mut daemon =
+        VhostUserDaemon::new(format!("raftblk-{}", cli.group_id), raftblk_backend, mem)
+            .map_err(|e| anyhow::anyhow!("VhostUserDaemon::new: {e:?}"))?;
+
+    let socket_path = cli.socket.clone();
+    tracing::info!(socket = ?socket_path, "starting vhost-user-blk daemon");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("raftblk-vhost: ctrl_c received, exiting before daemon start");
+        }
+        // VhostUserDaemon::serve blocks; run on a dedicated thread so it
+        // cooperates with tokio's signal handler.
+        result = tokio::task::spawn_blocking(move || daemon.serve(&socket_path)) => {
+            match result {
+                Ok(Ok(())) => tracing::info!("raftblk-vhost: daemon exited cleanly"),
+                Ok(Err(e)) => tracing::error!("raftblk-vhost: daemon error: {e:?}"),
+                Err(e) => tracing::error!("raftblk-vhost: blocking task panicked: {e}"),
+            }
+        }
+    }
     Ok(())
 }

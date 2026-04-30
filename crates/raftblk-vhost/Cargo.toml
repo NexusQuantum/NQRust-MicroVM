@@ -15,6 +15,14 @@ tracing = { workspace = true }
 reqwest = { workspace = true }
 uuid = { workspace = true }
 nexus-raft-block = { path = "../nexus-raft-block" }
+# vhost-user / virtio plumbing for the daemon module.
+vhost = "0.16"
+vhost-user-backend = "0.22"
+virtio-bindings = "0.2"
+virtio-queue = "0.17"
+vm-memory = { version = "=0.17.1", features = ["backend-mmap", "backend-atomic"] }
+vmm-sys-util = "0.15"
+log = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

@@ -37,9 +37,11 @@
 //!   `RaftSpdkHostBackend::populate_streaming` for the wedge).
 
 pub mod backend;
+pub mod daemon;
 pub mod request;
 
 pub use backend::{BlockBackend, BlockBackendError, RaftBlockBackend, RaftBlockBackendConfig};
+pub use daemon::RaftBlkVhostBackend;
 pub use request::{BlockRequest, BlockRequestKind, BlockResponse, VirtioBlkStatus};
 
 /// virtio-blk uses 512-byte logical sectors; this is the wire-level unit

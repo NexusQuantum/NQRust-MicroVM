@@ -19,3 +19,13 @@ tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
 uuid = { workspace = true }
 raftblk-vhost = { path = "../../crates/raftblk-vhost" }
+# vhost-user / virtio plumbing for the live daemon. These are rust-vmm crates;
+# pinned to the tested combination from vhost-user-backend 0.22.0.
+vhost = "0.16"
+vhost-user-backend = "0.22"
+virtio-bindings = "0.2"
+virtio-queue = "0.17"
+vm-memory = { version = "=0.17.1", features = ["backend-mmap"] }
+vmm-sys-util = "0.15"
+log = "0.4"
+env_logger = "0.11"
