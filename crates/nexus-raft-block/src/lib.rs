@@ -680,6 +680,97 @@ impl InMemoryOpenraftBlockStore {
         })
     }
 
+    pub fn open_or_create(
+        store: FileReplicaStore,
+        node_id: NodeId,
+        capacity_bytes: u64,
+        block_size: u64,
+    ) -> Result<Self, RaftBlockError> {
+        let applier = if let Some(existing) = OpenraftEntryApplier::open(store.clone())? {
+            existing
+        } else {
+            OpenraftEntryApplier::create(store, node_id, capacity_bytes, block_size)?
+        };
+        if applier.node_id() != node_id
+            || applier.replica().capacity_bytes() != capacity_bytes
+            || applier.replica().block_size() != block_size
+        {
+            return Err(RaftBlockError::Store(format!(
+                "openraft block store exists with node_id={}, capacity_bytes={}, block_size={}; requested node_id={}, capacity_bytes={}, block_size={}",
+                applier.node_id(),
+                applier.replica().capacity_bytes(),
+                applier.replica().block_size(),
+                node_id,
+                capacity_bytes,
+                block_size
+            )));
+        }
+        let logs = applier
+            .replica()
+            .log()
+            .iter()
+            .map(|entry| (entry.index, block_log_entry_to_openraft(entry, node_id)))
+            .collect();
+        Ok(Self {
+            inner: std::sync::Arc::new(std::sync::Mutex::new(InMemoryOpenraftBlockStoreInner {
+                vote: None,
+                committed: applier.last_applied_log_id(),
+                logs,
+                last_purged_log_id: if applier.replica().compacted_through() == 0 {
+                    None
+                } else {
+                    Some(openraft_log_id(
+                        applier.replica().snapshot().highest_term_seen,
+                        node_id,
+                        applier.replica().compacted_through(),
+                    ))
+                },
+                applier,
+            })),
+        })
+    }
+
+    pub fn append_command(
+        &self,
+        term: Term,
+        leader_id: NodeId,
+        command: BlockCommand,
+    ) -> Result<BlockResponse, RaftBlockError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        let index = inner.applier.replica().next_index;
+        let entry = openraft_entry(term, leader_id, index, command);
+        inner.logs.insert(index, entry.clone());
+        let mut responses = inner.applier.apply_entries([entry])?;
+        inner.committed = inner.applier.last_applied_log_id();
+        responses
+            .pop()
+            .ok_or_else(|| RaftBlockError::Store("openraft append produced no response".into()))
+    }
+
+    pub fn block_snapshot(&self) -> Result<BlockSnapshot, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(inner.applier.replica().snapshot())
+    }
+
+    pub fn install_block_snapshot(&self, snapshot: &BlockSnapshot) -> Result<(), RaftBlockError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        inner.applier.install_snapshot(snapshot)?;
+        inner
+            .logs
+            .retain(|index, _| *index > snapshot.last_included_index);
+        inner.committed = inner.applier.last_applied_log_id();
+        Ok(())
+    }
+
     pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>, RaftBlockError> {
         let inner = self
             .inner
@@ -687,6 +778,68 @@ impl InMemoryOpenraftBlockStore {
             .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
         inner.applier.replica().read_range(offset, len)
     }
+
+    pub fn node_id(&self) -> Result<NodeId, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(inner.applier.node_id())
+    }
+
+    pub fn capacity_bytes(&self) -> Result<u64, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(inner.applier.replica().capacity_bytes())
+    }
+
+    pub fn block_size(&self) -> Result<u64, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(inner.applier.replica().block_size())
+    }
+
+    pub fn last_applied_index(&self) -> Result<LogIndex, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(inner.applier.replica().last_applied_index())
+    }
+
+    pub fn compacted_through(&self) -> Result<LogIndex, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(inner.applier.replica().compacted_through())
+    }
+
+    pub fn retained_log_entries(&self) -> Result<u64, RaftBlockError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        Ok(inner.logs.len() as u64)
+    }
+}
+
+fn block_log_entry_to_openraft(
+    entry: &LogEntry,
+    leader_id: NodeId,
+) -> openraft::Entry<BlockRaftTypeConfig> {
+    let command = match &entry.op {
+        BlockOp::Write { offset, bytes, .. } => BlockCommand::Write {
+            offset: *offset,
+            bytes: bytes.clone(),
+        },
+        BlockOp::Flush => BlockCommand::Flush,
+    };
+    openraft_entry(entry.term, leader_id, entry.index, command)
 }
 
 impl openraft::storage::RaftLogReader<BlockRaftTypeConfig> for InMemoryOpenraftBlockStore {
@@ -1474,6 +1627,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(snapshot.meta.last_log_id, Some(openraft_log_id(1, 1, 1)));
+    }
+
+    #[test]
+    fn openraft_storage_harness_reopens_persistent_log_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let store =
+            InMemoryOpenraftBlockStore::open_or_create(store_path.clone(), 1, 4096, 512).unwrap();
+        store
+            .append_command(
+                1,
+                1,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![6; 512],
+                },
+            )
+            .unwrap();
+        drop(store);
+
+        let reopened =
+            InMemoryOpenraftBlockStore::open_or_create(store_path, 1, 4096, 512).unwrap();
+        assert_eq!(reopened.retained_log_entries().unwrap(), 1);
+        assert_eq!(reopened.last_applied_index().unwrap(), 1);
+        assert_eq!(reopened.read_range(0, 512).unwrap(), vec![6; 512]);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use nexus_raft_block::{
-    BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore, OpenraftEntryApplier,
+    BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore, InMemoryOpenraftBlockStore,
     RaftBlockError,
 };
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct RaftBlockState {
     base_dir: PathBuf,
-    groups: Arc<Mutex<HashMap<Uuid, OpenraftEntryApplier>>>,
+    groups: Arc<Mutex<HashMap<Uuid, InMemoryOpenraftBlockStore>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -80,12 +80,12 @@ impl RaftBlockState {
             return Ok(());
         }
         let store = self.store_for(req.group_id, req.node_id);
-        let replica = if let Some(existing) = OpenraftEntryApplier::open(store.clone())? {
-            validate_existing_group(&existing, &req)?;
-            existing
-        } else {
-            OpenraftEntryApplier::create(store, req.node_id, req.capacity_bytes, req.block_size)?
-        };
+        let replica = InMemoryOpenraftBlockStore::open_or_create(
+            store,
+            req.node_id,
+            req.capacity_bytes,
+            req.block_size,
+        )?;
         groups.insert(req.group_id, replica);
         Ok(())
     }
@@ -97,7 +97,7 @@ impl RaftBlockState {
             .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
         replica.append_command(
             req.term,
-            req.leader_id.unwrap_or_else(|| replica.node_id()),
+            req.leader_id.unwrap_or(replica.node_id()?),
             req.command,
         )
     }
@@ -107,7 +107,7 @@ impl RaftBlockState {
         let replica = groups
             .get(&group_id)
             .ok_or_else(|| RaftBlockError::Store(format!("group {group_id} not started")))?;
-        Ok(replica.replica().snapshot())
+        replica.block_snapshot()
     }
 
     async fn read(&self, req: ReadReq) -> Result<ReadResp, RaftBlockError> {
@@ -115,7 +115,7 @@ impl RaftBlockState {
         let replica = groups
             .get(&req.group_id)
             .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
-        let bytes = replica.replica().read_range(req.offset, req.len)?;
+        let bytes = replica.read_range(req.offset, req.len)?;
         Ok(ReadResp { bytes })
     }
 
@@ -124,7 +124,7 @@ impl RaftBlockState {
         let replica = groups
             .get_mut(&req.group_id)
             .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
-        replica.install_snapshot(&req.snapshot)
+        replica.install_block_snapshot(&req.snapshot)
     }
 
     pub async fn status(&self, group_id: Uuid) -> RaftBlockStatus {
@@ -135,12 +135,12 @@ impl RaftBlockState {
                 state: "started",
                 data_path: "persistent_local_replica",
                 transport: "openraft_entry_local",
-                node_id: Some(replica.node_id()),
-                capacity_bytes: Some(replica.replica().capacity_bytes()),
-                block_size: Some(replica.replica().block_size()),
-                last_applied_index: Some(replica.replica().last_applied_index()),
-                compacted_through: Some(replica.replica().compacted_through()),
-                retained_log_entries: replica.replica().log().len() as u64,
+                node_id: replica.node_id().ok(),
+                capacity_bytes: replica.capacity_bytes().ok(),
+                block_size: replica.block_size().ok(),
+                last_applied_index: replica.last_applied_index().ok(),
+                compacted_through: replica.compacted_through().ok(),
+                retained_log_entries: replica.retained_log_entries().unwrap_or(0),
             }
         } else {
             RaftBlockStatus {
@@ -160,19 +160,19 @@ impl RaftBlockState {
 }
 
 fn validate_existing_group(
-    existing: &OpenraftEntryApplier,
+    existing: &InMemoryOpenraftBlockStore,
     req: &CreateGroupReq,
 ) -> Result<(), RaftBlockError> {
-    if existing.node_id() != req.node_id
-        || existing.replica().capacity_bytes() != req.capacity_bytes
-        || existing.replica().block_size() != req.block_size
+    if existing.node_id()? != req.node_id
+        || existing.capacity_bytes()? != req.capacity_bytes
+        || existing.block_size()? != req.block_size
     {
         return Err(RaftBlockError::Store(format!(
             "group {} already exists with node_id={}, capacity_bytes={}, block_size={}; requested node_id={}, capacity_bytes={}, block_size={}",
             req.group_id,
-            existing.node_id(),
-            existing.replica().capacity_bytes(),
-            existing.replica().block_size(),
+            existing.node_id()?,
+            existing.capacity_bytes()?,
+            existing.block_size()?,
             req.node_id,
             req.capacity_bytes,
             req.block_size
