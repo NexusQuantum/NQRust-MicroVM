@@ -853,6 +853,25 @@ impl InMemoryOpenraftBlockStore {
         Ok(())
     }
 
+    pub fn install_openraft_snapshot(
+        &self,
+        meta: &openraft::SnapshotMeta<NodeId, openraft::BasicNode>,
+        snapshot: &BlockSnapshot,
+    ) -> Result<(), RaftBlockError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        inner.applier.install_snapshot(snapshot)?;
+        inner.applier.last_applied_log_id = meta.last_log_id;
+        inner.applier.last_membership = meta.last_membership.clone();
+        inner
+            .logs
+            .retain(|index, _| meta.last_log_id.is_none_or(|log_id| *index > log_id.index));
+        inner.committed = meta.last_log_id;
+        Ok(())
+    }
+
     pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>, RaftBlockError> {
         let inner = self
             .inner

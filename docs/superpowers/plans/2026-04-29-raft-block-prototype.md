@@ -75,8 +75,10 @@ started-group status for local liveness checks. `/v1/raft_block/vote` performs c
 vote fencing: first vote in a term is granted, conflicting same-term candidates are rejected, and a
 higher term can advance the vote. A `RaftBlockHttpClient` now exercises the live HTTP route boundary
 for create, append_entries, vote, heartbeat, snapshot fetch, install_snapshot, status, read, and
-remote error propagation. The remaining gap is wiring this boundary into a real Openraft network
-adapter/runtime instead of calling it from route-level tests.
+remote error propagation. The agent also exposes Openraft-native RPC routes under
+`/:group_id/openraft/{append_entries,vote,install_snapshot}` and the HTTP client exercises those
+native request/response shapes. The remaining gap is wiring this boundary into a real Openraft
+network adapter/runtime instead of calling it from route-level tests.
 
 Define an agent-internal transport for block log replication:
 
@@ -130,7 +132,8 @@ cargo test -p manager raft_spdk
 
 Do not start B-III until these are complete:
 
-- Promote the tested HTTP client/routes into an Openraft network adapter and real Raft node runtime.
+- Promote the tested Openraft-native HTTP client/routes into an Openraft network adapter and real
+  Raft node runtime.
 - Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
 - Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.
 - Replace the prototype manager bootstrap flag with production static three-node provisioning that

@@ -78,6 +78,7 @@ dependencies = [
  "nexus-storage",
  "nexus-types",
  "num_cpus",
+ "openraft",
  "reqwest",
  "serde",
  "serde_json",
