@@ -6,3 +6,4 @@ pub mod registry;
 pub mod routes;
 pub mod s3;
 pub mod spdk_lvol;
+pub mod spdk_replica_store;

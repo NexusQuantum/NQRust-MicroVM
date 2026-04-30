@@ -345,50 +345,120 @@ impl PersistentReplicaState {
     }
 }
 
+/// Pluggable backend for `FileReplicaStore`. Implementors provide the
+/// concrete persistence strategy (JSON-on-filesystem in this crate; SPDK
+/// lvol writes via NBD in the agent crate; future Ceph RBD or NVMe-oF
+/// in their own crates).
+///
+/// The trait is consumed only via `FileReplicaStore::external(...)`; the
+/// existing constructor `FileReplicaStore::new(path)` keeps the
+/// JSON-file behavior with no changes for callers.
+pub trait ReplicaStoreImpl: Send + Sync + std::fmt::Debug {
+    /// Read the persisted replica state, or `Ok(None)` if no prior state
+    /// is durable yet (fresh deployment / first call before the first
+    /// successful save).
+    fn load(&self) -> Result<Option<PersistentReplicaState>, RaftBlockError>;
+
+    /// Atomically persist `state` such that a subsequent load() returns
+    /// it. Implementations must be crash-safe: a partial write must not
+    /// corrupt a prior valid load result.
+    fn save(&self, state: &PersistentReplicaState) -> Result<(), RaftBlockError>;
+}
+
+/// `Clone`-able store handle used throughout the crate. Internally it
+/// dispatches to either the JSON-on-filesystem path (existing default
+/// behavior, used by all current callers and tests) or an external
+/// `ReplicaStoreImpl` (e.g. SPDK lvol on the agent side).
+///
+/// The name is preserved for backward compatibility with all callers
+/// that take `FileReplicaStore` by value; new code can construct the
+/// external variant via `FileReplicaStore::external(...)`.
 #[derive(Debug, Clone)]
 pub struct FileReplicaStore {
-    path: PathBuf,
+    inner: ReplicaStoreKind,
+}
+
+#[derive(Debug, Clone)]
+enum ReplicaStoreKind {
+    /// JSON-encoded `PersistentReplicaState` written to a single file
+    /// with crash-safe rename. The original `FileReplicaStore` behavior.
+    JsonFile(PathBuf),
+    /// External implementation. Boxed because the impl may be
+    /// agent-specific (e.g. holds an HTTP client to local SPDK).
+    External(std::sync::Arc<dyn ReplicaStoreImpl>),
 }
 
 impl FileReplicaStore {
+    /// Construct the JSON-on-filesystem variant (backward-compatible).
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            inner: ReplicaStoreKind::JsonFile(path.into()),
+        }
     }
 
+    /// Construct an external-backend variant. The caller is responsible
+    /// for the impl's correctness (atomicity, crash-safety). The `Arc`
+    /// is cheap to clone and already shared across the lib's clones of
+    /// the store handle.
+    pub fn external(impl_: std::sync::Arc<dyn ReplicaStoreImpl>) -> Self {
+        Self {
+            inner: ReplicaStoreKind::External(impl_),
+        }
+    }
+
+    /// Read the persisted state. Returns `Ok(None)` if nothing has been
+    /// saved yet (the JSON file is missing, or the external store
+    /// reports no state).
     pub fn load(&self) -> Result<Option<PersistentReplicaState>, RaftBlockError> {
-        if !self.path.exists() {
-            return Ok(None);
+        match &self.inner {
+            ReplicaStoreKind::JsonFile(path) => load_json(path),
+            ReplicaStoreKind::External(impl_) => impl_.load(),
         }
-        let mut file = std::fs::File::open(&self.path)
-            .map_err(|e| RaftBlockError::Store(format!("open {:?}: {e}", self.path)))?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|e| RaftBlockError::Store(format!("read {:?}: {e}", self.path)))?;
-        serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|e| RaftBlockError::Store(format!("decode {:?}: {e}", self.path)))
     }
 
+    /// Persist `state`. Atomic: a partial failure must not leave a
+    /// corrupt prior state visible to a subsequent load.
     pub fn save(&self, state: &PersistentReplicaState) -> Result<(), RaftBlockError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| RaftBlockError::Store(format!("create {parent:?}: {e}")))?;
+        match &self.inner {
+            ReplicaStoreKind::JsonFile(path) => save_json(path, state),
+            ReplicaStoreKind::External(impl_) => impl_.save(state),
         }
-        let tmp_path = tmp_path_for(&self.path);
-        let encoded = serde_json::to_vec(state)
-            .map_err(|e| RaftBlockError::Store(format!("encode {:?}: {e}", self.path)))?;
-        {
-            let mut file = std::fs::File::create(&tmp_path)
-                .map_err(|e| RaftBlockError::Store(format!("create {tmp_path:?}: {e}")))?;
-            file.write_all(&encoded)
-                .map_err(|e| RaftBlockError::Store(format!("write {tmp_path:?}: {e}")))?;
-            file.sync_all()
-                .map_err(|e| RaftBlockError::Store(format!("sync {tmp_path:?}: {e}")))?;
-        }
-        std::fs::rename(&tmp_path, &self.path)
-            .map_err(|e| RaftBlockError::Store(format!("rename {tmp_path:?}: {e}")))?;
-        Ok(())
     }
+}
+
+fn load_json(path: &Path) -> Result<Option<PersistentReplicaState>, RaftBlockError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| RaftBlockError::Store(format!("open {path:?}: {e}")))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| RaftBlockError::Store(format!("read {path:?}: {e}")))?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|e| RaftBlockError::Store(format!("decode {path:?}: {e}")))
+}
+
+fn save_json(path: &Path, state: &PersistentReplicaState) -> Result<(), RaftBlockError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| RaftBlockError::Store(format!("create {parent:?}: {e}")))?;
+    }
+    let tmp_path = tmp_path_for(path);
+    let encoded = serde_json::to_vec(state)
+        .map_err(|e| RaftBlockError::Store(format!("encode {path:?}: {e}")))?;
+    {
+        let mut file = std::fs::File::create(&tmp_path)
+            .map_err(|e| RaftBlockError::Store(format!("create {tmp_path:?}: {e}")))?;
+        file.write_all(&encoded)
+            .map_err(|e| RaftBlockError::Store(format!("write {tmp_path:?}: {e}")))?;
+        file.sync_all()
+            .map_err(|e| RaftBlockError::Store(format!("sync {tmp_path:?}: {e}")))?;
+    }
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| RaftBlockError::Store(format!("rename {tmp_path:?}: {e}")))?;
+    Ok(())
 }
 
 fn tmp_path_for(path: &Path) -> PathBuf {
