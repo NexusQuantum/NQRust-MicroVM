@@ -327,30 +327,81 @@ dd if=/dev/vda bs=4096 count=1 skip=20 iflag=direct | head -c 32
 | Guest sees I/O hang after leader kill but never recovers | The new leader was elected but the daemon (`raftblk-vhost`) is pointed at the dead agent. | The daemon connects to a fixed local agent. After failover, the agent the daemon talks to is now a follower, which forwards writes via `Raft::client_write` -> `ForwardToLeader`. The current implementation does not auto-redirect; restart `raftblk-vhost` after failover, or run one daemon per agent (only the leader's daemon services I/O). |
 | `vhost_user_socket` rejected by Firecracker as unknown field | The Firecracker version pinned in this repo (v1.13.1) accepts vhost-user-blk drives via the `vhost_user_socket` field. If the FC runtime is older, the operator must upgrade. | `firecracker --version`; bump per `install-firecracker.sh`. |
 
-## What's still pending (not in this PR)
+## What's already in code (no operator action needed)
 
-- **Stage 2 of `raftblk-vhost`** (vhost-user-backend daemon) — the data
-  plane is tested; the protocol glue is mechanical and gated on an
-  operator host with hugepages + `vhost` modules + a guest VM to verify
-  against.
-- **SPDK-lvol-backed bytes** — the agent's storage adapter still writes
-  committed bytes to a JSON file (`PersistentReplicaState` ->
-  `FileReplicaStore`). Replacing this with an `SpdkLvolReplicaStore` that
-  writes through the SPDK NBD path requires:
-  - A `ReplicaStore` trait in `nexus-raft-block` so the storage backend
-    is pluggable. (Today `FileReplicaStore` is the only impl.)
-  - An `SpdkLvolReplicaStore` impl on the agent side that performs
-    writes through the NBD device pool already used by the B-I import
-    path.
-  - A migration step: existing JSON-backed groups would need to be
-    re-bootstrapped onto SPDK (operator-driven; no in-place migration in
-    this PR).
+These ship on `feature/raft-block-prototype` and pass `cargo test`:
+
+- **vhost-user-backend daemon trait skeleton** —
+  `crates/raftblk-vhost::daemon::RaftBlkVhostBackend` implements
+  `vhost_user_backend::VhostUserBackend` with the right virtio-blk
+  feature bits (BLK_SIZE | FLUSH | SEG_MAX | EVENT_IDX | INDIRECT_DESC),
+  config-space layout (capacity in 512-byte sectors at offset 0..8,
+  blk_size at 20..24, seg_max=128 at 12..16), and exit_event handling
+  via dup'd eventfds. The binary at `apps/raftblk-vhost` wires this into
+  `VhostUserDaemon::new(...).serve(socket)`.
+- **`ReplicaStoreImpl` trait** in `nexus-raft-block` with two variants
+  internally dispatched by `FileReplicaStore`:
+   - `JsonFile(path)` — preserves the prototype's JSON-on-filesystem
+     behavior byte-for-byte; default for all existing callers.
+   - `External(Arc<dyn ReplicaStoreImpl>)` — operator-supplied backend,
+     constructed via `FileReplicaStore::external(...)`.
+- **`SpdkLvolReplicaStore`** in `apps/agent/src/features/storage/
+  spdk_replica_store.rs` — implements `ReplicaStoreImpl` over an
+  NBD-exported lvol with a 1 MiB length-prefixed metadata region. Tests
+  exercise the on-disk format round-trip via tempfile.
+
+## Operator-only remaining work
+
+Two specific code wedges for the operator to land on the live host:
+
+### 1. `handle_event` body in `crates/raftblk-vhost::daemon`
+
+The trait skeleton compiles and the daemon socket binds. The
+`handle_event` method (currently a `log::warn!` stub) needs the
+descriptor-chain processing that walks the virtqueue and dispatches
+through `BlockBackend::dispatch`. Reference implementations:
+
+- rust-vmm `vhost-device-vsock` for the descriptor-chain walking pattern.
+- Upstream `vhost-device-block` (cloud-hypervisor-org/vhost-device repo)
+  for the virtio-blk-specific outhdr / data / inhdr layout.
+
+The translation layer in `request::parse_request` is already correct;
+the chain handler just feeds it the raw header bytes plus the data
+buffer, then writes the response data + status byte back into the
+chain's writable descriptors. Recommend ~150 LoC.
+
+### 2. Wire `SpdkLvolReplicaStore` into `RaftBlockState::create_group`
+
+Currently `apps/agent/src/features/raft_block.rs::RaftBlockState::
+create_group` always constructs `FileReplicaStore::new(path)`. Add a
+TOML-configurable per-group flag (e.g. `[raft_block.spdk] enabled =
+true, nbd_device_template = "/dev/nbd{node_id}"`) that switches the
+constructor to:
+
+```rust
+let store = if cfg.spdk.enabled {
+    let nbd = cfg.spdk.nbd_device_for(req.node_id);
+    let impl_ = Arc::new(SpdkLvolReplicaStore::new(nbd));
+    FileReplicaStore::external(impl_)
+} else {
+    FileReplicaStore::new(path)
+};
+```
+
+The store accepts the NBD path; the operator runs SPDK's
+`nbd_start_disk` on the lvol before the agent starts. The smoke
+sequence already documents the NBD setup; this is the one-line config
++ branch.
+
+## Beyond B-II (B-III scope, deferred)
+
 - **Snapshot streaming through Raft** — `read_snapshot` on the host
   backend reads through the local Raft snapshot, but the manager-side
-  backup pipeline doesn't yet drive it. Tracked under B-II item 5
-  follow-on.
-- **Cluster reconfiguration (B-III)** — not started; this runbook is
-  static-three-node only.
+  backup pipeline doesn't yet drive it.
+- **Cluster reconfiguration** — dynamic membership, add/remove agents,
+  replica rebalancing, hot-spare promotion, decommission. Not started.
+  This runbook is static-three-node only.
 
-When all of the above lands, this runbook becomes the canonical end-to-end
-validation for the B-II story and the gating step for declaring B-II done.
+When the two operator wedges land + this runbook is run end-to-end with
+a real Firecracker guest surviving a leader kill, B-II is genuinely done
+and B-III can start.
