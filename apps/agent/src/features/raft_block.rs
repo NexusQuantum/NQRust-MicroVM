@@ -6,8 +6,8 @@ use axum::{
     Json, Router,
 };
 use nexus_raft_block::{
-    BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore, InMemoryOpenraftBlockStore,
-    RaftBlockError,
+    openraft_entry, BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore,
+    InMemoryOpenraftBlockStore, RaftBlockError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -100,6 +100,21 @@ impl RaftBlockState {
             req.leader_id.unwrap_or(replica.node_id()?),
             req.command,
         )
+    }
+
+    async fn append_entries(
+        &self,
+        req: AppendEntriesReq,
+    ) -> Result<Vec<BlockResponse>, RaftBlockError> {
+        let groups = self.groups.lock().await;
+        let replica = groups
+            .get(&req.group_id)
+            .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
+        let entries = req
+            .entries
+            .into_iter()
+            .map(|entry| openraft_entry(req.term, req.leader_id, entry.index, entry.command));
+        replica.append_openraft_entries(entries)
     }
 
     async fn snapshot(&self, group_id: Uuid) -> Result<BlockSnapshot, RaftBlockError> {
@@ -199,6 +214,20 @@ pub struct AppendReq {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct AppendEntriesReq {
+    pub group_id: Uuid,
+    pub term: u64,
+    pub leader_id: u64,
+    pub entries: Vec<AppendEntryReq>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AppendEntryReq {
+    pub index: u64,
+    pub command: BlockCommand,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct InstallSnapshotReq {
     pub group_id: Uuid,
     pub snapshot: BlockSnapshot,
@@ -255,6 +284,16 @@ pub async fn append(
     Json(req): Json<AppendReq>,
 ) -> impl IntoResponse {
     match state.append(req).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+pub async fn append_entries(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<AppendEntriesReq>,
+) -> impl IntoResponse {
+    match state.append_entries(req).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(err) => error_response(StatusCode::BAD_REQUEST, err),
     }
@@ -357,6 +396,7 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
         .route("/:group_id/snapshot", get(snapshot))
         .route("/create", post(create))
         .route("/append", post(append))
+        .route("/append_entries", post(append_entries))
         .route("/read", post(read))
         .route("/stop", post(stop))
         .route("/vote", post(vote))
@@ -645,6 +685,64 @@ mod tests {
         .await
         .into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn append_entries_applies_openraft_shaped_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = append_entries(
+            State(state.clone()),
+            Json(AppendEntriesReq {
+                group_id,
+                term: 2,
+                leader_id: 1,
+                entries: vec![
+                    AppendEntryReq {
+                        index: 1,
+                        command: BlockCommand::Write {
+                            offset: 0,
+                            bytes: vec![2; 512],
+                        },
+                    },
+                    AppendEntryReq {
+                        index: 2,
+                        command: BlockCommand::Flush,
+                    },
+                ],
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = read(
+            State(state),
+            Json(ReadReq {
+                group_id,
+                offset: 0,
+                len: 512,
+            }),
+        )
+        .await
+        .into_response();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["bytes"].as_array().unwrap()[0], 2);
     }
 
     #[tokio::test]

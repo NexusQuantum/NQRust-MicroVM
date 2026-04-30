@@ -750,6 +750,31 @@ impl InMemoryOpenraftBlockStore {
             .ok_or_else(|| RaftBlockError::Store("openraft append produced no response".into()))
     }
 
+    pub fn append_openraft_entries(
+        &self,
+        entries: impl IntoIterator<Item = openraft::Entry<BlockRaftTypeConfig>>,
+    ) -> Result<Vec<BlockResponse>, RaftBlockError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| RaftBlockError::Store("openraft store lock poisoned".into()))?;
+        let entries = entries.into_iter().collect::<Vec<_>>();
+        for (expected_index, entry) in (inner.applier.replica().next_index..).zip(entries.iter()) {
+            if entry.log_id.index != expected_index {
+                return Err(RaftBlockError::Store(format!(
+                    "openraft append_entries expected index {}, got {}",
+                    expected_index, entry.log_id.index
+                )));
+            }
+        }
+        for entry in &entries {
+            inner.logs.insert(entry.log_id.index, entry.clone());
+        }
+        let responses = inner.applier.apply_entries(entries)?;
+        inner.committed = inner.applier.last_applied_log_id();
+        Ok(responses)
+    }
+
     pub fn block_snapshot(&self) -> Result<BlockSnapshot, RaftBlockError> {
         let inner = self
             .inner
