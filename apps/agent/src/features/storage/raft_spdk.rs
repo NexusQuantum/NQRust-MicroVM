@@ -107,11 +107,15 @@ impl HostBackend for RaftSpdkHostBackend {
 
     async fn read_snapshot(
         &self,
-        _snap: &VolumeSnapshotHandle,
+        snap: &VolumeSnapshotHandle,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StorageError> {
-        Err(StorageError::NotSupported(
-            "raft_spdk read_snapshot awaits consistent Raft snapshot export".into(),
-        ))
+        let locator = RaftSpdkLocator::from_locator_str(&snap.locator)?;
+        let bytes = self
+            .raft_block
+            .snapshot_bytes(locator.group_id)
+            .await
+            .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
+        Ok(Box::new(std::io::Cursor::new(bytes)))
     }
 }
 
@@ -235,5 +239,51 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, StorageError::NotSupported(_)));
+    }
+
+    #[tokio::test]
+    async fn read_snapshot_streams_consistent_raft_bytes() {
+        use axum::response::IntoResponse;
+        use tokio::io::AsyncReadExt;
+
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state.clone());
+        let group_id = locator().group_id;
+        let volume = VolumeHandle {
+            volume_id: Uuid::new_v4(),
+            backend_id: BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::RaftSpdk,
+            locator: locator().to_locator_string().unwrap(),
+            size_bytes: 4096,
+        };
+        backend.attach(&volume).await.unwrap();
+        let response = crate::features::raft_block::append(
+            axum::extract::State(state),
+            axum::Json(crate::features::raft_block::AppendReq {
+                group_id,
+                term: 1,
+                leader_id: None,
+                command: nexus_raft_block::BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![7; 512],
+                },
+            }),
+        )
+        .await
+        .into_response();
+        assert!(response.status().is_success());
+
+        let snap = VolumeSnapshotHandle {
+            snapshot_id: Uuid::new_v4(),
+            source_volume_id: volume.volume_id,
+            backend_id: volume.backend_id,
+            backend_kind: BackendKind::RaftSpdk,
+            locator: locator().to_locator_string().unwrap(),
+        };
+        let mut reader = backend.read_snapshot(&snap).await.unwrap();
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[0..512], &[7; 512]);
+        assert_eq!(bytes.len(), 4096);
     }
 }

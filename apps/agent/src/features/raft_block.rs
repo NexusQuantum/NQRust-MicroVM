@@ -181,6 +181,10 @@ impl RaftBlockState {
         replica.block_snapshot()
     }
 
+    pub async fn snapshot_bytes(&self, group_id: Uuid) -> Result<Vec<u8>, RaftBlockError> {
+        self.snapshot(group_id).await.map(|snapshot| snapshot.bytes)
+    }
+
     async fn read(&self, req: ReadReq) -> Result<ReadResp, RaftBlockError> {
         let groups = self.groups.lock().await;
         let replica = groups
