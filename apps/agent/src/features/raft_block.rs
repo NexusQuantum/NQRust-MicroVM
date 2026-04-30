@@ -190,6 +190,349 @@ fn normalize_base_url(mut base_url: String) -> String {
     base_url
 }
 
+#[allow(dead_code)]
+/// Openraft `RaftNetworkFactory` for `BlockRaftTypeConfig`.
+///
+/// Holds a static peer table mapping `NodeId -> base_url` and constructs a
+/// per-target `RaftBlockNetworkConnection` that forwards Openraft RPCs to
+/// the existing `/:group_id/openraft/{append_entries,vote,install_snapshot}`
+/// agent routes via `RaftBlockHttpClient`.
+///
+/// Each Raft group spins up its own factory. A factory is built with the
+/// current group_id baked in so connections it produces can address the
+/// remote agent's group-scoped routes without the call sites needing to
+/// thread the group id through Openraft's network trait surface.
+#[derive(Debug, Clone)]
+pub struct RaftBlockNetworkFactory {
+    group_id: Uuid,
+    peers: Arc<HashMap<u64, String>>,
+    client: reqwest::Client,
+}
+
+#[allow(dead_code)]
+impl RaftBlockNetworkFactory {
+    /// Build a factory for `group_id` whose peer node-id->url map is `peers`.
+    /// The local node's own id should be included; Openraft's runtime never
+    /// constructs a network client targeting itself, but the storage harness
+    /// validates that the local node id is in the membership.
+    pub fn new(group_id: Uuid, peers: HashMap<u64, String>) -> Self {
+        Self {
+            group_id,
+            peers: Arc::new(
+                peers
+                    .into_iter()
+                    .map(|(node_id, url)| (node_id, normalize_base_url(url)))
+                    .collect(),
+            ),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Same as `new` but reuses an existing `reqwest::Client` (test pools,
+    /// custom timeouts, etc.).
+    pub fn with_client(
+        group_id: Uuid,
+        peers: HashMap<u64, String>,
+        client: reqwest::Client,
+    ) -> Self {
+        Self {
+            group_id,
+            peers: Arc::new(
+                peers
+                    .into_iter()
+                    .map(|(node_id, url)| (node_id, normalize_base_url(url)))
+                    .collect(),
+            ),
+            client,
+        }
+    }
+
+    fn lookup(&self, target: u64) -> Option<&str> {
+        self.peers.get(&target).map(String::as_str)
+    }
+}
+
+impl openraft::network::RaftNetworkFactory<BlockRaftTypeConfig> for RaftBlockNetworkFactory {
+    type Network = RaftBlockNetworkConnection;
+
+    async fn new_client(&mut self, target: u64, _node: &openraft::BasicNode) -> Self::Network {
+        // If the peer is unknown the connection still constructs successfully;
+        // every RPC then returns Unreachable, matching Openraft's contract that
+        // a missing-peer error must not panic the network factory.
+        let base_url = self.lookup(target).map(str::to_owned).unwrap_or_default();
+        RaftBlockNetworkConnection {
+            target,
+            group_id: self.group_id,
+            base_url,
+            client: self.client.clone(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+/// One outgoing Raft channel toward a single peer node, scoped to a group.
+///
+/// Wraps `RaftBlockHttpClient::openraft_*` so its reqwest-shaped errors are
+/// translated into Openraft's `RPCError` taxonomy.
+#[derive(Debug)]
+pub struct RaftBlockNetworkConnection {
+    target: u64,
+    group_id: Uuid,
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl RaftBlockNetworkConnection {
+    fn http_client(&self) -> Option<RaftBlockHttpClient> {
+        if self.base_url.is_empty() {
+            None
+        } else {
+            Some(RaftBlockHttpClient::with_client(
+                self.client.clone(),
+                self.base_url.clone(),
+            ))
+        }
+    }
+
+    fn transport_to_rpc<E>(
+        &self,
+        err: RaftBlockTransportError,
+    ) -> openraft::error::RPCError<u64, openraft::BasicNode, E>
+    where
+        E: std::error::Error,
+    {
+        use openraft::error::{NetworkError, RPCError, Unreachable};
+        match err {
+            // Connection-level failures: the remote did not respond, treat as
+            // unreachable so Openraft schedules a backoff retry.
+            RaftBlockTransportError::Request(req_err) => {
+                if req_err.is_connect() || req_err.is_timeout() {
+                    let std_err: std::io::Error = std::io::Error::other(req_err.to_string());
+                    RPCError::Unreachable(Unreachable::new(&std_err))
+                } else {
+                    let std_err: std::io::Error = std::io::Error::other(req_err.to_string());
+                    RPCError::Network(NetworkError::new(&std_err))
+                }
+            }
+            // HTTP-level failures (5xx etc.) are surfaced as a generic network
+            // error rather than RemoteError because the agent routes do not
+            // currently serialize structured Raft errors back; a future PR
+            // will tighten this once the routes return RaftError JSON.
+            RaftBlockTransportError::Remote { status, body } => {
+                let std_err: std::io::Error =
+                    std::io::Error::other(format!("status {status}: {body}"));
+                RPCError::Network(NetworkError::new(&std_err))
+            }
+        }
+    }
+
+    fn unreachable<E>(&self) -> openraft::error::RPCError<u64, openraft::BasicNode, E>
+    where
+        E: std::error::Error,
+    {
+        use openraft::error::{RPCError, Unreachable};
+        let std_err: std::io::Error =
+            std::io::Error::other(format!("no peer URL for node {}", self.target));
+        RPCError::Unreachable(Unreachable::new(&std_err))
+    }
+}
+
+impl openraft::network::RaftNetwork<BlockRaftTypeConfig> for RaftBlockNetworkConnection {
+    async fn append_entries(
+        &mut self,
+        rpc: openraft::raft::AppendEntriesRequest<BlockRaftTypeConfig>,
+        _option: openraft::network::RPCOption,
+    ) -> Result<
+        openraft::raft::AppendEntriesResponse<u64>,
+        openraft::error::RPCError<u64, openraft::BasicNode, openraft::error::RaftError<u64>>,
+    > {
+        let Some(client) = self.http_client() else {
+            return Err(self.unreachable());
+        };
+        client
+            .openraft_append_entries(self.group_id, &rpc)
+            .await
+            .map_err(|e| self.transport_to_rpc(e))
+    }
+
+    async fn vote(
+        &mut self,
+        rpc: openraft::raft::VoteRequest<u64>,
+        _option: openraft::network::RPCOption,
+    ) -> Result<
+        openraft::raft::VoteResponse<u64>,
+        openraft::error::RPCError<u64, openraft::BasicNode, openraft::error::RaftError<u64>>,
+    > {
+        let Some(client) = self.http_client() else {
+            return Err(self.unreachable());
+        };
+        client
+            .openraft_vote(self.group_id, &rpc)
+            .await
+            .map_err(|e| self.transport_to_rpc(e))
+    }
+
+    async fn install_snapshot(
+        &mut self,
+        rpc: openraft::raft::InstallSnapshotRequest<BlockRaftTypeConfig>,
+        _option: openraft::network::RPCOption,
+    ) -> Result<
+        openraft::raft::InstallSnapshotResponse<u64>,
+        openraft::error::RPCError<
+            u64,
+            openraft::BasicNode,
+            openraft::error::RaftError<u64, openraft::error::InstallSnapshotError>,
+        >,
+    > {
+        let Some(client) = self.http_client() else {
+            return Err(self.unreachable());
+        };
+        client
+            .openraft_install_snapshot(self.group_id, &rpc)
+            .await
+            .map_err(|e| self.transport_to_rpc(e))
+    }
+}
+
+/// A live Openraft node bound to a `BlockRaftTypeConfig` group.
+///
+/// This is the bridge between the agent's HTTP routes (which still call into
+/// the storage harness directly for the prototype path) and a real Raft
+/// runtime that performs leader election, log replication, and state machine
+/// application via Openraft.
+///
+/// Construction is `start_single_node` for tests and `start` for production
+/// three-node groups. The runtime owns the network factory and the storage,
+/// so the caller only needs to keep the `RaftBlockRuntime` alive.
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct RaftBlockRuntime {
+    pub group_id: Uuid,
+    pub node_id: u64,
+    pub raft: openraft::Raft<BlockRaftTypeConfig>,
+    pub store: InMemoryOpenraftBlockStore,
+}
+
+#[allow(dead_code)]
+impl RaftBlockRuntime {
+    /// Build a runtime that talks to a static set of peers via HTTP.
+    ///
+    /// `peers` maps `NodeId -> base_url`. The local node id MUST be present
+    /// in the map (Openraft's storage validates that the local id is in the
+    /// membership when initializing); the local entry's URL is unused by
+    /// `RaftBlockNetworkFactory` because Openraft never sends RPCs to itself.
+    pub async fn start(
+        group_id: Uuid,
+        node_id: u64,
+        capacity_bytes: u64,
+        block_size: u64,
+        store_path: PathBuf,
+        peers: HashMap<u64, String>,
+    ) -> Result<Self, RaftBlockError> {
+        let store = InMemoryOpenraftBlockStore::open_or_create(
+            FileReplicaStore::new(store_path),
+            node_id,
+            capacity_bytes,
+            block_size,
+        )?;
+        let factory = RaftBlockNetworkFactory::new(group_id, peers);
+        let config = nexus_raft_block::default_openraft_config()?;
+        let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
+        let raft = openraft::Raft::new(node_id, config, factory, log_store, state_machine)
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::new: {e}")))?;
+        Ok(Self {
+            group_id,
+            node_id,
+            raft,
+            store,
+        })
+    }
+
+    /// Initialize this runtime as the sole member of the cluster (single-node
+    /// path used by tests and by the leader of a fresh three-node group).
+    /// After `initialize` returns, the node will elect itself leader within
+    /// one heartbeat interval and accept `client_write`.
+    pub async fn initialize_single_node(&self) -> Result<(), RaftBlockError> {
+        let mut members: std::collections::BTreeMap<u64, openraft::BasicNode> =
+            std::collections::BTreeMap::new();
+        members.insert(self.node_id, openraft::BasicNode::default());
+        self.raft
+            .initialize(members)
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::initialize: {e}")))
+    }
+
+    /// Initialize this runtime as the bootstrap leader of a static membership.
+    /// All node ids must be present in the peer URL map.
+    pub async fn initialize_membership(
+        &self,
+        members: std::collections::BTreeMap<u64, openraft::BasicNode>,
+    ) -> Result<(), RaftBlockError> {
+        self.raft
+            .initialize(members)
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::initialize: {e}")))
+    }
+
+    /// Submit a block command through the Raft pipeline. Returns once the
+    /// command is committed and applied. Only the leader accepts writes;
+    /// followers return a `ForwardToLeader`-shaped error which is mapped to
+    /// `RaftBlockError::Store` for the prototype.
+    pub async fn client_write(
+        &self,
+        command: BlockCommand,
+    ) -> Result<BlockResponse, RaftBlockError> {
+        let result = self
+            .raft
+            .client_write(command)
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::client_write: {e}")))?;
+        Ok(result.data)
+    }
+
+    /// Read the current cluster metrics. Useful for `is_leader()` checks
+    /// and for surfacing Raft state through `/v1/raft_block/:id/status` in a
+    /// follow-up PR.
+    pub fn metrics(
+        &self,
+    ) -> tokio::sync::watch::Receiver<openraft::RaftMetrics<u64, openraft::BasicNode>> {
+        self.raft.metrics()
+    }
+
+    /// Block until this node observes itself as leader, or `timeout` elapses.
+    /// Returns `Ok(())` if leadership was reached, `Err` otherwise.
+    pub async fn await_leader(&self, timeout: std::time::Duration) -> Result<(), RaftBlockError> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut metrics = self.raft.metrics();
+        while tokio::time::Instant::now() < deadline {
+            let snapshot = metrics.borrow().clone();
+            if snapshot.current_leader == Some(self.node_id) {
+                return Ok(());
+            }
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => break,
+                changed = metrics.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(RaftBlockError::Store(
+            "timed out waiting for leadership".into(),
+        ))
+    }
+
+    /// Gracefully shut the runtime down. Idempotent.
+    pub async fn shutdown(&self) -> Result<(), RaftBlockError> {
+        self.raft
+            .shutdown()
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::shutdown: {e}")))
+    }
+}
+
 impl RaftBlockState {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
@@ -1612,6 +1955,247 @@ mod tests {
                 assert!(body.contains("not started"));
             }
             other => panic!("unexpected error: {other}"),
+        }
+
+        server.abort();
+    }
+
+    /// Spin up an agent router on a random port and return (handle, base_url).
+    /// Used by the network-adapter tests below.
+    async fn spawn_agent_for_network_tests(
+        state: Arc<RaftBlockState>,
+    ) -> (tokio::task::JoinHandle<()>, String) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, router(state)).await.unwrap();
+        });
+        (handle, format!("http://{addr}"))
+    }
+
+    /// Driving append_entries through `RaftNetworkFactory::new_client`
+    /// must reach the remote agent's `/:group_id/openraft/append_entries`
+    /// route and apply the entry to its replica.
+    #[tokio::test]
+    async fn network_factory_routes_append_entries_to_remote_agent() {
+        use openraft::network::{RaftNetwork, RaftNetworkFactory};
+
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let remote_state = Arc::new(RaftBlockState::new(dir.path()));
+        remote_state
+            .ensure_group(group_id, 2, 4096, 512)
+            .await
+            .unwrap();
+        let (server, base_url) = spawn_agent_for_network_tests(remote_state.clone()).await;
+
+        let mut peers = HashMap::new();
+        peers.insert(2u64, base_url);
+        let mut factory = RaftBlockNetworkFactory::new(group_id, peers);
+        let mut conn = factory.new_client(2, &openraft::BasicNode::default()).await;
+
+        let leader_vote = openraft::Vote {
+            leader_id: openraft::LeaderId::new(2, 1),
+            committed: false,
+        };
+        let req = openraft::raft::AppendEntriesRequest {
+            vote: leader_vote,
+            prev_log_id: None,
+            entries: vec![openraft_entry(
+                2,
+                1,
+                1,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![7; 512],
+                },
+            )],
+            leader_commit: Some(openraft_log_id(2, 1, 1)),
+        };
+        let resp = conn
+            .append_entries(
+                req,
+                openraft::network::RPCOption::new(std::time::Duration::from_secs(1)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp, openraft::raft::AppendEntriesResponse::Success);
+
+        // Confirm the remote applied the bytes by reading them back.
+        let read = remote_state
+            .read(ReadReq {
+                group_id,
+                offset: 0,
+                len: 512,
+            })
+            .await
+            .unwrap();
+        assert_eq!(read.bytes[0], 7);
+
+        server.abort();
+    }
+
+    /// Vote routes through the same factory pathway and a granted vote
+    /// returns `vote_granted = true`.
+    #[tokio::test]
+    async fn network_factory_routes_vote_to_remote_agent() {
+        use openraft::network::{RaftNetwork, RaftNetworkFactory};
+
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let remote_state = Arc::new(RaftBlockState::new(dir.path()));
+        remote_state
+            .ensure_group(group_id, 3, 4096, 512)
+            .await
+            .unwrap();
+        let (server, base_url) = spawn_agent_for_network_tests(remote_state).await;
+
+        let mut peers = HashMap::new();
+        peers.insert(3u64, base_url);
+        let mut factory = RaftBlockNetworkFactory::new(group_id, peers);
+        let mut conn = factory.new_client(3, &openraft::BasicNode::default()).await;
+
+        let candidate_vote = openraft::Vote {
+            leader_id: openraft::LeaderId::new(7, 1),
+            committed: false,
+        };
+        let req = openraft::raft::VoteRequest {
+            vote: candidate_vote,
+            last_log_id: None,
+        };
+        let resp = conn
+            .vote(
+                req,
+                openraft::network::RPCOption::new(std::time::Duration::from_secs(1)),
+            )
+            .await
+            .unwrap();
+        assert!(resp.vote_granted);
+
+        server.abort();
+    }
+
+    /// A node that isn't in the peer table must yield `Unreachable` rather
+    /// than panicking. Openraft retries on Unreachable; panicking would tear
+    /// down the runtime.
+    #[tokio::test]
+    async fn network_factory_unreachable_when_peer_url_missing() {
+        use openraft::network::{RaftNetwork, RaftNetworkFactory};
+
+        let group_id = Uuid::new_v4();
+        let mut factory = RaftBlockNetworkFactory::new(group_id, HashMap::new());
+        let mut conn = factory
+            .new_client(99, &openraft::BasicNode::default())
+            .await;
+
+        let leader_vote = openraft::Vote {
+            leader_id: openraft::LeaderId::new(1, 1),
+            committed: false,
+        };
+        let err = conn
+            .append_entries(
+                openraft::raft::AppendEntriesRequest {
+                    vote: leader_vote,
+                    prev_log_id: None,
+                    entries: vec![],
+                    leader_commit: None,
+                },
+                openraft::network::RPCOption::new(std::time::Duration::from_secs(1)),
+            )
+            .await
+            .unwrap_err();
+        match err {
+            openraft::error::RPCError::Unreachable(_) => {}
+            other => panic!("expected Unreachable for missing peer URL, got {other:?}"),
+        }
+    }
+
+    /// A single-node Raft runtime can be constructed, initialized,
+    /// transition to leader, accept a `client_write`, and apply the command
+    /// to its state machine. This is the minimal end-to-end proof that the
+    /// Openraft runtime is wired correctly: storage v1->v2 adaptor,
+    /// network factory, type config, and async runtime all agree.
+    #[tokio::test]
+    async fn runtime_single_node_accepts_client_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let store_path = dir.path().join("node-1.json");
+        let mut peers = HashMap::new();
+        // Local URL is unused by Openraft (never sends RPCs to itself) but
+        // keeps the peer table shape consistent with multi-node groups.
+        peers.insert(1u64, "http://127.0.0.1:0".to_string());
+
+        let runtime = RaftBlockRuntime::start(group_id, 1, 4096, 512, store_path, peers)
+            .await
+            .expect("start runtime");
+        runtime
+            .initialize_single_node()
+            .await
+            .expect("initialize as sole member");
+        runtime
+            .await_leader(std::time::Duration::from_secs(5))
+            .await
+            .expect("become leader within 5s");
+
+        let resp = runtime
+            .client_write(BlockCommand::Write {
+                offset: 0,
+                bytes: vec![0xab; 512],
+            })
+            .await
+            .expect("client_write commits via Raft");
+        assert_eq!(
+            resp.applied_index, 2,
+            "first user write commits at index 2 (initialize is index 1)"
+        );
+
+        // The state machine applied the write: read it back through the
+        // storage harness.
+        let bytes = runtime
+            .store
+            .read_range(0, 512)
+            .expect("read applied bytes");
+        assert_eq!(bytes[0], 0xab);
+
+        runtime.shutdown().await.expect("clean shutdown");
+    }
+
+    /// A 5xx response from the remote agent must surface as `RPCError::Network`
+    /// rather than `Unreachable`. Openraft treats Network errors differently
+    /// from Unreachable (less aggressive retry).
+    #[tokio::test]
+    async fn network_factory_translates_remote_4xx_to_network_error() {
+        use openraft::network::{RaftNetwork, RaftNetworkFactory};
+
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4(); // intentionally NOT created on the remote
+        let remote_state = Arc::new(RaftBlockState::new(dir.path()));
+        let (server, base_url) = spawn_agent_for_network_tests(remote_state).await;
+
+        let mut peers = HashMap::new();
+        peers.insert(4u64, base_url);
+        let mut factory = RaftBlockNetworkFactory::new(group_id, peers);
+        let mut conn = factory.new_client(4, &openraft::BasicNode::default()).await;
+
+        let leader_vote = openraft::Vote {
+            leader_id: openraft::LeaderId::new(1, 1),
+            committed: false,
+        };
+        let err = conn
+            .append_entries(
+                openraft::raft::AppendEntriesRequest {
+                    vote: leader_vote,
+                    prev_log_id: None,
+                    entries: vec![],
+                    leader_commit: None,
+                },
+                openraft::network::RPCOption::new(std::time::Duration::from_secs(1)),
+            )
+            .await
+            .unwrap_err();
+        match err {
+            openraft::error::RPCError::Network(_) => {}
+            other => panic!("expected Network error for 4xx remote, got {other:?}"),
         }
 
         server.abort();
