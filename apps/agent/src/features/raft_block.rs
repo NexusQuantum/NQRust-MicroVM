@@ -89,6 +89,15 @@ impl RaftBlockState {
         Ok(replica.snapshot())
     }
 
+    async fn read(&self, req: ReadReq) -> Result<ReadResp, RaftBlockError> {
+        let groups = self.groups.lock().await;
+        let replica = groups
+            .get(&req.group_id)
+            .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
+        let bytes = replica.read_range(req.offset, req.len)?;
+        Ok(ReadResp { bytes })
+    }
+
     async fn install_snapshot(&self, req: InstallSnapshotReq) -> Result<(), RaftBlockError> {
         let mut groups = self.groups.lock().await;
         let replica = groups
@@ -138,6 +147,18 @@ pub struct InstallSnapshotReq {
     pub snapshot: BlockSnapshot,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReadReq {
+    pub group_id: Uuid,
+    pub offset: u64,
+    pub len: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadResp {
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RaftBlockRpcEnvelope {
     pub group_id: Uuid,
@@ -176,6 +197,16 @@ pub async fn snapshot(
 ) -> impl IntoResponse {
     match state.snapshot(group_id).await {
         Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+pub async fn read(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<ReadReq>,
+) -> impl IntoResponse {
+    match state.read(req).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(err) => error_response(StatusCode::BAD_REQUEST, err),
     }
 }
@@ -226,6 +257,7 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
         .route("/:group_id/snapshot", get(snapshot))
         .route("/create", post(create))
         .route("/append", post(append))
+        .route("/read", post(read))
         .route("/vote", post(vote))
         .route("/install_snapshot", post(install_snapshot))
         .route("/heartbeat", post(heartbeat))
@@ -400,6 +432,66 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let snapshot: BlockSnapshot = serde_json::from_slice(&body).unwrap();
         assert_eq!(&snapshot.bytes[0..512], &[7; 512]);
+    }
+
+    #[tokio::test]
+    async fn read_returns_persisted_range_and_rejects_bounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = append(
+            State(state.clone()),
+            Json(AppendReq {
+                group_id,
+                term: 1,
+                command: BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![3; 512],
+                },
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = read(
+            State(state.clone()),
+            Json(ReadReq {
+                group_id,
+                offset: 0,
+                len: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["bytes"].as_array().unwrap().len(), 512);
+
+        let response = read(
+            State(state),
+            Json(ReadReq {
+                group_id,
+                offset: 4096,
+                len: 1,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

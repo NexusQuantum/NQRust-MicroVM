@@ -469,6 +469,16 @@ impl PersistentReplica {
         self.replica.read_all()
     }
 
+    pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>, RaftBlockError> {
+        let end = offset
+            .checked_add(len as u64)
+            .ok_or(RaftBlockError::OutOfBounds)?;
+        if end > self.replica.read_all().len() as u64 {
+            return Err(RaftBlockError::OutOfBounds);
+        }
+        Ok(self.replica.read_all()[offset as usize..end as usize].to_vec())
+    }
+
     pub fn log(&self) -> &[LogEntry] {
         &self.log
     }
@@ -958,6 +968,16 @@ mod tests {
         assert_eq!(&reopened.read_all()[0..512], &[8; 512]);
         assert_eq!(reopened.log().len(), 1);
         assert_eq!(reopened.log()[0].index, 1);
+        assert_eq!(reopened.read_range(0, 512).unwrap(), vec![8; 512]);
+    }
+
+    #[test]
+    fn persistent_replica_read_range_checks_bounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileReplicaStore::new(dir.path().join("node-1.json"));
+        let replica = PersistentReplica::create(store, 1, 1024, 512).unwrap();
+        let err = replica.read_range(512, 1024).unwrap_err();
+        assert_eq!(err, RaftBlockError::OutOfBounds);
     }
 
     #[test]
