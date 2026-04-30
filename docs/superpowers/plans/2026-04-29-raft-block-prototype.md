@@ -70,8 +70,9 @@ Status: partially scaffolded in the agent. A local durable replica can be create
 `/v1/raft_block/install_snapshot`. Agent groups are now backed by the Openraft-shaped store harness,
 not a separate direct-entry map. `/v1/raft_block/append_entries` accepts a guarded Openraft-like
 batch shape and rejects index gaps before applying entries. `/v1/raft_block/heartbeat` reports
-started-group status for local liveness checks. `/v1/raft_block/vote` still returns an explicit 501
-response until the Openraft network adapter is wired.
+started-group status for local liveness checks. `/v1/raft_block/vote` performs conservative local
+vote fencing: first vote in a term is granted, conflicting same-term candidates are rejected, and a
+higher term can advance the vote.
 
 Define an agent-internal transport for block log replication:
 
@@ -93,6 +94,9 @@ Status: complete for the local prototype.
 - Detach stops the loaded group but preserves durable replica state on disk.
 - Reopening an existing group validates node id, capacity, and block size instead of silently
   accepting mismatched metadata.
+- Agent startup scans the run directory for durable raft-block groups and reloads them without a
+  manager attach call.
+- `read_snapshot` streams a consistent local Raft block snapshot for backup/DR plumbing.
 
 Validation:
 
