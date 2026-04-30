@@ -128,6 +128,9 @@ mod tests {
             run_dir: run_dir.to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            raft_block_state: std::sync::Arc::new(
+                crate::features::raft_block::RaftBlockState::new(run_dir),
+            ),
         }
     }
 
