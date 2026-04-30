@@ -59,13 +59,6 @@
 //!   `FileReplicaStore::external(Arc::new(SpdkLvolReplicaStore::new(...)))`.
 //!   That flag is wired in this commit; the operator selects per-group.
 
-#![allow(dead_code)]
-//
-// Public surface used by the operator-driven smoke runbook to substitute
-// SPDK-backed replicas for the JSON file store. Until the manager
-// production provisioning wires the choice, the code is not invoked
-// in-process; clippy's dead-code lint is suppressed at the module level.
-
 use nexus_raft_block::{PersistentReplicaState, RaftBlockError, ReplicaStoreImpl};
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -113,10 +106,6 @@ impl SpdkLvolReplicaStore {
             nbd_path: nbd_path.into(),
             write_lock: Mutex::new(()),
         }
-    }
-
-    pub fn nbd_path(&self) -> &std::path::Path {
-        &self.nbd_path
     }
 }
 

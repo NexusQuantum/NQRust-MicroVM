@@ -677,6 +677,22 @@ impl RaftBlockState {
     }
 
     fn store_for(&self, group_id: Uuid, node_id: u64) -> FileReplicaStore {
+        // Operator opt-in to the SPDK-backed replica store. When the
+        // env var is set, every replica state is persisted through an
+        // NBD device exposed by SPDK rather than a JSON file under
+        // base_dir. The template is a printf-style string with
+        // `{node_id}` interpolation, e.g. `/dev/nbd{node_id}`.
+        //
+        // Default (env var unset) preserves the prototype behavior:
+        // every replica writes JSON to disk under
+        // <base_dir>/raft-block/<group_id>/node-<node_id>.json.
+        if let Ok(template) = std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE") {
+            let nbd_path = template.replace("{node_id}", &node_id.to_string());
+            let impl_obj = std::sync::Arc::new(
+                crate::features::storage::spdk_replica_store::SpdkLvolReplicaStore::new(nbd_path),
+            );
+            return FileReplicaStore::external(impl_obj);
+        }
         FileReplicaStore::new(
             self.base_dir
                 .join("raft-block")
