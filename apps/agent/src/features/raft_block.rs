@@ -27,6 +27,7 @@ pub struct RaftBlockStatus {
     pub group_id: Uuid,
     pub state: &'static str,
     pub data_path: &'static str,
+    pub transport: &'static str,
     pub node_id: Option<u64>,
     pub capacity_bytes: Option<u64>,
     pub block_size: Option<u64>,
@@ -133,6 +134,7 @@ impl RaftBlockState {
                 group_id,
                 state: "started",
                 data_path: "persistent_local_replica",
+                transport: "openraft_entry_local",
                 node_id: Some(replica.node_id()),
                 capacity_bytes: Some(replica.replica().capacity_bytes()),
                 block_size: Some(replica.replica().block_size()),
@@ -145,6 +147,7 @@ impl RaftBlockState {
                 group_id,
                 state: "not_started",
                 data_path: "raftblk_pending",
+                transport: "not_started",
                 node_id: None,
                 capacity_bytes: None,
                 block_size: None,
@@ -204,6 +207,13 @@ pub struct InstallSnapshotReq {
 #[derive(Debug, Clone, Deserialize)]
 pub struct StopGroupReq {
     pub group_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HeartbeatReq {
+    pub group_id: Uuid,
+    pub term: u64,
+    pub leader_id: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -296,8 +306,27 @@ pub async fn install_snapshot(
     }
 }
 
-pub async fn heartbeat(Json(req): Json<RaftBlockRpcEnvelope>) -> impl IntoResponse {
-    not_implemented(req.group_id, "heartbeat")
+pub async fn heartbeat(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<HeartbeatReq>,
+) -> impl IntoResponse {
+    let status = state.status(req.group_id).await;
+    if status.state != "started" {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            RaftBlockError::Store(format!("group {} not started", req.group_id)),
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "group_id": req.group_id,
+            "term": req.term,
+            "leader_id": req.leader_id,
+            "status": status
+        })),
+    )
+        .into_response()
 }
 
 fn not_implemented(group_id: Uuid, rpc: &'static str) -> axum::response::Response {
@@ -682,6 +711,59 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(response["bytes"].as_array().unwrap().len(), 512);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_reports_started_group_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = heartbeat(
+            State(state.clone()),
+            Json(HeartbeatReq {
+                group_id,
+                term: 3,
+                leader_id: 1,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["term"], 3);
+        assert_eq!(response["leader_id"], 1);
+        assert_eq!(response["status"]["state"], "started");
+        assert_eq!(response["status"]["transport"], "openraft_entry_local");
+    }
+
+    #[tokio::test]
+    async fn heartbeat_rejects_unstarted_group() {
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let response = heartbeat(
+            State(state),
+            Json(HeartbeatReq {
+                group_id: Uuid::new_v4(),
+                term: 1,
+                leader_id: 1,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
