@@ -26,7 +26,12 @@ pub struct RaftBlockStatus {
     pub group_id: Uuid,
     pub state: &'static str,
     pub data_path: &'static str,
-    pub applied_entries: u64,
+    pub node_id: Option<u64>,
+    pub capacity_bytes: Option<u64>,
+    pub block_size: Option<u64>,
+    pub last_applied_index: Option<u64>,
+    pub compacted_through: Option<u64>,
+    pub retained_log_entries: u64,
 }
 
 impl RaftBlockState {
@@ -113,14 +118,24 @@ impl RaftBlockState {
                 group_id,
                 state: "started",
                 data_path: "persistent_local_replica",
-                applied_entries: replica.log().len() as u64,
+                node_id: Some(replica.node_id()),
+                capacity_bytes: Some(replica.capacity_bytes()),
+                block_size: Some(replica.block_size()),
+                last_applied_index: Some(replica.last_applied_index()),
+                compacted_through: Some(replica.compacted_through()),
+                retained_log_entries: replica.log().len() as u64,
             }
         } else {
             RaftBlockStatus {
                 group_id,
                 state: "not_started",
                 data_path: "raftblk_pending",
-                applied_entries: 0,
+                node_id: None,
+                capacity_bytes: None,
+                block_size: None,
+                last_applied_index: None,
+                compacted_through: None,
+                retained_log_entries: 0,
             }
         }
     }
@@ -345,7 +360,9 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let status: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(status["state"], "started");
-        assert_eq!(status["applied_entries"], 1);
+        assert_eq!(status["retained_log_entries"], 1);
+        assert_eq!(status["last_applied_index"], 1);
+        assert_eq!(status["node_id"], 1);
     }
 
     #[tokio::test]

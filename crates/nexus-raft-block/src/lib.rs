@@ -469,6 +469,31 @@ impl PersistentReplica {
         self.replica.read_all()
     }
 
+    pub fn node_id(&self) -> NodeId {
+        self.replica.id()
+    }
+
+    pub fn capacity_bytes(&self) -> u64 {
+        self.replica.read_all().len() as u64
+    }
+
+    pub fn block_size(&self) -> u64 {
+        self.replica.block_size
+    }
+
+    pub fn compacted_through(&self) -> LogIndex {
+        self.compacted_through
+    }
+
+    pub fn last_applied_index(&self) -> LogIndex {
+        self.replica
+            .applied_indexes()
+            .iter()
+            .next_back()
+            .copied()
+            .unwrap_or(self.compacted_through)
+    }
+
     pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>, RaftBlockError> {
         let end = offset
             .checked_add(len as u64)
