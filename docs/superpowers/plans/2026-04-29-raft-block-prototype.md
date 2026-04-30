@@ -67,9 +67,11 @@ Do not wire either library into VM disks until Task 1 and Task 2 are stable.
 
 Status: partially scaffolded in the agent. A local durable replica can be created and appended to through
 `/v1/raft_block/create`, `/v1/raft_block/append`, `/:group_id/snapshot`, and
-`/v1/raft_block/install_snapshot`. Appends now route through Openraft entries instead of the custom
-model entry path. `/v1/raft_block/heartbeat` reports started-group status for local liveness checks.
-`/v1/raft_block/vote` still returns an explicit 501 response until the Openraft network adapter is wired.
+`/v1/raft_block/install_snapshot`. Agent groups are now backed by the Openraft-shaped store harness,
+not a separate direct-entry map. `/v1/raft_block/append_entries` accepts a guarded Openraft-like
+batch shape and rejects index gaps before applying entries. `/v1/raft_block/heartbeat` reports
+started-group status for local liveness checks. `/v1/raft_block/vote` still returns an explicit 501
+response until the Openraft network adapter is wired.
 
 Define an agent-internal transport for block log replication:
 
@@ -103,8 +105,7 @@ cargo test -p agent raft_spdk
 
 Do not start B-III until these are complete:
 
-- Promote the Openraft storage harness into the production agent service boundary and run the
-  upstream Openraft storage test suite against it.
+- Run the upstream Openraft storage test suite against the promoted storage harness.
 - Implement Openraft HTTP network adapter for append, vote, heartbeat, and install-snapshot.
 - Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
 - Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.
