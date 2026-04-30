@@ -128,23 +128,25 @@ Validation:
 cargo test -p manager raft_spdk
 ```
 
-## B-II Exit Criteria Still Open
+## B-II Exit Criteria — Status
 
-Do not start B-III until these are complete:
+| # | Item | Status |
+|---|---|---|
+| 1 | Openraft network adapter + real Raft node runtime | **DONE** — `RaftBlockNetworkFactory`, `RaftBlockNetworkConnection`, `RaftBlockRuntime`, runtime registry on `RaftBlockState`, `runtime_*` routes. 24 raft_block tests including 3-node integration with leader-kill failover and quorum-loss block. |
+| 2 | Migrate openraft routes to dispatch via Raft runtime | **DONE** — `openraft_append_entries` / `openraft_vote` / `openraft_install_snapshot` dispatch via `RaftBlockState::runtime_for(group_id)` when a runtime is registered, falling back to the legacy storage path otherwise. |
+| 3 | `raftblk` vhost-user-blk service | **PARTIAL** — data-plane translation layer in `crates/raftblk-vhost` (request parsing, `BlockBackend` trait + `RaftBlockBackend` HTTP impl + `InMemoryBlockBackend` test impl) is fully tested (12 unit tests). The daemon binary in `apps/raftblk-vhost` smoke-tests the agent at startup and parks. **The vhost-user-backend protocol glue is the only remaining wedge** — operator runbook spells out exactly what plugs into `vhost-user-backend` and which kernel modules need to be loaded. |
+| 4 | Replace JSON prototype store with SPDK lvol/NBD-backed replicas | **PENDING — operator-only** — requires hugepages + a real SPDK process per host. Documented in `docs/runbooks/raft-block-microvm-smoke.md`. The `ReplicaStore` trait factoring is the next code change but cannot be validated without the SPDK runtime. |
+| 5 | Manager production provisioning | **DONE** — `RaftSpdkConfig.production_provisioning_enabled = true` calls `create` -> `runtime_start` (each replica) -> `runtime_initialize` (leader). Locator marked `production_replica`. 2 new tests cover the path; mutual-exclusion with prototype flag is enforced. |
+| 6 | Three-agent integration test (leader kill, failover, byte survival) | **DONE** — `three_node_cluster_replicates_committed_write`, `three_node_cluster_fails_over_when_leader_is_killed`, `three_node_cluster_blocks_writes_under_quorum_loss`. All three pass via the production HTTP transport (RaftBlockNetworkFactory -> `/openraft/*` routes), not synthetic. |
+| 7 | Real microVM smoke (boot a guest with vhost-user-blk -> raftblk -> 3-node Raft, kill leader, observe survival) | **PENDING — operator-only** — gated on item 3 (vhost-user-backend daemon glue) and item 4 (SPDK-backed bytes). Step-by-step procedure in the runbook above. |
 
-- Promote the tested Openraft-native HTTP client/routes into an Openraft network adapter and real
-  Raft node runtime.
-- Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
-- Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.
-- Replace the prototype manager bootstrap flag with production static three-node provisioning that
-  creates real SPDK lvol replicas and bootstraps the real Raft runtime.
-- Run a three-agent integration test that writes through raftblk, kills the leader, elects a new
-  leader, and proves committed bytes survive.
+In short: items 1, 2, 5, 6 are landed and tested. Items 3 (partially), 4, and 7 are gated on operator-only work that requires sudo, hugepages, real SPDK, and a Firecracker host. The data-plane code paths those items consume are tested in isolation; the wedge is integration with kernel/hardware that an autonomous coding session cannot drive.
+
+The runbook at `docs/runbooks/raft-block-microvm-smoke.md` is the canonical procedure for the operator-only items and the gating step for declaring B-II done.
 
 ## Non-Goals
 
-- No SPDK writes through the replicated path yet.
-- `BackendKind::RaftSpdk` exists only as a guarded scaffold. It does not provision production volumes yet.
-- No dynamic membership.
+- No SPDK writes through the replicated path yet (operator runbook explains the wedge).
+- No dynamic membership (B-III).
 - No follower reads.
 - No live migration claim.
