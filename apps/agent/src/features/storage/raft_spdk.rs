@@ -80,9 +80,11 @@ impl HostBackend for RaftSpdkHostBackend {
 
     async fn detach(
         &self,
-        _volume: &VolumeHandle,
+        volume: &VolumeHandle,
         _attached: AttachedPath,
     ) -> Result<(), StorageError> {
+        let locator = RaftSpdkLocator::from_locator_str(&volume.locator)?;
+        self.raft_block.stop_group(locator.group_id).await;
         Ok(())
     }
 
@@ -197,6 +199,27 @@ mod tests {
 
         let err = backend.attach(&volume).await.unwrap_err();
         assert!(err.to_string().contains("leader-only"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn detach_stops_group_without_destroying_state() {
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let backend = RaftSpdkHostBackend::new("/run/nqrust/raftblk", 1, state.clone());
+        let group_id = locator().group_id;
+        let volume = VolumeHandle {
+            volume_id: Uuid::new_v4(),
+            backend_id: BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::RaftSpdk,
+            locator: locator().to_locator_string().unwrap(),
+            size_bytes: 4096,
+        };
+
+        let attached = backend.attach(&volume).await.unwrap();
+        assert_eq!(state.status(group_id).await.state, "started");
+        backend.detach(&volume, attached).await.unwrap();
+        assert_eq!(state.status(group_id).await.state, "not_started");
+        backend.attach(&volume).await.unwrap();
+        assert_eq!(state.status(group_id).await.state, "started");
     }
 
     #[tokio::test]

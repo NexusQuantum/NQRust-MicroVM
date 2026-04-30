@@ -67,6 +67,10 @@ impl RaftBlockState {
         .await
     }
 
+    pub async fn stop_group(&self, group_id: Uuid) -> bool {
+        self.groups.lock().await.remove(&group_id).is_some()
+    }
+
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
         let store = self.store_for(req.group_id, req.node_id);
         let replica = if let Some(existing) = PersistentReplica::open(store.clone())? {
@@ -163,6 +167,11 @@ pub struct InstallSnapshotReq {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct StopGroupReq {
+    pub group_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ReadReq {
     pub group_id: Uuid,
     pub offset: u64,
@@ -204,6 +213,18 @@ pub async fn append(
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(err) => error_response(StatusCode::BAD_REQUEST, err),
     }
+}
+
+pub async fn stop(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<StopGroupReq>,
+) -> impl IntoResponse {
+    let stopped = state.stop_group(req.group_id).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "stopped": stopped })),
+    )
+        .into_response()
 }
 
 pub async fn snapshot(
@@ -273,6 +294,7 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
         .route("/create", post(create))
         .route("/append", post(append))
         .route("/read", post(read))
+        .route("/stop", post(stop))
         .route("/vote", post(vote))
         .route("/install_snapshot", post(install_snapshot))
         .route("/heartbeat", post(heartbeat))
@@ -509,6 +531,71 @@ mod tests {
         .await
         .into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn stop_unloads_group_but_preserves_durable_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = append(
+            State(state.clone()),
+            Json(AppendReq {
+                group_id,
+                term: 1,
+                command: BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![4; 512],
+                },
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = stop(State(state.clone()), Json(StopGroupReq { group_id }))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.status(group_id).await.state, "not_started");
+
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = read(
+            State(state),
+            Json(ReadReq {
+                group_id,
+                offset: 0,
+                len: 512,
+            }),
+        )
+        .await
+        .into_response();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["bytes"].as_array().unwrap().len(), 512);
     }
 
     #[tokio::test]
