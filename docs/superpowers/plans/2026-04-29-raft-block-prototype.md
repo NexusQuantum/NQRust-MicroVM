@@ -97,6 +97,9 @@ Status: complete for the local prototype.
 - Agent startup scans the run directory for durable raft-block groups and reloads them without a
   manager attach call.
 - `read_snapshot` streams a consistent local Raft block snapshot for backup/DR plumbing.
+- `populate_streaming` writes source bytes through the local raft-block append path with block
+  padding, so image/rootfs import exercises Raft write validation instead of mutating one replica
+  directly.
 
 Validation:
 
