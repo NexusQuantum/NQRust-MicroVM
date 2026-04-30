@@ -111,6 +111,20 @@ cargo test -p agent raft_block
 cargo test -p agent raft_spdk
 ```
 
+## Task 6: Manager Static Bootstrap Guardrail
+
+Status: partially complete. The manager `raft_spdk` backend remains fail-closed by default, but an
+explicit `prototype_provisioning_enabled = true` TOML flag can now create static raft-block groups
+on the three configured agent URLs and return a validated `RaftSpdkLocator`. This is a B-II harness
+path only: replica locator entries are marked `prototype_replica` and do not claim SPDK lvol-backed
+storage yet. Failed partial bootstrap attempts best-effort stop already-created groups.
+
+Validation:
+
+```bash
+cargo test -p manager raft_spdk
+```
+
 ## B-II Exit Criteria Still Open
 
 Do not start B-III until these are complete:
@@ -119,7 +133,8 @@ Do not start B-III until these are complete:
 - Promote the tested HTTP client/routes into an Openraft network adapter and real Raft node runtime.
 - Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
 - Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.
-- Implement manager-side replica provisioning and bootstrap for static three-node groups.
+- Replace the prototype manager bootstrap flag with production static three-node provisioning that
+  creates real SPDK lvol replicas and bootstraps the real Raft runtime.
 - Run a three-agent integration test that writes through raftblk, kills the leader, elects a new
   leader, and proves committed bytes survive.
 
