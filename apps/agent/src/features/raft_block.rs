@@ -6,7 +6,8 @@ use axum::{
     Json, Router,
 };
 use nexus_raft_block::{
-    BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore, PersistentReplica, RaftBlockError,
+    BlockCommand, BlockResponse, BlockSnapshot, FileReplicaStore, OpenraftEntryApplier,
+    RaftBlockError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct RaftBlockState {
     base_dir: PathBuf,
-    groups: Arc<Mutex<HashMap<Uuid, PersistentReplica>>>,
+    groups: Arc<Mutex<HashMap<Uuid, OpenraftEntryApplier>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -73,10 +74,10 @@ impl RaftBlockState {
 
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
         let store = self.store_for(req.group_id, req.node_id);
-        let replica = if let Some(existing) = PersistentReplica::open(store.clone())? {
+        let replica = if let Some(existing) = OpenraftEntryApplier::open(store.clone())? {
             existing
         } else {
-            PersistentReplica::create(store, req.node_id, req.capacity_bytes, req.block_size)?
+            OpenraftEntryApplier::create(store, req.node_id, req.capacity_bytes, req.block_size)?
         };
         self.groups.lock().await.insert(req.group_id, replica);
         Ok(())
@@ -87,7 +88,11 @@ impl RaftBlockState {
         let replica = groups
             .get_mut(&req.group_id)
             .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
-        replica.append_command(req.term, req.command)
+        replica.append_command(
+            req.term,
+            req.leader_id.unwrap_or_else(|| replica.node_id()),
+            req.command,
+        )
     }
 
     async fn snapshot(&self, group_id: Uuid) -> Result<BlockSnapshot, RaftBlockError> {
@@ -95,7 +100,7 @@ impl RaftBlockState {
         let replica = groups
             .get(&group_id)
             .ok_or_else(|| RaftBlockError::Store(format!("group {group_id} not started")))?;
-        Ok(replica.snapshot())
+        Ok(replica.replica().snapshot())
     }
 
     async fn read(&self, req: ReadReq) -> Result<ReadResp, RaftBlockError> {
@@ -103,7 +108,7 @@ impl RaftBlockState {
         let replica = groups
             .get(&req.group_id)
             .ok_or_else(|| RaftBlockError::Store(format!("group {} not started", req.group_id)))?;
-        let bytes = replica.read_range(req.offset, req.len)?;
+        let bytes = replica.replica().read_range(req.offset, req.len)?;
         Ok(ReadResp { bytes })
     }
 
@@ -123,11 +128,11 @@ impl RaftBlockState {
                 state: "started",
                 data_path: "persistent_local_replica",
                 node_id: Some(replica.node_id()),
-                capacity_bytes: Some(replica.capacity_bytes()),
-                block_size: Some(replica.block_size()),
-                last_applied_index: Some(replica.last_applied_index()),
-                compacted_through: Some(replica.compacted_through()),
-                retained_log_entries: replica.log().len() as u64,
+                capacity_bytes: Some(replica.replica().capacity_bytes()),
+                block_size: Some(replica.replica().block_size()),
+                last_applied_index: Some(replica.replica().last_applied_index()),
+                compacted_through: Some(replica.replica().compacted_through()),
+                retained_log_entries: replica.replica().log().len() as u64,
             }
         } else {
             RaftBlockStatus {
@@ -157,6 +162,8 @@ pub struct CreateGroupReq {
 pub struct AppendReq {
     pub group_id: Uuid,
     pub term: u64,
+    #[serde(default)]
+    pub leader_id: Option<u64>,
     pub command: BlockCommand,
 }
 
@@ -322,6 +329,7 @@ mod tests {
             Json(AppendReq {
                 group_id: Uuid::new_v4(),
                 term: 1,
+                leader_id: None,
                 command: BlockCommand::Flush,
             }),
         )
@@ -353,6 +361,7 @@ mod tests {
             Json(AppendReq {
                 group_id,
                 term: 1,
+                leader_id: None,
                 command: BlockCommand::Write {
                     offset: 0,
                     bytes: vec![5; 512],
@@ -411,6 +420,7 @@ mod tests {
             Json(AppendReq {
                 group_id: source_group,
                 term: 1,
+                leader_id: None,
                 command: BlockCommand::Write {
                     offset: 0,
                     bytes: vec![7; 512],
@@ -495,6 +505,7 @@ mod tests {
             Json(AppendReq {
                 group_id,
                 term: 1,
+                leader_id: None,
                 command: BlockCommand::Write {
                     offset: 0,
                     bytes: vec![3; 512],
@@ -555,6 +566,7 @@ mod tests {
             Json(AppendReq {
                 group_id,
                 term: 1,
+                leader_id: None,
                 command: BlockCommand::Write {
                     offset: 0,
                     bytes: vec![4; 512],

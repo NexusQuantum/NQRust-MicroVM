@@ -600,6 +600,30 @@ impl OpenraftEntryApplier {
         Ok(responses)
     }
 
+    pub fn append_command(
+        &mut self,
+        term: Term,
+        leader_id: NodeId,
+        command: BlockCommand,
+    ) -> Result<BlockResponse, RaftBlockError> {
+        let index = self.replica.next_index;
+        let mut responses =
+            self.apply_entries([openraft_entry(term, leader_id, index, command)])?;
+        responses
+            .pop()
+            .ok_or_else(|| RaftBlockError::Store("openraft append produced no response".into()))
+    }
+
+    pub fn install_snapshot(&mut self, snapshot: &BlockSnapshot) -> Result<(), RaftBlockError> {
+        self.replica.install_snapshot(snapshot)?;
+        self.last_applied_log_id = Some(openraft_log_id(
+            snapshot.highest_term_seen,
+            self.node_id(),
+            snapshot.last_included_index,
+        ));
+        Ok(())
+    }
+
     pub fn last_applied_log_id(&self) -> Option<openraft::LogId<NodeId>> {
         self.last_applied_log_id
     }
@@ -610,6 +634,10 @@ impl OpenraftEntryApplier {
 
     pub fn replica(&self) -> &PersistentReplica {
         &self.replica
+    }
+
+    pub fn node_id(&self) -> NodeId {
+        self.replica.node_id()
     }
 }
 
