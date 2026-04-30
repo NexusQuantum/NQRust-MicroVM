@@ -1,6 +1,7 @@
 # Raft Block Prototype Implementation Plan
 
-**Status:** Correctness model plus raft_spdk guardrail scaffold implemented
+**Status:** Correctness model, durable local replica lifecycle, Openraft entry boundary, and
+raft_spdk guardrail scaffold implemented
 **Spec:** `docs/superpowers/specs/2026-04-29-spdk-raft-hci-design.md`
 **Scope:** B-II correctness prototype only. This is not a production storage backend and does not attach VM disks.
 
@@ -41,11 +42,14 @@ Validation:
 cargo test -p nexus-raft-block
 ```
 
-## Task 3: Real Raft Library Selection
+## Task 3: Real Raft Library Selection And Boundary
 
 Status: partially complete. `nexus-raft-block` now has serializable `BlockCommand`/`BlockResponse`
-types, a durable file-backed local replica store, and a pinned Openraft 0.9.24 type/config boundary.
-The full Openraft log/state-machine/network adapter is still pending.
+types, a durable file-backed local replica store, a pinned Openraft 0.9.24 type/config boundary, and
+an `OpenraftEntryApplier` that consumes real `openraft::Entry<BlockRaftTypeConfig>` values. Blank
+and membership entries advance Openraft-visible state without mutating block bytes; normal
+`BlockCommand` entries apply to the persistent local replica. The full Openraft log/state-machine
+and network adapter is still pending.
 
 Compare `openraft` and `tikv-raft-rs` against the model:
 
@@ -62,8 +66,9 @@ Do not wire either library into VM disks until Task 1 and Task 2 are stable.
 
 Status: partially scaffolded in the agent. A local durable replica can be created and appended to through
 `/v1/raft_block/create`, `/v1/raft_block/append`, `/:group_id/snapshot`, and
-`/v1/raft_block/install_snapshot`; vote/heartbeat still return explicit 501 responses until the
-Openraft network adapter is wired.
+`/v1/raft_block/install_snapshot`. Appends now route through Openraft entries instead of the custom
+model entry path. `/v1/raft_block/heartbeat` reports started-group status for local liveness checks.
+`/v1/raft_block/vote` still returns an explicit 501 response until the Openraft network adapter is wired.
 
 Define an agent-internal transport for block log replication:
 
@@ -74,6 +79,36 @@ Define an agent-internal transport for block log replication:
 - repair stream.
 
 The first transport can be in-process test doubles. Production HTTP/gRPC is a later slice.
+
+## Task 5: Agent Lifecycle Guardrails
+
+Status: complete for the local prototype.
+
+- `RaftSpdkHostBackend::attach` validates that the local node is in the static replica locator.
+- Attach is leader-only in B-II: a follower attach is refused when `leader_hint` points elsewhere.
+- Attach starts the durable local group and returns the future raftblk vhost-user socket path.
+- Detach stops the loaded group but preserves durable replica state on disk.
+- Reopening an existing group validates node id, capacity, and block size instead of silently
+  accepting mismatched metadata.
+
+Validation:
+
+```bash
+cargo test -p agent raft_block
+cargo test -p agent raft_spdk
+```
+
+## B-II Exit Criteria Still Open
+
+Do not start B-III until these are complete:
+
+- Replace local append/status routes with a real Openraft `RaftLogStorage`/`RaftStateMachine` pair.
+- Implement Openraft HTTP network adapter for append, vote, heartbeat, and install-snapshot.
+- Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
+- Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.
+- Implement manager-side replica provisioning and bootstrap for static three-node groups.
+- Run a three-agent integration test that writes through raftblk, kills the leader, elects a new
+  leader, and proves committed bytes survive.
 
 ## Non-Goals
 
