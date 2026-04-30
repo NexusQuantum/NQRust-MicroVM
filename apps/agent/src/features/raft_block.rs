@@ -1247,7 +1247,72 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
         .route("/vote", post(vote))
         .route("/install_snapshot", post(install_snapshot))
         .route("/heartbeat", post(heartbeat))
+        .route("/runtime_start", post(runtime_start))
+        .route("/runtime_write", post(runtime_write))
+        .route("/runtime_initialize", post(runtime_initialize))
         .with_state(state)
+}
+
+/// Request shape for `POST /v1/raft_block/runtime_start`. The agent uses
+/// this to bind an Openraft runtime to an existing storage group; the
+/// peer URL map is the static three-node membership.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeStartReq {
+    pub group_id: Uuid,
+    pub peers: HashMap<u64, String>,
+}
+
+/// Request shape for `POST /v1/raft_block/runtime_initialize`. Bootstrap
+/// the cluster (only the leader calls this; followers learn membership
+/// through subsequent append_entries).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeInitializeReq {
+    pub group_id: Uuid,
+    pub members: Vec<u64>,
+}
+
+/// Request shape for `POST /v1/raft_block/runtime_write`. This is the
+/// production write path used by `raftblk-vhost`'s `RaftBlockBackend`:
+/// every guest write becomes one of these and the response only returns
+/// after the entry is committed and applied across a quorum of replicas.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeWriteReq {
+    pub group_id: Uuid,
+    pub command: BlockCommand,
+}
+
+pub async fn runtime_start(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<RuntimeStartReq>,
+) -> impl IntoResponse {
+    match state.start_runtime(req.group_id, req.peers).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+pub async fn runtime_initialize(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<RuntimeInitializeReq>,
+) -> impl IntoResponse {
+    let mut members = std::collections::BTreeMap::new();
+    for node_id in req.members {
+        members.insert(node_id, openraft::BasicNode::default());
+    }
+    match state.initialize_runtime(req.group_id, members).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+pub async fn runtime_write(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<RuntimeWriteReq>,
+) -> impl IntoResponse {
+    match state.runtime_client_write(req.group_id, req.command).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
 }
 
 #[cfg(test)]

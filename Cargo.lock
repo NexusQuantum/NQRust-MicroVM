@@ -3894,6 +3894,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
+name = "raftblk-vhost"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nexus-raft-block",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "raftblk-vhost-bin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "raftblk-vhost",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "rand"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,21 @@
+[package]
+name = "raftblk-vhost-bin"
+version = "0.1.0"
+edition = "2021"
+description = "vhost-user-blk daemon binary that exposes a Raft-replicated block group to a Firecracker guest."
+
+[[bin]]
+name = "raftblk-vhost"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }
+uuid = { workspace = true }
+raftblk-vhost = { path = "../../crates/raftblk-vhost" }

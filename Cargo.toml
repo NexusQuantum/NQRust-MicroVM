@@ -3,10 +3,12 @@ members = [
 "apps/agent", "apps/guest-agent",
 "apps/manager",
 "apps/installer",
+"apps/raftblk-vhost",
 "crates/nexus-backup",
 "crates/nexus-raft-block",
 "crates/nexus-storage",
 "crates/nexus-types",
+"crates/raftblk-vhost",
 ]
 resolver = "2"
 
