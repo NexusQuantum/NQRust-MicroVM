@@ -1,6 +1,6 @@
 # Raft Block Prototype Implementation Plan
 
-**Status:** Correctness model, durable local replica lifecycle, Openraft entry boundary, and
+**Status:** Correctness model, durable local replica lifecycle, Openraft storage harness, and
 raft_spdk guardrail scaffold implemented
 **Spec:** `docs/superpowers/specs/2026-04-29-spdk-raft-hci-design.md`
 **Scope:** B-II correctness prototype only. This is not a production storage backend and does not attach VM disks.
@@ -45,11 +45,12 @@ cargo test -p nexus-raft-block
 ## Task 3: Real Raft Library Selection And Boundary
 
 Status: partially complete. `nexus-raft-block` now has serializable `BlockCommand`/`BlockResponse`
-types, a durable file-backed local replica store, a pinned Openraft 0.9.24 type/config boundary, and
-an `OpenraftEntryApplier` that consumes real `openraft::Entry<BlockRaftTypeConfig>` values. Blank
-and membership entries advance Openraft-visible state without mutating block bytes; normal
-`BlockCommand` entries apply to the persistent local replica. The full Openraft log/state-machine
-and network adapter is still pending.
+types, a durable file-backed local replica store, a pinned Openraft 0.9.24 type/config boundary,
+an `OpenraftEntryApplier` that consumes real `openraft::Entry<BlockRaftTypeConfig>` values, and an
+`InMemoryOpenraftBlockStore` harness implementing Openraft's storage shape for append/apply/snapshot
+tests. Blank and membership entries advance Openraft-visible state without mutating block bytes;
+normal `BlockCommand` entries apply to the persistent local replica. The production Openraft
+log/state-machine persistence split and network adapter are still pending.
 
 Compare `openraft` and `tikv-raft-rs` against the model:
 
@@ -102,7 +103,8 @@ cargo test -p agent raft_spdk
 
 Do not start B-III until these are complete:
 
-- Replace local append/status routes with a real Openraft `RaftLogStorage`/`RaftStateMachine` pair.
+- Promote the Openraft storage harness into the production agent service boundary and run the
+  upstream Openraft storage test suite against it.
 - Implement Openraft HTTP network adapter for append, vote, heartbeat, and install-snapshot.
 - Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
 - Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.
