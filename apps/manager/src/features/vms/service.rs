@@ -290,6 +290,27 @@ pub async fn create_and_start(
     )
     .await?;
 
+    // Now that the vm row exists, record the rootfs volume_attachment.
+    // provision_rootfs creates the volume row (named `rootfs-<vm_id>`)
+    // but cannot insert the attachment because vm.id doesn't yet exist
+    // for the FK. Look up the freshly-created volume by name and link it.
+    if let Ok(Some(rootfs_volume_id)) =
+        sqlx::query_scalar::<_, Uuid>(r#"SELECT id FROM volume WHERE name = $1 LIMIT 1"#)
+            .bind(format!("rootfs-{id}"))
+            .fetch_optional(&st.db)
+            .await
+    {
+        let _ = sqlx::query(
+            r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)
+               ON CONFLICT DO NOTHING"#,
+        )
+        .bind(rootfs_volume_id)
+        .bind(id)
+        .bind("rootfs")
+        .execute(&st.db)
+        .await;
+    }
+
     // Resolve network ID: use explicit selection or auto-register from bridge
     let network_id_opt = if let Some(nid) = req_network_id {
         Some(nid)
@@ -1397,15 +1418,16 @@ async fn provision_rootfs(
     .await
     .context("failed to record rootfs volume")?;
 
-    sqlx::query(
-        r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,
-    )
-    .bind(alloc.volume_handle.volume_id)
-    .bind(vm_id)
-    .bind("rootfs")
-    .execute(&st.db)
-    .await
-    .context("inserting volume_attachment row")?;
+    // The volume_attachment row used to be INSERTed here, but the FK
+    // `volume_attachment_vm_id_fkey REFERENCES vm(id)` is violated at this
+    // point: provision_rootfs runs as part of resolve_vm_spec, which is
+    // upstream of `repo::insert(VmRow)`. The attachment row is now
+    // INSERTed in create_vm right after the VmRow lands. The storage HCI
+    // spec § "volume_attachment row lifecycle" already specified this
+    // ordering ("written by the VM lifecycle, not by storage operations,
+    // only when vm start succeeds"); this fixes a regression where the
+    // INSERT had drifted into the storage path. The volume_id propagates
+    // up to the caller via the VolumeHandle in `alloc`.
 
     // Task 12b: For slow-path backends (e.g. iSCSI), the locator is a JSON blob
     // (IQN+LUN), not a real path.  Use the attached block-device path that the
