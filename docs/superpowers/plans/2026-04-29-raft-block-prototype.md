@@ -49,8 +49,9 @@ types, a durable file-backed local replica store, a pinned Openraft 0.9.24 type/
 an `OpenraftEntryApplier` that consumes real `openraft::Entry<BlockRaftTypeConfig>` values, and an
 `InMemoryOpenraftBlockStore` harness implementing Openraft's storage shape for append/apply/snapshot
 tests. Blank and membership entries advance Openraft-visible state without mutating block bytes;
-normal `BlockCommand` entries apply to the persistent local replica. The production Openraft
-log/state-machine persistence split and network adapter are still pending.
+normal `BlockCommand` entries apply to the persistent local replica. The harness now passes
+Openraft's upstream storage conformance suite through the legacy storage adapter. The production
+Openraft log/state-machine persistence split and network adapter are still pending.
 
 Compare `openraft` and `tikv-raft-rs` against the model:
 
@@ -129,7 +130,6 @@ cargo test -p manager raft_spdk
 
 Do not start B-III until these are complete:
 
-- Run the upstream Openraft storage test suite against the promoted storage harness.
 - Promote the tested HTTP client/routes into an Openraft network adapter and real Raft node runtime.
 - Implement `raftblk` vhost-user-blk service and make VM guest writes propose through Raft.
 - Move committed block bytes from the JSON prototype store to SPDK lvol/NBD-backed replicas.

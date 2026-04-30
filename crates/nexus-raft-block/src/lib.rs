@@ -1086,6 +1086,7 @@ impl openraft::storage::RaftStorage<BlockRaftTypeConfig> for InMemoryOpenraftBlo
             .applier
             .install_snapshot(&block_snapshot)
             .map_err(openraft_store_error)?;
+        inner.applier.last_applied_log_id = meta.last_log_id;
         inner.applier.last_membership = meta.last_membership.clone();
         Ok(())
     }
@@ -1094,6 +1095,16 @@ impl openraft::storage::RaftStorage<BlockRaftTypeConfig> for InMemoryOpenraftBlo
         &mut self,
     ) -> Result<Option<openraft::Snapshot<BlockRaftTypeConfig>>, openraft::StorageError<NodeId>>
     {
+        if self
+            .inner
+            .lock()
+            .map_err(openraft_lock_error)?
+            .applier
+            .last_applied_log_id()
+            .is_none()
+        {
+            return Ok(None);
+        }
         let mut builder = self.get_snapshot_builder().await;
         openraft::storage::RaftSnapshotBuilder::build_snapshot(&mut builder)
             .await
@@ -1743,6 +1754,25 @@ mod tests {
         assert_eq!(reopened.retained_log_entries().unwrap(), 1);
         assert_eq!(reopened.last_applied_index().unwrap(), 1);
         assert_eq!(reopened.read_range(0, 512).unwrap(), vec![6; 512]);
+    }
+
+    #[test]
+    fn openraft_upstream_storage_suite_accepts_store_harness() {
+        type StoreAdaptor =
+            openraft::storage::Adaptor<BlockRaftTypeConfig, InMemoryOpenraftBlockStore>;
+
+        openraft::testing::Suite::<BlockRaftTypeConfig, StoreAdaptor, StoreAdaptor, _, ()>::test_all(
+            || async {
+                let path = tempfile::NamedTempFile::new()
+                    .unwrap()
+                    .into_temp_path()
+                    .keep()
+                    .unwrap();
+                InMemoryOpenraftBlockStore::create(FileReplicaStore::new(path), 1, 4096, 512)
+                    .unwrap()
+            },
+        )
+        .unwrap();
     }
 
     #[test]
