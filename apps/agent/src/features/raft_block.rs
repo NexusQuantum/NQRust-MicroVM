@@ -937,10 +937,23 @@ impl RaftBlockState {
     }
 
     pub async fn destroy_group(&self, group_id: Uuid) -> Result<bool, RaftBlockError> {
-        let node_id = {
+        let node_id_from_groups = {
             let groups = self.groups.lock().await;
             groups.get(&group_id).and_then(|group| group.node_id().ok())
         };
+        // If the group has already been stop-removed from the in-memory map
+        // (idempotent destroy retry, or a runtime-only registration), fall
+        // back to the on-disk SPDK manifest so we still know which node-id
+        // owns this group and can clean its store + manifest.
+        let node_id = node_id_from_groups.or_else(|| self.spdk_manifest_node_id(group_id));
+        tracing::info!(
+            target: "agent::raft_block",
+            group_id = %group_id,
+            node_id_from_groups = ?node_id_from_groups,
+            node_id_resolved = ?node_id,
+            store_kind = %self.current_store_kind(),
+            "destroy_group: resolving cleanup target"
+        );
         let store_descriptor = node_id.map(|node_id| self.store_descriptor(group_id, node_id));
         let stopped = self.stop_group(group_id).await?;
         let sidecar_dir = self.base_dir.join("raft-block").join(group_id.to_string());
@@ -949,12 +962,41 @@ impl RaftBlockState {
                 .map_err(|e| RaftBlockError::Store(format!("remove {sidecar_dir:?}: {e}")))?;
         }
         if let Some((store_kind, Some(store_path))) = store_descriptor {
+            tracing::info!(
+                target: "agent::raft_block",
+                group_id = %group_id,
+                ?store_kind,
+                store_path = %store_path,
+                "destroy_group: clearing store"
+            );
             if store_kind == RaftBlockStoreKind::SpdkLvol {
                 destroy_spdk_store_path(&store_path)?;
             }
         }
         self.remove_spdk_manifest(group_id, node_id)?;
         Ok(stopped || !sidecar_dir.exists())
+    }
+
+    /// Read the on-disk SPDK manifest for `group_id` and return its
+    /// `node_id` if a valid manifest exists. Used by `destroy_group` to
+    /// recover the cleanup target after the in-memory `groups` map has
+    /// already evicted the entry.
+    fn spdk_manifest_node_id(&self, group_id: Uuid) -> Option<u64> {
+        let dir = self.spdk_manifest_dir(group_id);
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            if entry.file_type().ok()?.is_file() {
+                let bytes = std::fs::read(entry.path()).ok()?;
+                if let Ok(manifest) =
+                    serde_json::from_slice::<SpdkGroupManifest>(&bytes)
+                {
+                    if manifest.version == 1 && manifest.group_id == group_id {
+                        return Some(manifest.node_id);
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub async fn load_existing_groups(&self) -> Result<usize, RaftBlockError> {
