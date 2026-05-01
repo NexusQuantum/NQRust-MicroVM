@@ -977,7 +977,17 @@ impl OpenraftEntryApplier {
         let last_applied_log_id = replica
             .log()
             .last()
-            .map(|entry| openraft_log_id(entry.term, replica.node_id(), entry.index));
+            .map(|entry| openraft_log_id(entry.term, replica.node_id(), entry.index))
+            .or_else(|| {
+                let compacted_through = replica.compacted_through();
+                (compacted_through > 0).then(|| {
+                    openraft_log_id(
+                        replica.snapshot().highest_term_seen,
+                        replica.node_id(),
+                        compacted_through,
+                    )
+                })
+            });
         Ok(Some(Self {
             replica,
             last_applied_log_id,

@@ -15,36 +15,33 @@
 //!  - there's no SPDK acceleration / vhost-user-blk path.
 //!
 //! `SpdkLvolReplicaStore` keeps the same load/save contract as
-//! `FileReplicaStore` but writes the serialized `PersistentReplicaState`
-//! through an SPDK NBD bdev. The same SPDK lvol that backs the guest's
-//! `vhost_user_blk` socket holds the raft-block state at a reserved
-//! offset; subsequent guest writes (committed through Raft) overwrite
-//! the block-data region of the lvol.
+//! `FileReplicaStore` but writes compact metadata plus committed block
+//! bytes through an SPDK NBD bdev. It does not rewrite the whole
+//! capacity-sized byte vector on every Raft apply.
 //!
 //! ## On-disk layout
 //!
 //! Within the lvol:
 //!
 //! ```text
-//! offset 0                    1 MiB                    capacity_bytes
+//! offset 0                    1 MiB                    1 MiB + capacity_bytes
 //! ┌────────────────────────┬─────────────────────────────────────────┐
 //! │ replica metadata       │ block data region                       │
-//! │ (length-prefixed JSON) │ (block_size-aligned guest writes)       │
+//! │ (length-prefixed JSON) │ committed guest bytes                   │
 //! └────────────────────────┴─────────────────────────────────────────┘
 //! ```
 //!
-//! The metadata region is fixed at 1 MiB so a future addition (e.g. a
-//! second log file, metrics) doesn't have to migrate existing replicas.
-//! The block data region starts at offset `METADATA_REGION_BYTES` and
-//! is what `BlockBackend::Read`/`Write` operations target.
+//! The metadata region is fixed at 1 MiB. Log history is compacted on
+//! save by treating all applied entries as included in the stored block
+//! image; on load the state resumes at `compacted_through + 1`.
 //!
 //! ## What this file ships
 //!
 //! - The struct + constructor (operator builds it from a configured NBD
 //!   device path).
 //! - The `ReplicaStoreImpl` trait impl with `load`/`save` that
-//!   length-prefix the serialized state and read/write through the NBD
-//!   block device.
+//!   length-prefix compact metadata and writes changed block ranges
+//!   through the NBD block device.
 //! - Unit tests that exercise the load/save round-trip against a
 //!   tempfile (NBD devices are file-shaped from the perspective of the
 //!   read/write syscalls, so tempfile is a sound substitute for the
@@ -59,26 +56,52 @@
 //!   `FileReplicaStore::external(Arc::new(SpdkLvolReplicaStore::new(...)))`.
 //!   That flag is wired in this commit; the operator selects per-group.
 
-use nexus_raft_block::{PersistentReplicaState, RaftBlockError, ReplicaStoreImpl};
+use nexus_raft_block::{
+    BlockOp, LogIndex, PersistentReplicaState, RaftBlockError, ReplicaStoreImpl,
+};
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-/// Bytes reserved at the start of the lvol for the serialized
-/// `PersistentReplicaState`. Must be larger than any expected serialized
-/// state. 1 MiB is generous; current state is dominated by `block_data:
-/// Vec<u8>` which lives in-memory only via `Replica::data()` (the JSON
-/// already serializes it as part of the state, so capacity_bytes worth
-/// of bytes — 1 MiB is enough for a handful of MB-sized replicas).
-///
-/// For larger replicas the metadata-only path needs separate metadata +
-/// data regions; that's the next refactor (track in B-II item 4 follow-on).
+/// Bytes reserved at the start of the lvol for compact metadata.
 pub const METADATA_REGION_BYTES: u64 = 1024 * 1024;
 
 /// Length-prefix size for the metadata payload. The prefix is 8 little-
 /// endian bytes representing the JSON byte count.
 const LENGTH_PREFIX_BYTES: usize = 8;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SpdkReplicaMeta {
+    version: u32,
+    node_id: u64,
+    capacity_bytes: u64,
+    block_size: u64,
+    highest_term_seen: u64,
+    applied_indexes: Vec<LogIndex>,
+    compacted_through: LogIndex,
+}
+
+impl SpdkReplicaMeta {
+    fn from_state(state: &PersistentReplicaState) -> Self {
+        let compacted_through = state
+            .applied_indexes
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(state.compacted_through);
+        Self {
+            version: 1,
+            node_id: state.node_id,
+            capacity_bytes: state.capacity_bytes,
+            block_size: state.block_size,
+            highest_term_seen: state.highest_term_seen,
+            applied_indexes: state.applied_indexes.clone(),
+            compacted_through,
+        }
+    }
+}
 
 /// SPDK-lvol-backed replica state storage.
 ///
@@ -146,9 +169,29 @@ impl ReplicaStoreImpl for SpdkLvolReplicaStore {
         let mut buf = vec![0u8; len as usize];
         file.read_exact(&mut buf)
             .map_err(|e| RaftBlockError::Store(format!("read body {:?}: {e}", self.nbd_path)))?;
-        let state: PersistentReplicaState = serde_json::from_slice(&buf)
+        let meta: SpdkReplicaMeta = serde_json::from_slice(&buf)
             .map_err(|e| RaftBlockError::Store(format!("decode {:?}: {e}", self.nbd_path)))?;
-        Ok(Some(state))
+        if meta.version != 1 {
+            return Err(RaftBlockError::Store(format!(
+                "unsupported SPDK replica store version {}",
+                meta.version
+            )));
+        }
+        let mut bytes = vec![0u8; meta.capacity_bytes as usize];
+        file.seek(SeekFrom::Start(METADATA_REGION_BYTES))
+            .map_err(|e| RaftBlockError::Store(format!("seek {:?}: {e}", self.nbd_path)))?;
+        file.read_exact(&mut bytes)
+            .map_err(|e| RaftBlockError::Store(format!("read blocks {:?}: {e}", self.nbd_path)))?;
+        Ok(Some(PersistentReplicaState {
+            node_id: meta.node_id,
+            capacity_bytes: meta.capacity_bytes,
+            block_size: meta.block_size,
+            highest_term_seen: meta.highest_term_seen,
+            applied_indexes: meta.applied_indexes,
+            bytes,
+            log: Vec::new(),
+            compacted_through: meta.compacted_through,
+        }))
     }
 
     fn save(&self, state: &PersistentReplicaState) -> Result<(), RaftBlockError> {
@@ -156,13 +199,13 @@ impl ReplicaStoreImpl for SpdkLvolReplicaStore {
             .write_lock
             .lock()
             .map_err(|_| RaftBlockError::Store("write_lock poisoned".into()))?;
-        let encoded = serde_json::to_vec(state)
+        let meta = SpdkReplicaMeta::from_state(state);
+        let encoded = serde_json::to_vec(&meta)
             .map_err(|e| RaftBlockError::Store(format!("encode {:?}: {e}", self.nbd_path)))?;
         let total_with_prefix = encoded.len() as u64 + LENGTH_PREFIX_BYTES as u64;
         if total_with_prefix > METADATA_REGION_BYTES {
             return Err(RaftBlockError::Store(format!(
-                "encoded state ({} bytes) exceeds metadata region ({} bytes); \
-                 increase METADATA_REGION_BYTES or split metadata vs block-data",
+                "encoded metadata ({} bytes) exceeds metadata region ({} bytes)",
                 encoded.len(),
                 METADATA_REGION_BYTES
             )));
@@ -172,26 +215,128 @@ impl ReplicaStoreImpl for SpdkLvolReplicaStore {
             .read(true)
             .open(&self.nbd_path)
             .map_err(|e| RaftBlockError::Store(format!("open {:?}: {e}", self.nbd_path)))?;
-        file.seek(SeekFrom::Start(0))
-            .map_err(|e| RaftBlockError::Store(format!("seek {:?}: {e}", self.nbd_path)))?;
-        let prefix = (encoded.len() as u64).to_le_bytes();
-        file.write_all(&prefix)
-            .map_err(|e| RaftBlockError::Store(format!("write prefix {:?}: {e}", self.nbd_path)))?;
-        file.write_all(&encoded)
-            .map_err(|e| RaftBlockError::Store(format!("write body {:?}: {e}", self.nbd_path)))?;
-        // The kernel NBD path does not honor `sync_all` directly; SPDK
-        // flushes on its own cadence. For an operator-tunable strict
-        // sync we'd add a `nbd_disk_flush` SPDK RPC call here.
+        ensure_device_len(&file, METADATA_REGION_BYTES + state.capacity_bytes)?;
+        let previous_meta = read_meta_from_open_file(&mut file, &self.nbd_path)?;
+        if let Some(previous) = previous_meta {
+            let old_applied: std::collections::BTreeSet<LogIndex> =
+                previous.applied_indexes.iter().copied().collect();
+            write_new_blocks(&mut file, &self.nbd_path, state, &old_applied)?;
+        } else {
+            write_full_blocks(&mut file, &self.nbd_path, &state.bytes)?;
+        }
+        write_meta_to_open_file(&mut file, &self.nbd_path, &encoded)?;
         file.sync_all()
             .map_err(|e| RaftBlockError::Store(format!("sync {:?}: {e}", self.nbd_path)))?;
         Ok(())
     }
 }
 
+fn ensure_device_len(file: &std::fs::File, required_len: u64) -> Result<(), RaftBlockError> {
+    let len = file
+        .metadata()
+        .map_err(|e| RaftBlockError::Store(format!("stat NBD device: {e}")))?
+        .len();
+    if len < required_len {
+        return Err(RaftBlockError::Store(format!(
+            "NBD device length {len} is smaller than required raft_spdk layout {required_len}"
+        )));
+    }
+    Ok(())
+}
+
+fn read_meta_from_open_file(
+    file: &mut std::fs::File,
+    path: &PathBuf,
+) -> Result<Option<SpdkReplicaMeta>, RaftBlockError> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| RaftBlockError::Store(format!("seek {path:?}: {e}")))?;
+    let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
+    match file.read_exact(&mut prefix) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(err) => {
+            return Err(RaftBlockError::Store(format!(
+                "read prefix {path:?}: {err}"
+            )))
+        }
+    }
+    let len = u64::from_le_bytes(prefix);
+    if len == 0 {
+        return Ok(None);
+    }
+    if len > METADATA_REGION_BYTES - LENGTH_PREFIX_BYTES as u64 {
+        return Err(RaftBlockError::Store(format!(
+            "metadata length {len} exceeds reserved region {METADATA_REGION_BYTES}"
+        )));
+    }
+    let mut buf = vec![0u8; len as usize];
+    file.read_exact(&mut buf)
+        .map_err(|e| RaftBlockError::Store(format!("read body {path:?}: {e}")))?;
+    let meta: SpdkReplicaMeta = serde_json::from_slice(&buf)
+        .map_err(|e| RaftBlockError::Store(format!("decode {path:?}: {e}")))?;
+    if meta.version != 1 {
+        return Err(RaftBlockError::Store(format!(
+            "unsupported SPDK replica store version {}",
+            meta.version
+        )));
+    }
+    Ok(Some(meta))
+}
+
+fn write_meta_to_open_file(
+    file: &mut std::fs::File,
+    path: &PathBuf,
+    encoded: &[u8],
+) -> Result<(), RaftBlockError> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| RaftBlockError::Store(format!("seek {path:?}: {e}")))?;
+    file.write_all(&(encoded.len() as u64).to_le_bytes())
+        .map_err(|e| RaftBlockError::Store(format!("write prefix {path:?}: {e}")))?;
+    file.write_all(encoded)
+        .map_err(|e| RaftBlockError::Store(format!("write body {path:?}: {e}")))
+}
+
+fn write_full_blocks(
+    file: &mut std::fs::File,
+    path: &PathBuf,
+    bytes: &[u8],
+) -> Result<(), RaftBlockError> {
+    file.seek(SeekFrom::Start(METADATA_REGION_BYTES))
+        .map_err(|e| RaftBlockError::Store(format!("seek blocks {path:?}: {e}")))?;
+    file.write_all(bytes)
+        .map_err(|e| RaftBlockError::Store(format!("write blocks {path:?}: {e}")))
+}
+
+fn write_new_blocks(
+    file: &mut std::fs::File,
+    path: &PathBuf,
+    state: &PersistentReplicaState,
+    old_applied: &std::collections::BTreeSet<LogIndex>,
+) -> Result<(), RaftBlockError> {
+    let new_applied: std::collections::BTreeSet<LogIndex> =
+        state.applied_indexes.iter().copied().collect();
+    for entry in &state.log {
+        if old_applied.contains(&entry.index) || !new_applied.contains(&entry.index) {
+            continue;
+        }
+        if let BlockOp::Write { offset, bytes, .. } = &entry.op {
+            file.seek(SeekFrom::Start(METADATA_REGION_BYTES + *offset))
+                .map_err(|e| RaftBlockError::Store(format!("seek blocks {path:?}: {e}")))?;
+            file.write_all(bytes)
+                .map_err(|e| RaftBlockError::Store(format!("write blocks {path:?}: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_raft_block::{LogIndex, PersistentReplicaState, Replica};
+    use nexus_raft_block::{
+        BlockCommand, FileReplicaStore, LogIndex, PersistentReplica, PersistentReplicaState,
+        Replica,
+    };
+    use std::sync::Arc;
 
     /// The on-disk format round-trips: save followed by load yields the
     /// same state. Uses a tempfile in lieu of a real NBD device — the
@@ -222,6 +367,8 @@ mod tests {
         // The Replica round-trip is the truthiest assertion: rebuild the
         // replica from the loaded state and verify it matches what we
         // saved.
+        assert_eq!(loaded.log, Vec::new());
+        assert_eq!(loaded.compacted_through, 0);
         let (loaded_replica, _log, _compacted): (Replica, _, LogIndex) =
             loaded.into_replica().unwrap();
         assert_eq!(loaded_replica.id(), replica.id());
@@ -235,10 +382,10 @@ mod tests {
         assert!(store.load().unwrap().is_none());
     }
 
-    /// Saving a state larger than the metadata region returns a clear
-    /// error rather than silently truncating.
+    /// Saving to a device that is not large enough for metadata + blocks
+    /// returns a clear error rather than silently truncating.
     #[test]
-    fn oversized_state_is_rejected() {
+    fn undersized_device_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let device = dir.path().join("fake-nbd");
         std::fs::File::create(&device)
@@ -247,22 +394,53 @@ mod tests {
             .unwrap();
         let store = SpdkLvolReplicaStore::new(&device);
 
-        // Fabricate a Replica with capacity exceeding the metadata
-        // region. The serialized state includes the block data buffer,
-        // so a 4 MiB replica's state is at least 4 MiB.
-        let big_capacity = (METADATA_REGION_BYTES * 4) as usize;
-        let replica = Replica::new(1, big_capacity as u64, 4096).unwrap();
+        let replica = Replica::new(1, 8192, 4096).unwrap();
         let state = PersistentReplicaState::from_replica(&replica, vec![], 0);
         let err = store.save(&state).unwrap_err();
         match err {
             RaftBlockError::Store(msg) => {
                 assert!(
-                    msg.contains("exceeds metadata region"),
+                    msg.contains("smaller than required"),
                     "unexpected error: {msg}"
                 );
             }
             other => panic!("expected Store error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn persistent_replica_reopens_from_compacted_spdk_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let device = dir.path().join("fake-nbd");
+        std::fs::File::create(&device)
+            .unwrap()
+            .set_len(METADATA_REGION_BYTES + 4096)
+            .unwrap();
+        let external = Arc::new(SpdkLvolReplicaStore::new(&device));
+        let store = FileReplicaStore::external(external);
+        let mut replica = PersistentReplica::create(store.clone(), 7, 4096, 512).unwrap();
+        replica
+            .append_command(
+                1,
+                BlockCommand::Write {
+                    offset: 512,
+                    bytes: vec![0xAB; 512],
+                },
+            )
+            .unwrap();
+        drop(replica);
+
+        let reopened = PersistentReplica::open(store).unwrap().unwrap();
+        assert_eq!(reopened.compacted_through(), 1);
+        assert!(reopened.log().is_empty());
+        assert_eq!(reopened.read_range(512, 512).unwrap(), vec![0xAB; 512]);
+
+        let mut raw = std::fs::File::open(&device).unwrap();
+        raw.seek(SeekFrom::Start(METADATA_REGION_BYTES + 512))
+            .unwrap();
+        let mut block = vec![0; 512];
+        raw.read_exact(&mut block).unwrap();
+        assert_eq!(block, vec![0xAB; 512]);
     }
 
     /// The store implements the `ReplicaStoreImpl` trait shape so it can
