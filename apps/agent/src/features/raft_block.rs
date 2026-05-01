@@ -9,6 +9,7 @@ use nexus_raft_block::{
     openraft_entry, BlockCommand, BlockRaftTypeConfig, BlockResponse, BlockSnapshot,
     FileReplicaStore, InMemoryOpenraftBlockStore, RaftBlockError, VoteOutcome,
 };
+use nexus_storage::RaftBlockStoreKind;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -46,11 +47,11 @@ impl RaftBlockStoreConfig {
         }
     }
 
-    fn kind(&self) -> &'static str {
+    fn kind(&self) -> RaftBlockStoreKind {
         match self {
-            Self::Sidecar => "sidecar",
-            Self::SpdkLvol { .. } => "spdk_lvol",
-            Self::InMemory => "in_memory",
+            Self::Sidecar => RaftBlockStoreKind::Sidecar,
+            Self::SpdkLvol { .. } => RaftBlockStoreKind::SpdkLvol,
+            Self::InMemory => RaftBlockStoreKind::InMemory,
         }
     }
 }
@@ -75,7 +76,7 @@ pub struct RaftBlockStatus {
     pub state: String,
     pub data_path: String,
     pub transport: String,
-    pub store_kind: String,
+    pub store_kind: RaftBlockStoreKind,
     pub store_path: Option<String>,
     pub node_id: Option<u64>,
     pub capacity_bytes: Option<u64>,
@@ -812,22 +813,29 @@ impl RaftBlockState {
         )
     }
 
-    fn store_descriptor(&self, group_id: Uuid, node_id: u64) -> (String, Option<String>) {
+    fn store_descriptor(
+        &self,
+        group_id: Uuid,
+        node_id: u64,
+    ) -> (RaftBlockStoreKind, Option<String>) {
         if let RaftBlockStoreConfig::SpdkLvol { template } = &self.store_config {
             return (
-                "spdk_lvol".into(),
+                RaftBlockStoreKind::SpdkLvol,
                 Some(self.render_spdk_template(template, group_id, node_id)),
             );
         }
         if matches!(self.store_config, RaftBlockStoreConfig::InMemory) {
-            return ("in_memory".into(), None);
+            return (RaftBlockStoreKind::InMemory, None);
         }
         let path = self
             .base_dir
             .join("raft-block")
             .join(group_id.to_string())
             .join(format!("node-{node_id}.json"));
-        ("sidecar".into(), Some(path.to_string_lossy().into_owned()))
+        (
+            RaftBlockStoreKind::Sidecar,
+            Some(path.to_string_lossy().into_owned()),
+        )
     }
 
     fn render_spdk_template(&self, template: &str, group_id: Uuid, node_id: u64) -> String {
@@ -854,7 +862,7 @@ impl RaftBlockState {
         capacity_bytes: u64,
         block_size: u64,
     ) -> Result<(), RaftBlockError> {
-        if self.current_store_kind() != "spdk_lvol" {
+        if self.current_store_kind() != RaftBlockStoreKind::SpdkLvol {
             return Ok(());
         }
         let dir = self.spdk_manifest_dir(group_id);
@@ -901,8 +909,8 @@ impl RaftBlockState {
         Ok(())
     }
 
-    fn current_store_kind(&self) -> String {
-        self.store_config.kind().into()
+    fn current_store_kind(&self) -> RaftBlockStoreKind {
+        self.store_config.kind()
     }
 
     pub async fn ensure_group(
@@ -941,7 +949,7 @@ impl RaftBlockState {
                 .map_err(|e| RaftBlockError::Store(format!("remove {sidecar_dir:?}: {e}")))?;
         }
         if let Some((store_kind, Some(store_path))) = store_descriptor {
-            if store_kind == "spdk_lvol" {
+            if store_kind == RaftBlockStoreKind::SpdkLvol {
                 destroy_spdk_store_path(&store_path)?;
             }
         }
@@ -1012,7 +1020,7 @@ impl RaftBlockState {
     }
 
     async fn load_existing_spdk_groups(&self) -> Result<usize, RaftBlockError> {
-        if self.current_store_kind() != "spdk_lvol" {
+        if self.current_store_kind() != RaftBlockStoreKind::SpdkLvol {
             return Ok(0);
         }
         let root = self.base_dir.join("raft-block-spdk");
@@ -1078,7 +1086,7 @@ impl RaftBlockState {
     }
 
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
-        if let Some(desired) = req.desired_store_kind.as_deref() {
+        if let Some(desired) = req.desired_store_kind {
             let actual = self.current_store_kind();
             if desired != actual {
                 return Err(RaftBlockError::Store(format!(
@@ -1364,7 +1372,7 @@ pub struct CreateGroupReq {
     pub capacity_bytes: u64,
     pub block_size: u64,
     #[serde(default)]
-    pub desired_store_kind: Option<String>,
+    pub desired_store_kind: Option<RaftBlockStoreKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1857,7 +1865,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
-                desired_store_kind: Some("spdk_lvol".into()),
+                desired_store_kind: Some(RaftBlockStoreKind::SpdkLvol),
             }),
         )
         .await
@@ -1929,7 +1937,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
-                desired_store_kind: Some("spdk_lvol".into()),
+                desired_store_kind: Some(RaftBlockStoreKind::SpdkLvol),
             }),
         )
         .await
@@ -1958,7 +1966,7 @@ mod tests {
         assert_eq!(restarted.load_existing_groups().await.unwrap(), 1);
         let status = restarted.status(group_id).await;
         assert_eq!(status.state, "started");
-        assert_eq!(status.store_kind, "spdk_lvol");
+        assert_eq!(status.store_kind, RaftBlockStoreKind::SpdkLvol);
         assert_eq!(status.store_path.as_deref(), Some(device.to_str().unwrap()));
         let bytes = restarted
             .read(ReadReq {

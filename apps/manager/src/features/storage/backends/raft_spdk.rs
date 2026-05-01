@@ -5,9 +5,9 @@
 //! shape while returning NotSupported for mutating lifecycle calls.
 
 use nexus_storage::{
-    BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts, RaftSpdkLocator,
-    RaftSpdkReplicaLocator, StorageError, VolumeHandle, VolumeSnapshotHandle,
-    RAFT_SPDK_DEFAULT_BLOCK_SIZE, RAFT_SPDK_STATIC_REPLICA_COUNT,
+    BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts,
+    RaftBlockStoreKind, RaftSpdkLocator, RaftSpdkReplicaLocator, StorageError, VolumeHandle,
+    VolumeSnapshotHandle, RAFT_SPDK_DEFAULT_BLOCK_SIZE, RAFT_SPDK_STATIC_REPLICA_COUNT,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -78,7 +78,7 @@ impl RaftSpdkControlPlaneBackend {
         replica: &RaftSpdkReplicaConfig,
         group_id: Uuid,
         size_bytes: u64,
-        desired_store_kind: &'static str,
+        desired_store_kind: RaftBlockStoreKind,
     ) -> Result<(), StorageError> {
         let req = CreateRaftBlockGroupReq {
             group_id,
@@ -268,7 +268,11 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
                     replica,
                     group_id,
                     opts.size_bytes,
-                    if production { "spdk_lvol" } else { "sidecar" },
+                    if production {
+                        RaftBlockStoreKind::SpdkLvol
+                    } else {
+                        RaftBlockStoreKind::Sidecar
+                    },
                 )
                 .await
             {
@@ -417,7 +421,7 @@ struct CreateRaftBlockGroupReq {
     node_id: u64,
     capacity_bytes: u64,
     block_size: u64,
-    desired_store_kind: Option<&'static str>,
+    desired_store_kind: Option<RaftBlockStoreKind>,
 }
 
 #[derive(Debug, Serialize)]

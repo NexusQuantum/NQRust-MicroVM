@@ -1,10 +1,35 @@
 use crate::error::StorageError;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::PathBuf;
 use uuid::Uuid;
 
 pub const RAFT_SPDK_DEFAULT_BLOCK_SIZE: u64 = 512;
 pub const RAFT_SPDK_STATIC_REPLICA_COUNT: usize = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RaftBlockStoreKind {
+    Sidecar,
+    SpdkLvol,
+    InMemory,
+}
+
+impl RaftBlockStoreKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sidecar => "sidecar",
+            Self::SpdkLvol => "spdk_lvol",
+            Self::InMemory => "in_memory",
+        }
+    }
+}
+
+impl fmt::Display for RaftBlockStoreKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RaftSpdkReplicaLocator {

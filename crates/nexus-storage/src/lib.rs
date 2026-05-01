@@ -17,8 +17,8 @@ pub use error::StorageError;
 pub use handle::{AttachedPath, VolumeHandle, VolumeSnapshotHandle};
 pub use host::HostBackend;
 pub use raft_spdk::{
-    raftblk_socket_path, RaftSpdkLocator, RaftSpdkReplicaLocator, RAFT_SPDK_DEFAULT_BLOCK_SIZE,
-    RAFT_SPDK_STATIC_REPLICA_COUNT,
+    raftblk_socket_path, RaftBlockStoreKind, RaftSpdkLocator, RaftSpdkReplicaLocator,
+    RAFT_SPDK_DEFAULT_BLOCK_SIZE, RAFT_SPDK_STATIC_REPLICA_COUNT,
 };
 pub use spdk::{spdk_vhost_controller_name, SpdkJsonRpcClient, SpdkLvolLocator};
 pub use types::{BackendInstanceId, BackendKind, Capabilities, CreateOpts};
