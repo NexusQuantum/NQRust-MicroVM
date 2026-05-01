@@ -86,11 +86,22 @@ pub async fn create_and_start(
         return create_from_snapshot(st, id, name, template_id, snapshot, None).await;
     }
 
-    let host = st
-        .hosts
-        .first_healthy()
-        .await
-        .context("no healthy hosts available")?;
+    let host = if let Some(host_id) = req.host_id {
+        let host = st
+            .hosts
+            .get(host_id)
+            .await
+            .with_context(|| format!("failed to load requested host {host_id}"))?;
+        if host.last_seen_at <= chrono::Utc::now() - chrono::Duration::seconds(30) {
+            bail!("requested host {host_id} is not healthy");
+        }
+        host
+    } else {
+        st.hosts
+            .first_healthy()
+            .await
+            .context("no healthy hosts available")?
+    };
 
     // --- Task 12a: Scheduler filter — reject host if it doesn't support the requested backend ---
     {
@@ -1283,7 +1294,7 @@ async fn resolve_vm_spec(
 ) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
-    let (rootfs_path, rootfs_size_bytes) = provision_rootfs(
+    let (rootfs_path, rootfs_size_bytes, rootfs_is_vhost_user) = provision_rootfs(
         st,
         req.rootfs_image_id,
         req.rootfs_path,
@@ -1301,7 +1312,7 @@ async fn resolve_vm_spec(
         mem_mib: req.mem_mib,
         kernel_path,
         rootfs_path,
-        rootfs_is_vhost_user: false,
+        rootfs_is_vhost_user,
         rootfs_size_bytes,
     })
 }
@@ -1343,7 +1354,7 @@ async fn provision_rootfs(
     req_backend_id: Option<Uuid>,
     vm_host_id: Uuid,
     host_addr: &str,
-) -> Result<(String, Option<u64>)> {
+) -> Result<(String, Option<u64>, bool)> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
         let image = st
@@ -1373,7 +1384,7 @@ async fn provision_rootfs(
     if is_already_vm_copy {
         // Already a per-VM copy from container/function feature, use it directly
         info!(vm_id = %vm_id, source = %source_path, "using pre-copied rootfs from container/function feature");
-        return Ok((source_path, None));
+        return Ok((source_path, None, false));
     }
 
     // For regular VMs: allocate rootfs through the storage Registry.
@@ -1438,13 +1449,16 @@ async fn provision_rootfs(
     // NOTE: data disks allocated via `allocate_data_disk` go through `provision`
     // only and do not yet have an agent-attach step, so iSCSI data disks are
     // not supported in Plan 2. See TODO in create_drive / provision_data_disk.
-    let firecracker_drive_path = match &alloc.attached_for_caller {
-        Some(attached) => attached.path().to_string_lossy().into_owned(),
-        None => alloc.volume_handle.locator.clone(),
+    let (firecracker_drive_path, is_vhost_user) = match &alloc.attached_for_caller {
+        Some(attached) => {
+            let is_vhost = matches!(attached, nexus_storage::AttachedPath::VhostUserSock(_));
+            (attached.path().to_string_lossy().into_owned(), is_vhost)
+        }
+        None => (alloc.volume_handle.locator.clone(), false),
     };
     let size_bytes = alloc.volume_handle.size_bytes;
 
-    Ok((firecracker_drive_path, Some(size_bytes)))
+    Ok((firecracker_drive_path, Some(size_bytes), is_vhost_user))
 }
 
 fn ensure_allowed_path(st: &AppState, path: &str) -> Result<()> {
@@ -2795,6 +2809,7 @@ mod tests {
                 network_id: None,
                 port_forwards: vec![],
                 backend_id: None,
+                host_id: None,
             },
             None,
             None,
@@ -2871,6 +2886,7 @@ mod tests {
                 network_id: None,
                 port_forwards: vec![],
                 backend_id: None,
+                host_id: None,
             },
             None,
             None,

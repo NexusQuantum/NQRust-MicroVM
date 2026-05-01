@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::io::Cursor;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::{Bound, RangeBounds};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -34,11 +34,23 @@ openraft::declare_raft_types!(
 );
 
 pub fn default_openraft_config() -> Result<std::sync::Arc<openraft::Config>, RaftBlockError> {
+    // Heartbeat / election timing.
+    //
+    // Why these values: the agent-side network adapter posts append_entries
+    // over HTTP+JSON. In nested-KVM environments (KubeVirt) loopback request
+    // RTT can spike past 100ms under load (populate streams 64MiB through
+    // Raft, each chunk a separate commit). With heartbeat_interval=100 and
+    // election timeout starting at 500ms, a follower whose append_entries
+    // takes >500ms to round-trip flips to candidate, term climbs, and the
+    // group falls into permanent election storm. Bumping heartbeat to 500ms
+    // and election timeout to 2.5–5s gives ample slack for HTTP/JSON RPCs
+    // under bursty populate load while keeping single-node failure detection
+    // under ~5s.
     let config = openraft::Config {
         cluster_name: "nqrust-raft-block".into(),
-        heartbeat_interval: 100,
-        election_timeout_min: 500,
-        election_timeout_max: 1000,
+        heartbeat_interval: 500,
+        election_timeout_min: 2500,
+        election_timeout_max: 5000,
         ..Default::default()
     };
     config
@@ -352,7 +364,7 @@ impl PersistentReplicaState {
 ///
 /// The trait is consumed only via `FileReplicaStore::external(...)`; the
 /// existing constructor `FileReplicaStore::new(path)` keeps the
-/// JSON-file behavior with no changes for callers.
+/// filesystem-backed behavior with no changes for callers.
 pub trait ReplicaStoreImpl: Send + Sync + std::fmt::Debug {
     /// Read the persisted replica state, or `Ok(None)` if no prior state
     /// is durable yet (fresh deployment / first call before the first
@@ -380,12 +392,17 @@ pub struct FileReplicaStore {
 
 #[derive(Debug, Clone)]
 enum ReplicaStoreKind {
-    /// JSON-encoded `PersistentReplicaState` written to a single file
-    /// with crash-safe rename. The original `FileReplicaStore` behavior.
+    /// Filesystem-backed `PersistentReplicaState`. New writes use a
+    /// sidecar directory with split metadata/block/log files; legacy
+    /// monolithic JSON files still load.
     JsonFile(PathBuf),
     /// External implementation. Boxed because the impl may be
     /// agent-specific (e.g. holds an HTTP client to local SPDK).
     External(std::sync::Arc<dyn ReplicaStoreImpl>),
+    /// No-op: never persists. `load()` always returns `None`. Used by
+    /// smoke tests where crash-recovery semantics aren't needed and the
+    /// O(N²) cost of full-state JSON rewrites would dominate runtime.
+    NoOp,
 }
 
 impl FileReplicaStore {
@@ -406,6 +423,17 @@ impl FileReplicaStore {
         }
     }
 
+    /// In-memory store that never writes to disk. `load()` always
+    /// returns `None`, `save()` is a no-op. Intended for smoke tests
+    /// and ephemeral operator setups where the JSON path's per-write
+    /// O(N²) full-state rewrite dominates runtime. Crash recovery is
+    /// forfeited.
+    pub fn in_memory() -> Self {
+        Self {
+            inner: ReplicaStoreKind::NoOp,
+        }
+    }
+
     /// Read the persisted state. Returns `Ok(None)` if nothing has been
     /// saved yet (the JSON file is missing, or the external store
     /// reports no state).
@@ -413,6 +441,7 @@ impl FileReplicaStore {
         match &self.inner {
             ReplicaStoreKind::JsonFile(path) => load_json(path),
             ReplicaStoreKind::External(impl_) => impl_.load(),
+            ReplicaStoreKind::NoOp => Ok(None),
         }
     }
 
@@ -422,11 +451,64 @@ impl FileReplicaStore {
         match &self.inner {
             ReplicaStoreKind::JsonFile(path) => save_json(path, state),
             ReplicaStoreKind::External(impl_) => impl_.save(state),
+            ReplicaStoreKind::NoOp => Ok(()),
         }
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SidecarReplicaMeta {
+    version: u32,
+    node_id: NodeId,
+    capacity_bytes: u64,
+    block_size: u64,
+    highest_term_seen: Term,
+    applied_indexes: Vec<LogIndex>,
+    compacted_through: LogIndex,
+    log_len: usize,
+}
+
+impl SidecarReplicaMeta {
+    fn from_state(state: &PersistentReplicaState) -> Self {
+        Self {
+            version: 1,
+            node_id: state.node_id,
+            capacity_bytes: state.capacity_bytes,
+            block_size: state.block_size,
+            highest_term_seen: state.highest_term_seen,
+            applied_indexes: state.applied_indexes.clone(),
+            compacted_through: state.compacted_through,
+            log_len: state.log.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SidecarPaths {
+    dir: PathBuf,
+    meta: PathBuf,
+    blocks: PathBuf,
+    log: PathBuf,
+}
+
+fn sidecar_paths(path: &Path) -> SidecarPaths {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("replica-state");
+    let dir = path.with_file_name(format!("{file_name}.d"));
+    SidecarPaths {
+        meta: dir.join("meta.json"),
+        blocks: dir.join("blocks.bin"),
+        log: dir.join("log.bin"),
+        dir,
+    }
+}
+
 fn load_json(path: &Path) -> Result<Option<PersistentReplicaState>, RaftBlockError> {
+    if sidecar_paths(path).meta.exists() {
+        return load_sidecar(path);
+    }
     if !path.exists() {
         return Ok(None);
     }
@@ -441,6 +523,11 @@ fn load_json(path: &Path) -> Result<Option<PersistentReplicaState>, RaftBlockErr
 }
 
 fn save_json(path: &Path, state: &PersistentReplicaState) -> Result<(), RaftBlockError> {
+    save_sidecar(path, state)
+}
+
+#[allow(dead_code)]
+fn save_legacy_json(path: &Path, state: &PersistentReplicaState) -> Result<(), RaftBlockError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| RaftBlockError::Store(format!("create {parent:?}: {e}")))?;
@@ -459,6 +546,255 @@ fn save_json(path: &Path, state: &PersistentReplicaState) -> Result<(), RaftBloc
     std::fs::rename(&tmp_path, path)
         .map_err(|e| RaftBlockError::Store(format!("rename {tmp_path:?}: {e}")))?;
     Ok(())
+}
+
+fn load_sidecar(path: &Path) -> Result<Option<PersistentReplicaState>, RaftBlockError> {
+    let paths = sidecar_paths(path);
+    let Some(meta) = load_sidecar_meta(&paths.meta)? else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(&paths.blocks).map_err(|e| {
+        RaftBlockError::Store(format!("read sidecar blocks {:?}: {e}", paths.blocks))
+    })?;
+    if bytes.len() as u64 != meta.capacity_bytes {
+        return Err(RaftBlockError::Store(format!(
+            "sidecar blocks length {} does not match capacity {}",
+            bytes.len(),
+            meta.capacity_bytes
+        )));
+    }
+    let log = read_sidecar_log(&paths.log)?;
+    if log.len() != meta.log_len {
+        return Err(RaftBlockError::Store(format!(
+            "sidecar log length {} does not match meta length {}",
+            log.len(),
+            meta.log_len
+        )));
+    }
+    Ok(Some(PersistentReplicaState {
+        node_id: meta.node_id,
+        capacity_bytes: meta.capacity_bytes,
+        block_size: meta.block_size,
+        highest_term_seen: meta.highest_term_seen,
+        applied_indexes: meta.applied_indexes,
+        bytes,
+        log,
+        compacted_through: meta.compacted_through,
+    }))
+}
+
+fn save_sidecar(path: &Path, state: &PersistentReplicaState) -> Result<(), RaftBlockError> {
+    let paths = sidecar_paths(path);
+    std::fs::create_dir_all(&paths.dir)
+        .map_err(|e| RaftBlockError::Store(format!("create sidecar dir {:?}: {e}", paths.dir)))?;
+
+    let previous_meta = load_sidecar_meta(&paths.meta)?;
+    let rewrite_all = previous_meta.as_ref().is_none_or(|meta| {
+        meta.node_id != state.node_id
+            || meta.capacity_bytes != state.capacity_bytes
+            || meta.block_size != state.block_size
+            || meta.compacted_through != state.compacted_through
+            || state.log.len() < meta.log_len
+    });
+
+    if rewrite_all {
+        write_full_blocks(&paths.blocks, &state.bytes)?;
+        rewrite_sidecar_log(&paths.log, &state.log)?;
+    } else if let Some(meta) = previous_meta.as_ref() {
+        ensure_blocks_file(&paths.blocks, state.capacity_bytes)?;
+        let old_applied: BTreeSet<LogIndex> = meta.applied_indexes.iter().copied().collect();
+        apply_new_writes_to_blocks(&paths.blocks, &old_applied, state)?;
+        if state.log.len() > meta.log_len {
+            append_sidecar_log(&paths.log, &state.log[meta.log_len..])?;
+        }
+    }
+
+    write_json_atomically(&paths.meta, &SidecarReplicaMeta::from_state(state))
+}
+
+fn load_sidecar_meta(path: &Path) -> Result<Option<SidecarReplicaMeta>, RaftBlockError> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(RaftBlockError::Store(format!(
+                "read sidecar meta {path:?}: {err}"
+            )))
+        }
+    };
+    let meta: SidecarReplicaMeta = serde_json::from_slice(&bytes)
+        .map_err(|e| RaftBlockError::Store(format!("decode sidecar meta {path:?}: {e}")))?;
+    if meta.version != 1 {
+        return Err(RaftBlockError::Store(format!(
+            "unsupported sidecar replica store version {}",
+            meta.version
+        )));
+    }
+    Ok(Some(meta))
+}
+
+fn ensure_blocks_file(path: &Path, capacity_bytes: u64) -> Result<(), RaftBlockError> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| RaftBlockError::Store(format!("open sidecar blocks {path:?}: {e}")))?;
+    let current_len = file
+        .metadata()
+        .map_err(|e| RaftBlockError::Store(format!("stat sidecar blocks {path:?}: {e}")))?
+        .len();
+    if current_len != capacity_bytes {
+        file.set_len(capacity_bytes)
+            .map_err(|e| RaftBlockError::Store(format!("resize sidecar blocks {path:?}: {e}")))?;
+    }
+    Ok(())
+}
+
+fn write_full_blocks(path: &Path, bytes: &[u8]) -> Result<(), RaftBlockError> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| RaftBlockError::Store(format!("create sidecar blocks {path:?}: {e}")))?;
+    file.write_all(bytes)
+        .map_err(|e| RaftBlockError::Store(format!("write sidecar blocks {path:?}: {e}")))?;
+    file.sync_all()
+        .map_err(|e| RaftBlockError::Store(format!("sync sidecar blocks {path:?}: {e}")))
+}
+
+fn apply_new_writes_to_blocks(
+    path: &Path,
+    old_applied: &BTreeSet<LogIndex>,
+    state: &PersistentReplicaState,
+) -> Result<(), RaftBlockError> {
+    let new_applied: BTreeSet<LogIndex> = state.applied_indexes.iter().copied().collect();
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| RaftBlockError::Store(format!("open sidecar blocks {path:?}: {e}")))?;
+    for entry in &state.log {
+        if old_applied.contains(&entry.index) || !new_applied.contains(&entry.index) {
+            continue;
+        }
+        if let BlockOp::Write { offset, bytes, .. } = &entry.op {
+            file.seek(SeekFrom::Start(*offset))
+                .map_err(|e| RaftBlockError::Store(format!("seek sidecar blocks {path:?}: {e}")))?;
+            file.write_all(bytes).map_err(|e| {
+                RaftBlockError::Store(format!("write sidecar blocks {path:?}: {e}"))
+            })?;
+        }
+    }
+    file.sync_all()
+        .map_err(|e| RaftBlockError::Store(format!("sync sidecar blocks {path:?}: {e}")))
+}
+
+fn read_sidecar_log(path: &Path) -> Result<Vec<LogEntry>, RaftBlockError> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(RaftBlockError::Store(format!(
+                "open sidecar log {path:?}: {err}"
+            )))
+        }
+    };
+    let mut entries = Vec::new();
+    loop {
+        let mut prefix = [0u8; 8];
+        match file.read_exact(&mut prefix) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => {
+                return Err(RaftBlockError::Store(format!(
+                    "read sidecar log prefix {path:?}: {err}"
+                )))
+            }
+        }
+        let len = u64::from_le_bytes(prefix);
+        if len == 0 {
+            return Err(RaftBlockError::Store(format!(
+                "zero-length sidecar log entry in {path:?}"
+            )));
+        }
+        let mut buf = vec![0u8; len as usize];
+        file.read_exact(&mut buf)
+            .map_err(|e| RaftBlockError::Store(format!("read sidecar log body {path:?}: {e}")))?;
+        entries.push(
+            serde_json::from_slice(&buf)
+                .map_err(|e| RaftBlockError::Store(format!("decode sidecar log {path:?}: {e}")))?,
+        );
+    }
+    Ok(entries)
+}
+
+fn append_sidecar_log(path: &Path, entries: &[LogEntry]) -> Result<(), RaftBlockError> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| RaftBlockError::Store(format!("open sidecar log {path:?}: {e}")))?;
+    write_log_entries(&mut file, path, entries)?;
+    file.sync_all()
+        .map_err(|e| RaftBlockError::Store(format!("sync sidecar log {path:?}: {e}")))
+}
+
+fn rewrite_sidecar_log(path: &Path, entries: &[LogEntry]) -> Result<(), RaftBlockError> {
+    let tmp_path = tmp_path_for(path);
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp_path)
+            .map_err(|e| RaftBlockError::Store(format!("create sidecar log {tmp_path:?}: {e}")))?;
+        write_log_entries(&mut file, path, entries)?;
+        file.sync_all()
+            .map_err(|e| RaftBlockError::Store(format!("sync sidecar log {tmp_path:?}: {e}")))?;
+    }
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| RaftBlockError::Store(format!("rename {tmp_path:?} -> {path:?}: {e}")))
+}
+
+fn write_log_entries(
+    file: &mut std::fs::File,
+    path: &Path,
+    entries: &[LogEntry],
+) -> Result<(), RaftBlockError> {
+    for entry in entries {
+        let encoded = serde_json::to_vec(entry)
+            .map_err(|e| RaftBlockError::Store(format!("encode sidecar log {path:?}: {e}")))?;
+        file.write_all(&(encoded.len() as u64).to_le_bytes())
+            .map_err(|e| {
+                RaftBlockError::Store(format!("write sidecar log prefix {path:?}: {e}"))
+            })?;
+        file.write_all(&encoded)
+            .map_err(|e| RaftBlockError::Store(format!("write sidecar log body {path:?}: {e}")))?;
+    }
+    Ok(())
+}
+
+fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> Result<(), RaftBlockError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| RaftBlockError::Store(format!("create {parent:?}: {e}")))?;
+    }
+    let tmp_path = tmp_path_for(path);
+    let encoded = serde_json::to_vec(value)
+        .map_err(|e| RaftBlockError::Store(format!("encode {path:?}: {e}")))?;
+    {
+        let mut file = std::fs::File::create(&tmp_path)
+            .map_err(|e| RaftBlockError::Store(format!("create {tmp_path:?}: {e}")))?;
+        file.write_all(&encoded)
+            .map_err(|e| RaftBlockError::Store(format!("write {tmp_path:?}: {e}")))?;
+        file.sync_all()
+            .map_err(|e| RaftBlockError::Store(format!("sync {tmp_path:?}: {e}")))?;
+    }
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| RaftBlockError::Store(format!("rename {tmp_path:?}: {e}")))
 }
 
 fn tmp_path_for(path: &Path) -> PathBuf {
@@ -1928,6 +2264,48 @@ mod tests {
         assert_eq!(reopened.log().len(), 1);
         assert_eq!(reopened.log()[0].index, 1);
         assert_eq!(reopened.read_range(0, 512).unwrap(), vec![8; 512]);
+    }
+
+    #[test]
+    fn file_store_uses_sidecar_blocks_and_append_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node-1.json");
+        let store = FileReplicaStore::new(&path);
+        let mut replica = PersistentReplica::create(store.clone(), 1, 4096, 512).unwrap();
+
+        replica
+            .append_command(
+                1,
+                BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![3; 512],
+                },
+            )
+            .unwrap();
+        replica
+            .append_command(
+                1,
+                BlockCommand::Write {
+                    offset: 512,
+                    bytes: vec![4; 512],
+                },
+            )
+            .unwrap();
+        drop(replica);
+
+        let sidecar = sidecar_paths(&path);
+        assert!(sidecar.meta.exists());
+        assert!(sidecar.blocks.exists());
+        assert!(sidecar.log.exists());
+        assert!(
+            !path.exists(),
+            "new writes should not use legacy monolithic JSON"
+        );
+
+        let reopened = PersistentReplica::open(store).unwrap().unwrap();
+        assert_eq!(reopened.log().len(), 2);
+        assert_eq!(reopened.read_range(0, 512).unwrap(), vec![3; 512]);
+        assert_eq!(reopened.read_range(512, 512).unwrap(), vec![4; 512]);
     }
 
     #[test]

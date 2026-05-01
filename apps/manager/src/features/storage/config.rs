@@ -95,11 +95,18 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 .get("replicas")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| anyhow!("config.replicas is required"))?;
-            if replicas.len() != nexus_storage::RAFT_SPDK_STATIC_REPLICA_COUNT {
+            // Single-replica is permitted (degenerate Raft group, no
+            // replication — useful for local smokes and development).
+            // Two replicas are rejected because they cannot make progress
+            // under a single-node failure (no majority). Three is the
+            // production target for fault tolerance.
+            let n = replicas.len();
+            if n != 1 && n != nexus_storage::RAFT_SPDK_STATIC_REPLICA_COUNT {
                 return Err(anyhow!(
-                    "backend '{}' (kind=raft_spdk): config.replicas must contain exactly {} entries",
+                    "backend '{}' (kind=raft_spdk): config.replicas must contain 1 or {} entries (got {})",
                     raw.name,
-                    nexus_storage::RAFT_SPDK_STATIC_REPLICA_COUNT
+                    nexus_storage::RAFT_SPDK_STATIC_REPLICA_COUNT,
+                    n,
                 ));
             }
             let mut node_ids = std::collections::BTreeSet::new();
@@ -206,7 +213,19 @@ mod tests {
     }
 
     #[test]
-    fn raft_spdk_requires_three_static_replicas() {
+    fn raft_spdk_allows_one_or_three_static_replicas_and_rejects_two() {
+        validate(RawBackendEntry {
+            name: "raft".into(),
+            kind: BackendKind::RaftSpdk,
+            is_default: false,
+            config: serde_json::json!({
+                "replicas": [
+                    {"node_id": 1, "agent_base_url": "http://a1", "spdk_backend_id": uuid::Uuid::new_v4()}
+                ]
+            }),
+        })
+        .unwrap();
+
         let raw = RawBackendEntry {
             name: "raft".into(),
             kind: BackendKind::RaftSpdk,
@@ -219,7 +238,7 @@ mod tests {
             }),
         };
         let err = validate(raw).unwrap_err();
-        assert!(err.to_string().contains("exactly 3"), "got: {err}");
+        assert!(err.to_string().contains("1 or 3"), "got: {err}");
     }
 
     /// T27: Malformed TrueNAS iSCSI entry parsed from TOML must fail validation

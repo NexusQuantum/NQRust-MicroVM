@@ -418,6 +418,11 @@ pub struct RaftBlockRuntime {
     pub node_id: u64,
     pub raft: openraft::Raft<BlockRaftTypeConfig>,
     pub store: InMemoryOpenraftBlockStore,
+    /// Peer agent base URLs (NodeId -> base_url). Used to forward
+    /// client_write requests to the leader when a follower receives one.
+    pub peers: Arc<HashMap<u64, String>>,
+    /// Shared HTTP client for leader-forwarding.
+    pub http: reqwest::Client,
 }
 
 impl std::fmt::Debug for RaftBlockRuntime {
@@ -453,6 +458,7 @@ impl RaftBlockRuntime {
             capacity_bytes,
             block_size,
         )?;
+        let peers_arc = Arc::new(peers.clone());
         let factory = RaftBlockNetworkFactory::new(group_id, peers);
         let config = nexus_raft_block::default_openraft_config()?;
         let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
@@ -464,6 +470,8 @@ impl RaftBlockRuntime {
             node_id,
             raft,
             store,
+            peers: peers_arc,
+            http: reqwest::Client::new(),
         })
     }
 
@@ -479,6 +487,7 @@ impl RaftBlockRuntime {
         store: InMemoryOpenraftBlockStore,
         peers: HashMap<u64, String>,
     ) -> Result<Self, RaftBlockError> {
+        let peers_arc = Arc::new(peers.clone());
         let factory = RaftBlockNetworkFactory::new(group_id, peers);
         let config = nexus_raft_block::default_openraft_config()?;
         let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
@@ -490,6 +499,8 @@ impl RaftBlockRuntime {
             node_id,
             raft,
             store,
+            peers: peers_arc,
+            http: reqwest::Client::new(),
         })
     }
 
@@ -527,12 +538,48 @@ impl RaftBlockRuntime {
         &self,
         command: BlockCommand,
     ) -> Result<BlockResponse, RaftBlockError> {
-        let result = self
-            .raft
-            .client_write(command)
-            .await
-            .map_err(|e| RaftBlockError::Store(format!("Raft::client_write: {e}")))?;
-        Ok(result.data)
+        // Try local; if Openraft says we're not the leader, look up the
+        // leader's URL in `peers` and forward the request to its
+        // `runtime_write` endpoint. Without this, a daemon attached on a
+        // follower replica cannot serve writes — every write would block
+        // forever on a non-leader Raft handle.
+        match self.raft.client_write(command.clone()).await {
+            Ok(result) => Ok(result.data),
+            Err(openraft::error::RaftError::APIError(
+                openraft::error::ClientWriteError::ForwardToLeader(fwd),
+            )) => {
+                let leader_id = fwd.leader_id.ok_or_else(|| {
+                    RaftBlockError::Store(
+                        "ForwardToLeader without a known leader (election in progress)".into(),
+                    )
+                })?;
+                let leader_url = self.peers.get(&leader_id).ok_or_else(|| {
+                    RaftBlockError::Store(format!(
+                        "ForwardToLeader: no peer URL for node {leader_id}"
+                    ))
+                })?;
+                let url = format!("{}/runtime_write", leader_url.trim_end_matches('/'));
+                let body = serde_json::json!({
+                    "group_id": self.group_id,
+                    "command": command,
+                });
+                let resp = self.http.post(&url).json(&body).send().await.map_err(|e| {
+                    RaftBlockError::Store(format!("forward to leader {leader_id}: {e}"))
+                })?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let body_text = resp.text().await.unwrap_or_default();
+                    return Err(RaftBlockError::Store(format!(
+                        "forwarded write rejected by leader {leader_id}: {status}: {body_text}"
+                    )));
+                }
+                let resp_json: BlockResponse = resp.json().await.map_err(|e| {
+                    RaftBlockError::Store(format!("forwarded write response decode: {e}"))
+                })?;
+                Ok(resp_json)
+            }
+            Err(e) => Err(RaftBlockError::Store(format!("Raft::client_write: {e}"))),
+        }
     }
 
     /// Read the current cluster metrics. Useful for `is_leader()` checks
@@ -683,15 +730,25 @@ impl RaftBlockState {
         // base_dir. The template is a printf-style string with
         // `{node_id}` interpolation, e.g. `/dev/nbd{node_id}`.
         //
-        // Default (env var unset) preserves the prototype behavior:
-        // every replica writes JSON to disk under
-        // <base_dir>/raft-block/<group_id>/node-<node_id>.json.
+        // Default (env var unset) persists through the filesystem store
+        // under <base_dir>/raft-block/<group_id>/node-<node_id>.json.d:
+        // metadata, block bytes, and append-only log are split so normal
+        // writes do not rewrite the whole replica image.
         if let Ok(template) = std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE") {
             let nbd_path = template.replace("{node_id}", &node_id.to_string());
             let impl_obj = std::sync::Arc::new(
                 crate::features::storage::spdk_replica_store::SpdkLvolReplicaStore::new(nbd_path),
             );
             return FileReplicaStore::external(impl_obj);
+        }
+        // Smoke-test / ephemeral mode: skip on-disk persistence entirely.
+        // Kept for tests and emergency smokes only. Crash recovery is
+        // forfeited in exchange.
+        if std::env::var("AGENT_RAFTBLK_IN_MEMORY")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            return FileReplicaStore::in_memory();
         }
         FileReplicaStore::new(
             self.base_dir
@@ -717,8 +774,10 @@ impl RaftBlockState {
         .await
     }
 
-    pub async fn stop_group(&self, group_id: Uuid) -> bool {
-        self.groups.lock().await.remove(&group_id).is_some()
+    pub async fn stop_group(&self, group_id: Uuid) -> Result<bool, RaftBlockError> {
+        let runtime_stopped = self.stop_runtime(group_id).await?;
+        let group_stopped = self.groups.lock().await.remove(&group_id).is_some();
+        Ok(runtime_stopped || group_stopped)
     }
 
     pub async fn load_existing_groups(&self) -> Result<usize, RaftBlockError> {
@@ -754,18 +813,23 @@ impl RaftBlockState {
             for file in files {
                 let file =
                     file.map_err(|e| RaftBlockError::Store(format!("read {:?}: {e}", dir.path())))?;
-                if !file
+                let file_name = file.file_name().to_string_lossy().to_string();
+                if !file_name.starts_with("node-") {
+                    continue;
+                }
+                let store_path = if let Some(raw) = file_name.strip_suffix(".d") {
+                    file.path().with_file_name(raw)
+                } else if file
                     .file_type()
                     .map_err(|e| RaftBlockError::Store(format!("stat {:?}: {e}", file.path())))?
                     .is_file()
                 {
+                    file.path()
+                } else {
                     continue;
-                }
-                if !file.file_name().to_string_lossy().starts_with("node-") {
-                    continue;
-                }
+                };
                 let Some(store) =
-                    InMemoryOpenraftBlockStore::open_existing(FileReplicaStore::new(file.path()))?
+                    InMemoryOpenraftBlockStore::open_existing(FileReplicaStore::new(store_path))?
                 else {
                     continue;
                 };
@@ -1139,12 +1203,14 @@ pub async fn stop(
     State(state): State<Arc<RaftBlockState>>,
     Json(req): Json<StopGroupReq>,
 ) -> impl IntoResponse {
-    let stopped = state.stop_group(req.group_id).await;
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "stopped": stopped })),
-    )
-        .into_response()
+    match state.stop_group(req.group_id).await {
+        Ok(stopped) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "stopped": stopped })),
+        )
+            .into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
 }
 
 pub async fn snapshot(

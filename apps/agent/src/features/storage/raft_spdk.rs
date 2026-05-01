@@ -180,15 +180,11 @@ impl HostBackend for RaftSpdkHostBackend {
                 self.local_node_id, locator.group_id
             )));
         }
-        if locator
-            .leader_hint
-            .is_some_and(|leader| leader != self.local_node_id)
-        {
-            return Err(StorageError::NotSupported(format!(
-                "raft_spdk leader-only attach refused on node {}; leader hint is {:?}",
-                self.local_node_id, locator.leader_hint
-            )));
-        }
+        // Any replica node may host a vhost-user daemon for a local
+        // Firecracker VM. Writes from the daemon are routed through Raft
+        // to the leader regardless of which node serves the socket, so
+        // attach is no longer leader-only — the daemon must run on the
+        // same host as the consuming VM.
         self.raft_block
             .ensure_group(
                 locator.group_id,
@@ -221,7 +217,10 @@ impl HostBackend for RaftSpdkHostBackend {
     ) -> Result<(), StorageError> {
         let locator = RaftSpdkLocator::from_locator_str(&volume.locator)?;
         self.stop_daemon(locator.group_id).await;
-        self.raft_block.stop_group(locator.group_id).await;
+        self.raft_block
+            .stop_group(locator.group_id)
+            .await
+            .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
         self.active_groups.lock().await.remove(_attached.path());
         let _ = std::fs::remove_file(_attached.path());
         Ok(())
@@ -253,11 +252,27 @@ impl HostBackend for RaftSpdkHostBackend {
         }
         let mut file = std::fs::File::open(source)?;
         let block_size = locator.block_size as usize;
+        // Populate writes the rootfs into Raft via append_command. Calling
+        // it once per block_size byte is correct but pathologically slow
+        // for the prototype FileReplicaStore — every call rewrites the
+        // entire log JSON to disk and fsyncs, making populate O(N²) in
+        // entry count. A 64 MiB rootfs at 4 KiB blocks = 16 384 writes,
+        // each rewriting an ever-growing JSON file: empirically this
+        // didn't finish in 4 minutes.
+        //
+        // Coalescing into 1 MiB chunks (256 entries for 64 MiB) keeps the
+        // virtio_blk wire `block_size` unchanged (the daemon still reports
+        // 4 KiB to the guest) while collapsing populate from O(N²) to
+        // O(N²/256²). The chunk is a multiple of block_size so the
+        // BlockCommand::Write is still aligned.
+        const POPULATE_TARGET_CHUNK_BYTES: usize = 1024 * 1024;
+        let blocks_per_chunk = (POPULATE_TARGET_CHUNK_BYTES / block_size).max(1);
+        let chunk_size = blocks_per_chunk * block_size;
         let mut offset = 0_u64;
         let mut remaining = target_size_bytes;
         while remaining > 0 {
-            let chunk_len = block_size.min(remaining as usize);
-            let mut block = vec![0; block_size];
+            let chunk_len = chunk_size.min(remaining as usize);
+            let mut block = vec![0u8; chunk_len];
             let mut filled = 0;
             while filled < chunk_len {
                 let n = file.read(&mut block[filled..chunk_len])?;
@@ -278,8 +293,8 @@ impl HostBackend for RaftSpdkHostBackend {
                 )
                 .await
                 .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
-            offset += block_size as u64;
-            remaining = remaining.saturating_sub(block_size as u64);
+            offset += chunk_len as u64;
+            remaining = remaining.saturating_sub(chunk_len as u64);
         }
         Ok(())
     }
@@ -376,7 +391,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attach_rejects_follower_when_leader_hint_points_elsewhere() {
+    async fn attach_succeeds_on_follower_replica() {
+        // Any replica node may serve the vhost-user socket — writes route
+        // through Raft to the leader regardless. Confirms attach no longer
+        // rejects on a non-leader replica.
         let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
         let backend = RaftSpdkHostBackend::new_no_autospawn("/run/nqrust/raftblk", 2, state);
         let volume = VolumeHandle {
@@ -387,8 +405,8 @@ mod tests {
             size_bytes: 4096,
         };
 
-        let err = backend.attach(&volume).await.unwrap_err();
-        assert!(err.to_string().contains("leader-only"), "got: {err}");
+        let attached = backend.attach(&volume).await.expect("attach on follower");
+        assert!(matches!(attached, AttachedPath::VhostUserSock(_)));
     }
 
     #[tokio::test]

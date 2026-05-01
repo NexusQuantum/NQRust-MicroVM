@@ -40,9 +40,10 @@ impl RaftSpdkLocator {
                 "raft_spdk size_bytes must be a nonzero multiple of block_size".into(),
             ));
         }
-        if replicas.len() != RAFT_SPDK_STATIC_REPLICA_COUNT {
+        let n = replicas.len();
+        if n != 1 && n != RAFT_SPDK_STATIC_REPLICA_COUNT {
             return Err(StorageError::InvalidLocator(format!(
-                "raft_spdk requires exactly {RAFT_SPDK_STATIC_REPLICA_COUNT} static replicas"
+                "raft_spdk requires 1 or {RAFT_SPDK_STATIC_REPLICA_COUNT} static replicas (got {n})"
             )));
         }
         let mut node_ids = std::collections::BTreeSet::new();
@@ -139,7 +140,9 @@ mod tests {
     }
 
     #[test]
-    fn locator_rejects_non_three_node_replica_sets() {
+    fn locator_allows_one_or_three_replicas_and_rejects_two() {
+        RaftSpdkLocator::new(Uuid::new_v4(), 4096, 512, vec![replica(1)], Some(1)).unwrap();
+
         let err = RaftSpdkLocator::new(
             Uuid::new_v4(),
             4096,
@@ -148,7 +151,7 @@ mod tests {
             Some(1),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("exactly 3"));
+        assert!(err.to_string().contains("1 or 3"), "got: {err}");
     }
 
     #[test]

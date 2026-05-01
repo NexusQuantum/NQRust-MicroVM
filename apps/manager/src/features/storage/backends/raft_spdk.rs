@@ -62,11 +62,15 @@ impl RaftSpdkControlPlaneBackend {
     }
 
     fn raft_block_url(replica: &RaftSpdkReplicaConfig, path: &str) -> String {
-        format!(
-            "{}/v1/raft_block/{}",
-            replica.agent_base_url.trim_end_matches('/'),
-            path.trim_start_matches('/')
-        )
+        // The TOML's `agent_base_url` is the FULL base for the raft-block
+        // routes — typically `http://host:port/v1/raft_block`. We don't
+        // re-add the prefix here. This keeps the value in lockstep with
+        // the locator's `agent_base_url` that flows into the agent's
+        // RaftBlockNetworkFactory; both the manager (this fn) and the
+        // network factory consume it identically.
+        let base = replica.agent_base_url.trim_end_matches('/');
+        let suffix = path.trim_start_matches('/');
+        format!("{base}/{suffix}")
     }
 
     async fn create_remote_group(
@@ -101,11 +105,32 @@ impl RaftSpdkControlPlaneBackend {
 
     async fn stop_remote_group(&self, replica: &RaftSpdkReplicaConfig, group_id: Uuid) {
         let _ = self
+            .stop_remote_group_url(replica.node_id, &replica.agent_base_url, group_id)
+            .await;
+    }
+
+    async fn stop_remote_group_url(
+        &self,
+        node_id: u64,
+        agent_base_url: &str,
+        group_id: Uuid,
+    ) -> Result<(), StorageError> {
+        let url = format!("{}/{}", agent_base_url.trim_end_matches('/'), "stop");
+        let response = self
             .http
-            .post(Self::raft_block_url(replica, "stop"))
+            .post(url)
             .json(&StopRaftBlockGroupReq { group_id })
             .send()
-            .await;
+            .await
+            .map_err(StorageError::backend)?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "raft_spdk stop group on node {node_id} failed with {status}: {body}"
+            ))));
+        }
+        Ok(())
     }
 
     /// Start an Openraft runtime on `replica` for `group_id`, with the full
@@ -294,10 +319,25 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
         })
     }
 
-    async fn destroy(&self, _handle: VolumeHandle) -> Result<(), StorageError> {
-        Err(StorageError::NotSupported(
-            "raft_spdk destroy awaits raftblk/Openraft group teardown".into(),
-        ))
+    async fn destroy(&self, handle: VolumeHandle) -> Result<(), StorageError> {
+        let locator = RaftSpdkLocator::from_locator_str(&handle.locator)?;
+        let mut errors = Vec::new();
+        for replica in &locator.replicas {
+            if let Err(err) = self
+                .stop_remote_group_url(replica.node_id, &replica.agent_base_url, locator.group_id)
+                .await
+            {
+                errors.push(err.to_string());
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(StorageError::backend(std::io::Error::other(format!(
+                "raft_spdk destroy stopped with replica errors: {}",
+                errors.join("; ")
+            ))))
+        }
     }
 
     async fn clone_from_image(
@@ -355,9 +395,10 @@ pub fn validate_config(config: &RaftSpdkConfig) -> Result<(), StorageError> {
             "raft_spdk config.block_size must be nonzero".into(),
         ));
     }
-    if config.replicas.len() != RAFT_SPDK_STATIC_REPLICA_COUNT {
+    let n = config.replicas.len();
+    if n != 1 && n != RAFT_SPDK_STATIC_REPLICA_COUNT {
         return Err(StorageError::InvalidLocator(format!(
-            "raft_spdk requires exactly {RAFT_SPDK_STATIC_REPLICA_COUNT} static replicas"
+            "raft_spdk requires 1 or {RAFT_SPDK_STATIC_REPLICA_COUNT} static replicas (got {n})"
         )));
     }
     let mut node_ids = std::collections::BTreeSet::new();
@@ -480,9 +521,12 @@ mod tests {
         let (url3, calls3, server3) = spawn_agent().await;
         let mut cfg = cfg();
         cfg.prototype_provisioning_enabled = true;
-        cfg.replicas[0].agent_base_url = url1;
-        cfg.replicas[1].agent_base_url = url2;
-        cfg.replicas[2].agent_base_url = url3;
+        // Mock servers expose routes under /v1/raft_block; the production
+        // TOML convention is the same (`agent_base_url` is the full base
+        // for the raft-block routes, not just the host:port).
+        cfg.replicas[0].agent_base_url = format!("{url1}/v1/raft_block");
+        cfg.replicas[1].agent_base_url = format!("{url2}/v1/raft_block");
+        cfg.replicas[2].agent_base_url = format!("{url3}/v1/raft_block");
         let backend =
             RaftSpdkControlPlaneBackend::new(BackendInstanceId(uuid::Uuid::new_v4()), cfg).unwrap();
 
@@ -548,9 +592,12 @@ mod tests {
         let (url3, calls3, server3) = spawn_agent().await;
         let mut cfg = cfg();
         cfg.production_provisioning_enabled = true;
-        cfg.replicas[0].agent_base_url = url1;
-        cfg.replicas[1].agent_base_url = url2;
-        cfg.replicas[2].agent_base_url = url3;
+        // Mock servers expose routes under /v1/raft_block; the production
+        // TOML convention is the same (`agent_base_url` is the full base
+        // for the raft-block routes, not just the host:port).
+        cfg.replicas[0].agent_base_url = format!("{url1}/v1/raft_block");
+        cfg.replicas[1].agent_base_url = format!("{url2}/v1/raft_block");
+        cfg.replicas[2].agent_base_url = format!("{url3}/v1/raft_block");
         let backend =
             RaftSpdkControlPlaneBackend::new(BackendInstanceId(uuid::Uuid::new_v4()), cfg).unwrap();
 
@@ -613,6 +660,88 @@ mod tests {
                 !paths.contains(&"/v1/raft_block/runtime_initialize".to_string()),
                 "follower wrongly saw runtime_initialize: {paths:?}"
             );
+        }
+
+        server1.abort();
+        server2.abort();
+        server3.abort();
+    }
+
+    #[tokio::test]
+    async fn destroy_stops_every_locator_replica() {
+        async fn record(
+            axum::extract::State(calls): axum::extract::State<CallLog>,
+            uri: axum::extract::OriginalUri,
+            axum::Json(body): axum::Json<serde_json::Value>,
+        ) -> axum::Json<serde_json::Value> {
+            calls.lock().await.push((uri.0.path().to_string(), body));
+            axum::Json(serde_json::json!({}))
+        }
+
+        async fn spawn_agent() -> (String, CallLog, tokio::task::JoinHandle<()>) {
+            let calls = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+            let app = axum::Router::new()
+                .route("/v1/raft_block/stop", axum::routing::post(record))
+                .with_state(calls.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            (format!("http://{addr}/v1/raft_block"), calls, handle)
+        }
+
+        let (url1, calls1, server1) = spawn_agent().await;
+        let (url2, calls2, server2) = spawn_agent().await;
+        let (url3, calls3, server3) = spawn_agent().await;
+        let mut cfg = cfg();
+        cfg.replicas[0].agent_base_url = url1.clone();
+        cfg.replicas[1].agent_base_url = url2.clone();
+        cfg.replicas[2].agent_base_url = url3.clone();
+        let backend =
+            RaftSpdkControlPlaneBackend::new(BackendInstanceId(uuid::Uuid::new_v4()), cfg).unwrap();
+        let group_id = Uuid::new_v4();
+        let locator = RaftSpdkLocator::new(
+            group_id,
+            4096,
+            512,
+            vec![
+                RaftSpdkReplicaLocator {
+                    node_id: 1,
+                    agent_base_url: url1,
+                    spdk_lvol_locator: "{}".into(),
+                },
+                RaftSpdkReplicaLocator {
+                    node_id: 2,
+                    agent_base_url: url2,
+                    spdk_lvol_locator: "{}".into(),
+                },
+                RaftSpdkReplicaLocator {
+                    node_id: 3,
+                    agent_base_url: url3,
+                    spdk_lvol_locator: "{}".into(),
+                },
+            ],
+            Some(1),
+        )
+        .unwrap();
+
+        backend
+            .destroy(VolumeHandle {
+                volume_id: Uuid::new_v4(),
+                backend_id: backend.id,
+                backend_kind: BackendKind::RaftSpdk,
+                locator: locator.to_locator_string().unwrap(),
+                size_bytes: 4096,
+            })
+            .await
+            .unwrap();
+
+        for calls in [&calls1, &calls2, &calls3] {
+            let recorded = calls.lock().await;
+            assert_eq!(recorded.len(), 1);
+            assert_eq!(recorded[0].0, "/v1/raft_block/stop");
+            assert_eq!(recorded[0].1["group_id"], group_id.to_string());
         }
 
         server1.abort();
