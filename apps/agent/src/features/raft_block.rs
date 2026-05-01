@@ -16,9 +16,49 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SpdkGroupManifest {
+    version: u32,
+    group_id: Uuid,
+    node_id: u64,
+    capacity_bytes: u64,
+    block_size: u64,
+}
+
+#[derive(Debug, Clone)]
+enum RaftBlockStoreConfig {
+    Sidecar,
+    SpdkLvol { template: String },
+    InMemory,
+}
+
+impl RaftBlockStoreConfig {
+    fn detect() -> Self {
+        if let Ok(template) = std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE") {
+            Self::SpdkLvol { template }
+        } else if std::env::var("AGENT_RAFTBLK_IN_MEMORY")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            Self::InMemory
+        } else {
+            Self::Sidecar
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Sidecar => "sidecar",
+            Self::SpdkLvol { .. } => "spdk_lvol",
+            Self::InMemory => "in_memory",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RaftBlockState {
     base_dir: PathBuf,
+    store_config: RaftBlockStoreConfig,
     groups: Arc<Mutex<HashMap<Uuid, InMemoryOpenraftBlockStore>>>,
     /// Per-group Openraft runtimes. A group present in `runtimes` is in
     /// real-Raft mode: the openraft_* routes dispatch incoming RPCs through
@@ -630,6 +670,20 @@ impl RaftBlockState {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
+            store_config: RaftBlockStoreConfig::detect(),
+            groups: Arc::new(Mutex::new(HashMap::new())),
+            runtimes: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    #[cfg(test)]
+    fn new_with_store_config(
+        base_dir: impl Into<PathBuf>,
+        store_config: RaftBlockStoreConfig,
+    ) -> Self {
+        Self {
+            base_dir: base_dir.into(),
+            store_config,
             groups: Arc::new(Mutex::new(HashMap::new())),
             runtimes: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -730,14 +784,15 @@ impl RaftBlockState {
         // env var is set, every replica state is persisted through an
         // NBD device exposed by SPDK rather than a JSON file under
         // base_dir. The template is a printf-style string with
-        // `{node_id}` interpolation, e.g. `/dev/nbd{node_id}`.
+        // `{node_id}` and optional `{group_id}` interpolation, e.g.
+        // `/dev/nbd{node_id}` or `/var/lib/raftblk/{group_id}-{node_id}.dev`.
         //
         // Default (env var unset) persists through the filesystem store
         // under <base_dir>/raft-block/<group_id>/node-<node_id>.json.d:
         // metadata, block bytes, and append-only log are split so normal
         // writes do not rewrite the whole replica image.
-        if let Ok(template) = std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE") {
-            let nbd_path = template.replace("{node_id}", &node_id.to_string());
+        if let RaftBlockStoreConfig::SpdkLvol { template } = &self.store_config {
+            let nbd_path = self.render_spdk_template(template, group_id, node_id);
             let impl_obj = std::sync::Arc::new(
                 crate::features::storage::spdk_replica_store::SpdkLvolReplicaStore::new(nbd_path),
             );
@@ -746,10 +801,7 @@ impl RaftBlockState {
         // Smoke-test / ephemeral mode: skip on-disk persistence entirely.
         // Kept for tests and emergency smokes only. Crash recovery is
         // forfeited in exchange.
-        if std::env::var("AGENT_RAFTBLK_IN_MEMORY")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        {
+        if matches!(self.store_config, RaftBlockStoreConfig::InMemory) {
             return FileReplicaStore::in_memory();
         }
         FileReplicaStore::new(
@@ -761,16 +813,13 @@ impl RaftBlockState {
     }
 
     fn store_descriptor(&self, group_id: Uuid, node_id: u64) -> (String, Option<String>) {
-        if let Ok(template) = std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE") {
+        if let RaftBlockStoreConfig::SpdkLvol { template } = &self.store_config {
             return (
                 "spdk_lvol".into(),
-                Some(template.replace("{node_id}", &node_id.to_string())),
+                Some(self.render_spdk_template(template, group_id, node_id)),
             );
         }
-        if std::env::var("AGENT_RAFTBLK_IN_MEMORY")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        {
+        if matches!(self.store_config, RaftBlockStoreConfig::InMemory) {
             return ("in_memory".into(), None);
         }
         let path = self
@@ -781,17 +830,79 @@ impl RaftBlockState {
         ("sidecar".into(), Some(path.to_string_lossy().into_owned()))
     }
 
-    fn current_store_kind(&self) -> String {
-        if std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE").is_ok() {
-            "spdk_lvol".into()
-        } else if std::env::var("AGENT_RAFTBLK_IN_MEMORY")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        {
-            "in_memory".into()
-        } else {
-            "sidecar".into()
+    fn render_spdk_template(&self, template: &str, group_id: Uuid, node_id: u64) -> String {
+        template
+            .replace("{group_id}", &group_id.to_string())
+            .replace("{node_id}", &node_id.to_string())
+    }
+
+    fn spdk_manifest_dir(&self, group_id: Uuid) -> PathBuf {
+        self.base_dir
+            .join("raft-block-spdk")
+            .join(group_id.to_string())
+    }
+
+    fn spdk_manifest_path(&self, group_id: Uuid, node_id: u64) -> PathBuf {
+        self.spdk_manifest_dir(group_id)
+            .join(format!("node-{node_id}.json"))
+    }
+
+    fn save_spdk_manifest(
+        &self,
+        group_id: Uuid,
+        node_id: u64,
+        capacity_bytes: u64,
+        block_size: u64,
+    ) -> Result<(), RaftBlockError> {
+        if self.current_store_kind() != "spdk_lvol" {
+            return Ok(());
         }
+        let dir = self.spdk_manifest_dir(group_id);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| RaftBlockError::Store(format!("create {dir:?}: {e}")))?;
+        let path = self.spdk_manifest_path(group_id, node_id);
+        let manifest = SpdkGroupManifest {
+            version: 1,
+            group_id,
+            node_id,
+            capacity_bytes,
+            block_size,
+        };
+        let encoded = serde_json::to_vec_pretty(&manifest)
+            .map_err(|e| RaftBlockError::Store(format!("encode {path:?}: {e}")))?;
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, encoded)
+            .map_err(|e| RaftBlockError::Store(format!("write {tmp_path:?}: {e}")))?;
+        std::fs::rename(&tmp_path, &path)
+            .map_err(|e| RaftBlockError::Store(format!("rename {tmp_path:?} -> {path:?}: {e}")))?;
+        Ok(())
+    }
+
+    fn remove_spdk_manifest(
+        &self,
+        group_id: Uuid,
+        node_id: Option<u64>,
+    ) -> Result<(), RaftBlockError> {
+        let Some(node_id) = node_id else {
+            return Ok(());
+        };
+        let path = self.spdk_manifest_path(group_id, node_id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(RaftBlockError::Store(format!(
+                    "remove SPDK manifest {path:?}: {err}"
+                )));
+            }
+        }
+        let dir = self.spdk_manifest_dir(group_id);
+        let _ = std::fs::remove_dir(&dir);
+        Ok(())
+    }
+
+    fn current_store_kind(&self) -> String {
+        self.store_config.kind().into()
     }
 
     pub async fn ensure_group(
@@ -818,21 +929,33 @@ impl RaftBlockState {
     }
 
     pub async fn destroy_group(&self, group_id: Uuid) -> Result<bool, RaftBlockError> {
+        let node_id = {
+            let groups = self.groups.lock().await;
+            groups.get(&group_id).and_then(|group| group.node_id().ok())
+        };
+        let store_descriptor = node_id.map(|node_id| self.store_descriptor(group_id, node_id));
         let stopped = self.stop_group(group_id).await?;
         let sidecar_dir = self.base_dir.join("raft-block").join(group_id.to_string());
         if sidecar_dir.exists() {
             std::fs::remove_dir_all(&sidecar_dir)
                 .map_err(|e| RaftBlockError::Store(format!("remove {sidecar_dir:?}: {e}")))?;
         }
+        if let Some((store_kind, Some(store_path))) = store_descriptor {
+            if store_kind == "spdk_lvol" {
+                destroy_spdk_store_path(&store_path)?;
+            }
+        }
+        self.remove_spdk_manifest(group_id, node_id)?;
         Ok(stopped || !sidecar_dir.exists())
     }
 
     pub async fn load_existing_groups(&self) -> Result<usize, RaftBlockError> {
+        let spdk_loaded = self.load_existing_spdk_groups().await?;
         let root = self.base_dir.join("raft-block");
         if !root.exists() {
-            return Ok(0);
+            return Ok(spdk_loaded);
         }
-        let mut loaded = 0;
+        let mut loaded = spdk_loaded;
         let mut groups = self.groups.lock().await;
         let dirs = std::fs::read_dir(&root)
             .map_err(|e| RaftBlockError::Store(format!("read {root:?}: {e}")))?;
@@ -888,6 +1011,72 @@ impl RaftBlockState {
         Ok(loaded)
     }
 
+    async fn load_existing_spdk_groups(&self) -> Result<usize, RaftBlockError> {
+        if self.current_store_kind() != "spdk_lvol" {
+            return Ok(0);
+        }
+        let root = self.base_dir.join("raft-block-spdk");
+        if !root.exists() {
+            return Ok(0);
+        }
+        let mut loaded = 0;
+        let mut groups = self.groups.lock().await;
+        let dirs = std::fs::read_dir(&root)
+            .map_err(|e| RaftBlockError::Store(format!("read {root:?}: {e}")))?;
+        for dir in dirs {
+            let dir = dir.map_err(|e| RaftBlockError::Store(format!("read {root:?}: {e}")))?;
+            if !dir
+                .file_type()
+                .map_err(|e| RaftBlockError::Store(format!("stat {:?}: {e}", dir.path())))?
+                .is_dir()
+            {
+                continue;
+            }
+            let Some(group_id) = dir
+                .file_name()
+                .to_str()
+                .and_then(|raw| Uuid::parse_str(raw).ok())
+            else {
+                continue;
+            };
+            if groups.contains_key(&group_id) {
+                continue;
+            }
+            let files = std::fs::read_dir(dir.path())
+                .map_err(|e| RaftBlockError::Store(format!("read {:?}: {e}", dir.path())))?;
+            for file in files {
+                let file =
+                    file.map_err(|e| RaftBlockError::Store(format!("read {:?}: {e}", dir.path())))?;
+                if !file
+                    .file_type()
+                    .map_err(|e| RaftBlockError::Store(format!("stat {:?}: {e}", file.path())))?
+                    .is_file()
+                {
+                    continue;
+                }
+                let bytes = std::fs::read(file.path()).map_err(|e| {
+                    RaftBlockError::Store(format!("read manifest {:?}: {e}", file.path()))
+                })?;
+                let manifest: SpdkGroupManifest = serde_json::from_slice(&bytes).map_err(|e| {
+                    RaftBlockError::Store(format!("decode manifest {:?}: {e}", file.path()))
+                })?;
+                if manifest.version != 1 || manifest.group_id != group_id {
+                    continue;
+                }
+                let Some(store) = InMemoryOpenraftBlockStore::open_existing(
+                    self.store_for(group_id, manifest.node_id),
+                )?
+                else {
+                    continue;
+                };
+                groups.insert(group_id, store);
+                loaded += 1;
+                break;
+            }
+        }
+        Ok(loaded)
+    }
+
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
         if let Some(desired) = req.desired_store_kind.as_deref() {
             let actual = self.current_store_kind();
@@ -905,6 +1094,12 @@ impl RaftBlockState {
         let store = self.store_for(req.group_id, req.node_id);
         let replica = InMemoryOpenraftBlockStore::open_or_create(
             store,
+            req.node_id,
+            req.capacity_bytes,
+            req.block_size,
+        )?;
+        self.save_spdk_manifest(
+            req.group_id,
             req.node_id,
             req.capacity_bytes,
             req.block_size,
@@ -1144,6 +1339,22 @@ fn validate_existing_group(
         )));
     }
     Ok(())
+}
+
+fn destroy_spdk_store_path(store_path: &str) -> Result<(), RaftBlockError> {
+    let path = std::path::Path::new(store_path);
+    if path.starts_with("/dev") {
+        return Err(RaftBlockError::Store(format!(
+            "refusing to unlink SPDK NBD device {store_path}; real lvol destroy must release it through SPDK"
+        )));
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(RaftBlockError::Store(format!(
+            "remove SPDK store {store_path}: {err}"
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1485,6 +1696,7 @@ pub async fn runtime_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::storage::spdk_replica_store::METADATA_REGION_BYTES;
     use axum::body::to_bytes;
     use nexus_raft_block::openraft_log_id;
 
@@ -1686,6 +1898,93 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(!sidecar_dir.exists());
         assert_eq!(state.status(group_id).await.state, "not_started");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spdk_lvol_groups_reload_from_manifest_after_restart() {
+        let run_dir = tempfile::tempdir().unwrap();
+        let device_dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let template = device_dir
+            .path()
+            .join("{group_id}-node-{node_id}.dev")
+            .to_string_lossy()
+            .into_owned();
+        let device = device_dir.path().join(format!("{group_id}-node-1.dev"));
+        std::fs::File::create(&device)
+            .unwrap()
+            .set_len(METADATA_REGION_BYTES + 4096)
+            .unwrap();
+
+        let state = Arc::new(RaftBlockState::new_with_store_config(
+            run_dir.path(),
+            RaftBlockStoreConfig::SpdkLvol {
+                template: template.clone(),
+            },
+        ));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+                desired_store_kind: Some("spdk_lvol".into()),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = append(
+            State(state),
+            Json(AppendReq {
+                group_id,
+                term: 1,
+                leader_id: None,
+                command: BlockCommand::Write {
+                    offset: 0,
+                    bytes: vec![8; 512],
+                },
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let restarted = Arc::new(RaftBlockState::new_with_store_config(
+            run_dir.path(),
+            RaftBlockStoreConfig::SpdkLvol { template },
+        ));
+        assert_eq!(restarted.load_existing_groups().await.unwrap(), 1);
+        let status = restarted.status(group_id).await;
+        assert_eq!(status.state, "started");
+        assert_eq!(status.store_kind, "spdk_lvol");
+        assert_eq!(status.store_path.as_deref(), Some(device.to_str().unwrap()));
+        let bytes = restarted
+            .read(ReadReq {
+                group_id,
+                offset: 0,
+                len: 512,
+            })
+            .await
+            .unwrap()
+            .bytes;
+        assert_eq!(bytes, vec![8; 512]);
+    }
+
+    #[test]
+    fn destroy_spdk_store_path_unlinks_file_backed_stub() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node-1.dev");
+        std::fs::write(&path, [1, 2, 3]).unwrap();
+        destroy_spdk_store_path(path.to_str().unwrap()).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn destroy_spdk_store_path_refuses_device_nodes() {
+        let err = destroy_spdk_store_path("/dev/nbd0").unwrap_err();
+        assert!(err.to_string().contains("refusing to unlink"));
     }
 
     #[tokio::test]

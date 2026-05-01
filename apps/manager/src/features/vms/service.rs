@@ -955,14 +955,12 @@ pub async fn stop_and_delete_with_user(
     .await
     .unwrap_or_default();
 
+    let mut destroy_errors = Vec::new();
     for (volume_id, locator, size_bytes, backend_id) in &managed_rootfs_volumes {
         let Some(backend) = st.registry.get(*backend_id).cloned() else {
-            tracing::warn!(
-                vm_id = %id,
-                volume_id = %volume_id,
-                backend_id = %backend_id,
-                "cannot destroy rootfs volume: backend missing from registry"
-            );
+            destroy_errors.push(format!(
+                "volume {volume_id}: backend {backend_id} missing from registry"
+            ));
             continue;
         };
         let handle = nexus_storage::VolumeHandle {
@@ -973,13 +971,14 @@ pub async fn stop_and_delete_with_user(
             size_bytes: (*size_bytes).try_into().unwrap_or(0),
         };
         if let Err(err) = backend.destroy(handle).await {
-            tracing::warn!(
-                vm_id = %id,
-                volume_id = %volume_id,
-                error = ?err,
-                "failed to destroy managed rootfs volume during VM delete"
-            );
+            destroy_errors.push(format!("volume {volume_id}: {err}"));
         }
+    }
+    if !destroy_errors.is_empty() {
+        return Err(anyhow!(
+            "failed to destroy managed rootfs volume(s); VM delete aborted so backend resources stay visible: {}",
+            destroy_errors.join("; ")
+        ));
     }
 
     // Manually clean up storage directory (drives, logs, etc.)
