@@ -51,6 +51,15 @@ pub struct RaftSpdkControlPlaneBackend {
     http: reqwest::Client,
 }
 
+fn normalize_raft_block_base_url(raw: &str) -> String {
+    let trimmed = raw.trim_end_matches('/');
+    if trimmed.ends_with("/v1/raft_block") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1/raft_block")
+    }
+}
+
 impl RaftSpdkControlPlaneBackend {
     pub fn new(id: BackendInstanceId, config: RaftSpdkConfig) -> Result<Self, StorageError> {
         validate_config(&config)?;
@@ -62,13 +71,7 @@ impl RaftSpdkControlPlaneBackend {
     }
 
     fn raft_block_url(replica: &RaftSpdkReplicaConfig, path: &str) -> String {
-        // The TOML's `agent_base_url` is the FULL base for the raft-block
-        // routes — typically `http://host:port/v1/raft_block`. We don't
-        // re-add the prefix here. This keeps the value in lockstep with
-        // the locator's `agent_base_url` that flows into the agent's
-        // RaftBlockNetworkFactory; both the manager (this fn) and the
-        // network factory consume it identically.
-        let base = replica.agent_base_url.trim_end_matches('/');
+        let base = normalize_raft_block_base_url(&replica.agent_base_url);
         let suffix = path.trim_start_matches('/');
         format!("{base}/{suffix}")
     }
@@ -117,7 +120,11 @@ impl RaftSpdkControlPlaneBackend {
         agent_base_url: &str,
         group_id: Uuid,
     ) -> Result<(), StorageError> {
-        let url = format!("{}/{}", agent_base_url.trim_end_matches('/'), "stop");
+        let url = format!(
+            "{}/{}",
+            normalize_raft_block_base_url(agent_base_url),
+            "stop"
+        );
         let response = self
             .http
             .post(url)
@@ -141,7 +148,11 @@ impl RaftSpdkControlPlaneBackend {
         agent_base_url: &str,
         group_id: Uuid,
     ) -> Result<(), StorageError> {
-        let url = format!("{}/{}", agent_base_url.trim_end_matches('/'), "destroy");
+        let url = format!(
+            "{}/{}",
+            normalize_raft_block_base_url(agent_base_url),
+            "destroy"
+        );
         let response = self
             .http
             .post(url)
@@ -290,7 +301,7 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
                 .config
                 .replicas
                 .iter()
-                .map(|r| (r.node_id, r.agent_base_url.clone()))
+                .map(|r| (r.node_id, normalize_raft_block_base_url(&r.agent_base_url)))
                 .collect();
             for replica in &self.config.replicas {
                 if let Err(err) = self.start_remote_runtime(replica, group_id, &peers).await {
@@ -326,7 +337,7 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
                 .iter()
                 .map(|replica| RaftSpdkReplicaLocator {
                     node_id: replica.node_id,
-                    agent_base_url: replica.agent_base_url.clone(),
+                    agent_base_url: normalize_raft_block_base_url(&replica.agent_base_url),
                     spdk_lvol_locator: if prototype_marker {
                         serde_json::json!({
                             "spdk_backend_id": replica.spdk_backend_id,
@@ -515,6 +526,22 @@ mod tests {
         assert!(err.to_string().contains("duplicate"));
     }
 
+    #[test]
+    fn agent_base_url_accepts_host_root_or_raft_block_base() {
+        assert_eq!(
+            normalize_raft_block_base_url("http://agent-1:19090"),
+            "http://agent-1:19090/v1/raft_block"
+        );
+        assert_eq!(
+            normalize_raft_block_base_url("http://agent-1:19090/"),
+            "http://agent-1:19090/v1/raft_block"
+        );
+        assert_eq!(
+            normalize_raft_block_base_url("http://agent-1:19090/v1/raft_block"),
+            "http://agent-1:19090/v1/raft_block"
+        );
+    }
+
     #[tokio::test]
     async fn provision_is_guarded_until_data_path_exists() {
         let backend =
@@ -566,12 +593,12 @@ mod tests {
         let (url3, calls3, server3) = spawn_agent().await;
         let mut cfg = cfg();
         cfg.prototype_provisioning_enabled = true;
-        // Mock servers expose routes under /v1/raft_block; the production
-        // TOML convention is the same (`agent_base_url` is the full base
-        // for the raft-block routes, not just the host:port).
-        cfg.replicas[0].agent_base_url = format!("{url1}/v1/raft_block");
+        // Both host-root and full raft-block base URLs are accepted. The
+        // manager normalizes them before provisioning and before embedding
+        // peer URLs in the locator.
+        cfg.replicas[0].agent_base_url = url1.clone();
         cfg.replicas[1].agent_base_url = format!("{url2}/v1/raft_block");
-        cfg.replicas[2].agent_base_url = format!("{url3}/v1/raft_block");
+        cfg.replicas[2].agent_base_url = format!("{url3}/v1/raft_block/");
         let backend =
             RaftSpdkControlPlaneBackend::new(BackendInstanceId(uuid::Uuid::new_v4()), cfg).unwrap();
 
@@ -588,6 +615,10 @@ mod tests {
         let locator = RaftSpdkLocator::from_locator_str(&handle.locator).unwrap();
         assert_eq!(locator.replicas.len(), RAFT_SPDK_STATIC_REPLICA_COUNT);
         assert_eq!(locator.leader_hint, Some(1));
+        assert_eq!(
+            locator.replicas[0].agent_base_url,
+            format!("{url1}/v1/raft_block")
+        );
         assert_eq!(calls1.lock().await[0]["node_id"], 1);
         assert_eq!(calls2.lock().await[0]["node_id"], 2);
         assert_eq!(calls3.lock().await[0]["node_id"], 3);
