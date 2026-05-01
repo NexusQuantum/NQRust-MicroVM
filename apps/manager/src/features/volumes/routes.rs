@@ -437,18 +437,56 @@ pub async fn delete(
         }
     })?;
 
-    // Don't allow deletion if volume is attached
+    // Don't allow deletion if volume is attached.
     if volume.status == "attached" {
         return Err(StatusCode::CONFLICT);
     }
 
-    // Delete file if it exists
-    if let Err(err) = tokio::fs::remove_file(&volume.path).await {
-        error!(?err, path = %volume.path, "failed to delete volume file");
-        // Continue anyway - database cleanup is more important
+    // Drive the backend's destroy() so backend resources (raft block group,
+    // SPDK manifest + stub, lvol, iSCSI LUN) are released. Without this,
+    // deleting a non-local_file volume row leaks the entire backend
+    // resource and the next agent restart reloads an orphan group.
+    //
+    // We refuse to drop the DB row when destroy fails, mirroring the
+    // VM-delete flow's "no silent backend/DB drift" contract: an operator
+    // sees the volume row is still present and can fix the backend or
+    // retry. local_file's destroy is idempotent (NotFound is treated as
+    // success) so a stale row whose disk file is already gone still
+    // deletes cleanly.
+    if let Some(backend) = st.registry.get(volume.backend_id).cloned() {
+        let handle = nexus_storage::VolumeHandle {
+            volume_id: volume.id,
+            backend_id: nexus_storage::BackendInstanceId(volume.backend_id),
+            backend_kind: backend.kind(),
+            locator: volume.path.clone(),
+            size_bytes: volume.size_bytes.try_into().unwrap_or(0),
+        };
+        if let Err(err) = backend.destroy(handle).await {
+            error!(
+                volume_id = %id,
+                backend_id = %volume.backend_id,
+                error = ?err,
+                "backend.destroy failed; volume row preserved so the backend resource stays visible to operators"
+            );
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    } else {
+        // The volume row references a backend that's no longer in the
+        // registry (config rolled back, soft-deleted, etc.). We can't
+        // call destroy, but we also can't leave the row dangling — log
+        // and proceed with DB cleanup. The on-disk locator is best-effort
+        // unlinked below.
+        error!(
+            volume_id = %id,
+            backend_id = %volume.backend_id,
+            "backend missing from registry; skipping backend.destroy and unlinking locator best-effort"
+        );
+        if let Err(err) = tokio::fs::remove_file(&volume.path).await {
+            error!(?err, path = %volume.path, "failed to delete volume file");
+        }
     }
 
-    // Delete database record
+    // Delete database record.
     volume_repo.delete(id).await.map_err(|err| {
         error!(?err, "failed to delete volume from database");
         StatusCode::INTERNAL_SERVER_ERROR
