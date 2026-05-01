@@ -281,18 +281,37 @@ impl HostBackend for RaftSpdkHostBackend {
                 }
                 filled += n;
             }
-            self.raft_block
-                .append_command(
-                    locator.group_id,
-                    1,
-                    Some(self.local_node_id),
-                    BlockCommand::Write {
-                        offset,
-                        bytes: block,
-                    },
-                )
+            // Production raft_spdk replicates populate writes through
+            // openraft so committed bytes survive a leader-loss before the
+            // guest writes anything. If no runtime is registered for this
+            // group (prototype tests, or the legacy single-replica path),
+            // fall back to the direct in-memory append so the existing
+            // unit tests keep working.
+            let command = BlockCommand::Write {
+                offset,
+                bytes: block,
+            };
+            let runtime_present = self
+                .raft_block
+                .runtime_for(locator.group_id)
                 .await
-                .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
+                .is_some();
+            if runtime_present {
+                self.raft_block
+                    .runtime_client_write(locator.group_id, command)
+                    .await
+                    .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
+            } else {
+                self.raft_block
+                    .append_command(
+                        locator.group_id,
+                        1,
+                        Some(self.local_node_id),
+                        command,
+                    )
+                    .await
+                    .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
+            }
             offset += chunk_len as u64;
             remaining = remaining.saturating_sub(chunk_len as u64);
         }

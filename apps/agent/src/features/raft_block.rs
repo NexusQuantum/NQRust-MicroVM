@@ -1654,6 +1654,13 @@ fn error_response(status: StatusCode, err: RaftBlockError) -> axum::response::Re
 }
 
 pub fn router(state: Arc<RaftBlockState>) -> Router {
+    // Raft block writes carry a JSON-encoded byte vec; populate uses 1 MiB
+    // chunks which expand 3-4x in JSON ("0,0,0,..." form). The default 2 MiB
+    // body limit rejects them as 413 once the leader-forward path is taken.
+    // Bump to 64 MiB which comfortably covers any realistic chunk plus log
+    // headers, and matches the maximum capacity of a single populated write
+    // path under the current chunk-size policy.
+    const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
     Router::new()
         .route("/:group_id/status", get(status))
         .route("/:group_id/snapshot", get(snapshot))
@@ -1678,6 +1685,7 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
         .route("/runtime_start", post(runtime_start))
         .route("/runtime_write", post(runtime_write))
         .route("/runtime_initialize", post(runtime_initialize))
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }
 
