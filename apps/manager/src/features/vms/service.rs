@@ -301,21 +301,15 @@ pub async fn create_and_start(
     )
     .await?;
 
-    // Now that the vm row exists, record the rootfs volume_attachment.
-    // provision_rootfs creates the volume row (named `rootfs-<vm_id>`)
-    // but cannot insert the attachment because vm.id doesn't yet exist
-    // for the FK. Look up the freshly-created volume by name and link it.
-    if let Ok(Some(rootfs_volume_id)) =
-        sqlx::query_scalar::<_, Uuid>(r#"SELECT id FROM volume WHERE name = $1 LIMIT 1"#)
-            .bind(format!("rootfs-{id}"))
-            .fetch_optional(&st.db)
-            .await
-    {
+    // Now that the vm row exists, record the exact rootfs volume_attachment.
+    // provision_rootfs returns the VolumeHandle it created; using that id avoids
+    // ambiguous name lookups and keeps backend.destroy wired for VM delete.
+    if let Some(rootfs_volume) = &spec.rootfs_volume_handle {
         let _ = sqlx::query(
             r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)
                ON CONFLICT DO NOTHING"#,
         )
-        .bind(rootfs_volume_id)
+        .bind(rootfs_volume.volume_id)
         .bind(id)
         .bind("rootfs")
         .execute(&st.db)
@@ -360,14 +354,17 @@ pub async fn create_and_start(
         }
     }
 
-    // Auto-register rootfs volume if it doesn't exist
-    info!(vm_id = %id, rootfs = %spec.rootfs_path, host_id = %host.id, "attempting to auto-register rootfs volume");
-    match ensure_volume_registered(st, id, &spec.rootfs_path, host.id).await {
-        Ok(_) => {
-            info!(vm_id = %id, rootfs = %spec.rootfs_path, "volume auto-registration successful or already exists")
-        }
-        Err(e) => {
-            warn!(vm_id = %id, rootfs = %spec.rootfs_path, error = ?e, "failed to auto-register rootfs volume")
+    if spec.rootfs_volume_handle.is_none() {
+        // Legacy/container/function rootfs paths are not created through the
+        // storage registry, so keep the old best-effort registration path.
+        info!(vm_id = %id, rootfs = %spec.rootfs_path, host_id = %host.id, "attempting to auto-register rootfs volume");
+        match ensure_volume_registered(st, id, &spec.rootfs_path, host.id).await {
+            Ok(_) => {
+                info!(vm_id = %id, rootfs = %spec.rootfs_path, "volume auto-registration successful or already exists")
+            }
+            Err(e) => {
+                warn!(vm_id = %id, rootfs = %spec.rootfs_path, error = ?e, "failed to auto-register rootfs volume")
+            }
         }
     }
 
@@ -469,6 +466,7 @@ pub async fn create_from_snapshot(
         rootfs_path: source_vm.rootfs_path.clone(),
         rootfs_is_vhost_user: false,
         rootfs_size_bytes: None,
+        rootfs_volume_handle: None,
     };
 
     let paths = VmPaths::new(id, &st.storage)
@@ -733,6 +731,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
         rootfs_path: resolved_rootfs_path,
         rootfs_is_vhost_user,
         rootfs_size_bytes: None,
+        rootfs_volume_handle: None,
     };
 
     let network = select_network(&host.capabilities_json)?;
@@ -941,6 +940,48 @@ pub async fn stop_and_delete_with_user(
         tracing::warn!(vm_id = %id, error = ?err, "failed to stop vm before deletion");
     }
 
+    let managed_rootfs_volumes: Vec<(Uuid, String, i64, Uuid)> = sqlx::query_as(
+        r#"SELECT v.id, v.path, v.size_bytes, v.backend_id
+           FROM volume v
+           JOIN volume_attachment va ON va.volume_id = v.id
+           WHERE va.vm_id = $1
+             AND va.drive_id = 'rootfs'
+             AND v.name = $2
+             AND v.backend_id IS NOT NULL"#,
+    )
+    .bind(id)
+    .bind(format!("rootfs-{id}"))
+    .fetch_all(&st.db)
+    .await
+    .unwrap_or_default();
+
+    for (volume_id, locator, size_bytes, backend_id) in &managed_rootfs_volumes {
+        let Some(backend) = st.registry.get(*backend_id).cloned() else {
+            tracing::warn!(
+                vm_id = %id,
+                volume_id = %volume_id,
+                backend_id = %backend_id,
+                "cannot destroy rootfs volume: backend missing from registry"
+            );
+            continue;
+        };
+        let handle = nexus_storage::VolumeHandle {
+            volume_id: *volume_id,
+            backend_id: nexus_storage::BackendInstanceId(*backend_id),
+            backend_kind: backend.kind(),
+            locator: locator.clone(),
+            size_bytes: (*size_bytes).try_into().unwrap_or(0),
+        };
+        if let Err(err) = backend.destroy(handle).await {
+            tracing::warn!(
+                vm_id = %id,
+                volume_id = %volume_id,
+                error = ?err,
+                "failed to destroy managed rootfs volume during VM delete"
+            );
+        }
+    }
+
     // Manually clean up storage directory (drives, logs, etc.)
     let storage_path = st.storage.vm_dir(id);
     if let Err(e) = tokio::fs::remove_dir_all(&storage_path).await {
@@ -970,6 +1011,13 @@ pub async fn stop_and_delete_with_user(
     .context("listing active attachments")?;
     for drive_id in active_drives {
         let _ = volume_repo.mark_detached(id, &drive_id).await;
+    }
+
+    for (volume_id, _, _, _) in &managed_rootfs_volumes {
+        let _ = sqlx::query(r#"DELETE FROM volume WHERE id = $1"#)
+            .bind(volume_id)
+            .execute(&st.db)
+            .await;
     }
 
     // Delete from database (this cascades to vm_drive and vm_network_interface)
@@ -1283,6 +1331,14 @@ struct ResolvedVmSpec {
     rootfs_is_vhost_user: bool,
     #[allow(dead_code)]
     rootfs_size_bytes: Option<u64>,
+    rootfs_volume_handle: Option<nexus_storage::VolumeHandle>,
+}
+
+struct ProvisionedRootfs {
+    firecracker_path: String,
+    size_bytes: Option<u64>,
+    is_vhost_user: bool,
+    volume_handle: Option<nexus_storage::VolumeHandle>,
 }
 
 async fn resolve_vm_spec(
@@ -1294,7 +1350,7 @@ async fn resolve_vm_spec(
 ) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
-    let (rootfs_path, rootfs_size_bytes, rootfs_is_vhost_user) = provision_rootfs(
+    let rootfs = provision_rootfs(
         st,
         req.rootfs_image_id,
         req.rootfs_path,
@@ -1311,9 +1367,10 @@ async fn resolve_vm_spec(
         vcpu: req.vcpu,
         mem_mib: req.mem_mib,
         kernel_path,
-        rootfs_path,
-        rootfs_is_vhost_user,
-        rootfs_size_bytes,
+        rootfs_path: rootfs.firecracker_path,
+        rootfs_is_vhost_user: rootfs.is_vhost_user,
+        rootfs_size_bytes: rootfs.size_bytes,
+        rootfs_volume_handle: rootfs.volume_handle,
     })
 }
 
@@ -1354,7 +1411,7 @@ async fn provision_rootfs(
     req_backend_id: Option<Uuid>,
     vm_host_id: Uuid,
     host_addr: &str,
-) -> Result<(String, Option<u64>, bool)> {
+) -> Result<ProvisionedRootfs> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
         let image = st
@@ -1384,7 +1441,12 @@ async fn provision_rootfs(
     if is_already_vm_copy {
         // Already a per-VM copy from container/function feature, use it directly
         info!(vm_id = %vm_id, source = %source_path, "using pre-copied rootfs from container/function feature");
-        return Ok((source_path, None, false));
+        return Ok(ProvisionedRootfs {
+            firecracker_path: source_path,
+            size_bytes: None,
+            is_vhost_user: false,
+            volume_handle: None,
+        });
     }
 
     // For regular VMs: allocate rootfs through the storage Registry.
@@ -1458,7 +1520,12 @@ async fn provision_rootfs(
     };
     let size_bytes = alloc.volume_handle.size_bytes;
 
-    Ok((firecracker_drive_path, Some(size_bytes), is_vhost_user))
+    Ok(ProvisionedRootfs {
+        firecracker_path: firecracker_drive_path,
+        size_bytes: Some(size_bytes),
+        is_vhost_user,
+        volume_handle: Some(alloc.volume_handle),
+    })
 }
 
 fn ensure_allowed_path(st: &AppState, path: &str) -> Result<()> {

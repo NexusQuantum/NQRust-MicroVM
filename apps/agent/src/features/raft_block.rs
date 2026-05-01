@@ -35,6 +35,8 @@ pub struct RaftBlockStatus {
     pub state: String,
     pub data_path: String,
     pub transport: String,
+    pub store_kind: String,
+    pub store_path: Option<String>,
     pub node_id: Option<u64>,
     pub capacity_bytes: Option<u64>,
     pub block_size: Option<u64>,
@@ -758,6 +760,40 @@ impl RaftBlockState {
         )
     }
 
+    fn store_descriptor(&self, group_id: Uuid, node_id: u64) -> (String, Option<String>) {
+        if let Ok(template) = std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE") {
+            return (
+                "spdk_lvol".into(),
+                Some(template.replace("{node_id}", &node_id.to_string())),
+            );
+        }
+        if std::env::var("AGENT_RAFTBLK_IN_MEMORY")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            return ("in_memory".into(), None);
+        }
+        let path = self
+            .base_dir
+            .join("raft-block")
+            .join(group_id.to_string())
+            .join(format!("node-{node_id}.json"));
+        ("sidecar".into(), Some(path.to_string_lossy().into_owned()))
+    }
+
+    fn current_store_kind(&self) -> String {
+        if std::env::var("RAFT_BLOCK_SPDK_NBD_TEMPLATE").is_ok() {
+            "spdk_lvol".into()
+        } else if std::env::var("AGENT_RAFTBLK_IN_MEMORY")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            "in_memory".into()
+        } else {
+            "sidecar".into()
+        }
+    }
+
     pub async fn ensure_group(
         &self,
         group_id: Uuid,
@@ -770,6 +806,7 @@ impl RaftBlockState {
             node_id,
             capacity_bytes,
             block_size,
+            desired_store_kind: None,
         })
         .await
     }
@@ -778,6 +815,16 @@ impl RaftBlockState {
         let runtime_stopped = self.stop_runtime(group_id).await?;
         let group_stopped = self.groups.lock().await.remove(&group_id).is_some();
         Ok(runtime_stopped || group_stopped)
+    }
+
+    pub async fn destroy_group(&self, group_id: Uuid) -> Result<bool, RaftBlockError> {
+        let stopped = self.stop_group(group_id).await?;
+        let sidecar_dir = self.base_dir.join("raft-block").join(group_id.to_string());
+        if sidecar_dir.exists() {
+            std::fs::remove_dir_all(&sidecar_dir)
+                .map_err(|e| RaftBlockError::Store(format!("remove {sidecar_dir:?}: {e}")))?;
+        }
+        Ok(stopped || !sidecar_dir.exists())
     }
 
     pub async fn load_existing_groups(&self) -> Result<usize, RaftBlockError> {
@@ -842,6 +889,14 @@ impl RaftBlockState {
     }
 
     async fn create_group(&self, req: CreateGroupReq) -> Result<(), RaftBlockError> {
+        if let Some(desired) = req.desired_store_kind.as_deref() {
+            let actual = self.current_store_kind();
+            if desired != actual {
+                return Err(RaftBlockError::Store(format!(
+                    "raft block store kind mismatch: requested {desired}, agent is using {actual}"
+                )));
+            }
+        }
         let mut groups = self.groups.lock().await;
         if let Some(existing) = groups.get(&req.group_id) {
             validate_existing_group(existing, &req)?;
@@ -1032,12 +1087,18 @@ impl RaftBlockState {
     pub async fn status(&self, group_id: Uuid) -> RaftBlockStatus {
         let groups = self.groups.lock().await;
         if let Some(replica) = groups.get(&group_id) {
+            let node_id = replica.node_id().ok();
+            let (store_kind, store_path) = node_id
+                .map(|node_id| self.store_descriptor(group_id, node_id))
+                .unwrap_or_else(|| (self.current_store_kind(), None));
             RaftBlockStatus {
                 group_id,
                 state: "started".into(),
                 data_path: "persistent_local_replica".into(),
                 transport: "openraft_entry_local".into(),
-                node_id: replica.node_id().ok(),
+                store_kind,
+                store_path,
+                node_id,
                 capacity_bytes: replica.capacity_bytes().ok(),
                 block_size: replica.block_size().ok(),
                 last_applied_index: replica.last_applied_index().ok(),
@@ -1050,6 +1111,8 @@ impl RaftBlockState {
                 state: "not_started".into(),
                 data_path: "raftblk_pending".into(),
                 transport: "not_started".into(),
+                store_kind: self.current_store_kind(),
+                store_path: None,
                 node_id: None,
                 capacity_bytes: None,
                 block_size: None,
@@ -1089,6 +1152,8 @@ pub struct CreateGroupReq {
     pub node_id: u64,
     pub capacity_bytes: u64,
     pub block_size: u64,
+    #[serde(default)]
+    pub desired_store_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1122,6 +1187,11 @@ pub struct InstallSnapshotReq {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StopGroupReq {
+    pub group_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DestroyGroupReq {
     pub group_id: Uuid,
 }
 
@@ -1207,6 +1277,20 @@ pub async fn stop(
         Ok(stopped) => (
             StatusCode::OK,
             Json(serde_json::json!({ "stopped": stopped })),
+        )
+            .into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+pub async fn destroy(
+    State(state): State<Arc<RaftBlockState>>,
+    Json(req): Json<DestroyGroupReq>,
+) -> impl IntoResponse {
+    match state.destroy_group(req.group_id).await {
+        Ok(destroyed) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "destroyed": destroyed })),
         )
             .into_response(),
         Err(err) => error_response(StatusCode::BAD_REQUEST, err),
@@ -1326,6 +1410,7 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
         .route("/append_entries", post(append_entries))
         .route("/read", post(read))
         .route("/stop", post(stop))
+        .route("/destroy", post(destroy))
         .route("/vote", post(vote))
         .route("/install_snapshot", post(install_snapshot))
         .route("/heartbeat", post(heartbeat))
@@ -1440,6 +1525,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1470,6 +1556,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1484,6 +1571,11 @@ mod tests {
         assert_eq!(status["retained_log_entries"], 1);
         assert_eq!(status["last_applied_index"], 1);
         assert_eq!(status["node_id"], 1);
+        assert_eq!(status["store_kind"], "sidecar");
+        assert!(status["store_path"]
+            .as_str()
+            .unwrap()
+            .contains("node-1.json"));
     }
 
     #[tokio::test]
@@ -1498,6 +1590,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1541,6 +1634,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_rejects_requested_store_kind_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+                desired_store_kind: Some("spdk_lvol".into()),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(response["error"]
+            .as_str()
+            .unwrap()
+            .contains("store kind mismatch"));
+    }
+
+    #[tokio::test]
+    async fn destroy_stops_group_and_removes_sidecar_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_id = Uuid::new_v4();
+        let state = Arc::new(RaftBlockState::new(dir.path()));
+        let response = create(
+            State(state.clone()),
+            Json(CreateGroupReq {
+                group_id,
+                node_id: 1,
+                capacity_bytes: 4096,
+                block_size: 512,
+                desired_store_kind: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let sidecar_dir = dir.path().join("raft-block").join(group_id.to_string());
+        assert!(sidecar_dir.exists());
+
+        let response = destroy(State(state.clone()), Json(DestroyGroupReq { group_id }))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!sidecar_dir.exists());
+        assert_eq!(state.status(group_id).await.state, "not_started");
+    }
+
+    #[tokio::test]
     async fn create_rejects_mismatched_existing_group_metadata() {
         let dir = tempfile::tempdir().unwrap();
         let group_id = Uuid::new_v4();
@@ -1552,6 +1700,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1565,6 +1714,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 8192,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1579,6 +1729,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 8192,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1600,6 +1751,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1635,6 +1787,7 @@ mod tests {
                 node_id: 2,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1660,6 +1813,7 @@ mod tests {
                 node_id: 2,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1685,6 +1839,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1746,6 +1901,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1804,6 +1960,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1915,6 +2072,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1949,6 +2107,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -1981,6 +2140,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -2034,6 +2194,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             }),
         )
         .await
@@ -2093,6 +2254,7 @@ mod tests {
                 node_id: 1,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             })
             .await
             .unwrap();
@@ -2193,6 +2355,7 @@ mod tests {
                 node_id: 2,
                 capacity_bytes: 4096,
                 block_size: 512,
+                desired_store_kind: None,
             })
             .await
             .unwrap();

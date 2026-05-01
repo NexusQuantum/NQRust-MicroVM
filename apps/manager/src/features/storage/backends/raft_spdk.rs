@@ -78,12 +78,14 @@ impl RaftSpdkControlPlaneBackend {
         replica: &RaftSpdkReplicaConfig,
         group_id: Uuid,
         size_bytes: u64,
+        desired_store_kind: &'static str,
     ) -> Result<(), StorageError> {
         let req = CreateRaftBlockGroupReq {
             group_id,
             node_id: replica.node_id,
             capacity_bytes: size_bytes,
             block_size: self.config.block_size,
+            desired_store_kind: Some(desired_store_kind),
         };
         let response = self
             .http
@@ -128,6 +130,30 @@ impl RaftSpdkControlPlaneBackend {
             let body = response.text().await.unwrap_or_default();
             return Err(StorageError::backend(std::io::Error::other(format!(
                 "raft_spdk stop group on node {node_id} failed with {status}: {body}"
+            ))));
+        }
+        Ok(())
+    }
+
+    async fn destroy_remote_group_url(
+        &self,
+        node_id: u64,
+        agent_base_url: &str,
+        group_id: Uuid,
+    ) -> Result<(), StorageError> {
+        let url = format!("{}/{}", agent_base_url.trim_end_matches('/'), "destroy");
+        let response = self
+            .http
+            .post(url)
+            .json(&DestroyRaftBlockGroupReq { group_id })
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "raft_spdk destroy group on node {node_id} failed with {status}: {body}"
             ))));
         }
         Ok(())
@@ -238,7 +264,12 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
         let mut created: Vec<&RaftSpdkReplicaConfig> = Vec::new();
         for replica in &self.config.replicas {
             if let Err(err) = self
-                .create_remote_group(replica, group_id, opts.size_bytes)
+                .create_remote_group(
+                    replica,
+                    group_id,
+                    opts.size_bytes,
+                    if production { "spdk_lvol" } else { "sidecar" },
+                )
                 .await
             {
                 for created_replica in &created {
@@ -324,7 +355,11 @@ impl ControlPlaneBackend for RaftSpdkControlPlaneBackend {
         let mut errors = Vec::new();
         for replica in &locator.replicas {
             if let Err(err) = self
-                .stop_remote_group_url(replica.node_id, &replica.agent_base_url, locator.group_id)
+                .destroy_remote_group_url(
+                    replica.node_id,
+                    &replica.agent_base_url,
+                    locator.group_id,
+                )
                 .await
             {
                 errors.push(err.to_string());
@@ -382,10 +417,16 @@ struct CreateRaftBlockGroupReq {
     node_id: u64,
     capacity_bytes: u64,
     block_size: u64,
+    desired_store_kind: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
 struct StopRaftBlockGroupReq {
+    group_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+struct DestroyRaftBlockGroupReq {
     group_id: Uuid,
 }
 
@@ -681,7 +722,7 @@ mod tests {
         async fn spawn_agent() -> (String, CallLog, tokio::task::JoinHandle<()>) {
             let calls = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
             let app = axum::Router::new()
-                .route("/v1/raft_block/stop", axum::routing::post(record))
+                .route("/v1/raft_block/destroy", axum::routing::post(record))
                 .with_state(calls.clone());
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
@@ -740,7 +781,7 @@ mod tests {
         for calls in [&calls1, &calls2, &calls3] {
             let recorded = calls.lock().await;
             assert_eq!(recorded.len(), 1);
-            assert_eq!(recorded[0].0, "/v1/raft_block/stop");
+            assert_eq!(recorded[0].0, "/v1/raft_block/destroy");
             assert_eq!(recorded[0].1["group_id"], group_id.to_string());
         }
 
