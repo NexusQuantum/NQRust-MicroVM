@@ -1568,10 +1568,7 @@ async fn collect_planner_inputs(
             addr: h.addr.clone(),
             is_hot_spare: h.is_hot_spare,
             lifecycle_state: h.lifecycle_state.clone(),
-            healthy: now
-                .signed_duration_since(h.last_seen_at)
-                .num_seconds()
-                <= 30,
+            healthy: now.signed_duration_since(h.last_seen_at).num_seconds() <= 30,
             replica_count: 0, // filled in by the planner if needed
         })
         .collect();
@@ -1598,10 +1595,8 @@ async fn collect_planner_inputs(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("replicas: {e}")))?;
 
-    let host_by_addr: HashMap<String, Uuid> = hosts
-        .iter()
-        .map(|h| (h.addr.clone(), h.id))
-        .collect();
+    let host_by_addr: HashMap<String, Uuid> =
+        hosts.iter().map(|h| (h.addr.clone(), h.id)).collect();
     let replicas: Vec<ReplicaView> = rows
         .into_iter()
         .filter_map(|r| {
@@ -1700,13 +1695,9 @@ pub async fn promotion_plan(
             return (status, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
-    match plan_hot_spare_promotion(
-        q.host_id,
-        &hosts,
-        &replicas,
-        next_node_id,
-        |_target| Some(Uuid::nil()),
-    ) {
+    match plan_hot_spare_promotion(q.host_id, &hosts, &replicas, next_node_id, |_target| {
+        Some(Uuid::nil())
+    }) {
         Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
         Err(error) => (
             StatusCode::CONFLICT,
@@ -1739,13 +1730,9 @@ pub async fn rebalance_plan(
             return (status, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
-    match plan_rebalance(
-        id,
-        &hosts,
-        &replicas,
-        next_node_id,
-        |_target| Some(Uuid::nil()),
-    ) {
+    match plan_rebalance(id, &hosts, &replicas, next_node_id, |_target| {
+        Some(Uuid::nil())
+    }) {
         Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
         Err(error) => (
             StatusCode::CONFLICT,

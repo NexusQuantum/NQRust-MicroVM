@@ -128,7 +128,8 @@ pub fn plan_decommission(
     pick_node_id: impl Fn(&[ReplicaView]) -> u64,
     spdk_backend_id_for_host: impl Fn(Uuid) -> Option<Uuid>,
 ) -> Result<Plan, String> {
-    let target_replicas: Vec<&ReplicaView> = replicas.iter().filter(|r| r.host_id == host_id).collect();
+    let target_replicas: Vec<&ReplicaView> =
+        replicas.iter().filter(|r| r.host_id == host_id).collect();
     if target_replicas.is_empty() {
         return Ok(Plan {
             steps: vec![],
@@ -145,8 +146,10 @@ pub fn plan_decommission(
 
     let mut steps = Vec::new();
     let mut notes = Vec::new();
-    let mut spare_replica_count: Vec<(Uuid, usize)> =
-        spares.iter().map(|h| (h.id, count_for(replicas, h.id))).collect();
+    let mut spare_replica_count: Vec<(Uuid, usize)> = spares
+        .iter()
+        .map(|h| (h.id, count_for(replicas, h.id)))
+        .collect();
 
     for replica in &target_replicas {
         // Pick the spare with the lightest current load so we don't
@@ -178,7 +181,10 @@ pub fn plan_decommission(
         });
         // Update the running count so the next iteration picks a fresh spare
         // when this one fills up.
-        if let Some(entry) = spare_replica_count.iter_mut().find(|(id, _)| *id == target_host_id) {
+        if let Some(entry) = spare_replica_count
+            .iter_mut()
+            .find(|(id, _)| *id == target_host_id)
+        {
             entry.1 += 1;
         }
     }
@@ -218,8 +224,10 @@ pub fn plan_hot_spare_promotion(
     }
 
     let mut steps = Vec::new();
-    let mut spare_replica_count: Vec<(Uuid, usize)> =
-        spares.iter().map(|h| (h.id, count_for(replicas, h.id))).collect();
+    let mut spare_replica_count: Vec<(Uuid, usize)> = spares
+        .iter()
+        .map(|h| (h.id, count_for(replicas, h.id)))
+        .collect();
 
     for replica in &affected {
         spare_replica_count.sort_by_key(|(_, count)| *count);
@@ -229,9 +237,8 @@ pub fn plan_hot_spare_promotion(
             .find(|h| h.id == target_host_id)
             .expect("spare in list");
         let new_node_id = pick_node_id(replicas);
-        let spdk_backend_id = spdk_backend_id_for_host(target_host.id).ok_or_else(|| {
-            format!("host {target_host_id} has no spdk_backend_id configured")
-        })?;
+        let spdk_backend_id = spdk_backend_id_for_host(target_host.id)
+            .ok_or_else(|| format!("host {target_host_id} has no spdk_backend_id configured"))?;
         steps.push(PlanStep::AddReplica {
             backend_id: replica.backend_id,
             group_id: replica.group_id,
@@ -243,7 +250,10 @@ pub fn plan_hot_spare_promotion(
         // Note: we deliberately do NOT emit a RemoveReplica for the
         // failed host. The host might come back; the operator decides
         // to remove the orphan via the manual API once recovery is done.
-        if let Some(entry) = spare_replica_count.iter_mut().find(|(id, _)| *id == target_host_id) {
+        if let Some(entry) = spare_replica_count
+            .iter_mut()
+            .find(|(id, _)| *id == target_host_id)
+        {
             entry.1 += 1;
         }
     }
@@ -321,21 +331,18 @@ pub fn plan_rebalance(
             .filter(|r| r.host_id == *min_host && r.backend_id == backend_id)
             .map(|r| r.group_id)
             .collect();
-        let candidate = replicas
-            .iter()
-            .find(|r| {
-                r.host_id == *max_host
-                    && r.backend_id == backend_id
-                    && !groups_on_min.contains(&r.group_id)
-            });
+        let candidate = replicas.iter().find(|r| {
+            r.host_id == *max_host
+                && r.backend_id == backend_id
+                && !groups_on_min.contains(&r.group_id)
+        });
         let Some(replica) = candidate else { break };
 
         let target_host_id = *min_host;
         let target_addr = min_addr.clone();
         let new_node_id = pick_node_id(replicas);
-        let spdk_backend_id = spdk_backend_id_for_host(target_host_id).ok_or_else(|| {
-            format!("host {target_host_id} has no spdk_backend_id configured")
-        })?;
+        let spdk_backend_id = spdk_backend_id_for_host(target_host_id)
+            .ok_or_else(|| format!("host {target_host_id} has no spdk_backend_id configured"))?;
         steps.push(PlanStep::AddReplica {
             backend_id: replica.backend_id,
             group_id: replica.group_id,
@@ -462,7 +469,7 @@ mod tests {
     #[test]
     fn promotion_does_not_remove_failed_replica() {
         let hosts = vec![
-            host(1, false, "active"),  // failed host (still listed)
+            host(1, false, "active"), // failed host (still listed)
             host(2, false, "active"),
             host(9, true, "active"),
         ];
@@ -491,7 +498,11 @@ mod tests {
             host(3, false, "active"),
         ];
         // 3 replicas, one per host: balanced
-        let replicas = vec![replica(0xAA, 1, 1), replica(0xAA, 2, 2), replica(0xAA, 3, 3)];
+        let replicas = vec![
+            replica(0xAA, 1, 1),
+            replica(0xAA, 2, 2),
+            replica(0xAA, 3, 3),
+        ];
         let plan = plan_rebalance(
             Uuid::from_u128(1),
             &hosts,

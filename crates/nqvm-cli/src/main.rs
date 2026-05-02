@@ -148,11 +148,13 @@ async fn main() -> Result<()> {
 
 async fn storage(client: &reqwest::Client, base: &str, sub: StorageCmd) -> Result<()> {
     match sub {
-        StorageCmd::Backends => {
-            print_get(client, &format!("{base}/v1/storage_backends")).await
-        }
+        StorageCmd::Backends => print_get(client, &format!("{base}/v1/storage_backends")).await,
         StorageCmd::Groups { backend } => {
-            print_get(client, &format!("{base}/v1/storage_backends/{backend}/groups")).await
+            print_get(
+                client,
+                &format!("{base}/v1/storage_backends/{backend}/groups"),
+            )
+            .await
         }
         StorageCmd::Group { backend, group } => {
             print_get(
@@ -171,18 +173,14 @@ async fn storage(client: &reqwest::Client, base: &str, sub: StorageCmd) -> Resul
         StorageCmd::DecommissionPlan { backend, host } => {
             print_get(
                 client,
-                &format!(
-                    "{base}/v1/storage_backends/{backend}/decommission_plan?host_id={host}"
-                ),
+                &format!("{base}/v1/storage_backends/{backend}/decommission_plan?host_id={host}"),
             )
             .await
         }
         StorageCmd::PromotionPlan { backend, host } => {
             print_get(
                 client,
-                &format!(
-                    "{base}/v1/storage_backends/{backend}/promotion_plan?host_id={host}"
-                ),
+                &format!("{base}/v1/storage_backends/{backend}/promotion_plan?host_id={host}"),
             )
             .await
         }
@@ -263,7 +261,12 @@ async fn hosts(client: &reqwest::Client, base: &str, sub: HostCmd) -> Result<()>
             .await
         }
         HostCmd::Decommission { host } => {
-            print_post::<()>(client, &format!("{base}/v1/hosts/{host}/decommission"), None).await
+            print_post::<()>(
+                client,
+                &format!("{base}/v1/hosts/{host}/decommission"),
+                None,
+            )
+            .await
         }
     }
 }

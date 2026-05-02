@@ -28,10 +28,7 @@ pub fn router() -> Router {
         )
         .route("/:id/repair_queue", get(routes::list_repair_queue))
         // B-III Task 6: decommission plan preview.
-        .route(
-            "/:id/decommission_plan",
-            get(routes::decommission_plan),
-        )
+        .route("/:id/decommission_plan", get(routes::decommission_plan))
         // B-III Task 7: hot-spare promotion plan preview.
         .route("/:id/promotion_plan", get(routes::promotion_plan))
         // B-III Task 8: rebalance plan preview.

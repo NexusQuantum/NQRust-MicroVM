@@ -162,11 +162,8 @@ async fn audit_raft_spdk_membership(pool: &PgPool) -> Result<()> {
                 continue;
             }
         };
-        let locator_node_ids: HashSet<i64> = locator
-            .replicas
-            .iter()
-            .map(|r| r.node_id as i64)
-            .collect();
+        let locator_node_ids: HashSet<i64> =
+            locator.replicas.iter().map(|r| r.node_id as i64).collect();
 
         let db_rows: Vec<ReplicaRow> = sqlx::query_as(
             r#"SELECT node_id FROM raft_spdk_replica
@@ -196,14 +193,9 @@ async fn audit_raft_spdk_membership(pool: &PgPool) -> Result<()> {
         }
 
         if db_node_ids != locator_node_ids {
-            let only_in_locator: Vec<i64> = locator_node_ids
-                .difference(&db_node_ids)
-                .copied()
-                .collect();
-            let only_in_db: Vec<i64> = db_node_ids
-                .difference(&locator_node_ids)
-                .copied()
-                .collect();
+            let only_in_locator: Vec<i64> =
+                locator_node_ids.difference(&db_node_ids).copied().collect();
+            let only_in_db: Vec<i64> = db_node_ids.difference(&locator_node_ids).copied().collect();
             tracing::warn!(
                 volume_id = %vol.id,
                 backend_id = %vol.backend_id,
