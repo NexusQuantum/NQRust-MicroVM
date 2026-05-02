@@ -12,8 +12,13 @@ use nexus_types::{BackendKind, Capabilities, StorageBackend};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeSet, HashMap};
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
 use utoipa::ToSchema;
 use uuid::Uuid;
+
+const REPAIR_CATCHUP_TIMEOUT: Duration = Duration::from_secs(300);
+const REPAIR_CATCHUP_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 fn row_to_wire(row: StorageBackendRow) -> Result<StorageBackend, StatusCode> {
     let kind: BackendKind = serde_json::from_value(serde_json::Value::String(row.kind.clone()))
@@ -283,7 +288,7 @@ pub async fn list_repair_queue(
         ("group_id" = Uuid, Path, description = "Raft block group ID"),
         ("node_id" = u64, Path, description = "Replica node ID")
     ),
-    responses((status = 200), (status = 400), (status = 404), (status = 502)),
+    responses((status = 200), (status = 400), (status = 404), (status = 412), (status = 502), (status = 504)),
     tag = "StorageBackends",
 )]
 pub async fn repair_replica(
@@ -342,32 +347,50 @@ pub async fn repair_replica(
 
     let peers = replica_peer_map(&locator);
     match start_replica_runtime(replica.agent_base_url.as_str(), group_id, peers).await {
-        Ok(()) => match finish_repair_queue_row(&st, operation.id, "succeeded", None).await {
-            Ok(row) => {
-                operation = row;
+        Ok(()) => match wait_for_replica_catchup(
+            &locator,
+            node_id,
+            REPAIR_CATCHUP_TIMEOUT,
+            REPAIR_CATCHUP_POLL_INTERVAL,
+        )
+        .await
+        {
+            Ok(()) => match finish_repair_queue_row(&st, operation.id, "succeeded", None).await {
+                Ok(row) => {
+                    operation = row;
+                    (
+                        StatusCode::OK,
+                        Json(RaftRepairReplicaResponse { operation }),
+                    )
+                        .into_response()
+                }
+                Err(e) => {
+                    tracing::error!(
+                        operation_id = %operation.id,
+                        error = ?e,
+                        "failed to mark raft repair operation succeeded"
+                    );
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "db"})),
+                    )
+                        .into_response()
+                }
+            },
+            Err(error) => {
+                let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
                 (
-                    StatusCode::OK,
-                    Json(RaftRepairReplicaResponse { operation }),
-                )
-                    .into_response()
-            }
-            Err(e) => {
-                tracing::error!(
-                    operation_id = %operation.id,
-                    error = ?e,
-                    "failed to mark raft repair operation succeeded"
-                );
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "db"})),
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
                 )
                     .into_response()
             }
         },
         Err(error) => {
             let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+            let status = repair_start_error_status(&error);
             (
-                StatusCode::BAD_GATEWAY,
+                status,
                 Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
             )
                 .into_response()
@@ -404,6 +427,82 @@ async fn start_replica_runtime(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     Err(format!("{url}: {status}: {body}"))
+}
+
+fn repair_start_error_status(error: &str) -> StatusCode {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("not started")
+        || normalized.contains("not found")
+        || normalized.contains("missing manifest")
+    {
+        StatusCode::PRECONDITION_FAILED
+    } else {
+        StatusCode::BAD_GATEWAY
+    }
+}
+
+async fn wait_for_replica_catchup(
+    locator: &RaftSpdkLocator,
+    node_id: u64,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        match replica_catchup_progress(locator, node_id).await {
+            Ok((target_applied, required_applied)) if target_applied >= required_applied => {
+                return Ok(());
+            }
+            Ok((target_applied, required_applied)) if started.elapsed() >= timeout => {
+                return Err(format!(
+                    "timed out waiting for replica {node_id} to catch up: applied={target_applied}, required={required_applied}"
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if started.elapsed() >= timeout => return Err(error),
+            Err(_) => {}
+        }
+        sleep(poll_interval).await;
+    }
+}
+
+async fn replica_catchup_progress(
+    locator: &RaftSpdkLocator,
+    node_id: u64,
+) -> Result<(u64, u64), String> {
+    let statuses = fetch_replica_statuses(locator).await;
+    catchup_progress_from_statuses(node_id, statuses)
+}
+
+fn catchup_progress_from_statuses(
+    node_id: u64,
+    statuses: Vec<(u64, String, Result<RaftBlockReplicaStatus, String>)>,
+) -> Result<(u64, u64), String> {
+    let mut target_applied = None;
+    let mut required_applied = 0_u64;
+    let mut errors = Vec::new();
+
+    for (status_node_id, _, result) in statuses {
+        match result {
+            Ok(status) => {
+                let applied = status.last_applied_index.unwrap_or(0);
+                if status_node_id == node_id {
+                    target_applied = Some(applied);
+                } else {
+                    required_applied = required_applied.max(applied);
+                }
+            }
+            Err(error) if status_node_id == node_id => errors.push(error),
+            Err(_) => {}
+        }
+    }
+
+    let Some(target_applied) = target_applied else {
+        return Err(errors
+            .pop()
+            .unwrap_or_else(|| format!("replica {node_id} status unavailable")));
+    };
+    Ok((target_applied, required_applied))
 }
 
 async fn create_repair_queue_row(
@@ -891,6 +990,67 @@ mod tests {
         assert_eq!(
             peers.get(&3).map(String::as_str),
             Some("http://agent-3/v1/raft_block")
+        );
+    }
+
+    #[test]
+    fn repair_progress_requires_target_to_reach_peer_high_watermark() {
+        let progress = catchup_progress_from_statuses(
+            3,
+            vec![
+                (
+                    1,
+                    "http://agent-1/v1/raft_block".into(),
+                    Ok(status(1, Some(1), 20)),
+                ),
+                (
+                    2,
+                    "http://agent-2/v1/raft_block".into(),
+                    Ok(status(2, Some(1), 18)),
+                ),
+                (
+                    3,
+                    "http://agent-3/v1/raft_block".into(),
+                    Ok(status(3, Some(1), 17)),
+                ),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(progress, (17, 20));
+    }
+
+    #[test]
+    fn repair_progress_errors_when_target_status_is_missing() {
+        let error = catchup_progress_from_statuses(
+            3,
+            vec![
+                (
+                    1,
+                    "http://agent-1/v1/raft_block".into(),
+                    Ok(status(1, Some(1), 20)),
+                ),
+                (
+                    3,
+                    "http://agent-3/v1/raft_block".into(),
+                    Err("offline".into()),
+                ),
+            ],
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "offline");
+    }
+
+    #[test]
+    fn repair_start_errors_classify_missing_manifest_as_precondition() {
+        assert_eq!(
+            repair_start_error_status("runtime_start: group abc not started"),
+            StatusCode::PRECONDITION_FAILED
+        );
+        assert_eq!(
+            repair_start_error_status("connection refused"),
+            StatusCode::BAD_GATEWAY
         );
     }
 }
