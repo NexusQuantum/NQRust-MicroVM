@@ -11,7 +11,7 @@ use nexus_storage::{RaftBlockStoreKind, RaftSpdkLocator};
 use nexus_types::{BackendKind, Capabilities, StorageBackend};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -142,6 +142,11 @@ pub struct RaftRepairQueueResponse {
     pub items: Vec<RaftRepairQueueItem>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftRepairReplicaResponse {
+    pub operation: RaftRepairQueueItem,
+}
+
 fn default_lag_threshold() -> u64 {
     1024
 }
@@ -268,6 +273,213 @@ pub async fn list_repair_queue(
                 .into_response()
         }
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/storage_backends/{id}/groups/{group_id}/replicas/{node_id}/repair",
+    params(
+        ("id" = Uuid, Path, description = "Storage backend ID"),
+        ("group_id" = Uuid, Path, description = "Raft block group ID"),
+        ("node_id" = u64, Path, description = "Replica node ID")
+    ),
+    responses((status = 200), (status = 400), (status = 404), (status = 502)),
+    tag = "StorageBackends",
+)]
+pub async fn repair_replica(
+    Extension(st): Extension<AppState>,
+    Path((id, group_id, node_id)): Path<(Uuid, Uuid, u64)>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let groups = match load_raft_spdk_groups(&st, id).await {
+        Ok(groups) => groups,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    let Some((_, locator)) = groups
+        .into_iter()
+        .find(|(_, locator)| locator.group_id == group_id)
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "group not found" })),
+        )
+            .into_response();
+    };
+    let Some(replica) = locator
+        .replicas
+        .iter()
+        .find(|replica| replica.node_id == node_id)
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "replica not found" })),
+        )
+            .into_response();
+    };
+
+    let mut operation =
+        match create_repair_queue_row(&st, id, group_id, node_id, "repair_replica").await {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::error!(
+                    backend_id = %id,
+                    group_id = %group_id,
+                    node_id,
+                    error = ?e,
+                    "failed to create raft repair queue row"
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "db"})),
+                )
+                    .into_response();
+            }
+        };
+
+    let peers = replica_peer_map(&locator);
+    match start_replica_runtime(replica.agent_base_url.as_str(), group_id, peers).await {
+        Ok(()) => match finish_repair_queue_row(&st, operation.id, "succeeded", None).await {
+            Ok(row) => {
+                operation = row;
+                (
+                    StatusCode::OK,
+                    Json(RaftRepairReplicaResponse { operation }),
+                )
+                    .into_response()
+            }
+            Err(e) => {
+                tracing::error!(
+                    operation_id = %operation.id,
+                    error = ?e,
+                    "failed to mark raft repair operation succeeded"
+                );
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "db"})),
+                )
+                    .into_response()
+            }
+        },
+        Err(error) => {
+            let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+            )
+                .into_response()
+        }
+    }
+}
+
+fn replica_peer_map(locator: &RaftSpdkLocator) -> HashMap<u64, String> {
+    locator
+        .replicas
+        .iter()
+        .map(|replica| (replica.node_id, replica.agent_base_url.clone()))
+        .collect()
+}
+
+async fn start_replica_runtime(
+    agent_base_url: &str,
+    group_id: Uuid,
+    peers: HashMap<u64, String>,
+) -> Result<(), String> {
+    let url = format!("{}/runtime_start", agent_base_url.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({
+            "group_id": group_id,
+            "peers": peers,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("{url}: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("{url}: {status}: {body}"))
+}
+
+async fn create_repair_queue_row(
+    st: &AppState,
+    backend_id: Uuid,
+    group_id: Uuid,
+    node_id: u64,
+    op_type: &str,
+) -> sqlx::Result<RaftRepairQueueItem> {
+    sqlx::query_as::<_, RaftRepairQueueItem>(
+        r#"
+        INSERT INTO raft_repair_queue (
+            backend_id,
+            group_id,
+            op_type,
+            op_args,
+            state,
+            attempts,
+            started_at
+        )
+        VALUES ($1, $2, $3, $4, 'in_progress', 1, now())
+        RETURNING id,
+                  backend_id,
+                  group_id,
+                  op_type,
+                  op_args,
+                  state,
+                  attempts,
+                  last_error,
+                  created_at,
+                  started_at,
+                  finished_at,
+                  updated_at
+        "#,
+    )
+    .bind(backend_id)
+    .bind(group_id)
+    .bind(op_type)
+    .bind(serde_json::json!({ "node_id": node_id }))
+    .fetch_one(&st.db)
+    .await
+}
+
+async fn finish_repair_queue_row(
+    st: &AppState,
+    operation_id: Uuid,
+    state: &str,
+    error: Option<&str>,
+) -> sqlx::Result<RaftRepairQueueItem> {
+    sqlx::query_as::<_, RaftRepairQueueItem>(
+        r#"
+        UPDATE raft_repair_queue
+           SET state = $2,
+               last_error = $3,
+               finished_at = now(),
+               updated_at = now()
+         WHERE id = $1
+        RETURNING id,
+                  backend_id,
+                  group_id,
+                  op_type,
+                  op_args,
+                  state,
+                  attempts,
+                  last_error,
+                  created_at,
+                  started_at,
+                  finished_at,
+                  updated_at
+        "#,
+    )
+    .bind(operation_id)
+    .bind(state)
+    .bind(error)
+    .fetch_one(&st.db)
+    .await
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -665,5 +877,20 @@ mod tests {
             RaftSpdkQuorumState::Electing
         ));
         assert_eq!(response.observed_leader, Some(1));
+    }
+
+    #[test]
+    fn repair_endpoint_builds_peer_map_from_locator() {
+        let peers = replica_peer_map(&locator());
+
+        assert_eq!(peers.len(), 3);
+        assert_eq!(
+            peers.get(&1).map(String::as_str),
+            Some("http://agent-1/v1/raft_block")
+        );
+        assert_eq!(
+            peers.get(&3).map(String::as_str),
+            Some("http://agent-3/v1/raft_block")
+        );
     }
 }

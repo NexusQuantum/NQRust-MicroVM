@@ -47,7 +47,7 @@ curl -s http://manager/v1/storage_backends/$BID/groups/$GID | jq .
 
 ## Task 2: Single-replica repair (catchup)
 
-Status: not started.
+Status: in progress — manager repair endpoint now restarts an existing replica runtime and records the operation; catch-up polling pending.
 
 The simplest membership operation. A replica that fell behind (extended host outage) but is still in the configured replica set needs to catch up from the leader. Today this happens implicitly through openraft's append_entries — but only if the lagging follower's host is up and reachable. Operators need a way to trigger it explicitly and observe progress.
 
@@ -55,6 +55,12 @@ The simplest membership operation. A replica that fell behind (extended host out
 - Implementation: the manager sends `runtime_start` to the agent for `node_id` with the current peer URL map (re-bootstraps the runtime if the agent restarted with empty in-memory state but on-disk store is intact). If the manifest is missing on the target host, return 412 `Precondition Failed` — that's a host-rebuild scenario covered by Task 5, not Task 2.
 - Wait for the follower's `last_applied_index` to reach the leader's committed index (poll `/status`, default timeout 5 minutes).
 - Surface progress: stream from a new `GET /v1/.../replicas/{node_id}/repair_status` endpoint or include in Task 1's status aggregator.
+
+Implementation notes:
+
+- DONE: `POST /v1/storage_backends/{id}/groups/{group_id}/replicas/{node_id}/repair` validates the raft_spdk locator, creates a `raft_repair_queue` row, sends `runtime_start` with the full peer map to the target replica, and marks the row succeeded/failed.
+- TODO: poll status until the repaired replica catches up to the leader's applied index.
+- TODO: distinguish missing local manifest as 412 instead of the current generic upstream failure.
 
 Validation:
 
