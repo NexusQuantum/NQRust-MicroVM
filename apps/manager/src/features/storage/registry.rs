@@ -95,6 +95,16 @@ impl Registry {
             ));
         }
 
+        // B-III Task 3 manager-restart audit: cross-check raft_spdk per-group
+        // membership stored in volume.path (the locator, source of truth)
+        // against the denormalized raft_spdk_replica table. Any mismatch is a
+        // partial-failure fingerprint (a membership change that committed in
+        // Openraft but didn't fully persist its DB rows, or vice versa).
+        // Report and continue — operators can run repair to converge state.
+        if let Err(err) = audit_raft_spdk_membership(pool).await {
+            tracing::warn!(error = ?err, "raft_spdk membership audit failed at startup");
+        }
+
         Ok(Registry { by_id, default_id })
     }
 
@@ -109,6 +119,102 @@ impl Registry {
     pub fn default_backend(&self) -> Option<&Arc<dyn ControlPlaneBackend>> {
         self.default_id.and_then(|id| self.by_id.get(&id))
     }
+}
+
+/// Cross-check the per-group `raft_spdk` membership recorded in
+/// `volume.path` (the locator, source of truth) against the
+/// denormalized `raft_spdk_replica` table. Logs a warning per detected
+/// drift so an operator can act, then returns `Ok(())` regardless —
+/// audit failure must never block manager startup.
+async fn audit_raft_spdk_membership(pool: &PgPool) -> Result<()> {
+    use std::collections::HashSet;
+
+    #[derive(sqlx::FromRow)]
+    struct VolumeRow {
+        id: Uuid,
+        backend_id: Uuid,
+        path: String,
+    }
+    let volumes: Vec<VolumeRow> = sqlx::query_as(
+        r#"SELECT v.id, v.backend_id, v.path
+             FROM volume v
+             JOIN storage_backend b ON b.id = v.backend_id
+            WHERE b.kind = 'raft_spdk'"#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("audit: load raft_spdk volumes")?;
+
+    #[derive(sqlx::FromRow)]
+    struct ReplicaRow {
+        node_id: i64,
+    }
+    for vol in &volumes {
+        let locator = match nexus_storage::RaftSpdkLocator::from_locator_str(&vol.path) {
+            Ok(l) => l,
+            Err(err) => {
+                tracing::warn!(
+                    volume_id = %vol.id,
+                    backend_id = %vol.backend_id,
+                    error = %err,
+                    "audit: unparsable raft_spdk locator on volume"
+                );
+                continue;
+            }
+        };
+        let locator_node_ids: HashSet<i64> = locator
+            .replicas
+            .iter()
+            .map(|r| r.node_id as i64)
+            .collect();
+
+        let db_rows: Vec<ReplicaRow> = sqlx::query_as(
+            r#"SELECT node_id FROM raft_spdk_replica
+                WHERE backend_id = $1 AND group_id = $2 AND removed_at IS NULL"#,
+        )
+        .bind(vol.backend_id)
+        .bind(locator.group_id)
+        .fetch_all(pool)
+        .await
+        .context("audit: load raft_spdk_replica rows")?;
+        let db_node_ids: HashSet<i64> = db_rows.iter().map(|r| r.node_id).collect();
+
+        if db_node_ids.is_empty() {
+            // First-time bootstrap: locator was created before B-III's
+            // membership-tracking table existed. Not a drift; the
+            // table is denormalized state we populate on the next
+            // membership change. Log at info so operators can see
+            // which groups are in this state but don't trip alerts.
+            tracing::info!(
+                volume_id = %vol.id,
+                backend_id = %vol.backend_id,
+                group_id = %locator.group_id,
+                replicas = locator_node_ids.len(),
+                "audit: raft_spdk group has no raft_spdk_replica rows yet (pre-B-III bootstrap)"
+            );
+            continue;
+        }
+
+        if db_node_ids != locator_node_ids {
+            let only_in_locator: Vec<i64> = locator_node_ids
+                .difference(&db_node_ids)
+                .copied()
+                .collect();
+            let only_in_db: Vec<i64> = db_node_ids
+                .difference(&locator_node_ids)
+                .copied()
+                .collect();
+            tracing::warn!(
+                volume_id = %vol.id,
+                backend_id = %vol.backend_id,
+                group_id = %locator.group_id,
+                ?only_in_locator,
+                ?only_in_db,
+                "audit: raft_spdk membership drift between volume.path locator and raft_spdk_replica table — operator should review and re-issue add_replica/remove_replica to converge"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]
