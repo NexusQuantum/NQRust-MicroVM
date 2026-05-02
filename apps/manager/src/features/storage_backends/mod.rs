@@ -20,6 +20,10 @@ pub fn router() -> Router {
             "/:id/groups/:group_id/replicas/:node_id/repair_status",
             get(routes::repair_status),
         )
+        .route(
+            "/:id/groups/:group_id/replicas/:node_id",
+            axum::routing::delete(routes::remove_replica),
+        )
         .route("/:id/repair_queue", get(routes::list_repair_queue))
         .route("/:id", get(routes::get_one))
 }

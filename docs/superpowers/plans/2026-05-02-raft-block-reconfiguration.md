@@ -99,7 +99,7 @@ Validation:
 
 ## Task 4: Replica remove (decommission of one replica)
 
-Status: not started.
+Status: in progress — conservative non-leader remove endpoint landed; leadership transfer and live validation pending.
 
 Symmetrical to add. Removing a replica from a group is one half of decommissioning a host (Task 6).
 
@@ -110,6 +110,12 @@ Symmetrical to add. Removing a replica from a group is one half of decommissioni
   - On commit: `agent.stop_runtime` + `agent.destroy_group` on the removed node (releases the spdk_lvol stub and removes the manifest, same as `backend.destroy()`).
   - Update DB membership.
 - Task 4a: `POST /v1/storage_backends/{id}/groups/{group_id}/leadership/transfer` — manager sends openraft `transfer_leader(target)` against the current leader. Used as a precursor to leader removal.
+
+Implementation notes:
+
+- DONE: manager `DELETE /v1/storage_backends/{id}/groups/{group_id}/replicas/{node_id}` refuses leader removal, refuses invalid 2-node resulting shapes, drives Openraft membership replacement, updates the volume locator, marks the DB replica removed, and asks the removed agent to destroy local state.
+- TODO: leadership transfer route.
+- TODO: live remove-node validation.
 
 Validation:
 

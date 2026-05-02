@@ -183,6 +183,12 @@ pub struct AddRaftSpdkReplicaResponse {
     pub locator: RaftSpdkLocator,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoveRaftSpdkReplicaResponse {
+    pub operation: RaftRepairQueueItem,
+    pub locator: RaftSpdkLocator,
+}
+
 fn default_lag_threshold() -> u64 {
     1024
 }
@@ -707,6 +713,175 @@ pub async fn repair_status(
         .into_response()
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/storage_backends/{id}/groups/{group_id}/replicas/{node_id}",
+    params(
+        ("id" = Uuid, Path, description = "Storage backend ID"),
+        ("group_id" = Uuid, Path, description = "Raft block group ID"),
+        ("node_id" = u64, Path, description = "Replica node ID")
+    ),
+    responses((status = 200), (status = 400), (status = 404), (status = 409), (status = 502)),
+    tag = "StorageBackends",
+)]
+pub async fn remove_replica(
+    Extension(st): Extension<AppState>,
+    Path((id, group_id, node_id)): Path<(Uuid, Uuid, u64)>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let groups = match load_raft_spdk_groups(&st, id).await {
+        Ok(groups) => groups,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    let Some((volume_id, locator)) = groups
+        .into_iter()
+        .find(|(_, locator)| locator.group_id == group_id)
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "group not found" })),
+        )
+            .into_response();
+    };
+    let Some(removed_replica) = locator
+        .replicas
+        .iter()
+        .find(|replica| replica.node_id == node_id)
+        .cloned()
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "replica not found" })),
+        )
+            .into_response();
+    };
+    let statuses = fetch_replica_statuses(&locator).await;
+    let observed_leader = aggregate_raft_spdk_status(&locator, statuses, 0).observed_leader;
+    if observed_leader == Some(node_id) || locator.leader_hint == Some(node_id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "refusing to remove current leader; transfer leadership first"
+            })),
+        )
+            .into_response();
+    }
+
+    let remaining: Vec<RaftSpdkReplicaLocator> = locator
+        .replicas
+        .iter()
+        .filter(|replica| replica.node_id != node_id)
+        .cloned()
+        .collect();
+    if remaining.len() != 1 && remaining.len() < 3 {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "refusing to remove replica because resulting set would not be 1 or at least 3 replicas"
+            })),
+        )
+            .into_response();
+    }
+    let next_leader_hint = locator
+        .leader_hint
+        .filter(|leader| *leader != node_id)
+        .or_else(|| remaining.first().map(|replica| replica.node_id));
+    let reduced_locator = match RaftSpdkLocator::new(
+        locator.group_id,
+        locator.size_bytes,
+        locator.block_size,
+        remaining,
+        next_leader_hint,
+    ) {
+        Ok(locator) => locator,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let mut operation =
+        match create_repair_queue_row(&st, id, group_id, node_id, "remove_replica").await {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::error!(
+                    backend_id = %id,
+                    group_id = %group_id,
+                    node_id,
+                    error = ?e,
+                    "failed to create raft remove-replica queue row"
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "db"})),
+                )
+                    .into_response();
+            }
+        };
+
+    if let Err(error) = change_membership_on_leader(&reduced_locator).await {
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+    if let Err(e) = persist_removed_replica(&st, id, volume_id, &reduced_locator, node_id).await {
+        let error = format!("persist removed replica: {e}");
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+    if let Err(error) =
+        destroy_replica_group(removed_replica.agent_base_url.as_str(), locator.group_id).await
+    {
+        tracing::warn!(
+            backend_id = %id,
+            group_id = %group_id,
+            node_id,
+            error = %error,
+            "removed raft membership but failed to destroy removed replica state"
+        );
+    }
+
+    match finish_repair_queue_row(&st, operation.id, "succeeded", None).await {
+        Ok(row) => {
+            operation = row;
+            (
+                StatusCode::OK,
+                Json(RemoveRaftSpdkReplicaResponse {
+                    operation,
+                    locator: reduced_locator,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!(
+                operation_id = %operation.id,
+                error = ?e,
+                "failed to mark raft remove-replica operation succeeded"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 fn replica_peer_map(locator: &RaftSpdkLocator) -> HashMap<u64, String> {
     locator
         .replicas
@@ -739,6 +914,22 @@ async fn create_replica_group(
             "block_size": locator.block_size,
             "desired_store_kind": desired_store_kind,
         }))
+        .send()
+        .await
+        .map_err(|e| format!("{url}: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("{url}: {status}: {body}"))
+}
+
+async fn destroy_replica_group(agent_base_url: &str, group_id: Uuid) -> Result<(), String> {
+    let url = format!("{}/destroy", agent_base_url.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({ "group_id": group_id }))
         .send()
         .await
         .map_err(|e| format!("{url}: {e}"))?;
@@ -1046,6 +1237,47 @@ async fn persist_added_replica(
     .bind(replica.node_id as i64)
     .bind(&replica.agent_base_url)
     .bind(&replica.spdk_lvol_locator)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
+}
+
+async fn persist_removed_replica(
+    st: &AppState,
+    backend_id: Uuid,
+    volume_id: Uuid,
+    locator: &RaftSpdkLocator,
+    node_id: u64,
+) -> sqlx::Result<()> {
+    let encoded = locator
+        .to_locator_string()
+        .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    let mut tx = st.db.begin().await?;
+    sqlx::query(
+        r#"
+        UPDATE volume
+           SET path = $2
+         WHERE id = $1
+        "#,
+    )
+    .bind(volume_id)
+    .bind(encoded)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        UPDATE raft_spdk_replica
+           SET role = 'removed',
+               removed_at = now(),
+               updated_at = now()
+         WHERE backend_id = $1
+           AND group_id = $2
+           AND node_id = $3
+        "#,
+    )
+    .bind(backend_id)
+    .bind(locator.group_id)
+    .bind(node_id as i64)
     .execute(&mut *tx)
     .await?;
     tx.commit().await
