@@ -70,7 +70,7 @@ Validation:
 
 ## Task 3: Replica add (joint consensus path)
 
-Status: not started.
+Status: in progress — agent membership-change route and manager add-replica orchestration landed; live validation and DB bootstrap-read path pending.
 
 This is the first **mutating** membership change. It must go through openraft's joint consensus or be rejected. **Never write replica set changes directly to TOML and restart the manager.**
 
@@ -86,8 +86,11 @@ This is the first **mutating** membership change. It must go through openraft's 
 
 Implementation notes:
 
-- DONE: agent route `POST /v1/raft_block/{group_id}/openraft/change_membership` exposes Openraft `change_membership(ReplaceAllVoters, retain)` through the runtime wrapper. Manager orchestration is still pending.
-- TODO: manager replica-add endpoint that creates the target group, starts runtime, catches up, invokes the leader change-membership route, and persists membership.
+- DONE: agent route `POST /v1/raft_block/{group_id}/openraft/change_membership` exposes Openraft `change_membership(ReplaceAllVoters, retain)` through the runtime wrapper.
+- DONE: migration `0038_raft_spdk_replica.sql` introduces the durable membership table for post-bootstrap membership.
+- DONE: manager `POST /v1/storage_backends/{id}/groups/{group_id}/replicas` creates the target group, starts its runtime, waits for catch-up, invokes the leader change-membership route, updates the volume locator, and upserts `raft_spdk_replica`.
+- TODO: `RaftSpdkControlPlaneBackend` should read `raft_spdk_replica` on construction so manager restart treats DB membership as authoritative after first mutation.
+- TODO: live add-node validation.
 
 Validation:
 

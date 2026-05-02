@@ -7,7 +7,7 @@ use axum::{
     Extension, Json,
 };
 use chrono::{DateTime, Utc};
-use nexus_storage::{RaftBlockStoreKind, RaftSpdkLocator};
+use nexus_storage::{RaftBlockStoreKind, RaftSpdkLocator, RaftSpdkReplicaLocator};
 use nexus_types::{BackendKind, Capabilities, StorageBackend};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -168,6 +168,21 @@ pub struct RaftRepairStatusResponse {
     pub progress_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct AddRaftSpdkReplicaReq {
+    pub node_id: u64,
+    pub agent_base_url: String,
+    pub spdk_backend_id: Uuid,
+    #[serde(default)]
+    pub desired_store_kind: Option<RaftBlockStoreKind>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AddRaftSpdkReplicaResponse {
+    pub operation: RaftRepairQueueItem,
+    pub locator: RaftSpdkLocator,
+}
+
 fn default_lag_threshold() -> u64 {
     1024
 }
@@ -287,6 +302,197 @@ pub async fn list_repair_queue(
         Ok(items) => (StatusCode::OK, Json(RaftRepairQueueResponse { items })).into_response(),
         Err(e) => {
             tracing::error!(backend_id = %id, error = ?e, "raft repair queue list failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/storage_backends/{id}/groups/{group_id}/replicas",
+    params(
+        ("id" = Uuid, Path, description = "Storage backend ID"),
+        ("group_id" = Uuid, Path, description = "Raft block group ID")
+    ),
+    responses((status = 200), (status = 400), (status = 404), (status = 409), (status = 502), (status = 504)),
+    tag = "StorageBackends",
+)]
+pub async fn add_replica(
+    Extension(st): Extension<AppState>,
+    Path((id, group_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<AddRaftSpdkReplicaReq>,
+) -> impl IntoResponse {
+    if req.node_id == 0 || req.agent_base_url.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "node_id and agent_base_url are required" })),
+        )
+            .into_response();
+    }
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let groups = match load_raft_spdk_groups(&st, id).await {
+        Ok(groups) => groups,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    let Some((volume_id, locator)) = groups
+        .into_iter()
+        .find(|(_, locator)| locator.group_id == group_id)
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "group not found" })),
+        )
+            .into_response();
+    };
+    if locator
+        .replicas
+        .iter()
+        .any(|replica| replica.node_id == req.node_id)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "replica node_id already exists" })),
+        )
+            .into_response();
+    }
+
+    let agent_base_url = normalize_raft_block_base_url(&req.agent_base_url);
+    let spdk_lvol_locator = serde_json::json!({
+        "spdk_backend_id": req.spdk_backend_id,
+        "production_replica": true
+    })
+    .to_string();
+    let new_replica = RaftSpdkReplicaLocator {
+        node_id: req.node_id,
+        agent_base_url,
+        spdk_lvol_locator,
+    };
+    let mut expanded_replicas = locator.replicas.clone();
+    expanded_replicas.push(new_replica.clone());
+    expanded_replicas.sort_by_key(|replica| replica.node_id);
+    let expanded_locator = match RaftSpdkLocator::new(
+        locator.group_id,
+        locator.size_bytes,
+        locator.block_size,
+        expanded_replicas,
+        locator.leader_hint,
+    ) {
+        Ok(locator) => locator,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let mut operation =
+        match create_repair_queue_row(&st, id, group_id, req.node_id, "add_replica").await {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::error!(
+                    backend_id = %id,
+                    group_id = %group_id,
+                    node_id = req.node_id,
+                    error = ?e,
+                    "failed to create raft add-replica queue row"
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "db"})),
+                )
+                    .into_response();
+            }
+        };
+
+    let desired_store_kind = req
+        .desired_store_kind
+        .unwrap_or(RaftBlockStoreKind::SpdkLvol);
+    if let Err(error) =
+        create_replica_group(&new_replica, &expanded_locator, desired_store_kind).await
+    {
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+    if let Err(error) = start_replica_runtime(
+        new_replica.agent_base_url.as_str(),
+        expanded_locator.group_id,
+        replica_peer_map(&expanded_locator),
+    )
+    .await
+    {
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            repair_start_error_status(&error),
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+    if let Err(error) = wait_for_replica_catchup(
+        &expanded_locator,
+        req.node_id,
+        REPAIR_CATCHUP_TIMEOUT,
+        REPAIR_CATCHUP_POLL_INTERVAL,
+    )
+    .await
+    {
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+    if let Err(error) = change_membership_on_leader(&expanded_locator).await {
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+    if let Err(e) = persist_added_replica(&st, id, volume_id, &expanded_locator, &new_replica).await
+    {
+        let error = format!("persist added replica: {e}");
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+
+    match finish_repair_queue_row(&st, operation.id, "succeeded", None).await {
+        Ok(row) => {
+            operation = row;
+            (
+                StatusCode::OK,
+                Json(AddRaftSpdkReplicaResponse {
+                    operation,
+                    locator: expanded_locator,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!(
+                operation_id = %operation.id,
+                error = ?e,
+                "failed to mark raft add-replica operation succeeded"
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "db"})),
@@ -509,6 +715,41 @@ fn replica_peer_map(locator: &RaftSpdkLocator) -> HashMap<u64, String> {
         .collect()
 }
 
+fn normalize_raft_block_base_url(raw: &str) -> String {
+    let trimmed = raw.trim_end_matches('/');
+    if trimmed.ends_with("/v1/raft_block") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1/raft_block")
+    }
+}
+
+async fn create_replica_group(
+    replica: &RaftSpdkReplicaLocator,
+    locator: &RaftSpdkLocator,
+    desired_store_kind: RaftBlockStoreKind,
+) -> Result<(), String> {
+    let url = format!("{}/create", replica.agent_base_url.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({
+            "group_id": locator.group_id,
+            "node_id": replica.node_id,
+            "capacity_bytes": locator.size_bytes,
+            "block_size": locator.block_size,
+            "desired_store_kind": desired_store_kind,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("{url}: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("{url}: {status}: {body}"))
+}
+
 async fn start_replica_runtime(
     agent_base_url: &str,
     group_id: Uuid,
@@ -520,6 +761,44 @@ async fn start_replica_runtime(
         .json(&serde_json::json!({
             "group_id": group_id,
             "peers": peers,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("{url}: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("{url}: {status}: {body}"))
+}
+
+async fn change_membership_on_leader(locator: &RaftSpdkLocator) -> Result<(), String> {
+    let statuses = fetch_replica_statuses(locator).await;
+    let observed_leader = aggregate_raft_spdk_status(locator, statuses, 0).observed_leader;
+    let leader_id = observed_leader
+        .or(locator.leader_hint)
+        .ok_or_else(|| "cannot change membership: no observed leader".to_string())?;
+    let leader = locator
+        .replicas
+        .iter()
+        .find(|replica| replica.node_id == leader_id)
+        .ok_or_else(|| format!("cannot change membership: leader {leader_id} not in locator"))?;
+    let voters: Vec<u64> = locator
+        .replicas
+        .iter()
+        .map(|replica| replica.node_id)
+        .collect();
+    let url = format!(
+        "{}/{}/openraft/change_membership",
+        leader.agent_base_url.trim_end_matches('/'),
+        locator.group_id
+    );
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({
+            "voters": voters,
+            "retain": false,
         }))
         .send()
         .await
@@ -718,6 +997,58 @@ async fn latest_repair_queue_row(
     .bind(node_id.to_string())
     .fetch_optional(&st.db)
     .await
+}
+
+async fn persist_added_replica(
+    st: &AppState,
+    backend_id: Uuid,
+    volume_id: Uuid,
+    locator: &RaftSpdkLocator,
+    replica: &RaftSpdkReplicaLocator,
+) -> sqlx::Result<()> {
+    let encoded = locator
+        .to_locator_string()
+        .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    let mut tx = st.db.begin().await?;
+    sqlx::query(
+        r#"
+        UPDATE volume
+           SET path = $2
+         WHERE id = $1
+        "#,
+    )
+    .bind(volume_id)
+    .bind(encoded)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO raft_spdk_replica (
+            backend_id,
+            group_id,
+            node_id,
+            agent_base_url,
+            spdk_lvol_locator,
+            role,
+            removed_at
+        )
+        VALUES ($1, $2, $3, $4, $5, 'voter', NULL)
+        ON CONFLICT (backend_id, group_id, node_id) DO UPDATE
+          SET agent_base_url = EXCLUDED.agent_base_url,
+              spdk_lvol_locator = EXCLUDED.spdk_lvol_locator,
+              role = 'voter',
+              removed_at = NULL,
+              updated_at = now()
+        "#,
+    )
+    .bind(backend_id)
+    .bind(locator.group_id)
+    .bind(replica.node_id as i64)
+    .bind(&replica.agent_base_url)
+    .bind(&replica.spdk_lvol_locator)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

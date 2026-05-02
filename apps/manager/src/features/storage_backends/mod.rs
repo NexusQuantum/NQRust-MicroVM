@@ -9,6 +9,10 @@ pub fn router() -> Router {
         .route("/:id/groups", get(routes::list_groups))
         .route("/:id/groups/:group_id", get(routes::get_group_status))
         .route(
+            "/:id/groups/:group_id/replicas",
+            axum::routing::post(routes::add_replica),
+        )
+        .route(
             "/:id/groups/:group_id/replicas/:node_id/repair",
             axum::routing::post(routes::repair_replica),
         )
