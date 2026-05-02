@@ -47,7 +47,7 @@ curl -s http://manager/v1/storage_backends/$BID/groups/$GID | jq .
 
 ## Task 2: Single-replica repair (catchup)
 
-Status: in progress — manager repair endpoint restarts an existing replica runtime, waits for catch-up, and records the operation; progress endpoint pending.
+Status: implementation slice done — manager repair endpoint restarts an existing replica runtime, waits for catch-up, records the operation, and exposes repair status; live validation pending.
 
 The simplest membership operation. A replica that fell behind (extended host outage) but is still in the configured replica set needs to catch up from the leader. Today this happens implicitly through openraft's append_entries — but only if the lagging follower's host is up and reachable. Operators need a way to trigger it explicitly and observe progress.
 
@@ -60,7 +60,8 @@ Implementation notes:
 
 - DONE: `POST /v1/storage_backends/{id}/groups/{group_id}/replicas/{node_id}/repair` validates the raft_spdk locator, creates a `raft_repair_queue` row, sends `runtime_start` with the full peer map to the target replica, polls `/status` until the target reaches the peer high-water mark, and marks the row succeeded/failed.
 - DONE: runtime-start errors that look like missing local replica state return 412 `Precondition Failed`; unreachable agents still return upstream failure.
-- TODO: expose a separate repair progress endpoint instead of making callers wait for the synchronous repair call.
+- DONE: `GET /v1/storage_backends/{id}/groups/{group_id}/replicas/{node_id}/repair_status` returns the latest repair queue row plus current applied/required catch-up progress.
+- TODO: live 3-node validation.
 
 Validation:
 

@@ -152,6 +152,22 @@ pub struct RaftRepairReplicaResponse {
     pub operation: RaftRepairQueueItem,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftRepairProgress {
+    pub node_id: u64,
+    pub last_applied_index: u64,
+    pub required_applied_index: u64,
+    pub caught_up: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftRepairStatusResponse {
+    pub operation: Option<RaftRepairQueueItem>,
+    pub progress: Option<RaftRepairProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_error: Option<String>,
+}
+
 fn default_lag_threshold() -> u64 {
     1024
 }
@@ -398,6 +414,93 @@ pub async fn repair_replica(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/groups/{group_id}/replicas/{node_id}/repair_status",
+    params(
+        ("id" = Uuid, Path, description = "Storage backend ID"),
+        ("group_id" = Uuid, Path, description = "Raft block group ID"),
+        ("node_id" = u64, Path, description = "Replica node ID")
+    ),
+    responses((status = 200), (status = 400), (status = 404)),
+    tag = "StorageBackends",
+)]
+pub async fn repair_status(
+    Extension(st): Extension<AppState>,
+    Path((id, group_id, node_id)): Path<(Uuid, Uuid, u64)>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let groups = match load_raft_spdk_groups(&st, id).await {
+        Ok(groups) => groups,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    let Some((_, locator)) = groups
+        .into_iter()
+        .find(|(_, locator)| locator.group_id == group_id)
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "group not found" })),
+        )
+            .into_response();
+    };
+    if !locator
+        .replicas
+        .iter()
+        .any(|replica| replica.node_id == node_id)
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "replica not found" })),
+        )
+            .into_response();
+    }
+
+    let operation = match latest_repair_queue_row(&st, id, group_id, node_id).await {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::error!(
+                backend_id = %id,
+                group_id = %group_id,
+                node_id,
+                error = ?e,
+                "failed to load latest raft repair queue row"
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response();
+        }
+    };
+    let (progress, progress_error) = match replica_catchup_progress(&locator, node_id).await {
+        Ok((last_applied_index, required_applied_index)) => (
+            Some(RaftRepairProgress {
+                node_id,
+                last_applied_index,
+                required_applied_index,
+                caught_up: last_applied_index >= required_applied_index,
+            }),
+            None,
+        ),
+        Err(error) => (None, Some(error)),
+    };
+
+    (
+        StatusCode::OK,
+        Json(RaftRepairStatusResponse {
+            operation,
+            progress,
+            progress_error,
+        }),
+    )
+        .into_response()
+}
+
 fn replica_peer_map(locator: &RaftSpdkLocator) -> HashMap<u64, String> {
     locator
         .replicas
@@ -578,6 +681,42 @@ async fn finish_repair_queue_row(
     .bind(state)
     .bind(error)
     .fetch_one(&st.db)
+    .await
+}
+
+async fn latest_repair_queue_row(
+    st: &AppState,
+    backend_id: Uuid,
+    group_id: Uuid,
+    node_id: u64,
+) -> sqlx::Result<Option<RaftRepairQueueItem>> {
+    sqlx::query_as::<_, RaftRepairQueueItem>(
+        r#"
+        SELECT id,
+               backend_id,
+               group_id,
+               op_type,
+               op_args,
+               state,
+               attempts,
+               last_error,
+               created_at,
+               started_at,
+               finished_at,
+               updated_at
+          FROM raft_repair_queue
+         WHERE backend_id = $1
+           AND group_id = $2
+           AND op_type = 'repair_replica'
+           AND op_args->>'node_id' = $3
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+        "#,
+    )
+    .bind(backend_id)
+    .bind(group_id)
+    .bind(node_id.to_string())
+    .fetch_optional(&st.db)
     .await
 }
 
