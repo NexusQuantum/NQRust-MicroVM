@@ -1552,7 +1552,14 @@ pub struct DecommissionPlanQuery {
 async fn collect_planner_inputs(
     st: &AppState,
     backend_id: Uuid,
-) -> Result<(Vec<HostView>, Vec<ReplicaView>), (StatusCode, String)> {
+) -> Result<
+    (
+        Vec<HostView>,
+        Vec<ReplicaView>,
+        HashMap<Uuid, Uuid>, // host_id -> spdk_backend_id
+    ),
+    (StatusCode, String),
+> {
     // Hosts in the registry. Healthy = recent heartbeat (matches list_healthy
     // semantics, but the planner needs every host including drainings/spares).
     let hosts: Vec<crate::features::hosts::repo::HostRow> = st
@@ -1571,6 +1578,10 @@ async fn collect_planner_inputs(
             healthy: now.signed_duration_since(h.last_seen_at).num_seconds() <= 30,
             replica_count: 0, // filled in by the planner if needed
         })
+        .collect();
+    let spdk_by_host: HashMap<Uuid, Uuid> = hosts
+        .iter()
+        .filter_map(|h| h.spdk_backend_id.map(|id| (h.id, id)))
         .collect();
 
     // Active replicas for this backend, joined to host id by addr prefix
@@ -1617,7 +1628,7 @@ async fn collect_planner_inputs(
         })
         .collect();
 
-    Ok((host_views, replicas))
+    Ok((host_views, replicas, spdk_by_host))
 }
 
 /// Pick a fresh node_id by taking max + 1 across the whole replica set.
@@ -1647,19 +1658,15 @@ pub async fn decommission_plan(
     if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
         return (status, Json(serde_json::json!({ "error": error }))).into_response();
     }
-    let (hosts, replicas) = match collect_planner_inputs(&st, id).await {
+    let (hosts, replicas, spdk_by_host) = match collect_planner_inputs(&st, id).await {
         Ok(v) => v,
         Err((status, error)) => {
             return (status, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
-    match plan_decommission(
-        q.host_id,
-        &hosts,
-        &replicas,
-        next_node_id,
-        |_target| Some(Uuid::nil()), // operator fills in real spdk_backend_id when executing
-    ) {
+    match plan_decommission(q.host_id, &hosts, &replicas, next_node_id, |target| {
+        spdk_by_host.get(&target).copied()
+    }) {
         Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
         Err(error) => (
             StatusCode::CONFLICT,
@@ -1689,14 +1696,14 @@ pub async fn promotion_plan(
     if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
         return (status, Json(serde_json::json!({ "error": error }))).into_response();
     }
-    let (hosts, replicas) = match collect_planner_inputs(&st, id).await {
+    let (hosts, replicas, spdk_by_host) = match collect_planner_inputs(&st, id).await {
         Ok(v) => v,
         Err((status, error)) => {
             return (status, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
-    match plan_hot_spare_promotion(q.host_id, &hosts, &replicas, next_node_id, |_target| {
-        Some(Uuid::nil())
+    match plan_hot_spare_promotion(q.host_id, &hosts, &replicas, next_node_id, |target| {
+        spdk_by_host.get(&target).copied()
     }) {
         Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
         Err(error) => (
@@ -1724,14 +1731,14 @@ pub async fn rebalance_plan(
     if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
         return (status, Json(serde_json::json!({ "error": error }))).into_response();
     }
-    let (hosts, replicas) = match collect_planner_inputs(&st, id).await {
+    let (hosts, replicas, spdk_by_host) = match collect_planner_inputs(&st, id).await {
         Ok(v) => v,
         Err((status, error)) => {
             return (status, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
-    match plan_rebalance(id, &hosts, &replicas, next_node_id, |_target| {
-        Some(Uuid::nil())
+    match plan_rebalance(id, &hosts, &replicas, next_node_id, |target| {
+        spdk_by_host.get(&target).copied()
     }) {
         Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
         Err(error) => (

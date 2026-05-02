@@ -16,4 +16,7 @@ pub fn router() -> Router {
         .route("/:id/hot_spare", post(routes::set_hot_spare))
         // B-III Task 6: begin host decommission.
         .route("/:id/decommission", post(routes::decommission))
+        // B-III follow-up: set host's SPDK lvol bdev id for raft_spdk
+        // placement.
+        .route("/:id/spdk_backend_id", post(routes::set_spdk_backend_id))
 }

@@ -60,6 +60,7 @@ pub(crate) fn host_row_to_list_item(row: HostRow, status: &str, vm_count: i64) -
         is_hot_spare: row.is_hot_spare,
         lifecycle_state: row.lifecycle_state,
         lifecycle_changed_at: row.lifecycle_changed_at,
+        spdk_backend_id: row.spdk_backend_id,
     }
 }
 
@@ -180,6 +181,9 @@ pub struct HostListItem {
     /// B-III Task 6: `active`, `draining`, `decommissioned`.
     pub lifecycle_state: String,
     pub lifecycle_changed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// B-III follow-up: SPDK lvol bdev id used for raft_spdk replicas.
+    /// `None` means the host is not a raft_spdk placement target.
+    pub spdk_backend_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -304,6 +308,50 @@ pub async fn delete(
 #[derive(Debug, Clone, Deserialize)]
 pub struct SetHotSpareRequest {
     pub is_hot_spare: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetSpdkBackendIdRequest {
+    /// `None` clears the host's raft_spdk placement eligibility.
+    pub spdk_backend_id: Option<Uuid>,
+}
+
+/// B-III follow-up: set the host's SPDK lvol bdev id. Operators run this
+/// once per host that should host raft_spdk replicas; the planner reads
+/// the column when emitting `add_replica` plans so the operator no
+/// longer has to thread `--spdk-backend-id` through every CLI call.
+#[utoipa::path(
+    post,
+    path = "/v1/hosts/{id}/spdk_backend_id",
+    params(("id" = uuid::Uuid, Path, description = "Host id")),
+    request_body = SetSpdkBackendIdRequest,
+    responses(
+        (status = 200, description = "Updated host", body = HostDetailResponse),
+        (status = 404, description = "Host not found"),
+    ),
+    tag = "Hosts"
+)]
+pub async fn set_spdk_backend_id(
+    Extension(st): Extension<AppState>,
+    Path(HostPathParams { id }): Path<HostPathParams>,
+    Json(req): Json<SetSpdkBackendIdRequest>,
+) -> Result<Json<HostDetailResponse>, StatusCode> {
+    let row = st
+        .hosts
+        .set_spdk_backend_id(id, req.spdk_backend_id)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            other => {
+                error!(error = ?other, "set_spdk_backend_id failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    let vm_count = st.hosts.get_vm_count(id).await.unwrap_or(0);
+    let status = compute_host_status(row.last_seen_at, chrono::Utc::now());
+    Ok(Json(HostDetailResponse {
+        item: host_row_to_list_item(row, status, vm_count),
+    }))
 }
 
 /// B-III Task 5: toggle hot-spare flag.
@@ -433,6 +481,7 @@ mod tests {
             is_hot_spare: false,
             lifecycle_state: "active".into(),
             lifecycle_changed_at: None,
+            spdk_backend_id: None,
         }
     }
 

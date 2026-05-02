@@ -163,6 +163,29 @@ impl HostRepository {
         .await
     }
 
+    /// B-III follow-up: set the host's SPDK backend id (the lvol bdev id
+    /// used when placing a raft_spdk replica on this host). Pass `None`
+    /// to clear the configuration and remove the host from raft_spdk
+    /// placement.
+    pub async fn set_spdk_backend_id(
+        &self,
+        id: Uuid,
+        spdk_backend_id: Option<Uuid>,
+    ) -> sqlx::Result<HostRow> {
+        sqlx::query_as::<_, HostRow>(
+            r#"
+            UPDATE host
+               SET spdk_backend_id = $2
+             WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(spdk_backend_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
     /// B-III Task 5: toggle hot-spare flag.
     pub async fn set_hot_spare(&self, id: Uuid, value: bool) -> sqlx::Result<HostRow> {
         sqlx::query_as::<_, HostRow>(
@@ -301,4 +324,8 @@ pub struct HostRow {
     /// placement), or `decommissioned` (terminal).
     pub lifecycle_state: String,
     pub lifecycle_changed_at: Option<DateTime<chrono::Utc>>,
+    /// B-III follow-up: SPDK lvol bdev id this host uses for raft_spdk
+    /// replicas. `None` means the host cannot host raft_spdk replicas
+    /// and the planner skips it as a raft_spdk placement target.
+    pub spdk_backend_id: Option<Uuid>,
 }

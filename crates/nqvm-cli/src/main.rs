@@ -130,6 +130,18 @@ enum HostCmd {
         #[arg(long)]
         host: Uuid,
     },
+    /// Set the host's SPDK lvol bdev id (the backend id passed to
+    /// raft_spdk add_replica when this host is a placement target).
+    /// Pass `--clear` to remove the id and disable raft_spdk
+    /// placement on the host.
+    SpdkBackendId {
+        #[arg(long)]
+        host: Uuid,
+        #[arg(long, conflicts_with = "clear")]
+        id: Option<Uuid>,
+        #[arg(long, conflicts_with = "id")]
+        clear: bool,
+    },
 }
 
 #[tokio::main]
@@ -265,6 +277,21 @@ async fn hosts(client: &reqwest::Client, base: &str, sub: HostCmd) -> Result<()>
                 client,
                 &format!("{base}/v1/hosts/{host}/decommission"),
                 None,
+            )
+            .await
+        }
+        HostCmd::SpdkBackendId { host, id, clear } => {
+            #[derive(Serialize)]
+            struct Body {
+                spdk_backend_id: Option<Uuid>,
+            }
+            let body = Body {
+                spdk_backend_id: if clear { None } else { id },
+            };
+            print_post(
+                client,
+                &format!("{base}/v1/hosts/{host}/spdk_backend_id"),
+                Some(&body),
             )
             .await
         }
