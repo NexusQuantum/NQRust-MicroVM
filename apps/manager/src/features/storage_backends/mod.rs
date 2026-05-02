@@ -1,3 +1,4 @@
+pub mod auto_reconciler;
 pub mod executor;
 pub mod planner;
 pub mod reconciler;

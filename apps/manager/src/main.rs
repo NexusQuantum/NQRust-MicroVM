@@ -204,6 +204,14 @@ async fn main() -> anyhow::Result<()> {
         // reconciler are typically running tests and don't want extra
         // background DB writes.
         features::storage_backends::reconciler::spawn(state.db.clone());
+        // B-III Tasks 6 + 7: drives plan_decommission for `draining`
+        // hosts and plan_hot_spare_promotion for hosts that have
+        // missed heartbeats past the promotion threshold. Plans are
+        // dispatched via execute() which self-HTTPs back into the
+        // manager's API.
+        let manager_base = std::env::var("MANAGER_SELF_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:18080".to_string());
+        features::storage_backends::auto_reconciler::spawn(state.db.clone(), manager_base);
     } else {
         warn!("reconciler disabled by MANAGER_RECONCILER_DISABLED");
     }
