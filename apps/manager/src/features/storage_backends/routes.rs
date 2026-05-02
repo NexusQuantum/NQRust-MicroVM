@@ -1526,6 +1526,235 @@ fn aggregate_raft_spdk_status(
     }
 }
 
+// ===== B-III plan endpoints (Tasks 6, 7, 8) =====
+//
+// These return the planner's output without executing any operation. The
+// operator (or a future auto-reconciler) executes the steps via the
+// existing `add_replica` / `remove_replica` / `transfer_leader` routes.
+
+use crate::features::storage_backends::planner::{
+    plan_decommission, plan_hot_spare_promotion, plan_rebalance, HostView, ReplicaView,
+};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanResponse {
+    pub plan: crate::features::storage_backends::planner::Plan,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DecommissionPlanQuery {
+    /// `host_id` — the host whose replicas will be drained.
+    pub host_id: Uuid,
+}
+
+/// Resolve replicas + hosts for a given backend into the planner's view.
+async fn collect_planner_inputs(
+    st: &AppState,
+    backend_id: Uuid,
+) -> Result<(Vec<HostView>, Vec<ReplicaView>), (StatusCode, String)> {
+    // Hosts in the registry. Healthy = recent heartbeat (matches list_healthy
+    // semantics, but the planner needs every host including drainings/spares).
+    let hosts: Vec<crate::features::hosts::repo::HostRow> = st
+        .hosts
+        .list_all()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("hosts: {e}")))?;
+    let now = chrono::Utc::now();
+    let host_views: Vec<HostView> = hosts
+        .iter()
+        .map(|h| HostView {
+            id: h.id,
+            addr: h.addr.clone(),
+            is_hot_spare: h.is_hot_spare,
+            lifecycle_state: h.lifecycle_state.clone(),
+            healthy: now
+                .signed_duration_since(h.last_seen_at)
+                .num_seconds()
+                <= 30,
+            replica_count: 0, // filled in by the planner if needed
+        })
+        .collect();
+
+    // Active replicas for this backend, joined to host id by addr prefix
+    // (raft_spdk locators store the agent_base_url which begins with
+    // host.addr).
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        group_id: Uuid,
+        node_id: i64,
+        agent_base_url: String,
+    }
+    let rows: Vec<Row> = sqlx::query_as(
+        r#"
+        SELECT group_id, node_id, agent_base_url
+          FROM raft_spdk_replica
+         WHERE backend_id = $1
+           AND removed_at IS NULL
+        "#,
+    )
+    .bind(backend_id)
+    .fetch_all(&st.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("replicas: {e}")))?;
+
+    let host_by_addr: HashMap<String, Uuid> = hosts
+        .iter()
+        .map(|h| (h.addr.clone(), h.id))
+        .collect();
+    let replicas: Vec<ReplicaView> = rows
+        .into_iter()
+        .filter_map(|r| {
+            // agent_base_url normalizes to "<host.addr>/v1/raft_block".
+            // Strip suffix to look up the host.
+            let host_addr = r
+                .agent_base_url
+                .rsplit_once("/v1/raft_block")
+                .map(|(prefix, _)| prefix.to_string())
+                .unwrap_or(r.agent_base_url.clone());
+            let host_id = host_by_addr.get(&host_addr).copied()?;
+            Some(ReplicaView {
+                backend_id,
+                group_id: r.group_id,
+                node_id: r.node_id as u64,
+                host_id,
+            })
+        })
+        .collect();
+
+    Ok((host_views, replicas))
+}
+
+/// Pick a fresh node_id by taking max + 1 across the whole replica set.
+fn next_node_id(replicas: &[ReplicaView]) -> u64 {
+    replicas.iter().map(|r| r.node_id).max().unwrap_or(0) + 1
+}
+
+/// B-III Task 6: preview the decommission plan for a host. Read-only;
+/// returns the operations an operator would issue to drain the host.
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/decommission_plan",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses(
+        (status = 200, description = "Decommission plan", body = PlanResponse),
+        (status = 400, description = "Backend is not raft_spdk"),
+        (status = 404, description = "Backend not found"),
+        (status = 409, description = "Plan refused (e.g. no hot-spare available)"),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn decommission_plan(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<DecommissionPlanQuery>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let (hosts, replicas) = match collect_planner_inputs(&st, id).await {
+        Ok(v) => v,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    match plan_decommission(
+        q.host_id,
+        &hosts,
+        &replicas,
+        next_node_id,
+        |_target| Some(Uuid::nil()), // operator fills in real spdk_backend_id when executing
+    ) {
+        Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+/// B-III Task 7: preview the hot-spare promotion plan for a (presumed)
+/// failed host. Read-only.
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/promotion_plan",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses(
+        (status = 200, description = "Promotion plan", body = PlanResponse),
+        (status = 409, description = "No hot-spare available"),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn promotion_plan(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<DecommissionPlanQuery>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let (hosts, replicas) = match collect_planner_inputs(&st, id).await {
+        Ok(v) => v,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    match plan_hot_spare_promotion(
+        q.host_id,
+        &hosts,
+        &replicas,
+        next_node_id,
+        |_target| Some(Uuid::nil()),
+    ) {
+        Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+/// B-III Task 8: preview a rebalance plan for the backend.
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/rebalance_plan",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses(
+        (status = 200, description = "Rebalance plan", body = PlanResponse),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn rebalance_plan(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let (hosts, replicas) = match collect_planner_inputs(&st, id).await {
+        Ok(v) => v,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    match plan_rebalance(
+        id,
+        &hosts,
+        &replicas,
+        next_node_id,
+        |_target| Some(Uuid::nil()),
+    ) {
+        Ok(plan) => (StatusCode::OK, Json(PlanResponse { plan })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
