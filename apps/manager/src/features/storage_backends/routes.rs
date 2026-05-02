@@ -6,9 +6,11 @@ use axum::{
     response::IntoResponse,
     Extension, Json,
 };
+use chrono::{DateTime, Utc};
 use nexus_storage::{RaftBlockStoreKind, RaftSpdkLocator};
 use nexus_types::{BackendKind, Capabilities, StorageBackend};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -119,6 +121,27 @@ pub struct RaftSpdkStatusQuery {
     lag_threshold: u64,
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct RaftRepairQueueItem {
+    pub id: Uuid,
+    pub backend_id: Uuid,
+    pub group_id: Uuid,
+    pub op_type: String,
+    pub op_args: JsonValue,
+    pub state: String,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftRepairQueueResponse {
+    pub items: Vec<RaftRepairQueueItem>,
+}
+
 fn default_lag_threshold() -> u64 {
     1024
 }
@@ -187,6 +210,57 @@ pub async fn get_one(
             .into_response(),
         Err(e) => {
             tracing::error!("storage_backends get failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/repair_queue",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses((status = 200), (status = 400), (status = 404)),
+    tag = "StorageBackends",
+)]
+pub async fn list_repair_queue(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+
+    match sqlx::query_as::<_, RaftRepairQueueItem>(
+        r#"
+        SELECT id,
+               backend_id,
+               group_id,
+               op_type,
+               op_args,
+               state,
+               attempts,
+               last_error,
+               created_at,
+               started_at,
+               finished_at,
+               updated_at
+          FROM raft_repair_queue
+         WHERE backend_id = $1
+         ORDER BY created_at DESC, id DESC
+         LIMIT 200
+        "#,
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(RaftRepairQueueResponse { items })).into_response(),
+        Err(e) => {
+            tracing::error!(backend_id = %id, error = ?e, "raft repair queue list failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "db"})),

@@ -165,7 +165,7 @@ Validation:
 
 ## Task 9: Repair queue
 
-Status: not started.
+Status: in progress — schema and read API foundation landed; writers/reconciler pending.
 
 A durable record of pending and in-flight membership operations so that a manager restart mid-operation doesn't leave a half-applied change.
 
@@ -173,6 +173,13 @@ A durable record of pending and in-flight membership operations so that a manage
 - Every Task 3/4/6/7/8 operation appends a row before issuing any agent RPC and updates state on completion. The row is the source of truth for "is this group currently being reconfigured" (Task 3's pg lock holds while a row is `in_progress`).
 - A reconciler retries failed operations with exponential backoff. After `max_attempts` (default 5), the row is moved to `failed` state and an alert is raised.
 - API: `GET /v1/storage_backends/{id}/repair_queue` for operators.
+
+Implementation notes:
+
+- DONE: migration `0037_raft_repair_queue.sql` creates the durable operation ledger with checked `op_type` / `state` values and active-operation indexes.
+- DONE: manager `GET /v1/storage_backends/{id}/repair_queue` lists recent rows for raft_spdk backends.
+- TODO: helper functions that create/update queue rows for Tasks 2-8.
+- TODO: retry reconciler with exponential backoff and idempotent resume hooks.
 
 Validation:
 
