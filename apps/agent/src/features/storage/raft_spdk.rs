@@ -303,12 +303,7 @@ impl HostBackend for RaftSpdkHostBackend {
                     .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
             } else {
                 self.raft_block
-                    .append_command(
-                        locator.group_id,
-                        1,
-                        Some(self.local_node_id),
-                        command,
-                    )
+                    .append_command(locator.group_id, 1, Some(self.local_node_id), command)
                     .await
                     .map_err(|e| StorageError::InvalidLocator(e.to_string()))?;
             }

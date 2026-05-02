@@ -24,8 +24,17 @@ impl VolumeRepository {
         host_id: Option<Uuid>,
         backend_id: Uuid,
     ) -> sqlx::Result<VolumeRow> {
-        self.create_with_id(None, name, description, path, size_bytes, volume_type, host_id, backend_id)
-            .await
+        self.create_with_id(
+            None,
+            name,
+            description,
+            path,
+            size_bytes,
+            volume_type,
+            host_id,
+            backend_id,
+        )
+        .await
     }
 
     /// Insert a volume row with an explicit `id`. Used when the storage
