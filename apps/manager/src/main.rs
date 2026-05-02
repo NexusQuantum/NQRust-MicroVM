@@ -199,6 +199,11 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(false);
     if !reconciler_disabled {
         let _reconciler_handle = features::reconciler::spawn(state.clone());
+        // B-III Task 9: retry reconciler for raft_repair_queue. Reuses
+        // the same disable switch — operators turning off the VM
+        // reconciler are typically running tests and don't want extra
+        // background DB writes.
+        features::storage_backends::reconciler::spawn(state.db.clone());
     } else {
         warn!("reconciler disabled by MANAGER_RECONCILER_DISABLED");
     }

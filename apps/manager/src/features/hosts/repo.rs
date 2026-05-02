@@ -72,11 +72,16 @@ impl HostRepository {
             .await
     }
 
+    /// First placeable host: healthy heartbeat, not a hot-spare, not
+    /// draining or decommissioned. B-III Tasks 5 + 6: hot-spares and
+    /// non-active hosts must not show up as placement targets.
     pub async fn first_healthy(&self) -> sqlx::Result<HostRow> {
         sqlx::query_as::<_, HostRow>(
             r#"
             SELECT * FROM host
             WHERE last_seen_at > now() - INTERVAL '30 seconds'
+              AND is_hot_spare = false
+              AND lifecycle_state = 'active'
             ORDER BY last_seen_at DESC
             LIMIT 1
             "#,
@@ -85,11 +90,31 @@ impl HostRepository {
         .await
     }
 
+    /// All placeable hosts (same filters as `first_healthy`).
     pub async fn list_healthy(&self) -> sqlx::Result<Vec<HostRow>> {
         sqlx::query_as::<_, HostRow>(
             r#"
             SELECT * FROM host
             WHERE last_seen_at > now() - INTERVAL '30 seconds'
+              AND is_hot_spare = false
+              AND lifecycle_state = 'active'
+            ORDER BY last_seen_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Hot-spare hosts that have a healthy heartbeat. Used by Task 7
+    /// (failure recovery) and the host-add candidate listing. Decommissioned
+    /// hosts are excluded; draining hosts are excluded.
+    pub async fn list_hot_spares(&self) -> sqlx::Result<Vec<HostRow>> {
+        sqlx::query_as::<_, HostRow>(
+            r#"
+            SELECT * FROM host
+            WHERE last_seen_at > now() - INTERVAL '30 seconds'
+              AND is_hot_spare = true
+              AND lifecycle_state = 'active'
             ORDER BY last_seen_at DESC
             "#,
         )
@@ -134,6 +159,50 @@ impl HostRepository {
         .bind(total_memory_mb)
         .bind(total_disk_gb)
         .bind(used_disk_gb)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// B-III Task 5: toggle hot-spare flag.
+    pub async fn set_hot_spare(&self, id: Uuid, value: bool) -> sqlx::Result<HostRow> {
+        sqlx::query_as::<_, HostRow>(
+            r#"
+            UPDATE host
+               SET is_hot_spare = $2
+             WHERE id = $1
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(value)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// B-III Task 6: transition host lifecycle. Refuses invalid moves
+    /// (`decommissioned` is terminal — once set, can only be re-activated
+    /// by deleting and re-registering the host).
+    pub async fn set_lifecycle(&self, id: Uuid, target: &str) -> sqlx::Result<HostRow> {
+        if !matches!(target, "active" | "draining" | "decommissioned") {
+            return Err(sqlx::Error::Protocol(format!(
+                "invalid host lifecycle target: {target}"
+            )));
+        }
+        sqlx::query_as::<_, HostRow>(
+            r#"
+            UPDATE host
+               SET lifecycle_state = $2,
+                   lifecycle_changed_at = now()
+             WHERE id = $1
+               AND (
+                   lifecycle_state <> 'decommissioned'
+                   OR $2 = 'decommissioned'
+               )
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(target)
         .fetch_one(&self.pool)
         .await
     }
@@ -224,4 +293,12 @@ pub struct HostRow {
     pub total_disk_gb: Option<i64>,
     pub used_disk_gb: Option<i64>,
     pub last_metrics_at: Option<DateTime<chrono::Utc>>,
+    /// B-III Task 5: when true, the host is held in reserve and is
+    /// skipped by `first_healthy`/`list_healthy` placement. Promoted to
+    /// active during failure recovery (Task 7).
+    pub is_hot_spare: bool,
+    /// B-III Task 6: `active`, `draining` (mid-decommission, refuses new
+    /// placement), or `decommissioned` (terminal).
+    pub lifecycle_state: String,
+    pub lifecycle_changed_at: Option<DateTime<chrono::Utc>>,
 }

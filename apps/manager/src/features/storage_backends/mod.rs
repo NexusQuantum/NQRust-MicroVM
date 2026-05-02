@@ -1,3 +1,4 @@
+pub mod reconciler;
 pub mod repo;
 pub mod routes;
 
