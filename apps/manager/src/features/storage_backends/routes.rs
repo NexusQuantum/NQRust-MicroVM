@@ -1749,6 +1749,73 @@ pub async fn rebalance_plan(
     }
 }
 
+// ===== B-III plan execution (operator runs a previewed plan) =====
+
+use crate::features::storage_backends::executor::{execute, PlanRun};
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExecutePlanRequest {
+    pub plan: crate::features::storage_backends::planner::Plan,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecutePlanResponse {
+    pub run: PlanRun,
+}
+
+/// B-III plan execution. Takes a `Plan` (typically the body returned
+/// from `decommission_plan` / `promotion_plan` / `rebalance_plan`) and
+/// runs each step against the manager's own HTTP API. Returns a
+/// per-step report. On the first failed step the executor stops and
+/// reports the remaining steps as `skipped`; the operator inspects
+/// the run and re-issues a corrected plan or `repair_queue` to clean up.
+///
+/// The endpoint is sync — the caller blocks until the plan completes
+/// or aborts. Plans of typical scale (one host's worth of moves at a
+/// time, 2 RPCs per group) finish in seconds. A future cut can move
+/// this to a background tokio task with a `plan_run_id` poll endpoint
+/// when plan size justifies it.
+#[utoipa::path(
+    post,
+    path = "/v1/storage_backends/{id}/execute_plan",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    request_body = ExecutePlanRequest,
+    responses(
+        (status = 200, description = "Plan run report", body = ExecutePlanResponse),
+        (status = 400, description = "Backend is not raft_spdk"),
+        (status = 404, description = "Backend not found"),
+        (status = 500, description = "Plan execution failed mid-way; see report"),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn execute_plan(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<ExecutePlanRequest>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    // Forward the caller's auth header to the self-HTTP calls so the
+    // executor can hit the routes that require admin role. If absent,
+    // the executor still tries (the call will 401 and surface as the
+    // step's error message).
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let manager_base =
+        std::env::var("MANAGER_SELF_URL").unwrap_or_else(|_| "http://127.0.0.1:18080".to_string());
+    let run = execute(&manager_base, id, req.plan, auth.as_deref()).await;
+    let status = if run.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    (status, Json(ExecutePlanResponse { run })).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -97,6 +97,20 @@ enum StorageCmd {
         #[arg(long)]
         node: u64,
     },
+    /// Execute a previously-fetched plan against a backend. The plan
+    /// JSON is read from `--plan` (file path) or stdin if omitted.
+    /// Use the *_plan endpoints (decommission-plan / promotion-plan /
+    /// rebalance-plan) to fetch the plan first, eyeball it, then pipe
+    /// it back here.
+    ExecutePlan {
+        #[arg(long)]
+        backend: Uuid,
+        /// Path to a JSON file with the plan body
+        /// (`{"plan": {"steps": [...], "notes": [...]}}`). Reads
+        /// stdin when omitted.
+        #[arg(long)]
+        plan: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -251,6 +265,34 @@ async fn storage(client: &reqwest::Client, base: &str, sub: StorageCmd) -> Resul
                 .send()
                 .await
                 .with_context(|| format!("DELETE {url}"))?;
+            print_response(resp).await
+        }
+        StorageCmd::ExecutePlan { backend, plan } => {
+            // Read plan from file or stdin. Operator pipeline:
+            //   nqvm storage decommission-plan --backend B --host H \
+            //     | jq '{plan: .plan}' \
+            //     | nqvm storage execute-plan --backend B
+            let body_str = match plan {
+                Some(path) => std::fs::read_to_string(&path)
+                    .with_context(|| format!("read {}", path.display()))?,
+                None => {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buf)
+                        .context("read plan from stdin")?;
+                    buf
+                }
+            };
+            let body: serde_json::Value =
+                serde_json::from_str(&body_str).context("parse plan JSON")?;
+            let url = format!("{base}/v1/storage_backends/{backend}/execute_plan");
+            let resp = client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .with_context(|| format!("POST {url}"))?;
             print_response(resp).await
         }
     }

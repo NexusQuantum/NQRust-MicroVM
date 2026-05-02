@@ -1,3 +1,4 @@
+pub mod executor;
 pub mod planner;
 pub mod reconciler;
 pub mod repo;
@@ -33,5 +34,10 @@ pub fn router() -> Router {
         .route("/:id/promotion_plan", get(routes::promotion_plan))
         // B-III Task 8: rebalance plan preview.
         .route("/:id/rebalance_plan", get(routes::rebalance_plan))
+        // B-III plan execution: operator runs a previewed plan.
+        .route(
+            "/:id/execute_plan",
+            axum::routing::post(routes::execute_plan),
+        )
         .route("/:id", get(routes::get_one))
 }

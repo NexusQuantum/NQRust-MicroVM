@@ -19,7 +19,7 @@
 //! The planner is deliberately conservative: when in doubt, refuse to
 //! emit a plan (operator sees an error, fixes the constraint, retries).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// One step in a plan. Order matters — execute top-to-bottom. Each step
@@ -30,7 +30,7 @@ use uuid::Uuid;
 /// targets the current leader; the current planner functions don't emit
 /// it (operator removes the leader manually after a `transfer_leader`
 /// API call), but the variant is here so future planner versions can.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(dead_code)]
 pub enum PlanStep {
@@ -68,7 +68,7 @@ pub enum PlanStep {
 
 /// A planner output bundles the steps with the reasoning, so the
 /// operator-facing surface can show *why* this plan was chosen.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
     pub steps: Vec<PlanStep>,
     pub notes: Vec<String>,
