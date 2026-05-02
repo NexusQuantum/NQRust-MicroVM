@@ -76,6 +76,16 @@ pub struct RaftBlockStatus {
     pub state: String,
     pub data_path: String,
     pub transport: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raft_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_term: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_leader: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_log_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub millis_since_quorum_ack: Option<u64>,
     pub store_kind: RaftBlockStoreKind,
     pub store_path: Option<String>,
     pub node_id: Option<u64>,
@@ -987,9 +997,7 @@ impl RaftBlockState {
         for entry in entries.flatten() {
             if entry.file_type().ok()?.is_file() {
                 let bytes = std::fs::read(entry.path()).ok()?;
-                if let Ok(manifest) =
-                    serde_json::from_slice::<SpdkGroupManifest>(&bytes)
-                {
+                if let Ok(manifest) = serde_json::from_slice::<SpdkGroupManifest>(&bytes) {
                     if manifest.version == 1 && manifest.group_id == group_id {
                         return Some(manifest.node_id);
                     }
@@ -1336,19 +1344,38 @@ impl RaftBlockState {
             let (store_kind, store_path) = node_id
                 .map(|node_id| self.store_descriptor(group_id, node_id))
                 .unwrap_or_else(|| (self.current_store_kind(), None));
+            let capacity_bytes = replica.capacity_bytes().ok();
+            let block_size = replica.block_size().ok();
+            let last_applied_index = replica.last_applied_index().ok();
+            let compacted_through = replica.compacted_through().ok();
+            let retained_log_entries = replica.retained_log_entries().unwrap_or(0);
+            drop(groups);
+            let metrics = self
+                .runtime_for(group_id)
+                .await
+                .map(|runtime| runtime.metrics().borrow().clone());
             RaftBlockStatus {
                 group_id,
                 state: "started".into(),
                 data_path: "persistent_local_replica".into(),
                 transport: "openraft_entry_local".into(),
+                raft_state: metrics
+                    .as_ref()
+                    .map(|metrics| format!("{:?}", metrics.state)),
+                current_term: metrics.as_ref().map(|metrics| metrics.current_term),
+                current_leader: metrics.as_ref().and_then(|metrics| metrics.current_leader),
+                last_log_index: metrics.as_ref().and_then(|metrics| metrics.last_log_index),
+                millis_since_quorum_ack: metrics
+                    .as_ref()
+                    .and_then(|metrics| metrics.millis_since_quorum_ack),
                 store_kind,
                 store_path,
                 node_id,
-                capacity_bytes: replica.capacity_bytes().ok(),
-                block_size: replica.block_size().ok(),
-                last_applied_index: replica.last_applied_index().ok(),
-                compacted_through: replica.compacted_through().ok(),
-                retained_log_entries: replica.retained_log_entries().unwrap_or(0),
+                capacity_bytes,
+                block_size,
+                last_applied_index,
+                compacted_through,
+                retained_log_entries,
             }
         } else {
             RaftBlockStatus {
@@ -1356,6 +1383,11 @@ impl RaftBlockState {
                 state: "not_started".into(),
                 data_path: "raftblk_pending".into(),
                 transport: "not_started".into(),
+                raft_state: None,
+                current_term: None,
+                current_leader: None,
+                last_log_index: None,
+                millis_since_quorum_ack: None,
                 store_kind: self.current_store_kind(),
                 store_path: None,
                 node_id: None,

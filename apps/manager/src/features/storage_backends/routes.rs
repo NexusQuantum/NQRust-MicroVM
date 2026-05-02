@@ -1,7 +1,16 @@
 use crate::features::storage_backends::repo::{StorageBackendRepository, StorageBackendRow};
 use crate::AppState;
-use axum::{extract::Path, http::StatusCode, response::IntoResponse, Extension, Json};
+use axum::{
+    extract::{Path, Query},
+    http::StatusCode,
+    response::IntoResponse,
+    Extension, Json,
+};
+use nexus_storage::{RaftBlockStoreKind, RaftSpdkLocator};
 use nexus_types::{BackendKind, Capabilities, StorageBackend};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 fn row_to_wire(row: StorageBackendRow) -> Result<StorageBackend, StatusCode> {
@@ -28,9 +37,90 @@ fn row_to_wire(row: StorageBackendRow) -> Result<StorageBackend, StatusCode> {
     })
 }
 
-#[derive(serde::Serialize, utoipa::ToSchema)]
+#[derive(serde::Serialize, ToSchema)]
 pub struct StorageBackendListResponse {
     pub items: Vec<StorageBackend>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftSpdkGroupListItem {
+    pub group_id: Uuid,
+    pub volume_id: Uuid,
+    pub size_bytes: u64,
+    pub block_size: u64,
+    pub replica_count: usize,
+    pub leader_hint: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftSpdkGroupListResponse {
+    pub items: Vec<RaftSpdkGroupListItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RaftSpdkQuorumState {
+    LeaderSteady,
+    Electing,
+    QuorumLost,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RaftBlockReplicaStatus {
+    pub group_id: Uuid,
+    pub state: String,
+    pub data_path: String,
+    pub transport: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raft_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_term: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_leader: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_log_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub millis_since_quorum_ack: Option<u64>,
+    pub store_kind: RaftBlockStoreKind,
+    pub store_path: Option<String>,
+    pub node_id: Option<u64>,
+    pub capacity_bytes: Option<u64>,
+    pub block_size: Option<u64>,
+    pub last_applied_index: Option<u64>,
+    pub compacted_through: Option<u64>,
+    pub retained_log_entries: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftSpdkReplicaStatusItem {
+    pub node_id: u64,
+    pub agent_base_url: String,
+    pub healthy: bool,
+    pub status: Option<RaftBlockReplicaStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RaftSpdkGroupStatusResponse {
+    pub group_id: Uuid,
+    pub size_bytes: u64,
+    pub block_size: u64,
+    pub leader_hint: Option<u64>,
+    pub observed_leader: Option<u64>,
+    pub quorum_state: RaftSpdkQuorumState,
+    pub lagging_followers: Vec<u64>,
+    pub replicas: Vec<RaftSpdkReplicaStatusItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RaftSpdkStatusQuery {
+    #[serde(default = "default_lag_threshold")]
+    lag_threshold: u64,
+}
+
+fn default_lag_threshold() -> u64 {
+    1024
 }
 
 #[utoipa::path(
@@ -103,5 +193,403 @@ pub async fn get_one(
             )
                 .into_response()
         }
+    }
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct BackendVolumeRow {
+    id: Uuid,
+    path: String,
+    size_bytes: i64,
+}
+
+async fn get_raft_spdk_backend_row(
+    st: &AppState,
+    id: Uuid,
+) -> Result<StorageBackendRow, (StatusCode, String)> {
+    let repo = StorageBackendRepository::new(st.db.clone());
+    let row = repo
+        .get(id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}")))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "not found".to_string()))?;
+    if row.kind != "raft_spdk" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("backend {} is {}, not raft_spdk", row.id, row.kind),
+        ));
+    }
+    Ok(row)
+}
+
+async fn load_raft_spdk_groups(
+    st: &AppState,
+    backend_id: Uuid,
+) -> Result<Vec<(Uuid, RaftSpdkLocator)>, (StatusCode, String)> {
+    let rows = sqlx::query_as::<_, BackendVolumeRow>(
+        r#"SELECT id, path, size_bytes FROM volume WHERE backend_id = $1 ORDER BY created_at, id"#,
+    )
+    .bind(backend_id)
+    .fetch_all(&st.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}")))?;
+
+    let mut groups = Vec::new();
+    let mut seen = BTreeSet::new();
+    for row in rows {
+        let Ok(locator) = RaftSpdkLocator::from_locator_str(&row.path) else {
+            tracing::warn!(
+                volume_id = %row.id,
+                backend_id = %backend_id,
+                size_bytes = row.size_bytes,
+                "skipping raft_spdk volume row with unparsable locator"
+            );
+            continue;
+        };
+        if seen.insert(locator.group_id) {
+            groups.push((row.id, locator));
+        }
+    }
+    Ok(groups)
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/groups",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses((status = 200), (status = 400), (status = 404)),
+    tag = "StorageBackends",
+)]
+pub async fn list_groups(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    match load_raft_spdk_groups(&st, id).await {
+        Ok(groups) => {
+            let items = groups
+                .into_iter()
+                .map(|(volume_id, locator)| RaftSpdkGroupListItem {
+                    group_id: locator.group_id,
+                    volume_id,
+                    size_bytes: locator.size_bytes,
+                    block_size: locator.block_size,
+                    replica_count: locator.replicas.len(),
+                    leader_hint: locator.leader_hint,
+                })
+                .collect();
+            (StatusCode::OK, Json(RaftSpdkGroupListResponse { items })).into_response()
+        }
+        Err((status, error)) => {
+            (status, Json(serde_json::json!({ "error": error }))).into_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/groups/{group_id}",
+    params(
+        ("id" = Uuid, Path, description = "Storage backend ID"),
+        ("group_id" = Uuid, Path, description = "Raft block group ID")
+    ),
+    responses((status = 200), (status = 400), (status = 404)),
+    tag = "StorageBackends",
+)]
+pub async fn get_group_status(
+    Extension(st): Extension<AppState>,
+    Path((id, group_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<RaftSpdkStatusQuery>,
+) -> impl IntoResponse {
+    if let Err((status, error)) = get_raft_spdk_backend_row(&st, id).await {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    let groups = match load_raft_spdk_groups(&st, id).await {
+        Ok(groups) => groups,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+    let Some((_, locator)) = groups
+        .into_iter()
+        .find(|(_, locator)| locator.group_id == group_id)
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "group not found" })),
+        )
+            .into_response();
+    };
+
+    let statuses = fetch_replica_statuses(&locator).await;
+    let response = aggregate_raft_spdk_status(&locator, statuses, query.lag_threshold);
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+async fn fetch_replica_statuses(
+    locator: &RaftSpdkLocator,
+) -> Vec<(u64, String, Result<RaftBlockReplicaStatus, String>)> {
+    let http = reqwest::Client::new();
+    let mut out = Vec::with_capacity(locator.replicas.len());
+    for replica in &locator.replicas {
+        let base = replica.agent_base_url.trim_end_matches('/');
+        let url = format!("{base}/{}/status", locator.group_id);
+        let result = match http.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<RaftBlockReplicaStatus>()
+                .await
+                .map_err(|e| format!("decode {url}: {e}")),
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                Err(format!("{url}: {status}: {body}"))
+            }
+            Err(e) => Err(format!("{url}: {e}")),
+        };
+        out.push((replica.node_id, replica.agent_base_url.clone(), result));
+    }
+    out
+}
+
+fn aggregate_raft_spdk_status(
+    locator: &RaftSpdkLocator,
+    statuses: Vec<(u64, String, Result<RaftBlockReplicaStatus, String>)>,
+    lag_threshold: u64,
+) -> RaftSpdkGroupStatusResponse {
+    let quorum = locator.replicas.len() / 2 + 1;
+    let mut healthy = 0_usize;
+    let mut leaders = BTreeSet::new();
+    let mut leader_applied = 0_u64;
+    let mut observed_leader = None;
+    let mut leader_self_reported = false;
+    let mut replicas = Vec::with_capacity(statuses.len());
+
+    for (node_id, agent_base_url, result) in statuses {
+        match result {
+            Ok(status) => {
+                if status.state == "started" {
+                    healthy += 1;
+                }
+                if let Some(leader) = status.current_leader {
+                    leaders.insert(leader);
+                }
+                if status.current_leader == status.node_id {
+                    observed_leader = status.current_leader;
+                    leader_self_reported = true;
+                    leader_applied = status.last_applied_index.unwrap_or(0);
+                }
+                replicas.push(RaftSpdkReplicaStatusItem {
+                    node_id,
+                    agent_base_url,
+                    healthy: status.state == "started",
+                    status: Some(status),
+                    error: None,
+                });
+            }
+            Err(error) => replicas.push(RaftSpdkReplicaStatusItem {
+                node_id,
+                agent_base_url,
+                healthy: false,
+                status: None,
+                error: Some(error),
+            }),
+        }
+    }
+
+    if observed_leader.is_none() && leaders.len() == 1 {
+        observed_leader = leaders.iter().next().copied();
+        leader_applied = replicas
+            .iter()
+            .filter_map(|replica| replica.status.as_ref()?.last_applied_index)
+            .max()
+            .unwrap_or(0);
+    }
+
+    let quorum_state = if healthy < quorum {
+        RaftSpdkQuorumState::QuorumLost
+    } else if leader_self_reported && observed_leader.is_some() && leaders.len() <= 1 {
+        RaftSpdkQuorumState::LeaderSteady
+    } else {
+        RaftSpdkQuorumState::Electing
+    };
+
+    let lagging_followers = replicas
+        .iter()
+        .filter_map(|replica| {
+            let status = replica.status.as_ref()?;
+            if status.current_leader == Some(replica.node_id) {
+                return None;
+            }
+            let applied = status.last_applied_index.unwrap_or(0);
+            (leader_applied.saturating_sub(applied) > lag_threshold).then_some(replica.node_id)
+        })
+        .collect();
+
+    RaftSpdkGroupStatusResponse {
+        group_id: locator.group_id,
+        size_bytes: locator.size_bytes,
+        block_size: locator.block_size,
+        leader_hint: locator.leader_hint,
+        observed_leader,
+        quorum_state,
+        lagging_followers,
+        replicas,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexus_storage::RaftSpdkReplicaLocator;
+
+    fn locator() -> RaftSpdkLocator {
+        RaftSpdkLocator::new(
+            Uuid::parse_str("018f64ba-97aa-70d9-a7d2-6459256fd111").unwrap(),
+            4096,
+            512,
+            vec![
+                RaftSpdkReplicaLocator {
+                    node_id: 1,
+                    agent_base_url: "http://agent-1/v1/raft_block".into(),
+                    spdk_lvol_locator: "{}".into(),
+                },
+                RaftSpdkReplicaLocator {
+                    node_id: 2,
+                    agent_base_url: "http://agent-2/v1/raft_block".into(),
+                    spdk_lvol_locator: "{}".into(),
+                },
+                RaftSpdkReplicaLocator {
+                    node_id: 3,
+                    agent_base_url: "http://agent-3/v1/raft_block".into(),
+                    spdk_lvol_locator: "{}".into(),
+                },
+            ],
+            Some(1),
+        )
+        .unwrap()
+    }
+
+    fn status(node_id: u64, leader: Option<u64>, applied: u64) -> RaftBlockReplicaStatus {
+        RaftBlockReplicaStatus {
+            group_id: locator().group_id,
+            state: "started".into(),
+            data_path: "persistent_local_replica".into(),
+            transport: "openraft_entry_local".into(),
+            raft_state: Some(if leader == Some(node_id) {
+                "Leader".into()
+            } else {
+                "Follower".into()
+            }),
+            current_term: Some(3),
+            current_leader: leader,
+            last_log_index: Some(applied),
+            millis_since_quorum_ack: None,
+            store_kind: RaftBlockStoreKind::SpdkLvol,
+            store_path: Some(format!("/var/lib/spdk-stub/node-{node_id}.dev")),
+            node_id: Some(node_id),
+            capacity_bytes: Some(4096),
+            block_size: Some(512),
+            last_applied_index: Some(applied),
+            compacted_through: Some(applied),
+            retained_log_entries: 1,
+        }
+    }
+
+    #[test]
+    fn status_api_marks_steady_leader_and_lagging_follower() {
+        let locator = locator();
+        let response = aggregate_raft_spdk_status(
+            &locator,
+            vec![
+                (
+                    1,
+                    "http://agent-1/v1/raft_block".into(),
+                    Ok(status(1, Some(1), 2048)),
+                ),
+                (
+                    2,
+                    "http://agent-2/v1/raft_block".into(),
+                    Ok(status(2, Some(1), 2047)),
+                ),
+                (
+                    3,
+                    "http://agent-3/v1/raft_block".into(),
+                    Ok(status(3, Some(1), 1)),
+                ),
+            ],
+            1024,
+        );
+
+        assert!(matches!(
+            response.quorum_state,
+            RaftSpdkQuorumState::LeaderSteady
+        ));
+        assert_eq!(response.observed_leader, Some(1));
+        assert_eq!(response.lagging_followers, vec![3]);
+    }
+
+    #[test]
+    fn status_api_marks_quorum_lost_when_majority_unreachable() {
+        let locator = locator();
+        let response = aggregate_raft_spdk_status(
+            &locator,
+            vec![
+                (
+                    1,
+                    "http://agent-1/v1/raft_block".into(),
+                    Ok(status(1, Some(1), 10)),
+                ),
+                (
+                    2,
+                    "http://agent-2/v1/raft_block".into(),
+                    Err("offline".into()),
+                ),
+                (
+                    3,
+                    "http://agent-3/v1/raft_block".into(),
+                    Err("offline".into()),
+                ),
+            ],
+            1024,
+        );
+
+        assert!(matches!(
+            response.quorum_state,
+            RaftSpdkQuorumState::QuorumLost
+        ));
+    }
+
+    #[test]
+    fn status_api_marks_electing_when_leader_is_not_reachable() {
+        let locator = locator();
+        let response = aggregate_raft_spdk_status(
+            &locator,
+            vec![
+                (
+                    1,
+                    "http://agent-1/v1/raft_block".into(),
+                    Err("offline".into()),
+                ),
+                (
+                    2,
+                    "http://agent-2/v1/raft_block".into(),
+                    Ok(status(2, Some(1), 10)),
+                ),
+                (
+                    3,
+                    "http://agent-3/v1/raft_block".into(),
+                    Ok(status(3, Some(1), 10)),
+                ),
+            ],
+            1024,
+        );
+
+        assert!(matches!(
+            response.quorum_state,
+            RaftSpdkQuorumState::Electing
+        ));
+        assert_eq!(response.observed_leader, Some(1));
     }
 }

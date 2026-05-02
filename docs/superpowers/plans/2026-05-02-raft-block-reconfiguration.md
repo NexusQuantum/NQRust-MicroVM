@@ -1,6 +1,6 @@
 # Raft Block Reconfiguration (B-III) Implementation Plan
 
-**Status:** Not started.
+**Status:** In progress — Task 1 backend/API slice landed; UI/live validation pending.
 **Spec:** `docs/superpowers/specs/2026-04-29-spdk-raft-hci-design.md` § "B-III: Reconfiguration".
 **Predecessor:** `docs/superpowers/plans/2026-04-29-raft-block-prototype.md` (B-II).
 **Scope:** Take B-II's static three-replica raft_spdk groups and make membership dynamic — host add/remove, replica repair, rebalancing, hot-spares, decommission, plus an operator-facing status surface.
@@ -15,7 +15,7 @@ These are exactly the gaps B-III closes.
 
 ## Task 1: Group-level status API
 
-Status: not started.
+Status: in progress.
 
 The first thing every other B-III feature needs is observability. Before changing membership, an operator must see the cluster's view of the cluster.
 
@@ -24,6 +24,15 @@ The first thing every other B-III feature needs is observability. Before changin
 - Surface the same data in `apps/ui` under a new "Storage / Replication" panel on the storage backend detail page. Read-only; no mutating actions yet.
 - Auth: status is read-only; admin role only because the response leaks per-host topology.
 
+Implementation notes:
+
+- DONE: agent `/v1/raft_block/{group_id}/status` now includes Raft runtime fields (`raft_state`, `current_term`, `current_leader`, `last_log_index`, `millis_since_quorum_ack`) when the Openraft runtime is active.
+- DONE: manager `GET /v1/storage_backends/{id}/groups` derives known groups from current `volume` rows whose locator parses as `RaftSpdkLocator`. This is the B-II source of truth until Task 3 introduces `raft_spdk_replica`.
+- DONE: manager `GET /v1/storage_backends/{id}/groups/{group_id}` fans out to the locator's replica agents, returns per-node status/errors, derives `quorum_state`, and reports `lagging_followers` using configurable `?lag_threshold=`.
+- TODO: wire the read-only UI panel.
+- TODO: enforce admin-only auth on the storage backend routes; existing `/v1/storage_backends` routes are currently public inside the API router.
+- TODO: live KubeVirt validation.
+
 Validation:
 
 - Unit: aggregator collapses three matching `/status` payloads into one response, marks `quorum_state: leader_steady` when all three see the same leader_id; marks `quorum_lost` when fewer than `n/2 + 1` respond.
@@ -31,6 +40,7 @@ Validation:
 
 ```bash
 cargo test -p manager status_api
+cargo test -p agent raft_block::tests::status
 # Live:
 curl -s http://manager/v1/storage_backends/$BID/groups/$GID | jq .
 ```
