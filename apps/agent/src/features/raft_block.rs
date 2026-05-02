@@ -583,6 +583,22 @@ impl RaftBlockRuntime {
             .map_err(|e| RaftBlockError::Store(format!("Raft::initialize: {e}")))
     }
 
+    /// Commit a membership replacement through Openraft. This drives
+    /// Openraft's joint-consensus path when the current and next voter sets
+    /// differ, and must be called on the current leader.
+    pub async fn change_membership(
+        &self,
+        voters: std::collections::BTreeSet<u64>,
+        retain: bool,
+    ) -> Result<String, RaftBlockError> {
+        let response = self
+            .raft
+            .change_membership(openraft::ChangeMembers::ReplaceAllVoters(voters), retain)
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::change_membership: {e}")))?;
+        Ok(openraft::MessageSummary::summary(&response))
+    }
+
     /// Submit a block command through the Raft pipeline. Returns once the
     /// command is committed and applied. Only the leader accepts writes;
     /// followers return a `ForwardToLeader`-shaped error which is mapped to
@@ -742,6 +758,19 @@ impl RaftBlockState {
             .await
             .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
         runtime.initialize_membership(members).await
+    }
+
+    pub async fn change_membership(
+        &self,
+        group_id: Uuid,
+        voters: std::collections::BTreeSet<u64>,
+        retain: bool,
+    ) -> Result<String, RaftBlockError> {
+        let runtime = self
+            .runtime_for(group_id)
+            .await
+            .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
+        runtime.change_membership(voters, retain).await
     }
 
     /// Submit a `BlockCommand` through Raft. Returns once the command is
@@ -1705,6 +1734,10 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
             "/:group_id/openraft/install_snapshot",
             post(openraft_install_snapshot),
         )
+        .route(
+            "/:group_id/openraft/change_membership",
+            post(openraft_change_membership),
+        )
         .route("/create", post(create))
         .route("/append", post(append))
         .route("/append_entries", post(append_entries))
@@ -1739,6 +1772,18 @@ pub struct RuntimeInitializeReq {
     pub members: Vec<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeMembershipReq {
+    pub voters: Vec<u64>,
+    #[serde(default)]
+    pub retain: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeMembershipResp {
+    pub summary: String,
+}
+
 /// Request shape for `POST /v1/raft_block/runtime_write`. This is the
 /// production write path used by `raftblk-vhost`'s `RaftBlockBackend`:
 /// every guest write becomes one of these and the response only returns
@@ -1769,6 +1814,18 @@ pub async fn runtime_initialize(
     }
     match state.initialize_runtime(req.group_id, members).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+pub async fn openraft_change_membership(
+    State(state): State<Arc<RaftBlockState>>,
+    Path(group_id): Path<Uuid>,
+    Json(req): Json<ChangeMembershipReq>,
+) -> impl IntoResponse {
+    let voters = req.voters.into_iter().collect();
+    match state.change_membership(group_id, voters, req.retain).await {
+        Ok(summary) => (StatusCode::OK, Json(ChangeMembershipResp { summary })).into_response(),
         Err(err) => error_response(StatusCode::BAD_REQUEST, err),
     }
 }
@@ -2564,6 +2621,22 @@ mod tests {
                 group_id: Uuid::new_v4(),
                 term: 1,
                 leader_id: 1,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn change_membership_rejects_unstarted_runtime() {
+        let state = Arc::new(RaftBlockState::new(tempfile::tempdir().unwrap().path()));
+        let response = openraft_change_membership(
+            State(state),
+            Path(Uuid::new_v4()),
+            Json(ChangeMembershipReq {
+                voters: vec![1, 2, 3],
+                retain: false,
             }),
         )
         .await

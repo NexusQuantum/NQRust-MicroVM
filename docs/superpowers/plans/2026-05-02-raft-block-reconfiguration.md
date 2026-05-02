@@ -84,6 +84,11 @@ This is the first **mutating** membership change. It must go through openraft's 
 - Backend-side change: `RaftSpdkControlPlaneBackend` reads replicas from DB on construction (TOML still seeds an initial set on first run). Locators issued after a successful add reflect the new membership.
 - Concurrency: only one membership operation per group at a time. Take an advisory pg lock keyed by `(backend_id, group_id)` for the duration of the change.
 
+Implementation notes:
+
+- DONE: agent route `POST /v1/raft_block/{group_id}/openraft/change_membership` exposes Openraft `change_membership(ReplaceAllVoters, retain)` through the runtime wrapper. Manager orchestration is still pending.
+- TODO: manager replica-add endpoint that creates the target group, starts runtime, catches up, invokes the leader change-membership route, and persists membership.
+
 Validation:
 
 - Unit: model test in `nexus-raft-block` exercising openraft's joint consensus with one new voter. Confirm a write committed in the joint phase is visible on all old + new voters after commit.
