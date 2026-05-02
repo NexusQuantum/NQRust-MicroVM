@@ -8,6 +8,7 @@ members = [
 "crates/nexus-raft-block",
 "crates/nexus-storage",
 "crates/nexus-types",
+"crates/nqvm-cli",
 "crates/raftblk-vhost",
 ]
 resolver = "2"
