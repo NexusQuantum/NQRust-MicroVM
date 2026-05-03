@@ -29,6 +29,14 @@ interface Field {
   placeholder?: string;
   hint?: string;
   type?: "text" | "password";
+  /** Hide the field until another field has a value. Used so the
+   *  Export Path doesn't render before the operator has typed an NFS
+   *  server (there's nothing to pick from). */
+  requiresField?: string;
+  /** Tuck the field behind the "Show advanced options" toggle. The
+   *  manager has sane defaults for every advanced field; operators only
+   *  see them after explicitly opening the disclosure. */
+  advanced?: boolean;
 }
 
 /** Per-kind config fields. Keep aligned with `apps/manager/src/features/storage/config.rs::validate`. */
@@ -61,12 +69,14 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
         label: "Export path",
         placeholder: "/mnt/tank/vms",
         hint: "Path the server exports.",
+        requiresField: "server",
       },
       {
         key: "mount_base",
-        label: "Mount base (optional)",
+        label: "Mount base",
         placeholder: "/var/lib/nqrust/nfs",
-        hint: "Where the manager creates per-(server, export) mount points. Default /var/lib/nqrust/nfs. Most operators leave this blank.",
+        hint: "Where the manager creates per-(server, export) mount points. Default /var/lib/nqrust/nfs.",
+        advanced: true,
       },
     ],
   },
@@ -83,9 +93,10 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
       },
       {
         key: "portal",
-        label: "Portal (optional)",
+        label: "Portal",
         placeholder: "10.0.0.5:3260",
         hint: "Discovery portal — used by the agent for iscsiadm login.",
+        advanced: true,
       },
     ],
   },
@@ -109,27 +120,31 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
       { key: "pool", label: "Pool", placeholder: "NQRust", hint: "ZFS pool that hosts the per-volume zvols." },
       {
         key: "target_name_prefix",
-        label: "Target name prefix (optional)",
+        label: "Target name prefix",
         placeholder: "nqrust-v-",
-        hint: "Each VM disk creates a target named <prefix><uuid>. Default 'nqrust-v-'. The full IQN is <truenas-basename>:<prefix><uuid>.",
+        hint: "Each VM disk creates a target named <prefix><uuid>. Default 'nqrust-v-'.",
+        advanced: true,
       },
       {
         key: "portal_group_id",
-        label: "Portal group id (optional)",
-        placeholder: "1",
-        hint: "TrueNAS portal group id to associate each new target with. Without this, the operator must add a portal group to each new target via the TrueNAS UI before clients can connect.",
+        label: "Portal group id",
+        placeholder: "auto-discover or auto-create",
+        hint: "TrueNAS portal group id. The manager auto-discovers existing groups and falls back to auto-creating one if none exist. Override only if you need a specific group.",
+        advanced: true,
       },
       {
         key: "initiator_group_id",
-        label: "Initiator group id (optional)",
-        placeholder: "1",
-        hint: "TrueNAS initiator group id. Same role as the portal group — set it to make provisioning fully hands-off.",
+        label: "Initiator group id",
+        placeholder: "auto-discover or auto-create",
+        hint: "TrueNAS initiator group id. Same auto-discover behavior as portal group.",
+        advanced: true,
       },
       {
         key: "portal",
-        label: "Discovery portal (optional)",
+        label: "Discovery portal",
         placeholder: "10.0.0.5:3260",
         hint: "If unset, the agent uses iscsiadm discovery to find a portal.",
+        advanced: true,
       },
     ],
   },
@@ -266,14 +281,18 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
   const [kind, setKind] = useState<BackendKind>("nfs");
   const [isDefault, setIsDefault] = useState(false);
   const [config, setConfig] = useState<Record<string, string>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const spec = KIND_CONFIG[kind];
+  const basicFields = spec.fields.filter((f) => !f.advanced);
+  const advancedFields = spec.fields.filter((f) => f.advanced);
 
   function reset() {
     setName("");
     setKind("nfs");
     setIsDefault(false);
     setConfig({});
+    setShowAdvanced(false);
   }
 
   async function submit() {
@@ -359,38 +378,85 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
             <p className="text-xs text-muted-foreground">{spec.description}</p>
           </div>
 
-          {spec.fields.map((f) => (
-            <div key={f.key} className="space-y-1.5">
-              <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
-              {kind === "nfs" && f.key === "export" ? (
-                <NfsExportField
-                  server={String(config["server"] ?? "")}
-                  value={String(config[f.key] ?? "")}
-                  onChange={(v) => setConfig({ ...config, [f.key]: v })}
-                />
-              ) : (kind === "iscsi" || kind === "truenas_iscsi") && f.key === "portal" ? (
-                <>
+          {basicFields.map((f) => {
+            // Hide fields that depend on another field until that
+            // dependency has a value. Lets us drop the Export Path
+            // input until the operator types an NFS server.
+            if (f.requiresField && !String(config[f.requiresField] ?? "").trim()) {
+              return null;
+            }
+            return (
+              <div key={f.key} className="space-y-1.5">
+                <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
+                {kind === "nfs" && f.key === "export" ? (
+                  <NfsExportField
+                    server={String(config["server"] ?? "")}
+                    value={String(config[f.key] ?? "")}
+                    onChange={(v) => setConfig({ ...config, [f.key]: v })}
+                  />
+                ) : (kind === "iscsi" || kind === "truenas_iscsi") && f.key === "portal" ? (
+                  <>
+                    <Input
+                      id={`bk-cfg-${f.key}`}
+                      type="text"
+                      value={String(config[f.key] ?? "")}
+                      onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                      placeholder={f.placeholder}
+                    />
+                    <IscsiTargetDiscovery portal={String(config[f.key] ?? "")} />
+                  </>
+                ) : (
                   <Input
                     id={`bk-cfg-${f.key}`}
-                    type="text"
+                    type={f.type ?? "text"}
                     value={String(config[f.key] ?? "")}
                     onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
                     placeholder={f.placeholder}
                   />
-                  <IscsiTargetDiscovery portal={String(config[f.key] ?? "")} />
-                </>
-              ) : (
-                <Input
-                  id={`bk-cfg-${f.key}`}
-                  type={f.type ?? "text"}
-                  value={String(config[f.key] ?? "")}
-                  onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
-                  placeholder={f.placeholder}
-                />
-              )}
-              {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+                )}
+                {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+              </div>
+            );
+          })}
+
+          {advancedFields.length > 0 && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                className="text-xs text-blue-600 hover:underline"
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                {showAdvanced ? "Hide" : "Show"} advanced options ({advancedFields.length})
+              </button>
+              {showAdvanced &&
+                advancedFields.map((f) => (
+                  <div key={f.key} className="space-y-1.5">
+                    <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
+                    {(kind === "iscsi" || kind === "truenas_iscsi") && f.key === "portal" ? (
+                      <>
+                        <Input
+                          id={`bk-cfg-${f.key}`}
+                          type="text"
+                          value={String(config[f.key] ?? "")}
+                          onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                          placeholder={f.placeholder}
+                        />
+                        <IscsiTargetDiscovery portal={String(config[f.key] ?? "")} />
+                      </>
+                    ) : (
+                      <Input
+                        id={`bk-cfg-${f.key}`}
+                        type={f.type ?? "text"}
+                        value={String(config[f.key] ?? "")}
+                        onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                        placeholder={f.placeholder}
+                      />
+                    )}
+                    {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+                  </div>
+                ))}
             </div>
-          ))}
+          )}
 
           <div className="flex items-center justify-between rounded-md border p-3">
             <div className="space-y-0.5">
