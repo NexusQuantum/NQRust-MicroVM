@@ -253,3 +253,133 @@ pub async fn get_one(
         }
     }
 }
+
+use crate::features::storage_backends::discovery::{
+    discover_iscsi_targets, discover_nfs_exports, IscsiTarget, NfsExport,
+};
+
+#[derive(Debug, Deserialize)]
+pub struct NfsScanQuery {
+    pub server: String,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct NfsScanResponse {
+    pub exports: Vec<NfsExportWire>,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct NfsExportWire {
+    pub path: String,
+    pub allowed: String,
+}
+
+impl From<NfsExport> for NfsExportWire {
+    fn from(e: NfsExport) -> Self {
+        Self {
+            path: e.path,
+            allowed: e.allowed,
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/scan/nfs",
+    params(("server" = String, Query, description = "NFS server hostname or IP")),
+    responses(
+        (status = 200, body = NfsScanResponse),
+        (status = 400, description = "server query param missing"),
+        (status = 502, description = "Discovery failed (timeout, unreachable, command missing)"),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn scan_nfs(
+    Extension(_st): Extension<AppState>,
+    axum::extract::Query(q): axum::extract::Query<NfsScanQuery>,
+) -> impl IntoResponse {
+    if q.server.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "server query param is required"})),
+        )
+            .into_response();
+    }
+    match discover_nfs_exports(&q.server).await {
+        Ok(exports) => (
+            StatusCode::OK,
+            Json(NfsScanResponse {
+                exports: exports.into_iter().map(NfsExportWire::from).collect(),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IscsiScanQuery {
+    pub portal: String,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct IscsiScanResponse {
+    pub targets: Vec<IscsiTargetWire>,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct IscsiTargetWire {
+    pub portal: String,
+    pub iqn: String,
+}
+
+impl From<IscsiTarget> for IscsiTargetWire {
+    fn from(t: IscsiTarget) -> Self {
+        Self {
+            portal: t.portal,
+            iqn: t.iqn,
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/scan/iscsi",
+    params(("portal" = String, Query, description = "iSCSI portal as host:port")),
+    responses(
+        (status = 200, body = IscsiScanResponse),
+        (status = 400),
+        (status = 502),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn scan_iscsi(
+    Extension(_st): Extension<AppState>,
+    axum::extract::Query(q): axum::extract::Query<IscsiScanQuery>,
+) -> impl IntoResponse {
+    if q.portal.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "portal query param is required"})),
+        )
+            .into_response();
+    }
+    match discover_iscsi_targets(&q.portal).await {
+        Ok(targets) => (
+            StatusCode::OK,
+            Json(IscsiScanResponse {
+                targets: targets.into_iter().map(IscsiTargetWire::from).collect(),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response(),
+    }
+}

@@ -3,9 +3,6 @@
 //! remember exports or target IQNs — same UX shape as Proxmox VE's
 //! `pvesm nfsscan`.
 
-// Public items are wired into REST routes in Tasks 2 & 3.
-#![allow(dead_code)]
-
 use serde::Serialize;
 use std::time::Duration;
 
