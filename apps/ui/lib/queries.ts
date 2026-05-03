@@ -123,6 +123,20 @@ export const queryKeys = {
   // storage backends
   storageBackends: () => ["storage_backends"] as const,
 
+  // B-III replication surface
+  raftGroups: (backendId: string) =>
+    ["storage_backends", backendId, "groups"] as const,
+  raftGroupStatus: (backendId: string, groupId: string) =>
+    ["storage_backends", backendId, "groups", groupId] as const,
+  raftRepairQueue: (backendId: string) =>
+    ["storage_backends", backendId, "repair_queue"] as const,
+  raftDecommissionPlan: (backendId: string, hostId: string) =>
+    ["storage_backends", backendId, "decommission_plan", hostId] as const,
+  raftPromotionPlan: (backendId: string, hostId: string) =>
+    ["storage_backends", backendId, "promotion_plan", hostId] as const,
+  raftRebalancePlan: (backendId: string) =>
+    ["storage_backends", backendId, "rebalance_plan"] as const,
+
   // backups
   backupTargets: () => ["backup_targets"] as const,
   backups: (vid?: string) => ["backups", vid ?? "all"] as const,
@@ -1414,6 +1428,141 @@ export function useStorageBackends() {
       return resp.items;
     },
     staleTime: 60_000,
+  });
+}
+
+// B-III replication hooks ----------------------------------------------
+
+export function useRaftGroups(backendId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.raftGroups(backendId ?? ""),
+    queryFn: async () => {
+      if (!backendId) throw new Error("backendId required");
+      return (await facadeApi.listRaftSpdkGroups(backendId)).items;
+    },
+    enabled: !!backendId,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useRaftGroupStatus(
+  backendId: string | undefined,
+  groupId: string | undefined
+) {
+  return useQuery({
+    queryKey: queryKeys.raftGroupStatus(backendId ?? "", groupId ?? ""),
+    queryFn: () => facadeApi.getRaftSpdkGroupStatus(backendId!, groupId!),
+    enabled: !!backendId && !!groupId,
+    refetchInterval: 10_000,
+  });
+}
+
+export function useRaftRepairQueue(backendId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.raftRepairQueue(backendId ?? ""),
+    queryFn: async () => {
+      if (!backendId) throw new Error("backendId required");
+      return (await facadeApi.listRepairQueue(backendId)).items;
+    },
+    enabled: !!backendId,
+    refetchInterval: 15_000,
+  });
+}
+
+export function useDecommissionPlan(backendId: string, hostId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.raftDecommissionPlan(backendId, hostId ?? ""),
+    queryFn: () => facadeApi.getDecommissionPlan(backendId, hostId!),
+    enabled: !!hostId,
+  });
+}
+
+export function usePromotionPlan(backendId: string, hostId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.raftPromotionPlan(backendId, hostId ?? ""),
+    queryFn: () => facadeApi.getPromotionPlan(backendId, hostId!),
+    enabled: !!hostId,
+  });
+}
+
+export function useRebalancePlan(backendId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.raftRebalancePlan(backendId ?? ""),
+    queryFn: () => facadeApi.getRebalancePlan(backendId!),
+    enabled: !!backendId,
+  });
+}
+
+export function useExecutePlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      backendId,
+      plan,
+    }: {
+      backendId: string;
+      plan: import("@/lib/types").ReplicationPlan;
+    }) => facadeApi.executePlan(backendId, plan),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.raftGroups(vars.backendId) });
+      qc.invalidateQueries({
+        queryKey: queryKeys.raftRepairQueue(vars.backendId),
+      });
+    },
+  });
+}
+
+export function useRepairReplica() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      backendId: string;
+      groupId: string;
+      nodeId: number;
+    }) => facadeApi.repairReplica(vars.backendId, vars.groupId, vars.nodeId),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({
+        queryKey: queryKeys.raftGroupStatus(vars.backendId, vars.groupId),
+      });
+      qc.invalidateQueries({
+        queryKey: queryKeys.raftRepairQueue(vars.backendId),
+      });
+    },
+  });
+}
+
+export function useSetHostHotSpare() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { hostId: string; isHotSpare: boolean }) =>
+      facadeApi.setHostHotSpare(vars.hostId, vars.isHotSpare),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hosts"] });
+    },
+  });
+}
+
+export function useDecommissionHost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { hostId: string }) =>
+      facadeApi.decommissionHost(vars.hostId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hosts"] });
+    },
+  });
+}
+
+export function useSetHostSpdkBackendId() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      hostId: string;
+      spdkBackendId: string | null;
+    }) => facadeApi.setHostSpdkBackendId(vars.hostId, vars.spdkBackendId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hosts"] });
+    },
   });
 }
 

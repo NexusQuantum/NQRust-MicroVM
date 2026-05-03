@@ -418,11 +418,12 @@ pub async fn create(
     super::service::create_and_start(&st, id, req, None, user_id, &username)
         .await
         .map_err(|err| {
+            tracing::error!("create_and_start failed: {err:#}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
                     error: "Failed to create VM".to_string(),
-                    fault_message: Some(err.to_string()),
+                    fault_message: Some(format!("{err:#}")),
                 }),
             )
         })?;

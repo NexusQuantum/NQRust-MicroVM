@@ -1086,6 +1086,126 @@ export interface StorageBackendListResponse {
   items: StorageBackend[];
 }
 
+// B-III: raft_spdk replication surface ---------------------------------
+
+export interface RaftSpdkGroupListItem {
+  group_id: string;
+  volume_id: string;
+  size_bytes: number;
+  block_size: number;
+  replica_count: number;
+  leader_hint?: number | null;
+}
+
+export interface RaftSpdkGroupListResponse {
+  items: RaftSpdkGroupListItem[];
+}
+
+export interface RaftSpdkReplicaStatus {
+  node_id: number;
+  agent_base_url: string;
+  reachable: boolean;
+  last_applied_index: number | null;
+  retained_log_entries: number | null;
+  store_kind: string | null;
+  store_path: string | null;
+  /// Set when the agent's status RPC errored.
+  error?: string | null;
+}
+
+export interface RaftSpdkGroupStatus {
+  group_id: string;
+  volume_id: string;
+  size_bytes: number;
+  block_size: number;
+  leader_hint?: number | null;
+  /// "leader_steady" | "electing" | "quorum_lost" — derived from per-node responses.
+  quorum_state: string;
+  /// Node ids whose applied index is far behind the committed index.
+  lagging_followers: number[];
+  replicas: RaftSpdkReplicaStatus[];
+}
+
+export interface RaftRepairQueueItem {
+  id: string;
+  backend_id: string;
+  group_id: string;
+  op_type: string;
+  op_args: Record<string, unknown>;
+  state: "pending" | "in_progress" | "succeeded" | "failed" | "cancelled";
+  attempts: number;
+  last_error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at: string;
+}
+
+export interface RaftRepairQueueResponse {
+  items: RaftRepairQueueItem[];
+}
+
+export type PlanStepKind = "add_replica" | "remove_replica" | "transfer_leader";
+
+export interface PlanStepBase {
+  kind: PlanStepKind;
+}
+
+export interface AddReplicaStep extends PlanStepBase {
+  kind: "add_replica";
+  backend_id: string;
+  group_id: string;
+  target_host_id: string;
+  target_node_id: number;
+  target_agent_base_url: string;
+  target_spdk_backend_id: string;
+}
+
+export interface RemoveReplicaStep extends PlanStepBase {
+  kind: "remove_replica";
+  backend_id: string;
+  group_id: string;
+  node_id: number;
+}
+
+export interface TransferLeaderStep extends PlanStepBase {
+  kind: "transfer_leader";
+  backend_id: string;
+  group_id: string;
+  from_node_id: number;
+  to_node_id: number;
+}
+
+export type PlanStep = AddReplicaStep | RemoveReplicaStep | TransferLeaderStep;
+
+export interface ReplicationPlan {
+  steps: PlanStep[];
+  notes: string[];
+}
+
+export interface PlanResponse {
+  plan: ReplicationPlan;
+}
+
+export interface PlanStepReport {
+  index: number;
+  step: PlanStep;
+  status: "succeeded" | "failed" | "skipped";
+  error?: string | null;
+  elapsed_ms: number;
+}
+
+export interface PlanRun {
+  backend_id: string;
+  steps: PlanStepReport[];
+  total_elapsed_ms: number;
+  ok: boolean;
+}
+
+export interface ExecutePlanResponse {
+  run: PlanRun;
+}
+
 // ========================================
 // Backup Types
 // ========================================

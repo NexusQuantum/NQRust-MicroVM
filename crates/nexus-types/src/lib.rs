@@ -93,6 +93,10 @@ pub struct CreateVmReq {
     /// registry's default backend is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_id: Option<uuid::Uuid>,
+    /// Optional target host for VM placement. If omitted, the manager selects
+    /// the first healthy host that supports the requested storage backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -129,6 +133,7 @@ impl TemplateSpec {
             network_id: None,
             port_forwards: vec![],
             backend_id: None,
+            host_id: None,
         }
     }
 }
@@ -1716,6 +1721,10 @@ pub enum BackendKind {
     Iscsi,
     #[serde(rename = "truenas_iscsi")]
     TrueNasIscsi,
+    #[serde(rename = "spdk_lvol")]
+    SpdkLvol,
+    #[serde(rename = "raft_spdk")]
+    RaftSpdk,
 }
 
 #[derive(

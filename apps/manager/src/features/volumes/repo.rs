@@ -24,13 +24,45 @@ impl VolumeRepository {
         host_id: Option<Uuid>,
         backend_id: Uuid,
     ) -> sqlx::Result<VolumeRow> {
+        self.create_with_id(
+            None,
+            name,
+            description,
+            path,
+            size_bytes,
+            volume_type,
+            host_id,
+            backend_id,
+        )
+        .await
+    }
+
+    /// Insert a volume row with an explicit `id`. Used when the storage
+    /// backend's `provision()` already minted a `volume_id` (e.g. raft_spdk
+    /// embeds the volume id in its locator and the same id is used as the
+    /// raft group identifier — the DB row and the backend resource must
+    /// agree on which uuid is "the volume").
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_with_id(
+        &self,
+        id: Option<Uuid>,
+        name: &str,
+        description: Option<&str>,
+        path: &str,
+        size_bytes: i64,
+        volume_type: &str,
+        host_id: Option<Uuid>,
+        backend_id: Uuid,
+    ) -> sqlx::Result<VolumeRow> {
+        let id = id.unwrap_or_else(Uuid::new_v4);
         sqlx::query_as::<_, VolumeRow>(
             r#"
-            INSERT INTO volume (name, description, path, size_bytes, type, status, host_id, backend_id, created_by_user_id)
-            VALUES ($1, $2, $3, $4, $5, 'available', $6, $7, $8)
+            INSERT INTO volume (id, name, description, path, size_bytes, type, status, host_id, backend_id, created_by_user_id)
+            VALUES ($1, $2, $3, $4, $5, $6, 'available', $7, $8, $9)
             RETURNING *
             "#,
         )
+        .bind(id)
         .bind(name)
         .bind(description)
         .bind(path)

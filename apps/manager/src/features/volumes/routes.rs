@@ -188,8 +188,8 @@ pub async fn create(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Get host to verify it exists
-    let host = st.hosts.get(req.host_id).await.map_err(|err| match err {
+    // Verify host exists.
+    let _host = st.hosts.get(req.host_id).await.map_err(|err| match err {
         sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
         other => {
             error!(error = ?other, "failed to get host");
@@ -197,17 +197,6 @@ pub async fn create(
         }
     })?;
 
-    // Create volume file path
-    let volume_id = Uuid::new_v4();
-    let run_dir = host
-        .capabilities_json
-        .get("run_dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("/srv/fc");
-    let path = format!("{}/volumes/vol-{}.{}", run_dir, volume_id, req.volume_type);
-
-    // Note: Volume file will be created on the agent host when first attached to a VM
-    // This allows for lazy allocation and avoids pre-allocating large files
     let size_bytes = req.size_gb * 1024 * 1024 * 1024;
 
     let backend_id = req
@@ -215,23 +204,65 @@ pub async fn create(
         .or_else(|| st.registry.default_id())
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Create database record
+    // Drive the backend's `provision()` so the underlying resource (raft
+    // block group, lvol, iSCSI LUN, local file) is actually allocated and
+    // the row's `path` is the real backend locator. Without this, the
+    // standalone volumes API previously stored a synthetic path string
+    // and never asked the backend for storage at all — which left
+    // raft_spdk / spdk_lvol / iSCSI volumes as DB-only ghosts.
+    let alloc = crate::features::storage::rootfs_allocator::allocate_data_disk(
+        &st.registry,
+        backend_id,
+        size_bytes as u64,
+        &req.name,
+    )
+    .await
+    .map_err(|err| {
+        error!(?err, "backend.provision failed for standalone volume");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Persist the row with the backend-minted volume_id and locator so a
+    // later attach/destroy can reconstruct the same VolumeHandle.
     let volume_repo = VolumeRepository::new(st.db.clone());
     let volume = volume_repo
-        .create(
+        .create_with_id(
+            Some(alloc.volume_id),
             &req.name,
             req.description.as_deref(),
-            &path,
-            size_bytes,
+            &alloc.locator,
+            alloc.size_bytes as i64,
             &req.volume_type,
             Some(req.host_id),
             backend_id,
         )
         .await
         .map_err(|err| {
-            error!(?err, "failed to create volume");
+            error!(?err, "failed to create volume row after provision");
+            // Best-effort backend rollback — if we can't record the row,
+            // the backend resource we just created is orphaned.
+            let registry = st.registry.clone();
+            let handle = alloc.clone();
+            tokio::spawn(async move {
+                if let Some(backend) = registry.get(handle.backend_id.0).cloned() {
+                    if let Err(e) = backend.destroy(handle).await {
+                        tracing::warn!(error = ?e, "failed to roll back backend volume after DB insert error");
+                    }
+                }
+            });
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+
+    if let Err(err) =
+        crate::features::storage_backends::routes::persist_initial_raft_spdk_replicas(
+            &st.db,
+            backend_id,
+            &alloc.locator,
+        )
+        .await
+    {
+        tracing::warn!(?err, "failed to persist raft_spdk_replica rows for new standalone volume");
+    }
 
     Ok(Json(CreateVolumeResponse { id: volume.id }))
 }
@@ -417,18 +448,56 @@ pub async fn delete(
         }
     })?;
 
-    // Don't allow deletion if volume is attached
+    // Don't allow deletion if volume is attached.
     if volume.status == "attached" {
         return Err(StatusCode::CONFLICT);
     }
 
-    // Delete file if it exists
-    if let Err(err) = tokio::fs::remove_file(&volume.path).await {
-        error!(?err, path = %volume.path, "failed to delete volume file");
-        // Continue anyway - database cleanup is more important
+    // Drive the backend's destroy() so backend resources (raft block group,
+    // SPDK manifest + stub, lvol, iSCSI LUN) are released. Without this,
+    // deleting a non-local_file volume row leaks the entire backend
+    // resource and the next agent restart reloads an orphan group.
+    //
+    // We refuse to drop the DB row when destroy fails, mirroring the
+    // VM-delete flow's "no silent backend/DB drift" contract: an operator
+    // sees the volume row is still present and can fix the backend or
+    // retry. local_file's destroy is idempotent (NotFound is treated as
+    // success) so a stale row whose disk file is already gone still
+    // deletes cleanly.
+    if let Some(backend) = st.registry.get(volume.backend_id).cloned() {
+        let handle = nexus_storage::VolumeHandle {
+            volume_id: volume.id,
+            backend_id: nexus_storage::BackendInstanceId(volume.backend_id),
+            backend_kind: backend.kind(),
+            locator: volume.path.clone(),
+            size_bytes: volume.size_bytes.try_into().unwrap_or(0),
+        };
+        if let Err(err) = backend.destroy(handle).await {
+            error!(
+                volume_id = %id,
+                backend_id = %volume.backend_id,
+                error = ?err,
+                "backend.destroy failed; volume row preserved so the backend resource stays visible to operators"
+            );
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    } else {
+        // The volume row references a backend that's no longer in the
+        // registry (config rolled back, soft-deleted, etc.). We can't
+        // call destroy, but we also can't leave the row dangling — log
+        // and proceed with DB cleanup. The on-disk locator is best-effort
+        // unlinked below.
+        error!(
+            volume_id = %id,
+            backend_id = %volume.backend_id,
+            "backend missing from registry; skipping backend.destroy and unlinking locator best-effort"
+        );
+        if let Err(err) = tokio::fs::remove_file(&volume.path).await {
+            error!(?err, path = %volume.path, "failed to delete volume file");
+        }
     }
 
-    // Delete database record
+    // Delete database record.
     volume_repo.delete(id).await.map_err(|err| {
         error!(?err, "failed to delete volume from database");
         StatusCode::INTERNAL_SERVER_ERROR

@@ -741,6 +741,116 @@ export class FacadeApi {
     return apiClient.get<StorageBackendListResponse>("/storage_backends");
   }
 
+  // B-III replication surface --------------------------------------------
+
+  async listRaftSpdkGroups(
+    backendId: string
+  ): Promise<import("@/lib/types").RaftSpdkGroupListResponse> {
+    return apiClient.get(`/storage_backends/${backendId}/groups`);
+  }
+
+  async getRaftSpdkGroupStatus(
+    backendId: string,
+    groupId: string
+  ): Promise<import("@/lib/types").RaftSpdkGroupStatus> {
+    return apiClient.get(`/storage_backends/${backendId}/groups/${groupId}`);
+  }
+
+  async listRepairQueue(
+    backendId: string
+  ): Promise<import("@/lib/types").RaftRepairQueueResponse> {
+    return apiClient.get(`/storage_backends/${backendId}/repair_queue`);
+  }
+
+  async getDecommissionPlan(
+    backendId: string,
+    hostId: string
+  ): Promise<import("@/lib/types").PlanResponse> {
+    return apiClient.get(
+      `/storage_backends/${backendId}/decommission_plan?host_id=${hostId}`
+    );
+  }
+
+  async getPromotionPlan(
+    backendId: string,
+    hostId: string
+  ): Promise<import("@/lib/types").PlanResponse> {
+    return apiClient.get(
+      `/storage_backends/${backendId}/promotion_plan?host_id=${hostId}`
+    );
+  }
+
+  async getRebalancePlan(
+    backendId: string
+  ): Promise<import("@/lib/types").PlanResponse> {
+    return apiClient.get(`/storage_backends/${backendId}/rebalance_plan`);
+  }
+
+  async executePlan(
+    backendId: string,
+    plan: import("@/lib/types").ReplicationPlan
+  ): Promise<import("@/lib/types").ExecutePlanResponse> {
+    return apiClient.post(
+      `/storage_backends/${backendId}/execute_plan`,
+      { plan }
+    );
+  }
+
+  async repairReplica(
+    backendId: string,
+    groupId: string,
+    nodeId: number
+  ): Promise<unknown> {
+    return apiClient.post(
+      `/storage_backends/${backendId}/groups/${groupId}/replicas/${nodeId}/repair`,
+      {}
+    );
+  }
+
+  async addReplica(
+    backendId: string,
+    groupId: string,
+    body: {
+      node_id: number;
+      agent_base_url: string;
+      spdk_backend_id: string;
+    }
+  ): Promise<unknown> {
+    return apiClient.post(
+      `/storage_backends/${backendId}/groups/${groupId}/replicas`,
+      body
+    );
+  }
+
+  async removeReplica(
+    backendId: string,
+    groupId: string,
+    nodeId: number
+  ): Promise<unknown> {
+    return apiClient.delete(
+      `/storage_backends/${backendId}/groups/${groupId}/replicas/${nodeId}`
+    );
+  }
+
+  async setHostHotSpare(hostId: string, isHotSpare: boolean): Promise<unknown> {
+    return apiClient.post(`/hosts/${hostId}/hot_spare`, {
+      is_hot_spare: isHotSpare,
+    });
+  }
+
+  async setHostSpdkBackendId(
+    hostId: string,
+    spdkBackendId: string | null
+  ): Promise<unknown> {
+    return apiClient.post(`/hosts/${hostId}/spdk_backend_id`, {
+      spdk_backend_id: spdkBackendId,
+    });
+  }
+
+  async decommissionHost(hostId: string): Promise<unknown> {
+    return apiClient.post(`/hosts/${hostId}/decommission`, {});
+  }
+
   // ==============
   // User Management
   // ==============

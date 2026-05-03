@@ -89,6 +89,52 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 supports_clone_from_image: false,
             }
         }
+        BackendKind::RaftSpdk => {
+            let replicas = raw
+                .config
+                .get("replicas")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| anyhow!("config.replicas is required"))?;
+            // Single-replica is permitted (degenerate Raft group, no
+            // replication — useful for local smokes and development).
+            // Two replicas are rejected because they cannot make progress
+            // under a single-node failure (no majority). Three is the
+            // production target for fault tolerance.
+            let n = replicas.len();
+            if n != 1 && n != nexus_storage::RAFT_SPDK_STATIC_REPLICA_COUNT {
+                return Err(anyhow!(
+                    "backend '{}' (kind=raft_spdk): config.replicas must contain 1 or {} entries (got {})",
+                    raw.name,
+                    nexus_storage::RAFT_SPDK_STATIC_REPLICA_COUNT,
+                    n,
+                ));
+            }
+            let mut node_ids = std::collections::BTreeSet::new();
+            for replica in replicas {
+                let node_id = replica
+                    .get("node_id")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| anyhow!("config.replicas[].node_id is required"))?;
+                if node_id == 0 || !node_ids.insert(node_id) {
+                    return Err(anyhow!(
+                        "backend '{}' (kind=raft_spdk): config.replicas[].node_id must be nonzero and unique",
+                        raw.name
+                    ));
+                }
+                require_str(replica, "agent_base_url").map_err(|e| {
+                    anyhow!("backend '{}' (kind=raft_spdk): replicas[] {e}", raw.name)
+                })?;
+                require_str(replica, "spdk_backend_id").map_err(|e| {
+                    anyhow!("backend '{}' (kind=raft_spdk): replicas[] {e}", raw.name)
+                })?;
+            }
+            Capabilities {
+                supports_native_snapshots: true,
+                supports_concurrent_attach: false,
+                supports_live_migration: false,
+                supports_clone_from_image: false,
+            }
+        }
     };
 
     Ok(ValidatedBackend {
@@ -164,6 +210,35 @@ mod tests {
         };
         let err = validate(raw).unwrap_err();
         assert!(err.to_string().contains("lvs_name"), "got: {err}");
+    }
+
+    #[test]
+    fn raft_spdk_allows_one_or_three_static_replicas_and_rejects_two() {
+        validate(RawBackendEntry {
+            name: "raft".into(),
+            kind: BackendKind::RaftSpdk,
+            is_default: false,
+            config: serde_json::json!({
+                "replicas": [
+                    {"node_id": 1, "agent_base_url": "http://a1", "spdk_backend_id": uuid::Uuid::new_v4()}
+                ]
+            }),
+        })
+        .unwrap();
+
+        let raw = RawBackendEntry {
+            name: "raft".into(),
+            kind: BackendKind::RaftSpdk,
+            is_default: false,
+            config: serde_json::json!({
+                "replicas": [
+                    {"node_id": 1, "agent_base_url": "http://a1", "spdk_backend_id": uuid::Uuid::new_v4()},
+                    {"node_id": 2, "agent_base_url": "http://a2", "spdk_backend_id": uuid::Uuid::new_v4()}
+                ]
+            }),
+        };
+        let err = validate(raw).unwrap_err();
+        assert!(err.to_string().contains("1 or 3"), "got: {err}");
     }
 
     /// T27: Malformed TrueNAS iSCSI entry parsed from TOML must fail validation

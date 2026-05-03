@@ -31,6 +31,8 @@ pub enum BackendKind {
     TrueNasIscsi,
     #[serde(rename = "spdk_lvol")]
     SpdkLvol,
+    #[serde(rename = "raft_spdk")]
+    RaftSpdk,
 }
 
 impl BackendKind {
@@ -40,6 +42,7 @@ impl BackendKind {
             BackendKind::Iscsi => "iscsi",
             BackendKind::TrueNasIscsi => "truenas_iscsi",
             BackendKind::SpdkLvol => "spdk_lvol",
+            BackendKind::RaftSpdk => "raft_spdk",
         }
     }
 }

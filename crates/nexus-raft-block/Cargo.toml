@@ -1,0 +1,16 @@
+[package]
+name = "nexus-raft-block"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+openraft = { version = "=0.9.24", features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+tokio = { workspace = true }

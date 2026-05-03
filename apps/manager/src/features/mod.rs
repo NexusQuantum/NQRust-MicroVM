@@ -88,7 +88,15 @@ pub fn router(state: AppState) -> Router {
         .nest("/v1/logs", logs::router())
         .nest("/v1/metrics", metrics::router())
         .nest("/v1/volumes", volumes::router())
-        .nest("/v1/storage_backends", storage_backends::router())
+        .nest(
+            "/v1/storage_backends",
+            storage_backends::router()
+                .layer(axum::middleware::from_fn(users::middleware::require_admin))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    users::middleware::auth_middleware,
+                )),
+        )
         .nest("/v1/backup_targets", backup_targets::router())
         .nest("/v1/backups", backups::router())
         .nest("/v1/volumes/:id/backup", backups::volume_backup_router())

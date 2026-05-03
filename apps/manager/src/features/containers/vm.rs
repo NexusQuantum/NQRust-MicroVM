@@ -91,6 +91,7 @@ pub async fn create_container_vm(
         network_id: None,
         port_forwards: vec![],
         backend_id: None,
+        host_id: None,
     };
 
     // Create and start VM
