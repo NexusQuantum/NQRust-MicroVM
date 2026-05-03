@@ -103,13 +103,31 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
 
     async fn clone_from_image(
         &self,
-        _src: &std::path::Path,
-        _opts: CreateOpts,
+        src: &std::path::Path,
+        opts: CreateOpts,
     ) -> Result<VolumeHandle, nexus_storage::StorageError> {
-        // Implemented in Task 5.
-        Err(nexus_storage::StorageError::NotSupported(
-            "clone_from_image not yet implemented".into(),
-        ))
+        let vol_id = Uuid::new_v4();
+        let file = format!("nfs-{vol_id}.raw");
+        let dst = self.config.manager_mount_path.join(&file);
+        tokio::fs::create_dir_all(&self.config.manager_mount_path).await?;
+        tokio::fs::copy(src, &dst).await?;
+        let cur = tokio::fs::metadata(&dst).await?.len();
+        if opts.size_bytes > cur {
+            let f = tokio::fs::OpenOptions::new().write(true).open(&dst).await?;
+            f.set_len(opts.size_bytes).await?;
+        }
+        let locator = NfsLocator {
+            server: self.config.server.clone(),
+            export: self.config.export.clone(),
+            file,
+        };
+        Ok(VolumeHandle {
+            volume_id: vol_id,
+            backend_id: self.id,
+            backend_kind: BackendKind::Nfs,
+            locator: locator.to_locator_string()?,
+            size_bytes: opts.size_bytes,
+        })
     }
 
     async fn snapshot(
@@ -244,5 +262,25 @@ mod tests {
         assert_eq!(loc.export, "/mnt/tank/vms");
         assert!(loc.file.starts_with("nfs-"));
         assert!(loc.file.ends_with(".raw"));
+    }
+
+    #[tokio::test]
+    async fn clone_from_image_copies_and_resizes() {
+        let (backend, _guard) = temp_backend();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("base.raw");
+        tokio::fs::write(&src, b"hello world").await.unwrap();
+        let opts = CreateOpts {
+            name: "v".into(),
+            size_bytes: 4096,
+            description: None,
+        };
+        let h = backend.clone_from_image(&src, opts).await.unwrap();
+        let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
+        let path = backend.config.manager_mount_path.join(&loc.file);
+        let meta = tokio::fs::metadata(&path).await.unwrap();
+        assert_eq!(meta.len(), 4096);
+        let buf = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(&buf[..11], b"hello world");
     }
 }
