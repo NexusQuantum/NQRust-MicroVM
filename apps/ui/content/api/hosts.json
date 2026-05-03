@@ -42,6 +42,13 @@
           "capabilities": {},
           "name": {
             "type": "string"
+          },
+          "supported_backend_kinds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -181,6 +188,13 @@
         "properties": {
           "capabilities": {
             "nullable": true
+          },
+          "supported_backend_kinds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

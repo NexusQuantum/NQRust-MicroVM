@@ -490,6 +490,29 @@ pub async fn check_license(
     repo: &LicensingRepository,
     shared_state: &SharedLicenseState,
 ) -> LicenseState {
+    // Dev/demo escape hatch. When `LICENSE_DEV_MODE=1` is set, report
+    // a permanently-licensed state without contacting the billing
+    // server or touching the offline .lic file. Useful for local demos
+    // and CI runs where the real billing server isn't reachable.
+    if std::env::var("LICENSE_DEV_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        let state = LicenseState {
+            is_licensed: true,
+            status: "active".to_string(),
+            is_grace_period: false,
+            features: vec!["dev_mode".to_string()],
+            license_key: Some("DEV-MODE-NO-LICENSE-REQUIRED".to_string()),
+            customer_name: Some("dev".to_string()),
+            product: Some("nqrust-microvm".to_string()),
+            ..LicenseState::default()
+        };
+        let mut guard = shared_state.write().await;
+        *guard = state.clone();
+        return state;
+    }
+
     // Load persisted key from env or disk
     let license_key = config.license_key.clone().or_else(|| {
         let key_file = std::path::Path::new(&config.persist_dir).join(".license-key");

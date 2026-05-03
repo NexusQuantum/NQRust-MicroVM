@@ -2227,6 +2227,13 @@ components:
       - vcpu
       - mem_mib
       properties:
+        backend_id:
+          type: string
+          format: uuid
+          description: |-
+            Storage backend to use for rootfs/data-disk allocation. If None, the
+            registry's default backend is used.
+          nullable: true
         kernel_image_id:
           type: string
           format: uuid
@@ -2475,6 +2482,11 @@ components:
       type: object
       properties:
         capabilities:
+          nullable: true
+        supported_backend_kinds:
+          type: array
+          items:
+            type: string
           nullable: true
     Image:
       type: object
@@ -2733,6 +2745,11 @@ components:
         capabilities: {}
         name:
           type: string
+        supported_backend_kinds:
+          type: array
+          items:
+            type: string
+          nullable: true
     RegisterHostResponse:
       type: object
       required:

@@ -146,6 +146,12 @@
       "requestBody": {
         "type": "object",
         "properties": {
+          "backend_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Storage backend to use for rootfs/data-disk allocation. If None, the\nregistry's default backend is used."
+          },
           "kernel_image_id": {
             "type": "string",
             "format": "uuid",
