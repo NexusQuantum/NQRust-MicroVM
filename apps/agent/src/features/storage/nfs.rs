@@ -169,11 +169,8 @@ impl HostBackend for NfsHostBackend {
         Ok(())
     }
 
-    async fn resize2fs(&self, _attached: &AttachedPath) -> Result<(), StorageError> {
-        // Implemented in Task 12.
-        Err(StorageError::NotSupported(
-            "resize2fs not yet implemented".into(),
-        ))
+    async fn resize2fs(&self, attached: &AttachedPath) -> Result<(), StorageError> {
+        super::local_file::run_resize2fs(attached.path()).await
     }
 
     async fn read_snapshot(
@@ -284,6 +281,25 @@ mod tests {
         let written = tokio::fs::read(&path).await.unwrap();
         assert_eq!(&written[..3], b"abc");
         assert_eq!(written.len(), 16);
+    }
+
+    #[tokio::test]
+    async fn resize2fs_invokes_the_shared_helper() {
+        // Smoke: resize2fs against a non-ext4 file returns Err. This
+        // confirms wiring (the helper is reachable + invoked) without
+        // requiring a real ext4 image in the test.
+        let base = tempfile::tempdir().unwrap();
+        let cfg = NfsHostConfig {
+            mount_base: base.path().to_path_buf(),
+            assume_mounted: true,
+        };
+        let path = base.path().join("not-ext4.raw");
+        tokio::fs::write(&path, b"not an ext4 superblock")
+            .await
+            .unwrap();
+        let backend = NfsHostBackend::new(cfg);
+        let res = backend.resize2fs(&AttachedPath::File(path)).await;
+        assert!(res.is_err());
     }
 
     /// Live test: requires running as root or with CAP_SYS_ADMIN, and

@@ -62,7 +62,7 @@ impl HostBackend for LocalFileHostBackend {
     }
 }
 
-async fn run_resize2fs(path: &Path) -> Result<(), StorageError> {
+pub(super) async fn run_resize2fs(path: &Path) -> Result<(), StorageError> {
     let _ = tokio::process::Command::new("e2fsck")
         .args(["-f", "-y"])
         .arg(path)
