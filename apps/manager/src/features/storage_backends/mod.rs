@@ -1,3 +1,4 @@
+pub mod discovery;
 pub mod repo;
 pub mod routes;
 
