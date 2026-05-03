@@ -84,6 +84,38 @@ impl StorageBackendRepository {
         .await
     }
 
+    /// Update an existing backend by ID. The `name` column is intentionally
+    /// NOT updated here — names are treated as immutable identifiers. To
+    /// rename a backend, operators must delete it and re-add it with the new
+    /// name via POST.
+    pub async fn update(
+        &self,
+        id: uuid::Uuid,
+        kind: &str,
+        config_json: &JsonValue,
+        capabilities_json: &JsonValue,
+        is_default: bool,
+    ) -> sqlx::Result<Option<StorageBackendRow>> {
+        sqlx::query_as::<_, StorageBackendRow>(
+            r#"
+            UPDATE storage_backend
+               SET kind = $2,
+                   config_json = $3,
+                   capabilities_json = $4,
+                   is_default = $5
+             WHERE id = $1 AND deleted_at IS NULL
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(config_json)
+        .bind(capabilities_json)
+        .bind(is_default)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     pub async fn soft_delete_by_name(&self, name: &str) -> sqlx::Result<()> {
         sqlx::query(
             r#"UPDATE storage_backend SET deleted_at = now() WHERE name = $1 AND deleted_at IS NULL"#,

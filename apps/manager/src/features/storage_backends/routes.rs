@@ -414,3 +414,83 @@ pub async fn health(Extension(st): Extension<AppState>, Path(id): Path<Uuid>) ->
         }
     }
 }
+
+#[utoipa::path(
+    put,
+    path = "/v1/storage_backends/{id}",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    request_body = CreateStorageBackendReq,
+    responses(
+        (status = 200, body = StorageBackend),
+        (status = 400),
+        (status = 404),
+    ),
+    tag = "StorageBackends",
+)]
+/// Update a storage backend's kind/config/capabilities/is_default.
+/// Note: `name` is NOT modifiable through this endpoint — to rename
+/// a backend, delete and re-add it. The PUT body uses the same shape
+/// as POST `/v1/storage_backends` for consistency, but the `name`
+/// field is ignored.
+pub async fn update(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CreateStorageBackendReq>,
+) -> impl IntoResponse {
+    let validated = match validate(RawBackendEntry {
+        name: req.name.clone(),
+        kind: req.kind,
+        is_default: req.is_default,
+        config: req.config,
+    }) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let capabilities_json = match serde_json::to_value(validated.capabilities) {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "encode capabilities"})),
+            )
+                .into_response();
+        }
+    };
+    let repo = StorageBackendRepository::new(st.db.clone());
+    match repo
+        .update(
+            id,
+            validated.kind.as_db_str(),
+            &validated.config,
+            &capabilities_json,
+            validated.is_default,
+        )
+        .await
+    {
+        Ok(Some(row)) => match row_to_wire(row) {
+            Ok(w) => (StatusCode::OK, Json(w)).into_response(),
+            Err(s) => {
+                (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response()
+            }
+        },
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not found"})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("storage_backends update failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
+    }
+}

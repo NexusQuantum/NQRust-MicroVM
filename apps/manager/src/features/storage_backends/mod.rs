@@ -10,6 +10,11 @@ pub fn router() -> Router {
         .route("/", get(routes::list).post(routes::create))
         .route("/scan/nfs", get(routes::scan_nfs))
         .route("/scan/iscsi", get(routes::scan_iscsi))
-        .route("/:id", get(routes::get_one).delete(routes::delete))
+        .route(
+            "/:id",
+            get(routes::get_one)
+                .put(routes::update)
+                .delete(routes::delete),
+        )
         .route("/:id/health", get(routes::health))
 }
