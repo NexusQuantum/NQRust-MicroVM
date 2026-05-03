@@ -253,6 +253,17 @@ pub async fn create(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
+    if let Err(err) =
+        crate::features::storage_backends::routes::persist_initial_raft_spdk_replicas(
+            &st.db,
+            backend_id,
+            &alloc.locator,
+        )
+        .await
+    {
+        tracing::warn!(?err, "failed to persist raft_spdk_replica rows for new standalone volume");
+    }
+
     Ok(Json(CreateVolumeResponse { id: volume.id }))
 }
 

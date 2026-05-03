@@ -39,46 +39,91 @@ use crate::features::storage_backends::planner::{
     plan_decommission, plan_hot_spare_promotion, HostView, ReplicaView,
 };
 
-/// How often the auto-reconciler scans the cluster.
-const SCAN_INTERVAL: Duration = Duration::from_secs(60);
+/// How often the auto-reconciler scans the cluster. Overridable via
+/// `MANAGER_AUTO_RECONCILER_SCAN_SECS` for smoke/integration tests.
+fn scan_interval() -> Duration {
+    Duration::from_secs(
+        std::env::var("MANAGER_AUTO_RECONCILER_SCAN_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(60),
+    )
+}
 
 /// A host that has missed heartbeats for this long is treated as failed
-/// for hot-spare promotion. Conservative default: false-positive
-/// promotion is expensive (full replica re-sync), so we wait long
-/// enough that brief network blips don't trigger it.
-const PROMOTION_THRESHOLD: Duration = Duration::from_secs(600);
+/// for hot-spare promotion. Overridable via
+/// `MANAGER_PROMOTION_THRESHOLD_SECS` for smoke/integration tests.
+fn promotion_threshold() -> Duration {
+    Duration::from_secs(
+        std::env::var("MANAGER_PROMOTION_THRESHOLD_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(600),
+    )
+}
 
 /// Don't re-attempt promotion against the same failed host within this
-/// window. Avoids thrashing if the plan keeps failing for the same
-/// underlying reason (no more spares, agent unreachable, etc.).
-const PROMOTION_BACKOFF: Duration = Duration::from_secs(900);
+/// window. Overridable via `MANAGER_PROMOTION_BACKOFF_SECS`.
+fn promotion_backoff() -> Duration {
+    Duration::from_secs(
+        std::env::var("MANAGER_PROMOTION_BACKOFF_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(900),
+    )
+}
 
 #[derive(Clone)]
 struct AutoReconcilerCtx {
     pool: PgPool,
     manager_base: String,
+    /// `Bearer <token>` value the executor passes when calling back into
+    /// the manager's own HTTP API. Minted once at spawn time against the
+    /// `root` admin user so the executor isn't rejected by the auth
+    /// layer guarding `/v1/storage_backends/*`.
+    auth_header: Option<String>,
     /// In-memory record of "we tried to promote spare for this host at
-    /// time T" so we can apply [`PROMOTION_BACKOFF`] without an extra
+    /// time T" so we can apply [`promotion_backoff`] without an extra
     /// DB column. Lost on manager restart, which is fine — the
     /// startup race resolves naturally as the loop runs again.
     last_promotion_attempt: Arc<std::sync::Mutex<HashMap<Uuid, std::time::Instant>>>,
 }
 
 pub fn spawn(pool: PgPool, manager_base: String) {
-    let ctx = AutoReconcilerCtx {
-        pool,
-        manager_base,
-        last_promotion_attempt: Arc::new(std::sync::Mutex::new(HashMap::new())),
-    };
+    let ctx_pool = pool.clone();
     tokio::spawn(async move {
-        info!("storage auto-reconciler started");
-        loop {
-            if let Err(err) = scan_once(&ctx).await {
-                warn!(error = ?err, "storage auto-reconciler scan failed");
+        let auth_header = match mint_service_token(&ctx_pool).await {
+            Ok(t) => Some(format!("Bearer {t}")),
+            Err(err) => {
+                warn!(?err, "auto-reconciler: failed to mint service token; executor calls will fail with 401");
+                None
             }
-            tokio::time::sleep(SCAN_INTERVAL).await;
-        }
+        };
+        let ctx = AutoReconcilerCtx {
+            pool: ctx_pool,
+            manager_base,
+            auth_header,
+            last_promotion_attempt: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        };
+        run_loop(ctx).await;
     });
+}
+
+async fn mint_service_token(pool: &PgPool) -> anyhow::Result<String> {
+    let users = crate::features::users::repo::UserRepository::new(pool.clone());
+    let user = users.get_by_username("root").await?;
+    let token = users.create_token(user.id, None).await?;
+    Ok(token)
+}
+
+async fn run_loop(ctx: AutoReconcilerCtx) {
+    info!("storage auto-reconciler started");
+    loop {
+        if let Err(err) = scan_once(&ctx).await {
+            warn!(error = ?err, "storage auto-reconciler scan failed");
+        }
+        tokio::time::sleep(scan_interval()).await;
+    }
 }
 
 async fn scan_once(ctx: &AutoReconcilerCtx) -> sqlx::Result<()> {
@@ -242,7 +287,7 @@ async fn drain_draining_hosts(
             steps = plan.steps.len(),
             "executing drain plan"
         );
-        let run = execute(&ctx.manager_base, backend_id, plan, None).await;
+        let run = execute(&ctx.manager_base, backend_id, plan, ctx.auth_header.as_deref()).await;
         log_run(host.id, &run);
         if run.ok {
             mark_decommissioned(&ctx.pool, host.id).await?;
@@ -289,7 +334,7 @@ async fn promote_failed_hosts(
             continue;
         };
         let unhealthy_for = now.signed_duration_since(*last_ts);
-        if unhealthy_for.num_seconds() < PROMOTION_THRESHOLD.as_secs() as i64 {
+        if unhealthy_for.num_seconds() < promotion_threshold().as_secs() as i64 {
             continue;
         }
         // Backoff check (tight scope so the std::sync::Mutex guard
@@ -301,7 +346,7 @@ async fn promote_failed_hosts(
                 .lock()
                 .expect("auto-reconciler mutex poisoned");
             if let Some(prev_attempt) = last_attempt.get(&host.id) {
-                if prev_attempt.elapsed() < PROMOTION_BACKOFF {
+                if prev_attempt.elapsed() < promotion_backoff() {
                     debug!(host_id = %host.id, "skip promotion: still in backoff window");
                     continue;
                 }
@@ -339,7 +384,7 @@ async fn promote_failed_hosts(
             .expect("auto-reconciler mutex poisoned")
             .insert(host.id, std::time::Instant::now());
 
-        let run = execute(&ctx.manager_base, backend_id, plan, None).await;
+        let run = execute(&ctx.manager_base, backend_id, plan, ctx.auth_header.as_deref()).await;
         log_run(host.id, &run);
     }
     Ok(())

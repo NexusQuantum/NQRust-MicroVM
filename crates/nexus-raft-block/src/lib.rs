@@ -51,6 +51,12 @@ pub fn default_openraft_config() -> Result<std::sync::Arc<openraft::Config>, Raf
         heartbeat_interval: 500,
         election_timeout_min: 2500,
         election_timeout_max: 5000,
+        // Bound per-AppendEntries payload size so a learner catching up
+        // through HTTP/JSON doesn't get a single batch that exceeds the
+        // openraft AppendEntries timeout (loopback round-trip for a
+        // multi-MB JSON payload can blow past 500ms). Smaller batches
+        // also smooth memory spikes on the receiver during catchup.
+        max_payload_entries: 4,
         ..Default::default()
     };
     config

@@ -265,7 +265,7 @@ fn normalize_base_url(mut base_url: String) -> String {
 #[derive(Debug, Clone)]
 pub struct RaftBlockNetworkFactory {
     group_id: Uuid,
-    peers: Arc<HashMap<u64, String>>,
+    peers: Arc<std::sync::RwLock<HashMap<u64, String>>>,
     client: reqwest::Client,
 }
 
@@ -278,12 +278,12 @@ impl RaftBlockNetworkFactory {
     pub fn new(group_id: Uuid, peers: HashMap<u64, String>) -> Self {
         Self {
             group_id,
-            peers: Arc::new(
+            peers: Arc::new(std::sync::RwLock::new(
                 peers
                     .into_iter()
                     .map(|(node_id, url)| (node_id, normalize_base_url(url)))
                     .collect(),
-            ),
+            )),
             client: reqwest::Client::new(),
         }
     }
@@ -297,18 +297,36 @@ impl RaftBlockNetworkFactory {
     ) -> Self {
         Self {
             group_id,
-            peers: Arc::new(
+            peers: Arc::new(std::sync::RwLock::new(
                 peers
                     .into_iter()
                     .map(|(node_id, url)| (node_id, normalize_base_url(url)))
                     .collect(),
-            ),
+            )),
             client,
         }
     }
 
-    fn lookup(&self, target: u64) -> Option<&str> {
-        self.peers.get(&target).map(String::as_str)
+    fn lookup(&self, target: u64) -> Option<String> {
+        self.peers
+            .read()
+            .expect("RaftBlockNetworkFactory peers RwLock poisoned")
+            .get(&target)
+            .cloned()
+    }
+
+    /// Replace the peer map. Used by `update_peers` so add_replica can
+    /// teach the existing leader/followers the URL of a newly-added
+    /// learner before openraft tries to send append_entries to it.
+    pub fn update_peers(&self, peers: HashMap<u64, String>) {
+        let mut guard = self
+            .peers
+            .write()
+            .expect("RaftBlockNetworkFactory peers RwLock poisoned");
+        *guard = peers
+            .into_iter()
+            .map(|(node_id, url)| (node_id, normalize_base_url(url)))
+            .collect();
     }
 }
 
@@ -319,7 +337,7 @@ impl openraft::network::RaftNetworkFactory<BlockRaftTypeConfig> for RaftBlockNet
         // If the peer is unknown the connection still constructs successfully;
         // every RPC then returns Unreachable, matching Openraft's contract that
         // a missing-peer error must not panic the network factory.
-        let base_url = self.lookup(target).map(str::to_owned).unwrap_or_default();
+        let base_url = self.lookup(target).unwrap_or_default();
         RaftBlockNetworkConnection {
             target,
             group_id: self.group_id,
@@ -473,7 +491,14 @@ pub struct RaftBlockRuntime {
     pub store: InMemoryOpenraftBlockStore,
     /// Peer agent base URLs (NodeId -> base_url). Used to forward
     /// client_write requests to the leader when a follower receives one.
-    pub peers: Arc<HashMap<u64, String>>,
+    /// Wrapped in RwLock so add_replica can teach existing nodes the
+    /// URL of a newly-joining learner without restarting the runtime.
+    pub peers: Arc<std::sync::RwLock<HashMap<u64, String>>>,
+    /// Cloned reference to the network factory's peer map so
+    /// `update_peers` can broadcast the new map to both leader-forward
+    /// (`peers`) and openraft network factory (`network_factory.peers`)
+    /// in a single call site.
+    pub network_factory: RaftBlockNetworkFactory,
     /// Shared HTTP client for leader-forwarding.
     pub http: reqwest::Client,
 }
@@ -511,11 +536,11 @@ impl RaftBlockRuntime {
             capacity_bytes,
             block_size,
         )?;
-        let peers_arc = Arc::new(peers.clone());
+        let peers_arc = Arc::new(std::sync::RwLock::new(peers.clone()));
         let factory = RaftBlockNetworkFactory::new(group_id, peers);
         let config = nexus_raft_block::default_openraft_config()?;
         let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
-        let raft = openraft::Raft::new(node_id, config, factory, log_store, state_machine)
+        let raft = openraft::Raft::new(node_id, config, factory.clone(), log_store, state_machine)
             .await
             .map_err(|e| RaftBlockError::Store(format!("Raft::new: {e}")))?;
         Ok(Self {
@@ -524,6 +549,7 @@ impl RaftBlockRuntime {
             raft,
             store,
             peers: peers_arc,
+            network_factory: factory,
             http: reqwest::Client::new(),
         })
     }
@@ -540,11 +566,11 @@ impl RaftBlockRuntime {
         store: InMemoryOpenraftBlockStore,
         peers: HashMap<u64, String>,
     ) -> Result<Self, RaftBlockError> {
-        let peers_arc = Arc::new(peers.clone());
+        let peers_arc = Arc::new(std::sync::RwLock::new(peers.clone()));
         let factory = RaftBlockNetworkFactory::new(group_id, peers);
         let config = nexus_raft_block::default_openraft_config()?;
         let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
-        let raft = openraft::Raft::new(node_id, config, factory, log_store, state_machine)
+        let raft = openraft::Raft::new(node_id, config, factory.clone(), log_store, state_machine)
             .await
             .map_err(|e| RaftBlockError::Store(format!("Raft::new: {e}")))?;
         Ok(Self {
@@ -553,8 +579,24 @@ impl RaftBlockRuntime {
             raft,
             store,
             peers: peers_arc,
+            network_factory: factory,
             http: reqwest::Client::new(),
         })
+    }
+
+    /// Replace the peer URL map in both the leader-forward path and the
+    /// openraft network factory. Add-replica calls this on every existing
+    /// node before `add_learner` so the leader can immediately route
+    /// append_entries / install_snapshot to the new node.
+    pub fn update_peers(&self, peers: HashMap<u64, String>) {
+        {
+            let mut guard = self
+                .peers
+                .write()
+                .expect("RaftBlockRuntime peers RwLock poisoned");
+            *guard = peers.clone();
+        }
+        self.network_factory.update_peers(peers);
     }
 
     /// Initialize this runtime as the sole member of the cluster (single-node
@@ -599,6 +641,20 @@ impl RaftBlockRuntime {
         Ok(openraft::MessageSummary::summary(&response))
     }
 
+    /// Add a non-voting learner. Must be called before promoting the node
+    /// to voter via `change_membership` — Openraft refuses to promote a
+    /// node that isn't already in the cluster as a learner. The leader
+    /// replicates log entries to learners but they don't count toward
+    /// quorum.
+    pub async fn add_learner(&self, node_id: u64) -> Result<String, RaftBlockError> {
+        let response = self
+            .raft
+            .add_learner(node_id, openraft::BasicNode::default(), true)
+            .await
+            .map_err(|e| RaftBlockError::Store(format!("Raft::add_learner: {e}")))?;
+        Ok(openraft::MessageSummary::summary(&response))
+    }
+
     /// Submit a block command through the Raft pipeline. Returns once the
     /// command is committed and applied. Only the leader accepts writes;
     /// followers return a `ForwardToLeader`-shaped error which is mapped to
@@ -622,11 +678,17 @@ impl RaftBlockRuntime {
                         "ForwardToLeader without a known leader (election in progress)".into(),
                     )
                 })?;
-                let leader_url = self.peers.get(&leader_id).ok_or_else(|| {
-                    RaftBlockError::Store(format!(
-                        "ForwardToLeader: no peer URL for node {leader_id}"
-                    ))
-                })?;
+                let leader_url = self
+                    .peers
+                    .read()
+                    .expect("RaftBlockRuntime peers RwLock poisoned")
+                    .get(&leader_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        RaftBlockError::Store(format!(
+                            "ForwardToLeader: no peer URL for node {leader_id}"
+                        ))
+                    })?;
                 let url = format!("{}/runtime_write", leader_url.trim_end_matches('/'));
                 let body = serde_json::json!({
                     "group_id": self.group_id,
@@ -771,6 +833,31 @@ impl RaftBlockState {
             .await
             .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
         runtime.change_membership(voters, retain).await
+    }
+
+    pub async fn add_learner(
+        &self,
+        group_id: Uuid,
+        node_id: u64,
+    ) -> Result<String, RaftBlockError> {
+        let runtime = self
+            .runtime_for(group_id)
+            .await
+            .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
+        runtime.add_learner(node_id).await
+    }
+
+    pub async fn update_runtime_peers(
+        &self,
+        group_id: Uuid,
+        peers: HashMap<u64, String>,
+    ) -> Result<(), RaftBlockError> {
+        let runtime = self
+            .runtime_for(group_id)
+            .await
+            .ok_or_else(|| RaftBlockError::Store(format!("runtime for {group_id} not started")))?;
+        runtime.update_peers(peers);
+        Ok(())
     }
 
     /// Submit a `BlockCommand` through Raft. Returns once the command is
@@ -1718,10 +1805,13 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
     // Raft block writes carry a JSON-encoded byte vec; populate uses 1 MiB
     // chunks which expand 3-4x in JSON ("0,0,0,..." form). The default 2 MiB
     // body limit rejects them as 413 once the leader-forward path is taken.
-    // Bump to 64 MiB which comfortably covers any realistic chunk plus log
-    // headers, and matches the maximum capacity of a single populated write
-    // path under the current chunk-size policy.
-    const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+    // Add-replica stresses this further: the leader sends a backlog of
+    // AppendEntries to the new learner that can batch many populate
+    // chunks into a single request. 512 MiB is comfortably above what
+    // a 64 MiB rootfs (the smoke-test fixture) can produce at 1 MiB
+    // chunks with the current 3-4x JSON inflation, and well under the
+    // physical RAM available on a typical agent host.
+    const MAX_BODY_BYTES: usize = 512 * 1024 * 1024;
     Router::new()
         .route("/:group_id/status", get(status))
         .route("/:group_id/snapshot", get(snapshot))
@@ -1737,6 +1827,14 @@ pub fn router(state: Arc<RaftBlockState>) -> Router {
         .route(
             "/:group_id/openraft/change_membership",
             post(openraft_change_membership),
+        )
+        .route(
+            "/:group_id/openraft/add_learner",
+            post(openraft_add_learner),
+        )
+        .route(
+            "/:group_id/runtime_update_peers",
+            post(runtime_update_peers),
         )
         .route("/create", post(create))
         .route("/append", post(append))
@@ -1826,6 +1924,38 @@ pub async fn openraft_change_membership(
     let voters = req.voters.into_iter().collect();
     match state.change_membership(group_id, voters, req.retain).await {
         Ok(summary) => (StatusCode::OK, Json(ChangeMembershipResp { summary })).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AddLearnerReq {
+    pub node_id: u64,
+}
+
+pub async fn openraft_add_learner(
+    State(state): State<Arc<RaftBlockState>>,
+    Path(group_id): Path<Uuid>,
+    Json(req): Json<AddLearnerReq>,
+) -> impl IntoResponse {
+    match state.add_learner(group_id, req.node_id).await {
+        Ok(summary) => (StatusCode::OK, Json(serde_json::json!({"summary": summary}))).into_response(),
+        Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct UpdatePeersReq {
+    pub peers: HashMap<u64, String>,
+}
+
+pub async fn runtime_update_peers(
+    State(state): State<Arc<RaftBlockState>>,
+    Path(group_id): Path<Uuid>,
+    Json(req): Json<UpdatePeersReq>,
+) -> impl IntoResponse {
+    match state.update_runtime_peers(group_id, req.peers).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
         Err(err) => error_response(StatusCode::BAD_REQUEST, err),
     }
 }

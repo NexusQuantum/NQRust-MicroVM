@@ -447,6 +447,30 @@ pub async fn add_replica(
         )
             .into_response();
     }
+    // Openraft's protocol requires three steps to add a voter:
+    //   1. add_learner   — leader replicates log to the new node
+    //                      without it counting toward quorum.
+    //   2. wait_for_catchup — new node applies the backlog.
+    //   3. change_membership — promotes the caught-up learner to voter.
+    // Skipping step 1 makes step 3 fail with "Learner X not found"; the
+    // repair flow doesn't hit this because the repaired node is already
+    // a cluster member.
+    if let Err(error) = broadcast_peer_map_update(&expanded_locator).await {
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
+    if let Err(error) = add_learner_on_leader(&expanded_locator, req.node_id).await {
+        let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": error, "operation_id": operation.id })),
+        )
+            .into_response();
+    }
     if let Err(error) = wait_for_replica_catchup(
         &expanded_locator,
         req.node_id,
@@ -761,15 +785,8 @@ pub async fn remove_replica(
     };
     let statuses = fetch_replica_statuses(&locator).await;
     let observed_leader = aggregate_raft_spdk_status(&locator, statuses, 0).observed_leader;
-    if observed_leader == Some(node_id) || locator.leader_hint == Some(node_id) {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "refusing to remove current leader; transfer leadership first"
-            })),
-        )
-            .into_response();
-    }
+    let removing_leader =
+        observed_leader == Some(node_id) || locator.leader_hint == Some(node_id);
 
     let remaining: Vec<RaftSpdkReplicaLocator> = locator
         .replicas
@@ -826,7 +843,80 @@ pub async fn remove_replica(
             }
         };
 
-    if let Err(error) = change_membership_on_leader(&reduced_locator).await {
+    // When removing a non-leader, address the change_membership request
+    // to the current leader as found in `reduced_locator` — that's the
+    // node openraft expects to apply the membership change.
+    //
+    // When removing the leader itself, we instead send the request to
+    // the outgoing leader using the FULL membership: openraft accepts a
+    // change_membership that excludes self, commits it under joint
+    // consensus, and the outgoing leader steps down so the surviving
+    // voters elect a new leader. The reduced locator's voter set is
+    // what we want; the URL we hit must still be the outgoing leader
+    // because no one else can apply the change while it is in office.
+    let change_target_locator = if removing_leader {
+        // Build a synthetic locator: voter set is the reduced set, but
+        // we ship the replica list still containing the outgoing leader
+        // so `change_membership_on_leader` can route to it. Voters are
+        // derived from the replica list, so we pass the reduced
+        // replica list and explicitly set leader_hint = outgoing leader
+        // so the helper picks the outgoing leader as the target.
+        match RaftSpdkLocator::new(
+            locator.group_id,
+            locator.size_bytes,
+            locator.block_size,
+            locator.replicas.clone(),
+            Some(node_id),
+        ) {
+            Ok(mut l) => {
+                // Keep only the reduced voters in the replica list so
+                // the change_membership body's voter set matches what
+                // we actually want — but addressed to the outgoing
+                // leader's URL.
+                let outgoing = locator
+                    .replicas
+                    .iter()
+                    .find(|r| r.node_id == node_id)
+                    .cloned();
+                let mut new_replicas: Vec<RaftSpdkReplicaLocator> = reduced_locator
+                    .replicas
+                    .iter()
+                    .cloned()
+                    .collect();
+                if let Some(out) = outgoing {
+                    // change_membership_on_leader looks up the leader's
+                    // URL in `replicas` by node_id == leader_hint, so
+                    // we need the outgoing leader's URL in there.
+                    new_replicas.push(out);
+                    new_replicas.sort_by_key(|r| r.node_id);
+                }
+                let leader_hint = Some(node_id);
+                l = RaftSpdkLocator::new(
+                    locator.group_id,
+                    locator.size_bytes,
+                    locator.block_size,
+                    new_replicas,
+                    leader_hint,
+                )
+                .unwrap_or(l);
+                l
+            }
+            Err(err) => {
+                let _ =
+                    finish_repair_queue_row(&st, operation.id, "failed", Some(&err.to_string())).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": err.to_string(), "operation_id": operation.id })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        reduced_locator.clone()
+    };
+    if let Err(error) =
+        change_membership_with_voters(&change_target_locator, &reduced_locator).await
+    {
         let _ = finish_repair_queue_row(&st, operation.id, "failed", Some(&error)).await;
         return (
             StatusCode::BAD_GATEWAY,
@@ -952,6 +1042,139 @@ async fn start_replica_runtime(
         .json(&serde_json::json!({
             "group_id": group_id,
             "peers": peers,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("{url}: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("{url}: {status}: {body}"))
+}
+
+async fn broadcast_peer_map_update(locator: &RaftSpdkLocator) -> Result<(), String> {
+    // Push the expanded peer map (including the new replica) to every
+    // existing replica's runtime so the leader can route
+    // append_entries / install_snapshot to the new node before
+    // openraft's add_learner. Without this, the leader's network factory
+    // returns "no peer URL for node N" and the new learner never
+    // catches up.
+    //
+    // Best-effort per replica: a hot-spare-promotion add_replica runs
+    // when one of the existing replicas is on a failed host. Failing
+    // the whole add because that dead replica can't accept a
+    // peer-map update would deadlock recovery. We require at least one
+    // success — the leader's update is what unblocks catchup, and
+    // openraft will pick one whichever live voter has the most recent
+    // committed log.
+    let peers: HashMap<String, String> = locator
+        .replicas
+        .iter()
+        .map(|r| (r.node_id.to_string(), r.agent_base_url.clone()))
+        .collect();
+    let body = serde_json::json!({ "peers": peers });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .expect("reqwest client builder");
+    let mut last_err: Option<String> = None;
+    let mut ok_count = 0;
+    for replica in &locator.replicas {
+        let url = format!(
+            "{}/{}/runtime_update_peers",
+            replica.agent_base_url.trim_end_matches('/'),
+            locator.group_id
+        );
+        match client.post(&url).json(&body).send().await {
+            Ok(response) if response.status().is_success() => {
+                ok_count += 1;
+            }
+            Ok(response) => {
+                let status = response.status();
+                let body_text = response.text().await.unwrap_or_default();
+                last_err = Some(format!("{url}: {status}: {body_text}"));
+            }
+            Err(e) => {
+                last_err = Some(format!("{url}: {e}"));
+            }
+        }
+    }
+    if ok_count == 0 {
+        return Err(last_err
+            .unwrap_or_else(|| "broadcast_peer_map_update: no replicas reachable".into()));
+    }
+    Ok(())
+}
+
+async fn add_learner_on_leader(
+    locator: &RaftSpdkLocator,
+    learner_node_id: u64,
+) -> Result<(), String> {
+    let statuses = fetch_replica_statuses(locator).await;
+    let observed_leader = aggregate_raft_spdk_status(locator, statuses, 0).observed_leader;
+    let leader_id = observed_leader
+        .or(locator.leader_hint)
+        .ok_or_else(|| "cannot add learner: no observed leader".to_string())?;
+    let leader = locator
+        .replicas
+        .iter()
+        .find(|replica| replica.node_id == leader_id)
+        .ok_or_else(|| format!("cannot add learner: leader {leader_id} not in locator"))?;
+    let url = format!(
+        "{}/{}/openraft/add_learner",
+        leader.agent_base_url.trim_end_matches('/'),
+        locator.group_id
+    );
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({ "node_id": learner_node_id }))
+        .send()
+        .await
+        .map_err(|e| format!("{url}: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("{url}: {status}: {body}"))
+}
+
+/// Variant of `change_membership_on_leader` that sends the request to the
+/// leader implied by `route_locator` but uses the voter set from
+/// `voter_locator`. Used when removing the current leader: the outgoing
+/// leader is the only node that can apply the membership change while it
+/// is in office, but the voter set we want committed excludes it.
+async fn change_membership_with_voters(
+    route_locator: &RaftSpdkLocator,
+    voter_locator: &RaftSpdkLocator,
+) -> Result<(), String> {
+    let statuses = fetch_replica_statuses(route_locator).await;
+    let observed_leader = aggregate_raft_spdk_status(route_locator, statuses, 0).observed_leader;
+    let leader_id = observed_leader
+        .or(route_locator.leader_hint)
+        .ok_or_else(|| "cannot change membership: no observed leader".to_string())?;
+    let leader = route_locator
+        .replicas
+        .iter()
+        .find(|replica| replica.node_id == leader_id)
+        .ok_or_else(|| format!("cannot change membership: leader {leader_id} not in locator"))?;
+    let voters: Vec<u64> = voter_locator
+        .replicas
+        .iter()
+        .map(|replica| replica.node_id)
+        .collect();
+    let url = format!(
+        "{}/{}/openraft/change_membership",
+        leader.agent_base_url.trim_end_matches('/'),
+        route_locator.group_id
+    );
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({
+            "voters": voters,
+            "retain": false,
         }))
         .send()
         .await
@@ -1280,6 +1503,49 @@ async fn persist_removed_replica(
     .bind(node_id as i64)
     .execute(&mut *tx)
     .await?;
+    tx.commit().await
+}
+
+/// Insert one `raft_spdk_replica` row per replica of a freshly provisioned
+/// raft_spdk volume. Called from the volume create paths so the planner +
+/// auto-reconciler have membership data without waiting for an explicit
+/// add_replica call. No-op when the locator isn't a raft_spdk locator
+/// (caller doesn't know the backend kind, so we let the parse decide).
+pub async fn persist_initial_raft_spdk_replicas(
+    db: &sqlx::PgPool,
+    backend_id: Uuid,
+    locator_str: &str,
+) -> sqlx::Result<()> {
+    let locator = match RaftSpdkLocator::from_locator_str(locator_str) {
+        Ok(l) => l,
+        Err(_) => return Ok(()),
+    };
+    let mut tx = db.begin().await?;
+    for replica in &locator.replicas {
+        sqlx::query(
+            r#"
+            INSERT INTO raft_spdk_replica (
+                backend_id, group_id, node_id,
+                agent_base_url, spdk_lvol_locator,
+                role, removed_at
+            )
+            VALUES ($1, $2, $3, $4, $5, 'voter', NULL)
+            ON CONFLICT (backend_id, group_id, node_id) DO UPDATE
+              SET agent_base_url = EXCLUDED.agent_base_url,
+                  spdk_lvol_locator = EXCLUDED.spdk_lvol_locator,
+                  role = 'voter',
+                  removed_at = NULL,
+                  updated_at = now()
+            "#,
+        )
+        .bind(backend_id)
+        .bind(locator.group_id)
+        .bind(replica.node_id as i64)
+        .bind(&replica.agent_base_url)
+        .bind(&replica.spdk_lvol_locator)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await
 }
 

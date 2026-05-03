@@ -1490,6 +1490,20 @@ async fn provision_rootfs(
     .await
     .context("failed to record rootfs volume")?;
 
+    // For raft_spdk backends, persist initial replica membership so the
+    // planner + auto-reconciler can act on the group without waiting for
+    // an explicit add_replica call. No-op for non-raft_spdk locators.
+    if let Err(err) =
+        crate::features::storage_backends::routes::persist_initial_raft_spdk_replicas(
+            &st.db,
+            backend_id,
+            &alloc.volume_handle.locator,
+        )
+        .await
+    {
+        tracing::warn!(?err, "failed to persist raft_spdk_replica rows for new rootfs volume");
+    }
+
     // The volume_attachment row used to be INSERTed here, but the FK
     // `volume_attachment_vm_id_fkey REFERENCES vm(id)` is violated at this
     // point: provision_rootfs runs as part of resolve_vm_spec, which is
@@ -1596,6 +1610,17 @@ pub async fn create_drive(
         .execute(&st.db)
         .await
         .context("failed to record data disk volume")?;
+
+        if let Err(err) =
+            crate::features::storage_backends::routes::persist_initial_raft_spdk_replicas(
+                &st.db,
+                backend_id,
+                &dh.locator,
+            )
+            .await
+        {
+            tracing::warn!(?err, "failed to persist raft_spdk_replica rows for new data disk");
+        }
 
         sqlx::query(
             r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,

@@ -76,8 +76,12 @@ pub async fn execute(
     plan: Plan,
     auth_header: Option<&str>,
 ) -> PlanRun {
+    // Must exceed `REPAIR_CATCHUP_TIMEOUT` (300s) used inside the
+    // manager's add_replica handler — the executor's HTTP call doesn't
+    // return until catchup finishes, so a shorter timeout aborts in
+    // mid-flight even when the replica eventually catches up.
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(420))
         .build()
         .expect("reqwest client builder always succeeds with these defaults");
 
