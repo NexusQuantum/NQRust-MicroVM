@@ -415,6 +415,54 @@ pub async fn health(Extension(st): Extension<AppState>, Path(id): Path<Uuid>) ->
     }
 }
 
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct StorageBackendConfigResponse {
+    pub config: JsonValue,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/config",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses(
+        (status = 200, body = StorageBackendConfigResponse),
+        (status = 404),
+    ),
+    tag = "StorageBackends",
+)]
+/// Returns the raw config JSON for a backend so the UI can round-trip
+/// it through the Edit dialog. Note: the config may contain sensitive
+/// references like `api_key_env` (the env var name, not the key).
+/// Future: redact known-sensitive fields before returning.
+pub async fn get_config(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let repo = StorageBackendRepository::new(st.db.clone());
+    match repo.get(id).await {
+        Ok(Some(row)) => (
+            StatusCode::OK,
+            Json(StorageBackendConfigResponse {
+                config: row.config_json,
+            }),
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not found"})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("storage_backends get_config failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 #[utoipa::path(
     put,
     path = "/v1/storage_backends/{id}",

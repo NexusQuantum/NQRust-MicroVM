@@ -16,5 +16,6 @@ pub fn router() -> Router {
                 .put(routes::update)
                 .delete(routes::delete),
         )
+        .route("/:id/config", get(routes::get_config))
         .route("/:id/health", get(routes::health))
 }

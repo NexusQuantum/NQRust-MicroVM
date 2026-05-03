@@ -1118,6 +1118,10 @@ export interface BackendHealth {
   total_bytes?: number;
 }
 
+export interface StorageBackendConfig {
+  config: Record<string, unknown>;
+}
+
 // ========================================
 // Backup Types
 // ========================================

@@ -747,6 +747,13 @@ export class FacadeApi {
     return apiClient.post<import("@/lib/types").StorageBackend>("/storage_backends", req);
   }
 
+  async updateStorageBackend(
+    id: string,
+    req: import("@/lib/types").CreateStorageBackendReq,
+  ): Promise<import("@/lib/types").StorageBackend> {
+    return apiClient.put<import("@/lib/types").StorageBackend>(`/storage_backends/${id}`, req);
+  }
+
   async deleteStorageBackend(id: string): Promise<void> {
     await apiClient.delete<void>(`/storage_backends/${id}`);
   }
@@ -765,6 +772,10 @@ export class FacadeApi {
 
   async getBackendHealth(id: string): Promise<import("@/lib/types").BackendHealth> {
     return apiClient.get<import("@/lib/types").BackendHealth>(`/storage_backends/${id}/health`);
+  }
+
+  async getBackendConfig(id: string): Promise<import("@/lib/types").StorageBackendConfig> {
+    return apiClient.get<import("@/lib/types").StorageBackendConfig>(`/storage_backends/${id}/config`);
   }
 
   // ==============

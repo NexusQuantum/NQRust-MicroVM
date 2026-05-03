@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,9 +22,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import type { BackendKind, StorageBackend } from "@/lib/types";
 import { useDeleteStorageBackend, useBackendHealth } from "@/lib/queries";
+import { BackendEditDialog } from "@/components/storage/backend-edit-dialog";
 
 const KIND_LABEL: Record<BackendKind, string> = {
   local_file: "Local file",
@@ -76,8 +78,10 @@ function formatBytes(n: number): string {
 
 export function BackendTable({ backends }: { backends: StorageBackend[] }) {
   const del = useDeleteStorageBackend();
+  const [editing, setEditing] = useState<StorageBackend | null>(null);
 
   return (
+    <>
     <Table>
       <TableHeader>
         <TableRow>
@@ -124,6 +128,14 @@ export function BackendTable({ backends }: { backends: StorageBackend[] }) {
               {b.is_default ? <Badge>default</Badge> : <span className="text-muted-foreground">—</span>}
             </TableCell>
             <TableCell className="text-right">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Edit ${b.name}`}
+                onClick={() => setEditing(b)}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button
@@ -159,5 +171,13 @@ export function BackendTable({ backends }: { backends: StorageBackend[] }) {
         ))}
       </TableBody>
     </Table>
+    <BackendEditDialog
+      backend={editing}
+      open={editing !== null}
+      onOpenChange={(open) => {
+        if (!open) setEditing(null);
+      }}
+    />
+    </>
   );
 }

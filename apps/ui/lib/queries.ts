@@ -1434,6 +1434,25 @@ export function useCreateStorageBackend() {
   });
 }
 
+export function useUpdateStorageBackend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      id: string;
+      req: import("@/lib/types").CreateStorageBackendReq;
+    }) => facadeApi.updateStorageBackend(vars.id, vars.req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.storageBackends() });
+      toast.success("Storage backend updated");
+    },
+    onError: (e: unknown) => {
+      toast.error("Failed to update storage backend", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+}
+
 export function useDeleteStorageBackend() {
   const qc = useQueryClient();
   return useMutation({
@@ -1475,6 +1494,15 @@ export function useBackendHealth(id: string) {
     queryKey: ["storage_backends", id, "health"],
     queryFn: async () => facadeApi.getBackendHealth(id),
     refetchInterval: 15_000,
+    retry: false,
+  });
+}
+
+export function useBackendConfig(id: string | null) {
+  return useQuery({
+    queryKey: ["storage_backends", id, "config"],
+    queryFn: async () => facadeApi.getBackendConfig(id!),
+    enabled: id !== null,
     retry: false,
   });
 }
