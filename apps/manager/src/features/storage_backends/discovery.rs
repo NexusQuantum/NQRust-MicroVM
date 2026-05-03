@@ -127,3 +127,86 @@ mod tests {
         assert_eq!(parse_iscsiadm_discovery(raw).len(), 1);
     }
 }
+
+/// Run `showmount -e <server>` with a timeout. Returns the parsed list
+/// or a human-readable error string suitable for the UI.
+pub async fn discover_nfs_exports(server: &str) -> Result<Vec<NfsExport>, String> {
+    let out = tokio::time::timeout(
+        SHELL_TIMEOUT,
+        tokio::process::Command::new("showmount")
+            .arg("-e")
+            .arg("--no-headers")
+            .arg(server)
+            .output(),
+    )
+    .await
+    .map_err(|_| format!("showmount timed out after {}s", SHELL_TIMEOUT.as_secs()))?
+    .map_err(|e| format!("showmount spawn failed (install nfs-common): {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(format!(
+            "showmount {server} exited {}: {stderr}",
+            out.status
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Ok(parse_showmount(&stdout))
+}
+
+/// Run `iscsiadm -m discovery -t st -p <portal>` with a timeout.
+pub async fn discover_iscsi_targets(portal: &str) -> Result<Vec<IscsiTarget>, String> {
+    let out = tokio::time::timeout(
+        SHELL_TIMEOUT,
+        tokio::process::Command::new("iscsiadm")
+            .arg("-m")
+            .arg("discovery")
+            .arg("-t")
+            .arg("st")
+            .arg("-p")
+            .arg(portal)
+            .output(),
+    )
+    .await
+    .map_err(|_| format!("iscsiadm timed out after {}s", SHELL_TIMEOUT.as_secs()))?
+    .map_err(|e| format!("iscsiadm spawn failed (install open-iscsi): {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(format!("iscsiadm {portal} exited {}: {stderr}", out.status));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Ok(parse_iscsiadm_discovery(&stdout))
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+
+    /// Live test: requires showmount installed AND a reachable NFS
+    /// server at NQRUST_NFS_SCAN_HOST. Skipped by default. Run with
+    /// `cargo test -- --include-ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn discover_nfs_exports_against_live_server() {
+        let server = match std::env::var("NQRUST_NFS_SCAN_HOST") {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let exports = discover_nfs_exports(&server).await.expect("scan");
+        assert!(!exports.is_empty(), "expected at least one export");
+    }
+
+    /// Live test: requires iscsiadm + a reachable iSCSI portal at
+    /// NQRUST_ISCSI_SCAN_PORTAL.
+    #[tokio::test]
+    #[ignore]
+    async fn discover_iscsi_targets_against_live_portal() {
+        let portal = match std::env::var("NQRUST_ISCSI_SCAN_PORTAL") {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let targets = discover_iscsi_targets(&portal).await.expect("scan");
+        assert!(!targets.is_empty(), "expected at least one target");
+    }
+}
