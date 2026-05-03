@@ -89,11 +89,16 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
         })
     }
 
-    async fn destroy(&self, _h: VolumeHandle) -> Result<(), nexus_storage::StorageError> {
-        // Implemented in Task 4.
-        Err(nexus_storage::StorageError::NotSupported(
-            "destroy not yet implemented".into(),
-        ))
+    async fn destroy(&self, h: VolumeHandle) -> Result<(), nexus_storage::StorageError> {
+        let loc = NfsLocator::from_locator_str(&h.locator)?;
+        let path = self.config.manager_mount_path.join(&loc.file);
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => Ok(()),
+            // Idempotent: a destroy that races with another caller (or
+            // re-runs after a crash) is success, not error.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(nexus_storage::StorageError::from(e)),
+        }
     }
 
     async fn clone_from_image(
@@ -183,6 +188,43 @@ mod tests {
             },
         };
         (backend, dir)
+    }
+
+    #[tokio::test]
+    async fn destroy_unlinks_the_file() {
+        let (backend, _guard) = temp_backend();
+        let h = backend
+            .provision(CreateOpts {
+                name: "v".into(),
+                size_bytes: 1024,
+                description: None,
+            })
+            .await
+            .unwrap();
+        let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
+        let path = backend.config.manager_mount_path.join(&loc.file);
+        assert!(tokio::fs::metadata(&path).await.is_ok());
+        backend.destroy(h).await.expect("destroy");
+        assert!(tokio::fs::metadata(&path).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn destroy_is_idempotent_when_file_missing() {
+        let (backend, _guard) = temp_backend();
+        let bogus = VolumeHandle {
+            volume_id: Uuid::new_v4(),
+            backend_id: backend.id,
+            backend_kind: BackendKind::Nfs,
+            locator: NfsLocator {
+                server: backend.config.server.clone(),
+                export: backend.config.export.clone(),
+                file: "nfs-does-not-exist.raw".into(),
+            }
+            .to_locator_string()
+            .unwrap(),
+            size_bytes: 0,
+        };
+        backend.destroy(bogus).await.expect("idempotent destroy");
     }
 
     #[tokio::test]
