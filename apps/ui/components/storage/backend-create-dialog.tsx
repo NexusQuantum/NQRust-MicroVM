@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { BackendKind } from "@/lib/types";
-import { useCreateStorageBackend, useScanNfsExports } from "@/lib/queries";
+import { useCreateStorageBackend, useScanNfsExports, useScanIscsiTargets } from "@/lib/queries";
 
 interface Field {
   key: string;
@@ -214,6 +214,47 @@ function NfsExportField({
   );
 }
 
+function IscsiTargetDiscovery({ portal }: { portal: string }) {
+  const [open, setOpen] = useState(false);
+  const enabled = open && portal.trim().length > 0;
+  const { data, isFetching, error } = useScanIscsiTargets(portal, enabled);
+
+  if (!portal.trim()) {
+    return null;
+  }
+  return (
+    <div className="text-xs">
+      <button
+        type="button"
+        className="text-blue-600 hover:underline"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "Hide" : "Show"} reachable targets
+      </button>
+      {open && (
+        <div className="mt-2 rounded-md border bg-muted/50 p-2">
+          {isFetching && <p className="text-muted-foreground">Scanning {portal}…</p>}
+          {error && (
+            <p className="text-amber-600">Could not reach {portal} via iscsiadm.</p>
+          )}
+          {data?.targets.length === 0 && !isFetching && (
+            <p className="text-muted-foreground">No targets returned by {portal}.</p>
+          )}
+          {data?.targets && data.targets.length > 0 && (
+            <ul className="space-y-1 font-mono text-xs">
+              {data.targets.map((t, i) => (
+                <li key={`${t.portal}-${t.iqn}-${i}`}>
+                  <span className="text-muted-foreground">{t.portal}</span> {t.iqn}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -327,6 +368,17 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
                   value={String(config[f.key] ?? "")}
                   onChange={(v) => setConfig({ ...config, [f.key]: v })}
                 />
+              ) : (kind === "iscsi" || kind === "truenas_iscsi") && f.key === "portal" ? (
+                <>
+                  <Input
+                    id={`bk-cfg-${f.key}`}
+                    type="text"
+                    value={String(config[f.key] ?? "")}
+                    onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                    placeholder={f.placeholder}
+                  />
+                  <IscsiTargetDiscovery portal={String(config[f.key] ?? "")} />
+                </>
               ) : (
                 <Input
                   id={`bk-cfg-${f.key}`}
