@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { BackendKind } from "@/lib/types";
-import { useCreateStorageBackend } from "@/lib/queries";
+import { useCreateStorageBackend, useScanNfsExports } from "@/lib/queries";
 
 interface Field {
   key: string;
@@ -150,6 +150,70 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
 
 const KINDS: BackendKind[] = ["local_file", "nfs", "iscsi", "truenas_iscsi", "spdk_lvol"];
 
+function NfsExportField({
+  server,
+  value,
+  onChange,
+}: {
+  server: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const enabled = server.trim().length > 0;
+  const { data, isFetching, error } = useScanNfsExports(server, enabled);
+  const exports = data?.exports ?? [];
+
+  if (!enabled || (exports.length === 0 && !isFetching && !error)) {
+    return (
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="/mnt/tank/vms"
+      />
+    );
+  }
+  if (isFetching && exports.length === 0) {
+    return (
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={`Scanning ${server}…`}
+      />
+    );
+  }
+  if (error || exports.length === 0) {
+    return (
+      <div className="space-y-1.5">
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="/mnt/tank/vms"
+        />
+        <p className="text-xs text-amber-600">
+          Could not list exports from {server} — type the path manually.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger>
+        <SelectValue placeholder="Pick an export" />
+      </SelectTrigger>
+      <SelectContent>
+        {exports.map((e) => (
+          <SelectItem key={e.path} value={e.path}>
+            {e.path}
+            {e.allowed && (
+              <span className="ml-2 text-xs text-muted-foreground">→ {e.allowed}</span>
+            )}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -257,13 +321,21 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
           {spec.fields.map((f) => (
             <div key={f.key} className="space-y-1.5">
               <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
-              <Input
-                id={`bk-cfg-${f.key}`}
-                type={f.type ?? "text"}
-                value={config[f.key] ?? ""}
-                onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
-                placeholder={f.placeholder}
-              />
+              {kind === "nfs" && f.key === "export" ? (
+                <NfsExportField
+                  server={String(config["server"] ?? "")}
+                  value={String(config[f.key] ?? "")}
+                  onChange={(v) => setConfig({ ...config, [f.key]: v })}
+                />
+              ) : (
+                <Input
+                  id={`bk-cfg-${f.key}`}
+                  type={f.type ?? "text"}
+                  value={String(config[f.key] ?? "")}
+                  onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                  placeholder={f.placeholder}
+                />
+              )}
               {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
             </div>
           ))}
