@@ -31,6 +31,8 @@ pub enum BackendKind {
     TrueNasIscsi,
     #[serde(rename = "spdk_lvol")]
     SpdkLvol,
+    #[serde(rename = "nfs")]
+    Nfs,
 }
 
 impl BackendKind {
@@ -40,6 +42,7 @@ impl BackendKind {
             BackendKind::Iscsi => "iscsi",
             BackendKind::TrueNasIscsi => "truenas_iscsi",
             BackendKind::SpdkLvol => "spdk_lvol",
+            BackendKind::Nfs => "nfs",
         }
     }
 }
@@ -63,4 +66,19 @@ pub struct CreateOpts {
     pub size_bytes: u64,
     /// Free-form description; not interpreted by backends.
     pub description: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_kind_nfs_round_trips_through_db_string() {
+        let k = BackendKind::Nfs;
+        assert_eq!(k.as_db_str(), "nfs");
+        let json = serde_json::to_string(&k).unwrap();
+        assert_eq!(json, "\"nfs\"");
+        let back: BackendKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, BackendKind::Nfs);
+    }
 }

@@ -89,6 +89,20 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 supports_clone_from_image: false,
             }
         }
+        BackendKind::Nfs => {
+            require_str(&raw.config, "server")
+                .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
+            require_str(&raw.config, "export")
+                .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
+            require_str(&raw.config, "manager_mount_path")
+                .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
+            Capabilities {
+                supports_native_snapshots: true,
+                supports_concurrent_attach: false,
+                supports_live_migration: false,
+                supports_clone_from_image: true,
+            }
+        }
     };
 
     Ok(ValidatedBackend {
@@ -164,6 +178,18 @@ mod tests {
         };
         let err = validate(raw).unwrap_err();
         assert!(err.to_string().contains("lvs_name"), "got: {err}");
+    }
+
+    #[test]
+    fn nfs_validate_fails_when_server_missing() {
+        let raw = RawBackendEntry {
+            name: "nfs-test".into(),
+            kind: BackendKind::Nfs,
+            is_default: false,
+            config: serde_json::json!({"export": "/exports/vms", "manager_mount_path": "/mnt/nfs"}),
+        };
+        let err = validate(raw).unwrap_err();
+        assert!(err.to_string().contains("server"), "{err}");
     }
 
     /// T27: Malformed TrueNAS iSCSI entry parsed from TOML must fail validation

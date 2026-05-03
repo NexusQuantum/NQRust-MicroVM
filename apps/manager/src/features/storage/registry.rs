@@ -118,6 +118,7 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
         "iscsi" => BackendKind::Iscsi,
         "truenas_iscsi" => BackendKind::TrueNasIscsi,
         "spdk_lvol" => BackendKind::SpdkLvol,
+        "nfs" => BackendKind::Nfs,
         other => {
             return Err(anyhow!("unknown backend kind '{other}'"));
         }
@@ -167,6 +168,7 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
                 ),
             ))
         }
+        BackendKind::Nfs => Err(anyhow::anyhow!("nfs backend not yet wired (Task 7)")),
     }
 }
 
