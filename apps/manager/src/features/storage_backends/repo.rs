@@ -13,7 +13,6 @@ pub struct StorageBackendRow {
     pub id: Uuid,
     pub name: String,
     pub kind: String,
-    #[allow(dead_code)]
     pub config_json: JsonValue,
     pub capabilities_json: JsonValue,
     pub is_default: bool,
