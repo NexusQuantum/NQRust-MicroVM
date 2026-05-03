@@ -4,9 +4,13 @@
 //! NFS-ness is captured in the locator JSON so the agent knows what to
 //! mount when it later attaches the volume.
 
-use nexus_storage::StorageError;
+use nexus_storage::{
+    BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts, StorageError,
+    VolumeHandle, VolumeSnapshotHandle,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct NfsConfig {
@@ -29,16 +33,17 @@ impl NfsLocator {
     }
 
     pub fn from_locator_str(s: &str) -> Result<Self, StorageError> {
-        serde_json::from_str(s)
-            .map_err(|e| StorageError::InvalidLocator(format!("decode nfs locator: {e}")))
+        let loc: NfsLocator = serde_json::from_str(s)
+            .map_err(|e| StorageError::InvalidLocator(format!("decode nfs locator: {e}")))?;
+        if loc.file.is_empty() || loc.file.contains('/') || loc.file.starts_with('.') {
+            return Err(StorageError::InvalidLocator(format!(
+                "nfs locator.file must be a plain filename (no '/', no leading '.'), got {:?}",
+                loc.file
+            )));
+        }
+        Ok(loc)
     }
 }
-
-use nexus_storage::{
-    BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts, VolumeHandle,
-    VolumeSnapshotHandle,
-};
-use uuid::Uuid;
 
 pub struct NfsControlPlaneBackend {
     pub id: BackendInstanceId,
@@ -108,7 +113,7 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
         tokio::fs::create_dir_all(&self.config.manager_mount_path).await?;
         tokio::fs::copy(src, &dst).await?;
         let cur = tokio::fs::metadata(&dst).await?.len();
-        if opts.size_bytes > cur {
+        if opts.size_bytes != cur {
             let f = tokio::fs::OpenOptions::new().write(true).open(&dst).await?;
             f.set_len(opts.size_bytes).await?;
         }
@@ -141,6 +146,14 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
         let snap_file = format!("{}.snap-{name}", src_loc.file);
         let snap_path = self.config.manager_mount_path.join(&snap_file);
         tokio::fs::copy(&src_path, &snap_path).await?;
+        // Maintain the volume's provisioned size on the snapshot file so
+        // clone_from_snapshot doesn't return a smaller size_bytes when
+        // the source has been truncated below the provisioned size.
+        let f = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&snap_path)
+            .await?;
+        f.set_len(v.size_bytes).await?;
         let snap_locator = NfsLocator {
             server: src_loc.server,
             export: src_loc.export,
@@ -199,6 +212,8 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nexus_storage::{BackendInstanceId, ControlPlaneBackend, CreateOpts};
+    use uuid::Uuid;
 
     #[test]
     fn nfs_config_parses_minimal_json() {
@@ -228,8 +243,29 @@ mod tests {
         assert_eq!(back, loc);
     }
 
-    use nexus_storage::{BackendInstanceId, ControlPlaneBackend, CreateOpts};
-    use uuid::Uuid;
+    #[test]
+    fn locator_with_slash_in_file_is_rejected() {
+        let bad = serde_json::json!({
+            "server": "10.0.0.5",
+            "export": "/mnt/tank/vms",
+            "file": "../../etc/passwd"
+        })
+        .to_string();
+        let err = NfsLocator::from_locator_str(&bad).unwrap_err();
+        assert!(matches!(err, StorageError::InvalidLocator(_)), "{err}");
+    }
+
+    #[test]
+    fn locator_with_leading_dot_in_file_is_rejected() {
+        let bad = serde_json::json!({
+            "server": "10.0.0.5",
+            "export": "/mnt/tank/vms",
+            "file": ".hidden"
+        })
+        .to_string();
+        let err = NfsLocator::from_locator_str(&bad).unwrap_err();
+        assert!(matches!(err, StorageError::InvalidLocator(_)), "{err}");
+    }
 
     fn temp_backend() -> (NfsControlPlaneBackend, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -303,7 +339,6 @@ mod tests {
     #[tokio::test]
     async fn snapshot_then_clone_then_delete_round_trip() {
         let (backend, _guard) = temp_backend();
-        // Provision + populate the source.
         let h = backend
             .provision(CreateOpts {
                 name: "v".into(),
@@ -314,23 +349,39 @@ mod tests {
             .unwrap();
         let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
         let src_path = backend.config.manager_mount_path.join(&loc.file);
+        // Write LESS data than the provisioned size to verify the
+        // snapshot still reports the full provisioned size.
         tokio::fs::write(&src_path, b"original-data").await.unwrap();
 
-        // snapshot
         let snap = backend.snapshot(&h, "snap-1").await.expect("snapshot");
         let snap_loc = NfsLocator::from_locator_str(&snap.locator).unwrap();
         let snap_path = backend.config.manager_mount_path.join(&snap_loc.file);
-        assert_eq!(tokio::fs::read(&snap_path).await.unwrap(), b"original-data");
+        // The snapshot file is padded back up to the provisioned size.
+        let snap_meta = tokio::fs::metadata(&snap_path).await.unwrap();
+        assert_eq!(
+            snap_meta.len(),
+            1024,
+            "snapshot file must be at provisioned size"
+        );
+        let snap_data = tokio::fs::read(&snap_path).await.unwrap();
+        assert_eq!(&snap_data[..13], b"original-data");
 
-        // clone_from_snapshot
         let cloned = backend.clone_from_snapshot(&snap).await.expect("clone");
         let cloned_loc = NfsLocator::from_locator_str(&cloned.locator).unwrap();
         let cloned_path = backend.config.manager_mount_path.join(&cloned_loc.file);
+        let cloned_meta = tokio::fs::metadata(&cloned_path).await.unwrap();
+        assert_eq!(
+            cloned_meta.len(),
+            1024,
+            "clone must inherit provisioned size"
+        );
+        assert_eq!(
+            cloned.size_bytes, 1024,
+            "VolumeHandle.size_bytes must report provisioned size"
+        );
         let cloned_data = tokio::fs::read(&cloned_path).await.unwrap();
-        // The cloned file may be padded to size_bytes; first 13 bytes must match.
         assert_eq!(&cloned_data[..13], b"original-data");
 
-        // delete_snapshot
         backend
             .delete_snapshot(snap)
             .await
@@ -356,5 +407,29 @@ mod tests {
         assert_eq!(meta.len(), 4096);
         let buf = tokio::fs::read(&path).await.unwrap();
         assert_eq!(&buf[..11], b"hello world");
+    }
+
+    #[tokio::test]
+    async fn clone_from_image_truncates_when_source_larger_than_requested() {
+        let (backend, _guard) = temp_backend();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("base.raw");
+        // Source is 8 KiB.
+        tokio::fs::write(&src, vec![0xab; 8 * 1024]).await.unwrap();
+        let opts = CreateOpts {
+            name: "v".into(),
+            size_bytes: 4 * 1024, // request 4 KiB — smaller than source
+            description: None,
+        };
+        let h = backend.clone_from_image(&src, opts).await.unwrap();
+        let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
+        let path = backend.config.manager_mount_path.join(&loc.file);
+        let meta = tokio::fs::metadata(&path).await.unwrap();
+        assert_eq!(
+            meta.len(),
+            4 * 1024,
+            "destination should be truncated to requested size"
+        );
+        assert_eq!(h.size_bytes, 4 * 1024);
     }
 }

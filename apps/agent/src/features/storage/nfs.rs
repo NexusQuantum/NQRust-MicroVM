@@ -69,7 +69,16 @@ impl NfsHostBackend {
             .await;
         let source_line = match probe {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-            _ => String::new(),
+            // findmnt ran but exit != 0: path is not a mount point.
+            Ok(_) => String::new(),
+            // findmnt failed to spawn — almost certainly missing from PATH.
+            // Surface this so the operator can install the package rather
+            // than silently double-mounting on every attach.
+            Err(e) => {
+                return Err(StorageError::backend(std::io::Error::other(format!(
+                    "findmnt not available: {e}"
+                ))));
+            }
         };
         let want = format!("{server}:{export}");
         if source_line == want {
@@ -106,8 +115,15 @@ impl NfsHostBackend {
     }
 
     fn locator(&self, raw: &str) -> Result<NfsLocatorWire, StorageError> {
-        serde_json::from_str(raw)
-            .map_err(|e| StorageError::InvalidLocator(format!("decode nfs locator: {e}")))
+        let loc: NfsLocatorWire = serde_json::from_str(raw)
+            .map_err(|e| StorageError::InvalidLocator(format!("decode nfs locator: {e}")))?;
+        if loc.file.is_empty() || loc.file.contains('/') || loc.file.starts_with('.') {
+            return Err(StorageError::InvalidLocator(format!(
+                "nfs locator.file must be a plain filename (no '/', no leading '.'), got {:?}",
+                loc.file
+            )));
+        }
+        Ok(loc)
     }
 }
 
@@ -188,7 +204,6 @@ impl HostBackend for NfsHostBackend {
 mod tests {
     use super::*;
     use nexus_storage::{BackendKind, HostBackend, VolumeHandle};
-    use tempfile::TempDir;
     use uuid::Uuid;
 
     #[test]
@@ -210,18 +225,13 @@ mod tests {
 
     /// Pretends the export is already mounted at `mount_point_for(...)`
     /// by creating that directory and dropping a file inside it.
-    fn fake_mounted_export(
-        cfg: &NfsHostConfig,
-        server: &str,
-        export: &str,
-        file: &str,
-    ) -> (PathBuf, TempDir) {
+    /// Caller owns the `cfg.mount_base` tempdir lifetime.
+    fn fake_mounted_export(cfg: &NfsHostConfig, server: &str, export: &str, file: &str) -> PathBuf {
         let mount = cfg.mount_point_for(server, export);
         std::fs::create_dir_all(&mount).unwrap();
         let path = mount.join(file);
         std::fs::write(&path, b"hello").unwrap();
-        let guard = tempfile::tempdir().unwrap();
-        (path, guard)
+        path
     }
 
     fn locator_json(server: &str, export: &str, file: &str) -> String {
@@ -243,7 +253,7 @@ mod tests {
         let server = "10.0.0.5";
         let export = "/mnt/tank/vms";
         let file = "nfs-abc.raw";
-        let (expected_path, _guard) = fake_mounted_export(&cfg, server, export, file);
+        let expected_path = fake_mounted_export(&cfg, server, export, file);
         let backend = NfsHostBackend::new(cfg);
         let v = VolumeHandle {
             volume_id: Uuid::new_v4(),
@@ -266,7 +276,7 @@ mod tests {
         let server = "10.0.0.5";
         let export = "/mnt/tank/vms";
         let file = "nfs-pop.raw";
-        let (path, _g) = fake_mounted_export(&cfg, server, export, file);
+        let path = fake_mounted_export(&cfg, server, export, file);
 
         let src_dir = tempfile::tempdir().unwrap();
         let src = src_dir.path().join("base.raw");
@@ -371,7 +381,7 @@ mod tests {
         let server = "10.0.0.5";
         let export = "/mnt/tank/vms";
         let file = "nfs-abc.raw.snap-x";
-        let (path, _g) = fake_mounted_export(&cfg, server, export, file);
+        let path = fake_mounted_export(&cfg, server, export, file);
         tokio::fs::write(&path, b"snapshot-bytes").await.unwrap();
 
         let backend = NfsHostBackend::new(cfg);
