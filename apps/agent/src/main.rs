@@ -29,6 +29,20 @@ async fn main() -> anyhow::Result<()> {
     let iscsi_host = std::sync::Arc::new(features::storage::iscsi::IscsiHostBackend);
     storage_registry.register_for(nexus_storage::BackendKind::Iscsi, iscsi_host.clone());
     storage_registry.register_for(nexus_storage::BackendKind::TrueNasIscsi, iscsi_host);
+    if let Ok(mount_base) = std::env::var("AGENT_NFS_MOUNT_BASE") {
+        let assume_mounted = std::env::var("AGENT_NFS_ASSUME_MOUNTED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        storage_registry.register_for(
+            nexus_storage::BackendKind::Nfs,
+            std::sync::Arc::new(features::storage::nfs::NfsHostBackend::new(
+                features::storage::nfs::NfsHostConfig {
+                    mount_base: std::path::PathBuf::from(mount_base),
+                    assume_mounted,
+                },
+            )),
+        );
+    }
     if let Ok(rpc_socket) = std::env::var("AGENT_SPDK_RPC_SOCKET") {
         let vhost_socket_dir =
             std::env::var("AGENT_SPDK_VHOST_SOCKET_DIR").unwrap_or_else(|_| "/var/tmp".into());

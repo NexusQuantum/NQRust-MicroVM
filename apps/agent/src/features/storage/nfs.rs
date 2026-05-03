@@ -13,7 +13,6 @@ use nexus_storage::{
 };
 use serde::Deserialize;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct NfsHostConfig {
     pub mount_base: PathBuf,
@@ -24,7 +23,6 @@ pub struct NfsHostConfig {
     pub assume_mounted: bool,
 }
 
-#[allow(dead_code)]
 impl NfsHostConfig {
     /// Deterministic per-(server, export) directory name. The export's
     /// leading slash is stripped and remaining slashes become `_` so the
@@ -37,7 +35,6 @@ impl NfsHostConfig {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct NfsLocatorWire {
     server: String,
@@ -45,12 +42,10 @@ struct NfsLocatorWire {
     file: String,
 }
 
-#[allow(dead_code)]
 pub struct NfsHostBackend {
     config: NfsHostConfig,
 }
 
-#[allow(dead_code)]
 impl NfsHostBackend {
     pub fn new(config: NfsHostConfig) -> Self {
         Self { config }
