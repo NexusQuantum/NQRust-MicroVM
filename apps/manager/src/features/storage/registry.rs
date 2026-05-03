@@ -168,7 +168,17 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
                 ),
             ))
         }
-        BackendKind::Nfs => Err(anyhow::anyhow!("nfs backend not yet wired (Task 7)")),
+        BackendKind::Nfs => {
+            let cfg: crate::features::storage::backends::nfs::NfsConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' nfs config", row.name))?;
+            Ok(Arc::new(
+                crate::features::storage::backends::nfs::NfsControlPlaneBackend {
+                    id: BackendInstanceId(row.id),
+                    config: cfg,
+                },
+            ))
+        }
     }
 }
 
@@ -263,5 +273,25 @@ mod tests {
             .execute(&p)
             .await
             .ok();
+    }
+
+    #[tokio::test]
+    async fn build_backend_constructs_nfs_when_kind_is_nfs() {
+        let row = StorageBackendRow {
+            id: uuid::Uuid::new_v4(),
+            name: "nfs-test".into(),
+            kind: "nfs".into(),
+            is_default: false,
+            config_json: serde_json::json!({
+                "server": "10.0.0.5",
+                "export": "/mnt/tank/vms",
+                "manager_mount_path": "/tmp/nqrust-nfs-mgr"
+            }),
+            capabilities_json: serde_json::json!({}),
+            deleted_at: None,
+            created_at: chrono::Utc::now(),
+        };
+        let backend = build_backend(&row).expect("build_backend");
+        assert!(matches!(backend.kind(), nexus_storage::BackendKind::Nfs));
     }
 }

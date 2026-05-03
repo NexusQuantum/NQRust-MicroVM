@@ -8,7 +8,6 @@ use nexus_storage::StorageError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct NfsConfig {
     pub server: String,
@@ -16,7 +15,6 @@ pub struct NfsConfig {
     pub manager_mount_path: PathBuf,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NfsLocator {
     pub server: String,
@@ -24,7 +22,6 @@ pub struct NfsLocator {
     pub file: String,
 }
 
-#[allow(dead_code)]
 impl NfsLocator {
     pub fn to_locator_string(&self) -> Result<String, StorageError> {
         serde_json::to_string(self)
@@ -43,7 +40,6 @@ use nexus_storage::{
 };
 use uuid::Uuid;
 
-#[allow(dead_code)]
 pub struct NfsControlPlaneBackend {
     pub id: BackendInstanceId,
     pub config: NfsConfig,
