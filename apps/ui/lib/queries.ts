@@ -1417,6 +1417,39 @@ export function useStorageBackends() {
   });
 }
 
+export function useCreateStorageBackend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (req: import("@/lib/types").CreateStorageBackendReq) =>
+      facadeApi.createStorageBackend(req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.storageBackends() });
+      toast.success("Storage backend added");
+    },
+    onError: (e: unknown) => {
+      toast.error("Failed to add storage backend", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+}
+
+export function useDeleteStorageBackend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => facadeApi.deleteStorageBackend(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.storageBackends() });
+      toast.success("Storage backend removed");
+    },
+    onError: (e: unknown) => {
+      toast.error("Failed to remove storage backend", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+}
+
 // ==============
 // Backups
 // ==============

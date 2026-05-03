@@ -52,8 +52,8 @@ impl StorageBackendRepository {
         .await
     }
 
-    /// Upsert by name. Used by the registry on startup to reconcile TOML with DB.
-    #[allow(dead_code)]
+    /// Upsert by name. Used by the registry on startup to reconcile TOML
+    /// with DB, and by the admin POST route to add backends from the UI.
     pub async fn upsert(
         &self,
         name: &str,
@@ -84,7 +84,6 @@ impl StorageBackendRepository {
         .await
     }
 
-    #[allow(dead_code)]
     pub async fn soft_delete_by_name(&self, name: &str) -> sqlx::Result<()> {
         sqlx::query(
             r#"UPDATE storage_backend SET deleted_at = now() WHERE name = $1 AND deleted_at IS NULL"#,

@@ -16,6 +16,7 @@ import {
   ServerCog,
   Network,
   HardDrive,
+  Layers,
   User,
   BookOpen,
   LogOut,
@@ -50,7 +51,8 @@ const MAIN: NavItem[] = [
 const HOST: NavItem[] = [
   { name: "Hosts", href: "/hosts", icon: ServerCog },
   { name: "Networks", href: "/networks", icon: Network },
-  { name: "Volumes", href: "/volumes", icon: HardDrive },
+  { name: "Storage", href: "/storage", icon: HardDrive },
+  { name: "Volumes", href: "/volumes", icon: Layers },
 ]
 
 const BOTTOM: NavItem[] = [

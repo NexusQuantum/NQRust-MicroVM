@@ -1,12 +1,16 @@
+use crate::features::storage::config::{validate, RawBackendEntry};
 use crate::features::storage_backends::repo::{StorageBackendRepository, StorageBackendRow};
 use crate::AppState;
 use axum::{extract::Path, http::StatusCode, response::IntoResponse, Extension, Json};
-use nexus_types::{BackendKind, Capabilities, StorageBackend};
+use nexus_types::{Capabilities, StorageBackend};
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
 fn row_to_wire(row: StorageBackendRow) -> Result<StorageBackend, StatusCode> {
-    let kind: BackendKind = serde_json::from_value(serde_json::Value::String(row.kind.clone()))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let kind: nexus_types::BackendKind =
+        serde_json::from_value(serde_json::Value::String(row.kind.clone()))
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let capabilities: Capabilities = match serde_json::from_value(row.capabilities_json) {
         Ok(c) => c,
         Err(e) => {
@@ -66,6 +70,150 @@ pub async fn list(Extension(st): Extension<AppState>) -> impl IntoResponse {
                 .into_response()
         }
     }
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CreateStorageBackendReq {
+    pub name: String,
+    pub kind: nexus_storage::BackendKind,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub config: JsonValue,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/storage_backends",
+    request_body = CreateStorageBackendReq,
+    responses(
+        (status = 201, body = StorageBackend),
+        (status = 400, description = "Validation failed"),
+        (status = 409, description = "Backend with this name already exists"),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn create(
+    Extension(st): Extension<AppState>,
+    Json(req): Json<CreateStorageBackendReq>,
+) -> impl IntoResponse {
+    let validated = match validate(RawBackendEntry {
+        name: req.name.clone(),
+        kind: req.kind,
+        is_default: req.is_default,
+        config: req.config,
+    }) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let capabilities_json = match serde_json::to_value(validated.capabilities) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("encode capabilities: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "encode capabilities"})),
+            )
+                .into_response();
+        }
+    };
+    let repo = StorageBackendRepository::new(st.db.clone());
+    // Idempotent on (name). A second POST with the same name updates
+    // the existing row in place — that's the behaviour operators
+    // expect when iterating on a backend's config in the UI form.
+    match repo
+        .upsert(
+            &validated.name,
+            validated.kind.as_db_str(),
+            &validated.config,
+            &capabilities_json,
+            validated.is_default,
+        )
+        .await
+    {
+        Ok(row) => match row_to_wire(row) {
+            Ok(w) => (StatusCode::CREATED, Json(w)).into_response(),
+            Err(s) => {
+                (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response()
+            }
+        },
+        Err(e) => {
+            tracing::error!("storage_backends create failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    delete,
+    path = "/v1/storage_backends/{id}",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses(
+        (status = 204, description = "Soft-deleted"),
+        (status = 404),
+        (status = 409, description = "Backend has live volumes"),
+    ),
+    tag = "StorageBackends",
+)]
+pub async fn delete(Extension(st): Extension<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let repo = StorageBackendRepository::new(st.db.clone());
+    let row = match repo.get(id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("storage_backends get for delete failed: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response();
+        }
+    };
+    // Refuse delete if any active volume references this backend.
+    // A foreign-key cascade isn't right here — soft-deleting a backend
+    // with live volumes attached would orphan them.
+    let live_count: Result<i64, _> = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM volume WHERE backend_id = $1 AND status != 'deleted'"#,
+    )
+    .bind(row.id)
+    .fetch_one(&st.db)
+    .await;
+    if let Ok(n) = live_count {
+        if n > 0 {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": format!("backend has {n} live volume(s); delete or migrate them before removing the backend"),
+                })),
+            )
+                .into_response();
+        }
+    }
+    if let Err(e) = repo.soft_delete_by_name(&row.name).await {
+        tracing::error!("storage_backends soft-delete failed: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "db"})),
+        )
+            .into_response();
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[utoipa::path(

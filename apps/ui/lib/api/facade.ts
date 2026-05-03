@@ -741,6 +741,16 @@ export class FacadeApi {
     return apiClient.get<StorageBackendListResponse>("/storage_backends");
   }
 
+  async createStorageBackend(
+    req: import("@/lib/types").CreateStorageBackendReq,
+  ): Promise<import("@/lib/types").StorageBackend> {
+    return apiClient.post<import("@/lib/types").StorageBackend>("/storage_backends", req);
+  }
+
+  async deleteStorageBackend(id: string): Promise<void> {
+    await apiClient.delete<void>(`/storage_backends/${id}`);
+  }
+
   // ==============
   // User Management
   // ==============
