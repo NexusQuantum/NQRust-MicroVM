@@ -147,14 +147,26 @@ impl HostBackend for NfsHostBackend {
 
     async fn populate_streaming(
         &self,
-        _attached: &AttachedPath,
-        _source: &std::path::Path,
-        _target_size_bytes: u64,
+        attached: &AttachedPath,
+        source: &std::path::Path,
+        target_size_bytes: u64,
     ) -> Result<(), StorageError> {
-        // Implemented in Task 11.
-        Err(StorageError::NotSupported(
-            "populate_streaming not yet implemented".into(),
-        ))
+        use tokio::io::AsyncWriteExt;
+        let dst_path = attached.path();
+        let mut src = tokio::fs::File::open(source).await?;
+        let mut dst = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dst_path)
+            .await?;
+        tokio::io::copy(&mut src, &mut dst).await?;
+        let cur = tokio::fs::metadata(dst_path).await?.len();
+        if target_size_bytes > cur {
+            dst.set_len(target_size_bytes).await?;
+        }
+        dst.flush().await?;
+        Ok(())
     }
 
     async fn resize2fs(&self, _attached: &AttachedPath) -> Result<(), StorageError> {
@@ -245,6 +257,33 @@ mod tests {
         };
         let attached = backend.attach(&v).await.unwrap();
         assert_eq!(attached.path(), expected_path.as_path());
+    }
+
+    #[tokio::test]
+    async fn populate_streaming_copies_then_truncates() {
+        let base = tempfile::tempdir().unwrap();
+        let cfg = NfsHostConfig {
+            mount_base: base.path().to_path_buf(),
+            assume_mounted: true,
+        };
+        let server = "10.0.0.5";
+        let export = "/mnt/tank/vms";
+        let file = "nfs-pop.raw";
+        let (path, _g) = fake_mounted_export(&cfg, server, export, file);
+
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("base.raw");
+        tokio::fs::write(&src, b"abc").await.unwrap();
+
+        let backend = NfsHostBackend::new(cfg);
+        backend
+            .populate_streaming(&AttachedPath::File(path.clone()), &src, 16)
+            .await
+            .unwrap();
+
+        let written = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(&written[..3], b"abc");
+        assert_eq!(written.len(), 16);
     }
 
     /// Live test: requires running as root or with CAP_SYS_ADMIN, and
