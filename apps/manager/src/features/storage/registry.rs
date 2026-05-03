@@ -284,8 +284,7 @@ mod tests {
             is_default: false,
             config_json: serde_json::json!({
                 "server": "10.0.0.5",
-                "export": "/mnt/tank/vms",
-                "manager_mount_path": "/tmp/nqrust-nfs-mgr"
+                "export": "/mnt/tank/vms"
             }),
             capabilities_json: serde_json::json!({}),
             deleted_at: None,

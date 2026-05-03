@@ -95,8 +95,9 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
             require_str(&raw.config, "export")
                 .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
-            require_str(&raw.config, "manager_mount_path")
-                .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
+            // No `manager_mount_path` requirement: the manager auto-mounts
+            // each `(server, export)` under `mount_base` (default
+            // `/var/lib/nqrust/nfs`). Operators don't run mount.nfs.
             Capabilities {
                 supports_native_snapshots: true,
                 supports_concurrent_attach: false,
@@ -187,7 +188,7 @@ mod tests {
             name: "nfs-test".into(),
             kind: BackendKind::Nfs,
             is_default: false,
-            config: serde_json::json!({"export": "/exports/vms", "manager_mount_path": "/mnt/nfs"}),
+            config: serde_json::json!({"export": "/exports/vms"}),
         };
         let err = validate(raw).unwrap_err();
         assert!(err.to_string().contains("server"), "{err}");

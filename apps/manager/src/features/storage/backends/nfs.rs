@@ -1,22 +1,60 @@
-//! NFS control-plane backend. The manager accesses the export through a
-//! local mount (`manager_mount_path`); all provision / destroy / clone
-//! ops are filesystem ops against that mount, just like LocalFile. The
-//! NFS-ness is captured in the locator JSON so the agent knows what to
-//! mount when it later attaches the volume.
+//! NFS control-plane backend. Operator only configures `server` and
+//! `export` — the manager handles its own mount lifecycle. On every
+//! provision/destroy/clone/snapshot it ensures the share is mounted at
+//! a deterministic path under `mount_base` (default `/var/lib/nqrust/nfs`,
+//! overridable per-backend) and proceeds with the filesystem op there.
+//!
+//! The NFS-ness is captured in the locator JSON `{server, export, file}`
+//! so the agent independently re-mounts on the agent host when it
+//! attaches the volume — the agent's mount lifecycle is separate from
+//! the manager's.
 
 use nexus_storage::{
     BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts, StorageError,
     VolumeHandle, VolumeSnapshotHandle,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+const DEFAULT_MOUNT_BASE: &str = "/var/lib/nqrust/nfs";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct NfsConfig {
     pub server: String,
     pub export: String,
-    pub manager_mount_path: PathBuf,
+    /// Where the manager creates per-`(server, export)` mount points.
+    /// Defaults to `/var/lib/nqrust/nfs` so most operators never set it.
+    /// Each backend gets its own subdirectory under this base, derived
+    /// deterministically from `(server, export)`, so two backends
+    /// pointing at different exports on the same server don't collide.
+    #[serde(default)]
+    pub mount_base: Option<PathBuf>,
+    /// If true, the manager trusts that the export is already mounted
+    /// at the resolved mount point and skips the mount.nfs invocation.
+    /// Useful for unit tests, environments managed by systemd.automount,
+    /// or hosts where the manager runs unprivileged. Production
+    /// deployments leave this false (the default) so the manager
+    /// auto-mounts.
+    #[serde(default)]
+    pub assume_mounted: bool,
+}
+
+impl NfsConfig {
+    fn mount_base(&self) -> PathBuf {
+        self.mount_base
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_MOUNT_BASE))
+    }
+
+    /// Deterministic per-`(server, export)` mount point under
+    /// `mount_base`. Same shape as the agent's `mount_point_for` so
+    /// operators can reason about either side from one rule.
+    pub fn mount_point(&self) -> PathBuf {
+        let exp = self.export.trim_start_matches('/').replace('/', "_");
+        let server_safe = self.server.replace([':', '/'], "_");
+        self.mount_base().join(format!("{server_safe}:{exp}"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +88,75 @@ pub struct NfsControlPlaneBackend {
     pub config: NfsConfig,
 }
 
+impl NfsControlPlaneBackend {
+    /// Idempotent mount. If the export is already mounted at
+    /// `mount_point()` as the expected source, succeed silently. If
+    /// nothing is mounted there, run `mount -t nfs <server>:<export>
+    /// <mount_point>`. If something else is mounted there, fail loudly.
+    ///
+    /// Skipped when `config.assume_mounted` is true (test/automount).
+    async fn ensure_mounted(&self) -> Result<PathBuf, StorageError> {
+        let mount_point = self.config.mount_point();
+        if self.config.assume_mounted {
+            tokio::fs::create_dir_all(&mount_point).await?;
+            return Ok(mount_point);
+        }
+        tokio::fs::create_dir_all(&mount_point).await?;
+        let want = format!("{}:{}", self.config.server, self.config.export);
+        let probe = tokio::process::Command::new("findmnt")
+            .arg("--target")
+            .arg(&mount_point)
+            .arg("--noheadings")
+            .arg("--output")
+            .arg("SOURCE")
+            .output()
+            .await;
+        let source_line = match probe {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            // findmnt ran, exit != 0: nothing mounted there.
+            Ok(_) => String::new(),
+            // findmnt failed to spawn — probably missing from PATH. Surface
+            // it so operators install nfs-common rather than discover the
+            // double-mount silently.
+            Err(e) => {
+                return Err(StorageError::backend(std::io::Error::other(format!(
+                    "findmnt not available (install nfs-common / util-linux): {e}"
+                ))));
+            }
+        };
+        if source_line == want {
+            return Ok(mount_point);
+        }
+        if !source_line.is_empty() {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "{} is already mounted from '{}', not '{}'",
+                mount_point.display(),
+                source_line,
+                want
+            ))));
+        }
+        let status = tokio::process::Command::new("mount")
+            .arg("-t")
+            .arg("nfs")
+            .arg(&want)
+            .arg(&mount_point)
+            .status()
+            .await
+            .map_err(|e| {
+                StorageError::backend(std::io::Error::other(format!("mount.nfs spawn: {e}")))
+            })?;
+        if !status.success() {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "mount.nfs {} -> {} exited {}",
+                want,
+                mount_point.display(),
+                status
+            ))));
+        }
+        Ok(mount_point)
+    }
+}
+
 #[async_trait::async_trait]
 impl ControlPlaneBackend for NfsControlPlaneBackend {
     fn kind(&self) -> BackendKind {
@@ -65,14 +172,11 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
         }
     }
 
-    async fn provision(
-        &self,
-        opts: CreateOpts,
-    ) -> Result<VolumeHandle, nexus_storage::StorageError> {
+    async fn provision(&self, opts: CreateOpts) -> Result<VolumeHandle, StorageError> {
+        let mount = self.ensure_mounted().await?;
         let vol_id = Uuid::new_v4();
         let file = format!("nfs-{vol_id}.raw");
-        let path = self.config.manager_mount_path.join(&file);
-        tokio::fs::create_dir_all(&self.config.manager_mount_path).await?;
+        let path = mount.join(&file);
         let f = tokio::fs::File::create(&path).await?;
         f.set_len(opts.size_bytes).await?;
         drop(f);
@@ -90,27 +194,28 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
         })
     }
 
-    async fn destroy(&self, h: VolumeHandle) -> Result<(), nexus_storage::StorageError> {
+    async fn destroy(&self, h: VolumeHandle) -> Result<(), StorageError> {
         let loc = NfsLocator::from_locator_str(&h.locator)?;
-        let path = self.config.manager_mount_path.join(&loc.file);
+        let mount = self.ensure_mounted().await?;
+        let path = mount.join(&loc.file);
         match tokio::fs::remove_file(&path).await {
             Ok(()) => Ok(()),
             // Idempotent: a destroy that races with another caller (or
             // re-runs after a crash) is success, not error.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(nexus_storage::StorageError::from(e)),
+            Err(e) => Err(StorageError::from(e)),
         }
     }
 
     async fn clone_from_image(
         &self,
-        src: &std::path::Path,
+        src: &Path,
         opts: CreateOpts,
-    ) -> Result<VolumeHandle, nexus_storage::StorageError> {
+    ) -> Result<VolumeHandle, StorageError> {
+        let mount = self.ensure_mounted().await?;
         let vol_id = Uuid::new_v4();
         let file = format!("nfs-{vol_id}.raw");
-        let dst = self.config.manager_mount_path.join(&file);
-        tokio::fs::create_dir_all(&self.config.manager_mount_path).await?;
+        let dst = mount.join(&file);
         tokio::fs::copy(src, &dst).await?;
         let cur = tokio::fs::metadata(&dst).await?.len();
         if opts.size_bytes != cur {
@@ -135,16 +240,17 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
         &self,
         v: &VolumeHandle,
         name: &str,
-    ) -> Result<VolumeSnapshotHandle, nexus_storage::StorageError> {
+    ) -> Result<VolumeSnapshotHandle, StorageError> {
         if name.is_empty() || name.contains('/') {
-            return Err(nexus_storage::StorageError::InvalidLocator(
+            return Err(StorageError::InvalidLocator(
                 "snapshot name must be non-empty and contain no '/'".into(),
             ));
         }
+        let mount = self.ensure_mounted().await?;
         let src_loc = NfsLocator::from_locator_str(&v.locator)?;
-        let src_path = self.config.manager_mount_path.join(&src_loc.file);
+        let src_path = mount.join(&src_loc.file);
         let snap_file = format!("{}.snap-{name}", src_loc.file);
-        let snap_path = self.config.manager_mount_path.join(&snap_file);
+        let snap_path = mount.join(&snap_file);
         tokio::fs::copy(&src_path, &snap_path).await?;
         // Maintain the volume's provisioned size on the snapshot file so
         // clone_from_snapshot doesn't return a smaller size_bytes when
@@ -171,12 +277,13 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
     async fn clone_from_snapshot(
         &self,
         s: &VolumeSnapshotHandle,
-    ) -> Result<VolumeHandle, nexus_storage::StorageError> {
+    ) -> Result<VolumeHandle, StorageError> {
+        let mount = self.ensure_mounted().await?;
         let src_loc = NfsLocator::from_locator_str(&s.locator)?;
-        let src_path = self.config.manager_mount_path.join(&src_loc.file);
+        let src_path = mount.join(&src_loc.file);
         let vol_id = Uuid::new_v4();
         let file = format!("nfs-{vol_id}.raw");
-        let dst = self.config.manager_mount_path.join(&file);
+        let dst = mount.join(&file);
         tokio::fs::copy(&src_path, &dst).await?;
         // The snapshot file is already at the provisioned size (it's a
         // straight copy of the source volume), so no truncation here.
@@ -195,16 +302,14 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
         })
     }
 
-    async fn delete_snapshot(
-        &self,
-        s: VolumeSnapshotHandle,
-    ) -> Result<(), nexus_storage::StorageError> {
+    async fn delete_snapshot(&self, s: VolumeSnapshotHandle) -> Result<(), StorageError> {
         let loc = NfsLocator::from_locator_str(&s.locator)?;
-        let path = self.config.manager_mount_path.join(&loc.file);
+        let mount = self.ensure_mounted().await?;
+        let path = mount.join(&loc.file);
         match tokio::fs::remove_file(&path).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(nexus_storage::StorageError::from(e)),
+            Err(e) => Err(StorageError::from(e)),
         }
     }
 }
@@ -216,18 +321,47 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn nfs_config_parses_minimal_json() {
+    fn nfs_config_parses_minimal_json_without_mount_path() {
+        // Operator only types server + export. No `manager_mount_path` —
+        // that step is now the manager's job, not the operator's.
         let json = serde_json::json!({
             "server": "10.0.0.5",
-            "export": "/mnt/tank/vms",
-            "manager_mount_path": "/mnt/nfs-manager"
+            "export": "/mnt/tank/vms"
         });
         let cfg: NfsConfig = serde_json::from_value(json).unwrap();
         assert_eq!(cfg.server, "10.0.0.5");
         assert_eq!(cfg.export, "/mnt/tank/vms");
+        assert_eq!(cfg.mount_base, None);
+        assert!(!cfg.assume_mounted);
+    }
+
+    #[test]
+    fn mount_base_defaults_to_var_lib_nqrust_nfs() {
+        let cfg = NfsConfig {
+            server: "10.0.0.5".into(),
+            export: "/mnt/tank/vms".into(),
+            mount_base: None,
+            assume_mounted: false,
+        };
+        assert_eq!(cfg.mount_base(), PathBuf::from(DEFAULT_MOUNT_BASE));
+    }
+
+    #[test]
+    fn mount_point_is_unique_and_filesystem_safe() {
+        let make = |server: &str, export: &str| NfsConfig {
+            server: server.into(),
+            export: export.into(),
+            mount_base: Some(PathBuf::from("/var/lib/nqrust/nfs")),
+            assume_mounted: false,
+        };
+        let a = make("10.0.0.5", "/mnt/tank/vms").mount_point();
+        let b = make("10.0.0.5", "/mnt/tank/iso").mount_point();
+        let c = make("10.0.0.6", "/mnt/tank/vms").mount_point();
+        assert_ne!(a, b);
+        assert_ne!(a, c);
         assert_eq!(
-            cfg.manager_mount_path,
-            std::path::PathBuf::from("/mnt/nfs-manager")
+            a,
+            PathBuf::from("/var/lib/nqrust/nfs/10.0.0.5:mnt_tank_vms")
         );
     }
 
@@ -267,6 +401,11 @@ mod tests {
         assert!(matches!(err, StorageError::InvalidLocator(_)), "{err}");
     }
 
+    /// Build a backend whose `mount_base` is a tempdir and whose
+    /// `assume_mounted` flag is true so the runtime tests don't try
+    /// to invoke `mount.nfs`. The mount point under the tempdir
+    /// substitutes for a real NFS mount; the rest of the codepath is
+    /// identical.
     fn temp_backend() -> (NfsControlPlaneBackend, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = NfsControlPlaneBackend {
@@ -274,7 +413,8 @@ mod tests {
             config: NfsConfig {
                 server: "10.0.0.5".into(),
                 export: "/mnt/tank/vms".into(),
-                manager_mount_path: dir.path().to_path_buf(),
+                mount_base: Some(dir.path().to_path_buf()),
+                assume_mounted: true,
             },
         };
         (backend, dir)
@@ -292,7 +432,7 @@ mod tests {
             .await
             .unwrap();
         let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
-        let path = backend.config.manager_mount_path.join(&loc.file);
+        let path = backend.config.mount_point().join(&loc.file);
         assert!(tokio::fs::metadata(&path).await.is_ok());
         backend.destroy(h).await.expect("destroy");
         assert!(tokio::fs::metadata(&path).await.is_err());
@@ -327,7 +467,7 @@ mod tests {
         };
         let h = backend.provision(opts).await.expect("provision");
         let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
-        let path = backend.config.manager_mount_path.join(&loc.file);
+        let path = backend.config.mount_point().join(&loc.file);
         let meta = tokio::fs::metadata(&path).await.unwrap();
         assert_eq!(meta.len(), 4 * 1024 * 1024);
         assert_eq!(loc.server, "10.0.0.5");
@@ -348,15 +488,14 @@ mod tests {
             .await
             .unwrap();
         let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
-        let src_path = backend.config.manager_mount_path.join(&loc.file);
+        let src_path = backend.config.mount_point().join(&loc.file);
         // Write LESS data than the provisioned size to verify the
         // snapshot still reports the full provisioned size.
         tokio::fs::write(&src_path, b"original-data").await.unwrap();
 
         let snap = backend.snapshot(&h, "snap-1").await.expect("snapshot");
         let snap_loc = NfsLocator::from_locator_str(&snap.locator).unwrap();
-        let snap_path = backend.config.manager_mount_path.join(&snap_loc.file);
-        // The snapshot file is padded back up to the provisioned size.
+        let snap_path = backend.config.mount_point().join(&snap_loc.file);
         let snap_meta = tokio::fs::metadata(&snap_path).await.unwrap();
         assert_eq!(
             snap_meta.len(),
@@ -368,7 +507,7 @@ mod tests {
 
         let cloned = backend.clone_from_snapshot(&snap).await.expect("clone");
         let cloned_loc = NfsLocator::from_locator_str(&cloned.locator).unwrap();
-        let cloned_path = backend.config.manager_mount_path.join(&cloned_loc.file);
+        let cloned_path = backend.config.mount_point().join(&cloned_loc.file);
         let cloned_meta = tokio::fs::metadata(&cloned_path).await.unwrap();
         assert_eq!(
             cloned_meta.len(),
@@ -402,7 +541,7 @@ mod tests {
         };
         let h = backend.clone_from_image(&src, opts).await.unwrap();
         let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
-        let path = backend.config.manager_mount_path.join(&loc.file);
+        let path = backend.config.mount_point().join(&loc.file);
         let meta = tokio::fs::metadata(&path).await.unwrap();
         assert_eq!(meta.len(), 4096);
         let buf = tokio::fs::read(&path).await.unwrap();
@@ -423,7 +562,7 @@ mod tests {
         };
         let h = backend.clone_from_image(&src, opts).await.unwrap();
         let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
-        let path = backend.config.manager_mount_path.join(&loc.file);
+        let path = backend.config.mount_point().join(&loc.file);
         let meta = tokio::fs::metadata(&path).await.unwrap();
         assert_eq!(
             meta.len(),

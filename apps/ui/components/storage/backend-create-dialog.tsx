@@ -48,15 +48,25 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
   nfs: {
     label: "NFS",
     description:
-      "VM disks live as files on an NFS export. The manager must have the export mounted at manager_mount_path; agents mount on demand.",
+      "VM disks live as files on an NFS export. The manager auto-mounts the share under /var/lib/nqrust/nfs/ — operators don't run mount.nfs. Agents mount on demand on their own hosts.",
     fields: [
-      { key: "server", label: "NFS server", placeholder: "10.0.0.5", hint: "IP or hostname of the NFS server." },
-      { key: "export", label: "Export path", placeholder: "/mnt/tank/vms", hint: "Path the server exports." },
       {
-        key: "manager_mount_path",
-        label: "Manager mount path",
-        placeholder: "/mnt/nfs-mgr",
-        hint: "Where the manager process has the export mounted locally. Must exist and be writable.",
+        key: "server",
+        label: "NFS server",
+        placeholder: "10.0.0.5",
+        hint: "IP or hostname of the NFS server.",
+      },
+      {
+        key: "export",
+        label: "Export path",
+        placeholder: "/mnt/tank/vms",
+        hint: "Path the server exports.",
+      },
+      {
+        key: "mount_base",
+        label: "Mount base (optional)",
+        placeholder: "/var/lib/nqrust/nfs",
+        hint: "Where the manager creates per-(server, export) mount points. Default /var/lib/nqrust/nfs. Most operators leave this blank.",
       },
     ],
   },
