@@ -175,12 +175,17 @@ impl HostBackend for NfsHostBackend {
 
     async fn read_snapshot(
         &self,
-        _snap: &VolumeSnapshotHandle,
+        snap: &VolumeSnapshotHandle,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StorageError> {
-        // Implemented in Task 13.
-        Err(StorageError::NotSupported(
-            "read_snapshot not yet implemented".into(),
-        ))
+        let loc = self.locator(&snap.locator)?;
+        let mount = self.config.mount_point_for(&loc.server, &loc.export);
+        if !self.config.assume_mounted {
+            self.ensure_mounted(&loc.server, &loc.export, &mount)
+                .await?;
+        }
+        let path = mount.join(&loc.file);
+        let f = tokio::fs::File::open(&path).await?;
+        Ok(Box::new(f))
     }
 }
 
@@ -357,5 +362,34 @@ mod tests {
             .arg(&mount)
             .status()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn read_snapshot_returns_file_contents() {
+        use tokio::io::AsyncReadExt;
+
+        let base = tempfile::tempdir().unwrap();
+        let cfg = NfsHostConfig {
+            mount_base: base.path().to_path_buf(),
+            assume_mounted: true,
+        };
+        let server = "10.0.0.5";
+        let export = "/mnt/tank/vms";
+        let file = "nfs-abc.raw.snap-x";
+        let (path, _g) = fake_mounted_export(&cfg, server, export, file);
+        tokio::fs::write(&path, b"snapshot-bytes").await.unwrap();
+
+        let backend = NfsHostBackend::new(cfg);
+        let snap = VolumeSnapshotHandle {
+            snapshot_id: Uuid::new_v4(),
+            backend_id: nexus_storage::BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::Nfs,
+            locator: locator_json(server, export, file),
+            source_volume_id: Uuid::new_v4(),
+        };
+        let mut r = backend.read_snapshot(&snap).await.unwrap();
+        let mut buf = Vec::new();
+        r.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, b"snapshot-bytes");
     }
 }
