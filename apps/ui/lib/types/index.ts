@@ -1111,6 +1111,13 @@ export interface IscsiScanResponse {
   targets: IscsiTarget[];
 }
 
+export interface BackendHealth {
+  reachable: boolean;
+  status: string;
+  used_bytes?: number;
+  total_bytes?: number;
+}
+
 // ========================================
 // Backup Types
 // ========================================

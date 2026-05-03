@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Trash2 } from "lucide-react";
 import type { BackendKind, StorageBackend } from "@/lib/types";
-import { useDeleteStorageBackend } from "@/lib/queries";
+import { useDeleteStorageBackend, useBackendHealth } from "@/lib/queries";
 
 const KIND_LABEL: Record<BackendKind, string> = {
   local_file: "Local file",
@@ -35,6 +35,45 @@ const KIND_LABEL: Record<BackendKind, string> = {
 
 const EXTERNAL_KINDS: BackendKind[] = ["iscsi", "truenas_iscsi", "nfs"];
 
+function StatusDot({ id }: { id: string }) {
+  const { data, isLoading } = useBackendHealth(id);
+  if (isLoading || !data) {
+    return <span className="inline-block h-2.5 w-2.5 rounded-full bg-muted" />;
+  }
+  return (
+    <span
+      className={`inline-block h-2.5 w-2.5 rounded-full ${
+        data.reachable ? "bg-green-500" : "bg-red-500"
+      }`}
+      title={data.status}
+    />
+  );
+}
+
+function CapacityCell({ id }: { id: string }) {
+  const { data } = useBackendHealth(id);
+  if (!data || data.total_bytes === undefined || data.used_bytes === undefined) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const used = formatBytes(data.used_bytes);
+  const total = formatBytes(data.total_bytes);
+  const pct = data.total_bytes > 0 ? Math.round((data.used_bytes / data.total_bytes) * 100) : 0;
+  return (
+    <span className="text-xs">
+      {used} / {total}{" "}
+      <span className="text-muted-foreground">({pct}%)</span>
+    </span>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MiB`;
+  if (n < 1024 ** 4) return `${(n / 1024 ** 3).toFixed(2)} GiB`;
+  return `${(n / 1024 ** 4).toFixed(2)} TiB`;
+}
+
 export function BackendTable({ backends }: { backends: StorageBackend[] }) {
   const del = useDeleteStorageBackend();
 
@@ -42,9 +81,11 @@ export function BackendTable({ backends }: { backends: StorageBackend[] }) {
     <Table>
       <TableHeader>
         <TableRow>
+          <TableHead className="w-[50px]">Status</TableHead>
           <TableHead>Name</TableHead>
           <TableHead>Kind</TableHead>
           <TableHead>Capabilities</TableHead>
+          <TableHead>Capacity</TableHead>
           <TableHead>Default</TableHead>
           <TableHead className="text-right">Actions</TableHead>
         </TableRow>
@@ -52,6 +93,7 @@ export function BackendTable({ backends }: { backends: StorageBackend[] }) {
       <TableBody>
         {backends.map((b) => (
           <TableRow key={b.id}>
+            <TableCell><StatusDot id={b.id} /></TableCell>
             <TableCell className="font-medium">{b.name}</TableCell>
             <TableCell>
               <div className="flex items-center gap-2">
@@ -77,6 +119,7 @@ export function BackendTable({ backends }: { backends: StorageBackend[] }) {
                 )}
               </div>
             </TableCell>
+            <TableCell><CapacityCell id={b.id} /></TableCell>
             <TableCell>
               {b.is_default ? <Badge>default</Badge> : <span className="text-muted-foreground">—</span>}
             </TableCell>

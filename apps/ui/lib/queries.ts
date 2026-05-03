@@ -1470,6 +1470,15 @@ export function useScanIscsiTargets(portal: string, enabled: boolean) {
   });
 }
 
+export function useBackendHealth(id: string) {
+  return useQuery({
+    queryKey: ["storage_backends", id, "health"],
+    queryFn: async () => facadeApi.getBackendHealth(id),
+    refetchInterval: 15_000,
+    retry: false,
+  });
+}
+
 // ==============
 // Backups
 // ==============

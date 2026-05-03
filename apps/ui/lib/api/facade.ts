@@ -763,6 +763,10 @@ export class FacadeApi {
     );
   }
 
+  async getBackendHealth(id: string): Promise<import("@/lib/types").BackendHealth> {
+    return apiClient.get<import("@/lib/types").BackendHealth>(`/storage_backends/${id}/health`);
+  }
+
   // ==============
   // User Management
   // ==============
