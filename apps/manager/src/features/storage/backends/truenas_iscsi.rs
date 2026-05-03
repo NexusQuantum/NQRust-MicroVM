@@ -1,10 +1,17 @@
-//! TrueNAS iSCSI control-plane backend. Provisions zvols via TrueNAS REST API,
-//! creates iSCSI extents and assigns LUNs. The volume's locator is a JSON
-//! object: {"iqn":"...","lun":N,"dataset":"pool/v-<uuid>","portal":"..."}.
+//! TrueNAS iSCSI control-plane backend. Provisions one **target per
+//! volume** (Harvester-CSI style) so the operator never has to pre-create
+//! anything on TrueNAS — they only configure the endpoint, API key, and
+//! pool. Per-volume targets give clean isolation, simple per-target ACLs,
+//! straightforward cleanup, and TrueNAS-UI clarity (one row per volume).
 //!
-//! This implementation is intentionally minimum-viable for Plan 2. Snapshot
-//! and clone_from_snapshot are stubbed as NotSupported; the trait still
-//! advertises supports_native_snapshots: true so future work can fill it in.
+//! Flow per provision (4 REST calls):
+//! 1. `POST /api/v2.0/pool/dataset`      — create the zvol
+//! 2. `POST /api/v2.0/iscsi/extent`      — create the extent backed by the zvol
+//! 3. `POST /api/v2.0/iscsi/target`      — create the per-volume target
+//! 4. `POST /api/v2.0/iscsi/targetextent` — associate target + extent at LUN 0
+//!
+//! Destroy reverses the order. The locator stores all four ids so destroy
+//! can clean up cleanly.
 
 use nexus_storage::{
     BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts, StorageError,
@@ -20,9 +27,36 @@ pub struct TrueNasConfig {
     pub endpoint: String,
     pub api_key_env: String,
     pub pool: String,
-    pub target_iqn_prefix: String,
+    /// Optional iSCSI portal `<ip>:<port>` recorded in the locator so the
+    /// agent can pass it to `iscsiadm -p`. If unset, the agent uses the
+    /// portal it discovers via `iscsiadm -m discovery`.
     #[serde(default)]
     pub portal: Option<String>,
+    /// Optional prefix for per-volume target names. Final TrueNAS target
+    /// name is `<target_name_prefix><uuid>`. Default is `nqrust-v-`. The
+    /// full IQN is computed by TrueNAS as `<global.basename>:<name>` so
+    /// operators see e.g. `iqn.2005-10.org.freenas.ctl:nqrust-v-<uuid>`.
+    #[serde(default)]
+    pub target_name_prefix: Option<String>,
+    /// Optional iSCSI portal-group id to associate the target with. If
+    /// unset, the per-volume target is created with an empty `groups`
+    /// array — the operator must associate a portal group via the
+    /// TrueNAS UI before clients can connect. Set this to the id of an
+    /// existing portal group to make provisioning fully hands-off.
+    #[serde(default)]
+    pub portal_group_id: Option<u32>,
+    /// Optional iSCSI initiator-group id to associate the target with.
+    /// Same semantics as `portal_group_id` — set it to make
+    /// provisioning fully hands-off; leave unset and the operator must
+    /// add an initiator group via the UI.
+    #[serde(default)]
+    pub initiator_group_id: Option<u32>,
+}
+
+impl TrueNasConfig {
+    fn target_name_prefix(&self) -> &str {
+        self.target_name_prefix.as_deref().unwrap_or("nqrust-v-")
+    }
 }
 
 pub struct TrueNasIscsiControlPlaneBackend {
@@ -32,11 +66,17 @@ pub struct TrueNasIscsiControlPlaneBackend {
     pub http: Client,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct LocatorJson {
     pub iqn: String,
     pub lun: u32,
     pub dataset: String,
+    /// TrueNAS extent id, recorded so destroy can delete cleanly.
+    pub extent_id: u32,
+    /// TrueNAS target id, recorded so destroy can delete cleanly.
+    pub target_id: u32,
+    /// TrueNAS targetextent (association) id.
+    pub targetextent_id: u32,
     #[serde(default)]
     pub portal: Option<String>,
 }
@@ -44,6 +84,32 @@ pub struct LocatorJson {
 impl TrueNasIscsiControlPlaneBackend {
     fn auth_header(&self) -> String {
         format!("Bearer {}", self.api_key)
+    }
+
+    /// Read TrueNAS's global iSCSI `basename`. The full IQN of any target
+    /// is `<basename>:<target.name>`.
+    async fn iscsi_basename(&self) -> Result<String, StorageError> {
+        #[derive(Deserialize)]
+        struct GlobalResp {
+            basename: String,
+        }
+        let url = format!("{}/api/v2.0/iscsi/global", self.config.endpoint);
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", self.auth_header())
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let t = resp.text().await.unwrap_or_default();
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "iscsi/global GET {s}: {t}"
+            ))));
+        }
+        let g: GlobalResp = resp.json().await.map_err(StorageError::backend)?;
+        Ok(g.basename)
     }
 
     async fn create_zvol(&self, name: &str, size_bytes: u64) -> Result<String, StorageError> {
@@ -68,13 +134,13 @@ impl TrueNasIscsiControlPlaneBackend {
             })
             .send()
             .await
-            .map_err(|e| StorageError::Backend(Box::new(e)))?;
+            .map_err(StorageError::backend)?;
         if !resp.status().is_success() {
             let s = resp.status();
             let t = resp.text().await.unwrap_or_default();
-            return Err(StorageError::Backend(
-                anyhow::anyhow!("create_zvol {}: {}", s, t).into(),
-            ));
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "create_zvol {s}: {t}"
+            ))));
         }
         Ok(dataset)
     }
@@ -91,28 +157,25 @@ impl TrueNasIscsiControlPlaneBackend {
             .header("Authorization", self.auth_header())
             .send()
             .await
-            .map_err(|e| StorageError::Backend(Box::new(e)))?;
+            .map_err(StorageError::backend)?;
         if !resp.status().is_success() && resp.status() != reqwest::StatusCode::NOT_FOUND {
-            return Err(StorageError::Backend(
-                anyhow::anyhow!("delete_zvol: {}", resp.status()).into(),
-            ));
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "delete_zvol: {}",
+                resp.status()
+            ))));
         }
         Ok(())
     }
 
-    /// Create an iSCSI extent for the zvol and return the assigned LUN id.
-    /// TrueNAS allocates LUNs automatically when the extent is associated
-    /// with a target via /iscsi/targetextent.
-    async fn create_lun_for_zvol(&self, dataset: &str) -> Result<u32, StorageError> {
-        // Create extent
+    async fn create_extent(&self, dataset: &str) -> Result<u32, StorageError> {
         #[derive(Serialize)]
-        struct ExtentReq<'a> {
+        struct Req<'a> {
             name: &'a str,
             r#type: &'a str,
             disk: String,
         }
         #[derive(Deserialize)]
-        struct ExtentResp {
+        struct Resp {
             id: u32,
         }
         let url = format!("{}/api/v2.0/iscsi/extent", self.config.endpoint);
@@ -120,28 +183,182 @@ impl TrueNasIscsiControlPlaneBackend {
             .http
             .post(&url)
             .header("Authorization", self.auth_header())
-            .json(&ExtentReq {
+            .json(&Req {
                 name: dataset,
                 r#type: "DISK",
-                disk: format!("zvol/{}", dataset),
+                disk: format!("zvol/{dataset}"),
             })
             .send()
             .await
-            .map_err(|e| StorageError::Backend(Box::new(e)))?;
+            .map_err(StorageError::backend)?;
         if !resp.status().is_success() {
             let s = resp.status();
             let t = resp.text().await.unwrap_or_default();
-            return Err(StorageError::Backend(
-                anyhow::anyhow!("create_extent {}: {}", s, t).into(),
-            ));
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "create_extent {s}: {t}"
+            ))));
         }
-        let extent: ExtentResp = resp
-            .json()
+        let r: Resp = resp.json().await.map_err(StorageError::backend)?;
+        Ok(r.id)
+    }
+
+    async fn delete_extent(&self, extent_id: u32) -> Result<(), StorageError> {
+        let url = format!(
+            "{}/api/v2.0/iscsi/extent/id/{extent_id}",
+            self.config.endpoint
+        );
+        let resp = self
+            .http
+            .delete(&url)
+            .header("Authorization", self.auth_header())
+            .send()
             .await
-            .map_err(|e| StorageError::Backend(Box::new(e)))?;
-        // Use the extent id as the LUN id (acceptable approximation; production
-        // would query target↔extent mapping for the actual lun number).
-        Ok(extent.id)
+            .map_err(StorageError::backend)?;
+        if !resp.status().is_success() && resp.status() != reqwest::StatusCode::NOT_FOUND {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "delete_extent: {}",
+                resp.status()
+            ))));
+        }
+        Ok(())
+    }
+
+    async fn create_target(&self, target_name: &str) -> Result<u32, StorageError> {
+        #[derive(Serialize)]
+        struct GroupRef {
+            portal: Option<u32>,
+            initiator: Option<u32>,
+            authmethod: &'static str,
+            auth: Option<u32>,
+        }
+        #[derive(Serialize)]
+        struct Req<'a> {
+            name: &'a str,
+            mode: &'a str,
+            groups: Vec<GroupRef>,
+        }
+        #[derive(Deserialize)]
+        struct Resp {
+            id: u32,
+        }
+        // If the operator configured a portal group, build a single
+        // groups entry for it. Without one, TrueNAS accepts an empty
+        // `groups` array but the target is unreachable until the
+        // operator adds one via the UI.
+        let groups: Vec<GroupRef> =
+            if self.config.portal_group_id.is_some() || self.config.initiator_group_id.is_some() {
+                vec![GroupRef {
+                    portal: self.config.portal_group_id,
+                    initiator: self.config.initiator_group_id,
+                    authmethod: "NONE",
+                    auth: None,
+                }]
+            } else {
+                Vec::new()
+            };
+        let url = format!("{}/api/v2.0/iscsi/target", self.config.endpoint);
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .json(&Req {
+                name: target_name,
+                mode: "ISCSI",
+                groups,
+            })
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let t = resp.text().await.unwrap_or_default();
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "create_target {s}: {t}"
+            ))));
+        }
+        let r: Resp = resp.json().await.map_err(StorageError::backend)?;
+        Ok(r.id)
+    }
+
+    async fn delete_target(&self, target_id: u32) -> Result<(), StorageError> {
+        let url = format!(
+            "{}/api/v2.0/iscsi/target/id/{target_id}",
+            self.config.endpoint
+        );
+        let resp = self
+            .http
+            .delete(&url)
+            .header("Authorization", self.auth_header())
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !resp.status().is_success() && resp.status() != reqwest::StatusCode::NOT_FOUND {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "delete_target: {}",
+                resp.status()
+            ))));
+        }
+        Ok(())
+    }
+
+    async fn associate_target_extent(
+        &self,
+        target_id: u32,
+        extent_id: u32,
+    ) -> Result<u32, StorageError> {
+        #[derive(Serialize)]
+        struct Req {
+            target: u32,
+            extent: u32,
+            lunid: u32,
+        }
+        #[derive(Deserialize)]
+        struct Resp {
+            id: u32,
+        }
+        let url = format!("{}/api/v2.0/iscsi/targetextent", self.config.endpoint);
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .json(&Req {
+                target: target_id,
+                extent: extent_id,
+                lunid: 0,
+            })
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let t = resp.text().await.unwrap_or_default();
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "create_targetextent {s}: {t}"
+            ))));
+        }
+        let r: Resp = resp.json().await.map_err(StorageError::backend)?;
+        Ok(r.id)
+    }
+
+    async fn delete_target_extent(&self, te_id: u32) -> Result<(), StorageError> {
+        let url = format!(
+            "{}/api/v2.0/iscsi/targetextent/id/{te_id}",
+            self.config.endpoint
+        );
+        let resp = self
+            .http
+            .delete(&url)
+            .header("Authorization", self.auth_header())
+            .send()
+            .await
+            .map_err(StorageError::backend)?;
+        if !resp.status().is_success() && resp.status() != reqwest::StatusCode::NOT_FOUND {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "delete_targetextent: {}",
+                resp.status()
+            ))));
+        }
+        Ok(())
     }
 }
 
@@ -163,16 +380,57 @@ impl ControlPlaneBackend for TrueNasIscsiControlPlaneBackend {
     async fn provision(&self, opts: CreateOpts) -> Result<VolumeHandle, StorageError> {
         let vol_id = Uuid::new_v4();
         let zvol_name = format!("v-{vol_id}");
+        let target_name = format!("{}{vol_id}", self.config.target_name_prefix());
+
+        // Read TrueNAS basename so we can store the full IQN in the
+        // locator. One extra REST call per provision; acceptable. A
+        // future optimization can cache it on the backend struct.
+        let basename = self.iscsi_basename().await?;
+        let iqn = format!("{basename}:{target_name}");
+
+        // 1. zvol
         let dataset = self.create_zvol(&zvol_name, opts.size_bytes).await?;
-        let lun = self.create_lun_for_zvol(&dataset).await?;
+
+        // 2. extent — rollback zvol on failure.
+        let extent_id = match self.create_extent(&dataset).await {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = self.delete_zvol(&dataset).await;
+                return Err(e);
+            }
+        };
+
+        // 3. target — rollback extent + zvol on failure.
+        let target_id = match self.create_target(&target_name).await {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = self.delete_extent(extent_id).await;
+                let _ = self.delete_zvol(&dataset).await;
+                return Err(e);
+            }
+        };
+
+        // 4. associate — rollback target + extent + zvol on failure.
+        let targetextent_id = match self.associate_target_extent(target_id, extent_id).await {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = self.delete_target(target_id).await;
+                let _ = self.delete_extent(extent_id).await;
+                let _ = self.delete_zvol(&dataset).await;
+                return Err(e);
+            }
+        };
+
         let locator = LocatorJson {
-            iqn: self.config.target_iqn_prefix.clone(),
-            lun,
-            dataset: dataset.clone(),
+            iqn,
+            lun: 0,
+            dataset,
+            extent_id,
+            target_id,
+            targetextent_id,
             portal: self.config.portal.clone(),
         };
-        let locator_str =
-            serde_json::to_string(&locator).map_err(|e| StorageError::Backend(Box::new(e)))?;
+        let locator_str = serde_json::to_string(&locator).map_err(StorageError::backend)?;
         Ok(VolumeHandle {
             volume_id: vol_id,
             backend_id: self.id,
@@ -185,9 +443,11 @@ impl ControlPlaneBackend for TrueNasIscsiControlPlaneBackend {
     async fn destroy(&self, handle: VolumeHandle) -> Result<(), StorageError> {
         let loc: LocatorJson = serde_json::from_str(&handle.locator)
             .map_err(|e| StorageError::InvalidLocator(format!("{}: {}", handle.locator, e)))?;
-        // Best-effort: delete extent and zvol. We don't track extent id on the
-        // handle yet; deleting the zvol typically cascades or leaves the extent
-        // dangling — operator may need to clean up extents separately.
+        // Reverse order. Each step is best-effort: if a downstream object
+        // is already gone (404) we treat that as success and continue.
+        let _ = self.delete_target_extent(loc.targetextent_id).await;
+        let _ = self.delete_target(loc.target_id).await;
+        let _ = self.delete_extent(loc.extent_id).await;
         self.delete_zvol(&loc.dataset).await
     }
 
@@ -228,11 +488,34 @@ mod tests {
     use super::*;
     use nexus_storage::CreateOpts;
 
+    fn backend_with(server_url: &str) -> TrueNasIscsiControlPlaneBackend {
+        TrueNasIscsiControlPlaneBackend {
+            id: BackendInstanceId(uuid::Uuid::new_v4()),
+            config: TrueNasConfig {
+                endpoint: server_url.to_string(),
+                api_key_env: "_unused_".into(),
+                pool: "tank".into(),
+                portal: None,
+                target_name_prefix: None,
+                portal_group_id: Some(1),
+                initiator_group_id: Some(1),
+            },
+            api_key: "test".into(),
+            http: reqwest::Client::new(),
+        }
+    }
+
     #[tokio::test]
-    async fn truenas_provision_calls_create_zvol() {
+    async fn provision_creates_zvol_extent_target_and_association() {
         let mut server = mockito::Server::new_async().await;
 
-        // The zvol endpoint: create_zvol checks status only, doesn't parse response body.
+        let global_mock = server
+            .mock("GET", "/api/v2.0/iscsi/global")
+            .with_status(200)
+            .with_body(r#"{"basename":"iqn.2005-10.org.freenas.ctl"}"#)
+            .create_async()
+            .await;
+
         let zvol_mock = server
             .mock("POST", "/api/v2.0/pool/dataset")
             .with_status(200)
@@ -240,7 +523,6 @@ mod tests {
             .create_async()
             .await;
 
-        // The extent endpoint: create_lun_for_zvol parses {"id": N} to get the LUN.
         let extent_mock = server
             .mock("POST", "/api/v2.0/iscsi/extent")
             .with_status(200)
@@ -248,19 +530,21 @@ mod tests {
             .create_async()
             .await;
 
-        let backend = TrueNasIscsiControlPlaneBackend {
-            id: BackendInstanceId(uuid::Uuid::new_v4()),
-            config: TrueNasConfig {
-                endpoint: server.url(),
-                api_key_env: "_unused_".into(),
-                pool: "tank".into(),
-                target_iqn_prefix: "iqn.x:tgt".into(),
-                portal: None,
-            },
-            api_key: "test".into(),
-            http: reqwest::Client::new(),
-        };
+        let target_mock = server
+            .mock("POST", "/api/v2.0/iscsi/target")
+            .with_status(200)
+            .with_body(r#"{"id":7}"#)
+            .create_async()
+            .await;
 
+        let assoc_mock = server
+            .mock("POST", "/api/v2.0/iscsi/targetextent")
+            .with_status(200)
+            .with_body(r#"{"id":99}"#)
+            .create_async()
+            .await;
+
+        let backend = backend_with(&server.url());
         let h = backend
             .provision(CreateOpts {
                 name: "x".into(),
@@ -273,19 +557,132 @@ mod tests {
         assert_eq!(h.size_bytes, 1024 * 1024);
         assert_eq!(h.backend_kind, BackendKind::TrueNasIscsi);
 
-        // Verify the locator JSON is well-formed and contains expected fields.
-        // The dataset name is `tank/v-<uuid>` (uuid allocated internally), so we
-        // only check the pool prefix and the IQN/LUN values that are deterministic.
         let loc: LocatorJson = serde_json::from_str(&h.locator).unwrap();
-        assert_eq!(loc.iqn, "iqn.x:tgt");
-        assert_eq!(loc.lun, 42);
+        assert!(
+            loc.iqn.starts_with("iqn.2005-10.org.freenas.ctl:nqrust-v-"),
+            "iqn: {}",
+            loc.iqn
+        );
+        assert_eq!(loc.lun, 0);
         assert!(
             loc.dataset.starts_with("tank/v-"),
-            "dataset should start with 'tank/v-', got: {}",
+            "dataset: {}",
             loc.dataset
         );
+        assert_eq!(loc.extent_id, 42);
+        assert_eq!(loc.target_id, 7);
+        assert_eq!(loc.targetextent_id, 99);
 
+        global_mock.assert_async().await;
         zvol_mock.assert_async().await;
         extent_mock.assert_async().await;
+        target_mock.assert_async().await;
+        assoc_mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn provision_rolls_back_zvol_when_extent_fails() {
+        let mut server = mockito::Server::new_async().await;
+
+        server
+            .mock("GET", "/api/v2.0/iscsi/global")
+            .with_status(200)
+            .with_body(r#"{"basename":"iqn.x"}"#)
+            .create_async()
+            .await;
+
+        server
+            .mock("POST", "/api/v2.0/pool/dataset")
+            .with_status(200)
+            .with_body(r#"{"id":"tank/v-x"}"#)
+            .create_async()
+            .await;
+
+        server
+            .mock("POST", "/api/v2.0/iscsi/extent")
+            .with_status(500)
+            .with_body("boom")
+            .create_async()
+            .await;
+
+        // The rollback delete on the zvol must hit this endpoint.
+        let cleanup_mock = server
+            .mock(
+                "DELETE",
+                mockito::Matcher::Regex(r"/api/v2.0/pool/dataset/id/.*".into()),
+            )
+            .with_status(200)
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let backend = backend_with(&server.url());
+        let err = backend
+            .provision(CreateOpts {
+                name: "x".into(),
+                size_bytes: 1024,
+                description: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("create_extent"),
+            "expected create_extent error, got: {err}"
+        );
+
+        cleanup_mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn destroy_walks_back_targetextent_target_extent_zvol() {
+        let mut server = mockito::Server::new_async().await;
+
+        let te_mock = server
+            .mock("DELETE", "/api/v2.0/iscsi/targetextent/id/99")
+            .with_status(200)
+            .create_async()
+            .await;
+        let target_mock = server
+            .mock("DELETE", "/api/v2.0/iscsi/target/id/7")
+            .with_status(200)
+            .create_async()
+            .await;
+        let extent_mock = server
+            .mock("DELETE", "/api/v2.0/iscsi/extent/id/42")
+            .with_status(200)
+            .create_async()
+            .await;
+        let zvol_mock = server
+            .mock(
+                "DELETE",
+                mockito::Matcher::Regex(r"/api/v2.0/pool/dataset/id/.*".into()),
+            )
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let backend = backend_with(&server.url());
+        let locator = LocatorJson {
+            iqn: "iqn.x:nqrust-v-zzz".into(),
+            lun: 0,
+            dataset: "tank/v-zzz".into(),
+            extent_id: 42,
+            target_id: 7,
+            targetextent_id: 99,
+            portal: None,
+        };
+        let h = VolumeHandle {
+            volume_id: uuid::Uuid::new_v4(),
+            backend_id: backend.id,
+            backend_kind: BackendKind::TrueNasIscsi,
+            locator: serde_json::to_string(&locator).unwrap(),
+            size_bytes: 1024,
+        };
+        backend.destroy(h).await.expect("destroy");
+
+        te_mock.assert_async().await;
+        target_mock.assert_async().await;
+        extent_mock.assert_async().await;
+        zvol_mock.assert_async().await;
     }
 }
