@@ -1093,6 +1093,24 @@ export interface StorageBackendListResponse {
   items: StorageBackend[];
 }
 
+export interface NfsExport {
+  path: string;
+  allowed: string;
+}
+
+export interface NfsScanResponse {
+  exports: NfsExport[];
+}
+
+export interface IscsiTarget {
+  portal: string;
+  iqn: string;
+}
+
+export interface IscsiScanResponse {
+  targets: IscsiTarget[];
+}
+
 // ========================================
 // Backup Types
 // ========================================

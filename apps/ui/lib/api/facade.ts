@@ -751,6 +751,18 @@ export class FacadeApi {
     await apiClient.delete<void>(`/storage_backends/${id}`);
   }
 
+  async scanNfsExports(server: string): Promise<import("@/lib/types").NfsScanResponse> {
+    return apiClient.get<import("@/lib/types").NfsScanResponse>(
+      `/storage_backends/scan/nfs?server=${encodeURIComponent(server)}`,
+    );
+  }
+
+  async scanIscsiTargets(portal: string): Promise<import("@/lib/types").IscsiScanResponse> {
+    return apiClient.get<import("@/lib/types").IscsiScanResponse>(
+      `/storage_backends/scan/iscsi?portal=${encodeURIComponent(portal)}`,
+    );
+  }
+
   // ==============
   // User Management
   // ==============

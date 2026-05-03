@@ -1450,6 +1450,26 @@ export function useDeleteStorageBackend() {
   });
 }
 
+export function useScanNfsExports(server: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["storage_backends", "scan", "nfs", server],
+    queryFn: async () => facadeApi.scanNfsExports(server),
+    enabled: enabled && server.trim().length > 0,
+    retry: false, // discovery failures are common (server down) — surface fast
+    staleTime: 30_000,
+  });
+}
+
+export function useScanIscsiTargets(portal: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["storage_backends", "scan", "iscsi", portal],
+    queryFn: async () => facadeApi.scanIscsiTargets(portal),
+    enabled: enabled && portal.trim().length > 0,
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
 // ==============
 // Backups
 // ==============
