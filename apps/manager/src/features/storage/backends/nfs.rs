@@ -132,31 +132,71 @@ impl ControlPlaneBackend for NfsControlPlaneBackend {
 
     async fn snapshot(
         &self,
-        _v: &VolumeHandle,
-        _name: &str,
+        v: &VolumeHandle,
+        name: &str,
     ) -> Result<VolumeSnapshotHandle, nexus_storage::StorageError> {
-        // Implemented in Task 6.
-        Err(nexus_storage::StorageError::NotSupported(
-            "snapshot not yet implemented".into(),
-        ))
+        if name.is_empty() || name.contains('/') {
+            return Err(nexus_storage::StorageError::InvalidLocator(
+                "snapshot name must be non-empty and contain no '/'".into(),
+            ));
+        }
+        let src_loc = NfsLocator::from_locator_str(&v.locator)?;
+        let src_path = self.config.manager_mount_path.join(&src_loc.file);
+        let snap_file = format!("{}.snap-{name}", src_loc.file);
+        let snap_path = self.config.manager_mount_path.join(&snap_file);
+        tokio::fs::copy(&src_path, &snap_path).await?;
+        let snap_locator = NfsLocator {
+            server: src_loc.server,
+            export: src_loc.export,
+            file: snap_file,
+        };
+        Ok(VolumeSnapshotHandle {
+            snapshot_id: Uuid::new_v4(),
+            backend_id: self.id,
+            backend_kind: BackendKind::Nfs,
+            locator: snap_locator.to_locator_string()?,
+            source_volume_id: v.volume_id,
+        })
     }
 
     async fn clone_from_snapshot(
         &self,
-        _s: &VolumeSnapshotHandle,
+        s: &VolumeSnapshotHandle,
     ) -> Result<VolumeHandle, nexus_storage::StorageError> {
-        // Implemented in Task 6.
-        Err(nexus_storage::StorageError::NotSupported(
-            "clone_from_snapshot not yet implemented".into(),
-        ))
+        let src_loc = NfsLocator::from_locator_str(&s.locator)?;
+        let src_path = self.config.manager_mount_path.join(&src_loc.file);
+        let vol_id = Uuid::new_v4();
+        let file = format!("nfs-{vol_id}.raw");
+        let dst = self.config.manager_mount_path.join(&file);
+        tokio::fs::copy(&src_path, &dst).await?;
+        // The snapshot file is already at the provisioned size (it's a
+        // straight copy of the source volume), so no truncation here.
+        let size_bytes = tokio::fs::metadata(&dst).await?.len();
+        let locator = NfsLocator {
+            server: src_loc.server,
+            export: src_loc.export,
+            file,
+        };
+        Ok(VolumeHandle {
+            volume_id: vol_id,
+            backend_id: self.id,
+            backend_kind: BackendKind::Nfs,
+            locator: locator.to_locator_string()?,
+            size_bytes,
+        })
     }
 
     async fn delete_snapshot(
         &self,
-        _s: VolumeSnapshotHandle,
+        s: VolumeSnapshotHandle,
     ) -> Result<(), nexus_storage::StorageError> {
-        // Implemented in Task 6.
-        Ok(())
+        let loc = NfsLocator::from_locator_str(&s.locator)?;
+        let path = self.config.manager_mount_path.join(&loc.file);
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(nexus_storage::StorageError::from(e)),
+        }
     }
 }
 
@@ -262,6 +302,44 @@ mod tests {
         assert_eq!(loc.export, "/mnt/tank/vms");
         assert!(loc.file.starts_with("nfs-"));
         assert!(loc.file.ends_with(".raw"));
+    }
+
+    #[tokio::test]
+    async fn snapshot_then_clone_then_delete_round_trip() {
+        let (backend, _guard) = temp_backend();
+        // Provision + populate the source.
+        let h = backend
+            .provision(CreateOpts {
+                name: "v".into(),
+                size_bytes: 1024,
+                description: None,
+            })
+            .await
+            .unwrap();
+        let loc = NfsLocator::from_locator_str(&h.locator).unwrap();
+        let src_path = backend.config.manager_mount_path.join(&loc.file);
+        tokio::fs::write(&src_path, b"original-data").await.unwrap();
+
+        // snapshot
+        let snap = backend.snapshot(&h, "snap-1").await.expect("snapshot");
+        let snap_loc = NfsLocator::from_locator_str(&snap.locator).unwrap();
+        let snap_path = backend.config.manager_mount_path.join(&snap_loc.file);
+        assert_eq!(tokio::fs::read(&snap_path).await.unwrap(), b"original-data");
+
+        // clone_from_snapshot
+        let cloned = backend.clone_from_snapshot(&snap).await.expect("clone");
+        let cloned_loc = NfsLocator::from_locator_str(&cloned.locator).unwrap();
+        let cloned_path = backend.config.manager_mount_path.join(&cloned_loc.file);
+        let cloned_data = tokio::fs::read(&cloned_path).await.unwrap();
+        // The cloned file may be padded to size_bytes; first 13 bytes must match.
+        assert_eq!(&cloned_data[..13], b"original-data");
+
+        // delete_snapshot
+        backend
+            .delete_snapshot(snap)
+            .await
+            .expect("delete_snapshot");
+        assert!(tokio::fs::metadata(&snap_path).await.is_err());
     }
 
     #[tokio::test]
