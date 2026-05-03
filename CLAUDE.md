@@ -135,6 +135,16 @@ New feature routers are registered in `apps/manager/src/features/mod.rs` via `.n
 - SQLx compile-time query checking enabled — queries are verified at build time
 - Migration 10 may need manual reset: `psql $DATABASE_URL -c "DELETE FROM _sqlx_migrations WHERE version = 10;"`
 
+### DB Migration Policy for Releases
+
+To make manager rollback feasible during platform self-update, every migration that ships in a tagged release must be **forward-only** within that release:
+
+- **Allowed:** new tables, new columns (NULLABLE or with DEFAULT), new indexes (use `CREATE INDEX CONCURRENTLY` if the table is large), new constraints added in `NOT VALID` mode then validated.
+- **Not allowed in the same release that stops using a column:** `DROP TABLE`, `DROP COLUMN`, `ALTER TABLE … RENAME`, breaking type changes.
+- **Removal is two-release:** release N stops reading/writing the column; release N+1 drops it.
+
+This rule is enforced by code review. The auto-updater rolls the manager binary back on a failed health check but does not attempt schema rollback (a partially-applied migration cannot be safely reversed automatically).
+
 ### Network Bridging
 - VMs require `fcbr0` bridge. Two modes: NAT (isolated) or Bridged (network-visible)
 - Setup: `sudo ./scripts/fc-bridge-setup.sh fcbr0 <interface>`

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Platform auto-update: Settings → Updates page lets admins apply new releases either by uploading a `.nqupdate` bundle (airgap) or by enabling internet checks against a configured manifest URL. Apply order is manager → agents (rolling) → UI; running VMs are not disturbed by agent restart. See `docs/superpowers/specs/2026-04-28-platform-auto-update-design.md`.
+
+### Changed
+- Manager and agent binaries are now installed under `/opt/nqrust/bin/<name>.<version>` with a `<name>` symlink, to support atomic self-update.
+- systemd units now set `RestartForceExitStatus=42` so a clean self-update exit triggers a restart on the new binary.
+
 ## [0.1.0] - 2024-XX-XX
 
 ### Added

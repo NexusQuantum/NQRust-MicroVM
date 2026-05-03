@@ -6,6 +6,7 @@ members = [
 "crates/nexus-backup",
 "crates/nexus-storage",
 "crates/nexus-types",
+"crates/nqvm-cli",
 ]
 resolver = "2"
 
@@ -36,6 +37,7 @@ utoipa = "4"
 futures = "0.3"
 tokio-tungstenite = "0.21"
 sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
 
 # Release profile - maximum performance and minimal binary size
 [profile.release]

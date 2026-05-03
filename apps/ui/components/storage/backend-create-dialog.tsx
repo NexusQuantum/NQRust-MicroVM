@@ -302,7 +302,18 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
     const NUMERIC_KEYS = new Set(["portal_group_id", "initiator_group_id"]);
     for (const f of spec.fields) {
       const v = (config[f.key] ?? "").trim();
-      if (!v && !/(optional)/i.test(f.label)) {
+      // A field is optional when it's tucked behind the Advanced
+      // toggle (operators don't have to set it — the manager has
+      // sane defaults), or when its label still says "(optional)"
+      // for backward compat with legacy specs that haven't been
+      // migrated to the `advanced` flag.
+      const isOptional = f.advanced || /(optional)/i.test(f.label);
+      // Hidden fields (requiresField unmet) are never required —
+      // they don't render, so the operator has no way to fill them.
+      const isHidden =
+        f.requiresField !== undefined &&
+        !String(config[f.requiresField] ?? "").trim();
+      if (!v && !isOptional && !isHidden) {
         // Server-side validate() will reject; surface a friendlier first
         // pass here by skipping submit until required fields are filled.
         return;
