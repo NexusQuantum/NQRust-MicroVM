@@ -257,6 +257,7 @@ pub async fn get_one(
 use crate::features::storage_backends::discovery::{
     discover_iscsi_targets, discover_nfs_exports, IscsiTarget, NfsExport,
 };
+use crate::features::storage_backends::health::check_backend_health;
 
 #[derive(Debug, Deserialize)]
 pub struct NfsScanQuery {
@@ -381,5 +382,35 @@ pub async fn scan_iscsi(
             Json(serde_json::json!({"error": e})),
         )
             .into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/storage_backends/{id}/health",
+    params(("id" = Uuid, Path, description = "Storage backend ID")),
+    responses((status = 200), (status = 404)),
+    tag = "StorageBackends",
+)]
+pub async fn health(Extension(st): Extension<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let repo = StorageBackendRepository::new(st.db.clone());
+    match repo.get(id).await {
+        Ok(Some(row)) => {
+            let h = check_backend_health(&row).await;
+            (StatusCode::OK, Json(h)).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not found"})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("health get failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db"})),
+            )
+                .into_response()
+        }
     }
 }
