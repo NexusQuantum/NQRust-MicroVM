@@ -358,7 +358,16 @@ pub async fn initialize_vg(device: &std::path::Path, vg_name: &str) -> Result<()
     use tokio::io::AsyncWriteExt;
     use tokio::process::Command;
 
-    let device_str = device.to_str().ok_or_else(|| {
+    // Canonicalize: `/dev/disk/by-path/...` is a symlink, and `pvs` does not
+    // reliably report a PV when given a symlink — even though `pvcreate` does
+    // see the signature on the underlying block device. Resolve to the real
+    // path (e.g. `/dev/sda`) so the idempotency check and the create command
+    // operate on the same identity.
+    let canonical = match tokio::fs::canonicalize(device).await {
+        Ok(p) => p,
+        Err(_) => device.to_path_buf(),
+    };
+    let device_str = canonical.to_str().ok_or_else(|| {
         StorageError::backend(std::io::Error::other("device path is not valid UTF-8"))
     })?;
 
