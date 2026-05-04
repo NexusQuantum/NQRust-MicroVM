@@ -319,6 +319,137 @@ pub async fn resolve_iscsi_block_device(iqn: &str, portal: &str, lun: u32) -> Op
     None
 }
 
+// -------------------------------------------------------------------------
+// Volume-group initialization (`pvcreate` + `vgcreate`)
+// -------------------------------------------------------------------------
+
+/// Build the argv tail for `pvcreate`. Mirrors Proxmox `LVMPlugin.pm:120`:
+/// metadatasize 250k yields `pe_start = 512` (sector 1024), aligned to the
+/// 128k boundary preferred by SSD arrays.
+fn build_pvcreate_args(device: &str) -> Vec<&str> {
+    vec!["--metadatasize", "250k", device]
+}
+
+/// Build the argv tail for `vgcreate <vg> <device>`.
+fn build_vgcreate_args<'a>(vg: &'a str, device: &'a str) -> Vec<&'a str> {
+    vec![vg, device]
+}
+
+/// Initialize a volume group on `device`, idempotently.
+///
+/// Behavior:
+/// - If the device already carries a PV that belongs to `vg_name`, returns
+///   `Ok(())` immediately (no-op).
+/// - If the device carries a PV that belongs to a *different* VG, returns an
+///   error and does NOT touch the device — refusing to overwrite another VG's
+///   metadata is intentional.
+/// - If the device has a PV but no VG, skips the zero+pvcreate step and goes
+///   straight to `vgcreate`.
+/// - Otherwise: zero the first 512 bytes of the device (mirrors
+///   `LVMPlugin.pm:96-103` — `pvcreate` refuses if leftover label data is
+///   present), run `pvcreate --metadatasize 250k`, then `vgcreate <vg>
+///   <device>`.
+pub async fn initialize_vg(device: &std::path::Path, vg_name: &str) -> Result<(), StorageError> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let device_str = device.to_str().ok_or_else(|| {
+        StorageError::backend(std::io::Error::other("device path is not valid UTF-8"))
+    })?;
+
+    // Idempotency probe: parse `pvs <device>` output. Non-zero exit means "no
+    // PV here" → fall through to the create path.
+    let probe = Command::new("pvs")
+        .args([
+            "--separator",
+            ":",
+            "--noheadings",
+            "--units",
+            "k",
+            "--unbuffered",
+            "--nosuffix",
+            "--options",
+            "pv_name,pv_size,vg_name,pv_uuid",
+            device_str,
+        ])
+        .output()
+        .await;
+
+    let mut pv_exists_no_vg = false;
+    if let Ok(out) = probe {
+        if out.status.success() {
+            if let Some(line) = String::from_utf8_lossy(&out.stdout).lines().next() {
+                if let Some(info) = parse_pv_info(line) {
+                    match info.vg_name.as_deref() {
+                        Some(existing) if existing == vg_name => return Ok(()),
+                        Some(other) => {
+                            return Err(StorageError::backend(std::io::Error::other(format!(
+                                "device {} is already part of VG '{}'; refusing to overwrite",
+                                device_str, other
+                            ))));
+                        }
+                        None => {
+                            // PV exists but no VG — skip zero+pvcreate, jump
+                            // straight to vgcreate below.
+                            pv_exists_no_vg = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !pv_exists_no_vg {
+        // Zero first sector to clear any stale label data.
+        let mut f = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(device)
+            .await
+            .map_err(|e| {
+                StorageError::backend(std::io::Error::other(format!(
+                    "open {} for zero: {e}",
+                    device.display()
+                )))
+            })?;
+        f.write_all(&[0u8; 512]).await.map_err(|e| {
+            StorageError::backend(std::io::Error::other(format!("zero first sector: {e}")))
+        })?;
+        drop(f);
+
+        // pvcreate.
+        let status = Command::new("pvcreate")
+            .args(build_pvcreate_args(device_str))
+            .status()
+            .await
+            .map_err(|e| {
+                StorageError::backend(std::io::Error::other(format!("pvcreate spawn: {e}")))
+            })?;
+        if !status.success() {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "pvcreate failed: exit {:?}",
+                status.code()
+            ))));
+        }
+    }
+
+    // vgcreate.
+    let status = Command::new("vgcreate")
+        .args(build_vgcreate_args(vg_name, device_str))
+        .status()
+        .await
+        .map_err(|e| {
+            StorageError::backend(std::io::Error::other(format!("vgcreate spawn: {e}")))
+        })?;
+    if !status.success() {
+        return Err(StorageError::backend(std::io::Error::other(format!(
+            "vgcreate failed: exit {:?}",
+            status.code()
+        ))));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod session_tests {
     use super::*;
@@ -359,5 +490,42 @@ mod session_tests {
         iscsi_login(&iqn, &portal).await.expect("login");
         // logout to leave host clean for next test
         let _ = iscsi_logout(&iqn).await;
+    }
+}
+
+#[cfg(test)]
+mod init_tests {
+    use super::*;
+
+    #[test]
+    fn pvcreate_args_use_proxmox_metadata_size() {
+        let args = build_pvcreate_args("/dev/sdb");
+        assert_eq!(args, vec!["--metadatasize", "250k", "/dev/sdb"]);
+    }
+
+    #[test]
+    fn vgcreate_args_minimal() {
+        let args = build_vgcreate_args("vg-nqrust", "/dev/sdb");
+        assert_eq!(args, vec!["vg-nqrust", "/dev/sdb"]);
+    }
+
+    // Live test: requires a real block device the test runner is allowed to
+    // wipe. Set NQRUST_LVM_LIVE_DEVICE=/dev/sdX (and optionally
+    // NQRUST_LVM_LIVE_VG=name) and run with `--ignored`.
+    #[ignore]
+    #[tokio::test]
+    async fn live_initialize_vg_idempotent() {
+        let device = match std::env::var("NQRUST_LVM_LIVE_DEVICE") {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let vg = std::env::var("NQRUST_LVM_LIVE_VG").unwrap_or_else(|_| "test-vg-nqrust".into());
+        initialize_vg(std::path::Path::new(&device), &vg)
+            .await
+            .expect("first init");
+        // Second call should be a no-op.
+        initialize_vg(std::path::Path::new(&device), &vg)
+            .await
+            .expect("idempotent");
     }
 }
