@@ -493,6 +493,205 @@ mod session_tests {
     }
 }
 
+// -------------------------------------------------------------------------
+// Per-VM LV lifecycle (`lvcreate` / `lvremove` / `lvchange`)
+// -------------------------------------------------------------------------
+
+/// Build the argv tail for `lvcreate`. Mirrors Proxmox `LVMPlugin.pm:622-637`
+/// — every flag is intentional:
+/// - `-aly`: activate locally on creation
+/// - `-Wy --yes`: wipe signatures non-interactively
+/// - `--setautoactivation n`: do NOT auto-activate at boot. Critical for
+///   shared-LUN safety: only the host that needs the LV should activate it.
+/// - `--addtag <t>`: attaches ownership tags so we can find LVs later.
+fn build_lvcreate_args(vg: &str, name: &str, size: &str, tags: &[&str]) -> Vec<String> {
+    let mut a: Vec<String> = vec![
+        "-aly".into(),
+        "-Wy".into(),
+        "--yes".into(),
+        "--size".into(),
+        size.into(),
+        "--name".into(),
+        name.into(),
+        "--setautoactivation".into(),
+        "n".into(),
+    ];
+    for t in tags {
+        a.push("--addtag".into());
+        a.push((*t).to_string());
+    }
+    a.push(vg.into());
+    a
+}
+
+/// Build the argv for exclusive activation. `-aey` (vs `-aly`) is the
+/// cluster-safety mechanism: only one host can hold the LV active at a time,
+/// so a single shared LUN can safely back N VMs across N hosts.
+/// (Proxmox `LVMPlugin.pm:960`.)
+fn build_lvchange_activate_args(vg: &str, lv: &str) -> Vec<String> {
+    vec!["-aey".into(), format!("/dev/{vg}/{lv}")]
+}
+
+/// Build the argv for local deactivation (`-aln`). Releases the exclusive
+/// lock so another host can activate the same LV next.
+fn build_lvchange_deactivate_args(vg: &str, lv: &str) -> Vec<String> {
+    vec!["-aln".into(), format!("/dev/{vg}/{lv}")]
+}
+
+/// Create a logical volume of `size_bytes` for `vmid` in `vg`. Tags the LV
+/// with `nqrust-vm-<vmid>` for ownership tracking. Returns the device path
+/// `/dev/<vg>/<name>` on success.
+pub async fn lvcreate(
+    vg: &str,
+    name: &str,
+    size_bytes: u64,
+    vmid: &str,
+) -> Result<PathBuf, StorageError> {
+    use tokio::process::Command;
+    let size_arg = format!("{size_bytes}B");
+    let tag = format!("nqrust-vm-{vmid}");
+    let tags = [tag.as_str()];
+    let args = build_lvcreate_args(vg, name, &size_arg, &tags);
+    let status = Command::new("lvcreate")
+        .args(&args)
+        .status()
+        .await
+        .map_err(|e| {
+            StorageError::backend(std::io::Error::other(format!("lvcreate spawn: {e}")))
+        })?;
+    if !status.success() {
+        return Err(StorageError::backend(std::io::Error::other(format!(
+            "lvcreate failed: exit {:?}",
+            status.code()
+        ))));
+    }
+    Ok(PathBuf::from(format!("/dev/{vg}/{name}")))
+}
+
+/// Remove a logical volume. Uses `-f` to skip the interactive confirmation.
+pub async fn lvremove(vg: &str, name: &str) -> Result<(), StorageError> {
+    use tokio::process::Command;
+    let path = format!("{vg}/{name}");
+    let status = Command::new("lvremove")
+        .args(["-f", &path])
+        .status()
+        .await
+        .map_err(|e| {
+            StorageError::backend(std::io::Error::other(format!("lvremove spawn: {e}")))
+        })?;
+    if !status.success() {
+        return Err(StorageError::backend(std::io::Error::other(format!(
+            "lvremove failed: exit {:?}",
+            status.code()
+        ))));
+    }
+    Ok(())
+}
+
+/// Activate an LV exclusively on this host (`-aey`), then refresh device-mapper
+/// state (`--refresh`, best-effort) to mirror `LVMPlugin.pm:970`.
+pub async fn lvchange_activate(vg: &str, lv: &str) -> Result<(), StorageError> {
+    use tokio::process::Command;
+    let args = build_lvchange_activate_args(vg, lv);
+    let status = Command::new("lvchange")
+        .args(&args)
+        .status()
+        .await
+        .map_err(|e| {
+            StorageError::backend(std::io::Error::other(format!(
+                "lvchange activate spawn: {e}"
+            )))
+        })?;
+    if !status.success() {
+        return Err(StorageError::backend(std::io::Error::other(format!(
+            "lvchange activate failed: exit {:?}",
+            status.code()
+        ))));
+    }
+    // --refresh after activate (LVMPlugin.pm:970). Best-effort.
+    let _ = Command::new("lvchange")
+        .args(["--refresh", &format!("/dev/{vg}/{lv}")])
+        .status()
+        .await;
+    Ok(())
+}
+
+/// Deactivate an LV locally (`-aln`). Best-effort: failures are logged but not
+/// propagated, since another process holding the LV (e.g. firecracker still
+/// flushing) is the common case during shutdown.
+pub async fn lvchange_deactivate(vg: &str, lv: &str) -> Result<(), StorageError> {
+    use tokio::process::Command;
+    let args = build_lvchange_deactivate_args(vg, lv);
+    let status = Command::new("lvchange")
+        .args(&args)
+        .status()
+        .await
+        .map_err(|e| {
+            StorageError::backend(std::io::Error::other(format!(
+                "lvchange deactivate spawn: {e}"
+            )))
+        })?;
+    if !status.success() {
+        // Deactivate is best-effort: another process holding the LV is common
+        // (e.g. firecracker still writing). Log via tracing::warn but return Ok.
+        tracing::warn!(
+            vg = %vg,
+            lv = %lv,
+            exit = ?status.code(),
+            "lvchange deactivate failed (best-effort)"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod lv_tests {
+    use super::*;
+
+    #[test]
+    fn lvcreate_args_match_proxmox_shape() {
+        let tags = ["nqrust-vm-100"];
+        let args = build_lvcreate_args("vg-nqrust", "vm-100-disk-0", "10737418240B", &tags);
+        let s = args.join(" ");
+        // From LVMPlugin.pm:622-637 — every flag is intentional.
+        assert!(s.contains("-aly"), "{s}"); // activate immediately
+        assert!(s.contains("-Wy"), "{s}"); // wipe signatures
+        assert!(s.contains("--yes"), "{s}"); // assume yes
+        assert!(s.contains("--size 10737418240B"), "{s}");
+        assert!(s.contains("--name vm-100-disk-0"), "{s}");
+        assert!(s.contains("--setautoactivation n"), "{s}");
+        assert!(s.contains("--addtag nqrust-vm-100"), "{s}");
+        assert!(s.ends_with("vg-nqrust"), "{s}");
+    }
+
+    #[test]
+    fn lvcreate_args_with_multiple_tags() {
+        let tags = ["nqrust-vm-100", "backup"];
+        let args = build_lvcreate_args("vg-x", "lv-y", "1G", &tags);
+        let s = args.join(" ");
+        assert!(s.contains("--addtag nqrust-vm-100"));
+        assert!(s.contains("--addtag backup"));
+    }
+
+    #[test]
+    fn lvchange_activate_uses_exclusive_mode() {
+        // From LVMPlugin.pm:960 — `-aey` (exclusive). `-aly` would allow
+        // multiple hosts active = corruption risk. Pinning the exact flag.
+        let args = build_lvchange_activate_args("vg-nqrust", "vm-100-disk-0");
+        let s = args.join(" ");
+        assert!(s.contains("-aey"), "{s}");
+        assert!(s.contains("/dev/vg-nqrust/vm-100-disk-0"), "{s}");
+    }
+
+    #[test]
+    fn lvchange_deactivate_uses_local_mode() {
+        let args = build_lvchange_deactivate_args("vg-nqrust", "vm-100-disk-0");
+        let s = args.join(" ");
+        assert!(s.contains("-aln"), "{s}");
+        assert!(s.contains("/dev/vg-nqrust/vm-100-disk-0"), "{s}");
+    }
+}
+
 #[cfg(test)]
 mod init_tests {
     use super::*;
