@@ -1,11 +1,17 @@
-//! Pure-logic parsers for LVM tool output (`pvs`, `vgs`, `lvs`).
+//! Pure-logic parsers for LVM tool output (`pvs`, `vgs`, `lvs`) plus iSCSI
+//! session lifecycle helpers (discovery, login, logout, block-device resolve).
 //!
-//! These functions parse lines produced by the LVM tools when invoked with
-//! `--separator : --noheadings` and a fixed column set. They are intentionally
-//! free of any I/O so they can be unit-tested without LVM/iSCSI installed on
-//! the host.
+//! The parser functions are I/O-free; the iSCSI session helpers shell out to
+//! `iscsiadm` via `tokio::process::Command` and walk `/dev/disk/by-path/`. The
+//! shape mirrors Proxmox VE's `ISCSIPlugin.pm` (`iscsi_login`): discover →
+//! login → mark `node.startup=automatic` so the session is restored across
+//! reboots.
 
 #![allow(dead_code)]
+
+use std::path::PathBuf;
+
+use nexus_storage::StorageError;
 
 /// One row from `pvs --separator : --noheadings --units k --nosuffix
 /// --options pv_name,pv_size,vg_name,pv_uuid`.
@@ -191,5 +197,167 @@ mod parser_tests {
         assert!(parse_pv_info("not enough fields").is_none());
         assert!(parse_vg_info("a:b").is_none());
         assert!(parse_lv_info("").is_none());
+    }
+}
+
+// -------------------------------------------------------------------------
+// iSCSI session lifecycle
+// -------------------------------------------------------------------------
+
+/// Build the argv for `iscsiadm` to log in to a single target on a portal.
+///
+/// Matches the open-iscsi `--mode node --targetname <iqn> --portal <portal>
+/// --login` invocation used by Proxmox's `ISCSIPlugin::iscsi_login`.
+pub fn build_iscsi_login_args(iqn: &str, portal: &str) -> Vec<String> {
+    vec![
+        "--mode".into(),
+        "node".into(),
+        "--targetname".into(),
+        iqn.into(),
+        "--portal".into(),
+        portal.into(),
+        "--login".into(),
+    ]
+}
+
+/// Build the argv for marking a node record as auto-started on boot.
+///
+/// `iscsiadm --mode node --targetname <iqn> --op update --name node.startup
+/// --value automatic`. Should be run after a successful login so the session
+/// survives reboots without manual re-login.
+pub fn build_iscsi_persistent_args(iqn: &str) -> Vec<String> {
+    vec![
+        "--mode".into(),
+        "node".into(),
+        "--targetname".into(),
+        iqn.into(),
+        "--op".into(),
+        "update".into(),
+        "--name".into(),
+        "node.startup".into(),
+        "--value".into(),
+        "automatic".into(),
+    ]
+}
+
+/// Discover, log in, and persist a node record for the given target+portal.
+///
+/// Discovery and the persistent-config step are best-effort (their failure is
+/// swallowed) — only login is treated as load-bearing. `iscsiadm` exit code
+/// 15 means "session already exists for this target", which we treat as
+/// success since the post-condition (a live session) holds.
+pub async fn iscsi_login(iqn: &str, portal: &str) -> Result<(), StorageError> {
+    use tokio::process::Command;
+
+    // Discovery first (best-effort).
+    let _ = Command::new("iscsiadm")
+        .args([
+            "--mode",
+            "discovery",
+            "--type",
+            "sendtargets",
+            "--portal",
+            portal,
+        ])
+        .status()
+        .await;
+
+    // Login.
+    let status = Command::new("iscsiadm")
+        .args(build_iscsi_login_args(iqn, portal))
+        .status()
+        .await
+        .map_err(|e| {
+            StorageError::backend(std::io::Error::other(format!("iscsiadm login spawn: {e}")))
+        })?;
+
+    // Exit 15 == already logged in; treat as success.
+    if !status.success() && status.code() != Some(15) {
+        return Err(StorageError::backend(std::io::Error::other(format!(
+            "iscsiadm login failed: exit {:?}",
+            status.code()
+        ))));
+    }
+
+    // Make persistent (best-effort: ignore errors here, the session is up).
+    let _ = Command::new("iscsiadm")
+        .args(build_iscsi_persistent_args(iqn))
+        .status()
+        .await;
+
+    Ok(())
+}
+
+/// Log out of an iSCSI target. Best-effort: failures are swallowed because
+/// logout commonly fails when the kernel still holds device-mapper or LVM
+/// references against the session — those callers manage their own teardown.
+pub async fn iscsi_logout(iqn: &str) -> Result<(), StorageError> {
+    use tokio::process::Command;
+
+    let _ = Command::new("iscsiadm")
+        .args(["--mode", "node", "--targetname", iqn, "--logout"])
+        .status()
+        .await;
+
+    Ok(())
+}
+
+/// Find the `/dev/disk/by-path/` symlink for a logged-in iSCSI LUN, if any.
+///
+/// open-iscsi creates entries of the form
+/// `ip-<portal>-iscsi-<iqn>-lun-<N>` once a session is established and udev
+/// has finished settling. Returns `None` when the entry is missing (e.g.
+/// session not yet up, or wrong LUN number).
+pub async fn resolve_iscsi_block_device(iqn: &str, portal: &str, lun: u32) -> Option<PathBuf> {
+    let pattern = format!("ip-{portal}-iscsi-{iqn}-lun-{lun}");
+    let mut entries = tokio::fs::read_dir("/dev/disk/by-path").await.ok()?;
+    while let Ok(Some(e)) = entries.next_entry().await {
+        if e.file_name().to_string_lossy() == pattern {
+            return Some(e.path());
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn build_iscsi_login_args_includes_login_flag() {
+        let args = build_iscsi_login_args("iqn.foo:bar", "192.168.1.10:3260");
+        let s = args.join(" ");
+        assert!(s.contains("--mode node"), "{s}");
+        assert!(s.contains("--targetname iqn.foo:bar"), "{s}");
+        assert!(s.contains("--portal 192.168.1.10:3260"), "{s}");
+        assert!(s.contains("--login"), "{s}");
+    }
+
+    #[test]
+    fn build_iscsi_persistent_args_sets_node_startup_automatic() {
+        let args = build_iscsi_persistent_args("iqn.foo:bar");
+        let s = args.join(" ");
+        assert!(s.contains("--op update"), "{s}");
+        assert!(s.contains("--name node.startup"), "{s}");
+        assert!(s.contains("--value automatic"), "{s}");
+        assert!(s.contains("--targetname iqn.foo:bar"), "{s}");
+    }
+
+    // Live test gated on env var: NQRUST_ISCSI_LVM_LIVE_PORTAL=192.168.18.171:3260
+    // and NQRUST_ISCSI_LVM_LIVE_IQN=iqn.foo:bar — only run manually.
+    #[ignore]
+    #[tokio::test]
+    async fn live_iscsi_login_against_portal() {
+        let portal = match std::env::var("NQRUST_ISCSI_LVM_LIVE_PORTAL") {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let iqn = match std::env::var("NQRUST_ISCSI_LVM_LIVE_IQN") {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        iscsi_login(&iqn, &portal).await.expect("login");
+        // logout to leave host clean for next test
+        let _ = iscsi_logout(&iqn).await;
     }
 }
