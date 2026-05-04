@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Platform auto-update: Settings → Updates page lets admins apply new releases either by uploading a `.nqupdate` bundle (airgap) or by enabling internet checks against a configured manifest URL. Apply order is manager → agents (rolling) → UI; running VMs are not disturbed by agent restart. See `docs/superpowers/specs/2026-04-28-platform-auto-update-design.md`.
+- **`iscsi_lvm` storage backend** — vendor-agnostic auto-provisioning of per-VM block devices on top of any iSCSI target. Mirrors Proxmox VE's LVM-on-iSCSI mode. Adds `BackendKind::IscsiLvm`, `activate_volume`/`deactivate_volume` trait hooks, agent routes under `/v1/storage/iscsi_lvm/*`, and a manager `POST /v1/storage_backends/:id/initialize` endpoint with destructive-confirmation UI flow. See `docs/runbooks/iscsi-lvm-troubleshooting.md`.
 
 ### Changed
 - Manager and agent binaries are now installed under `/opt/nqrust/bin/<name>.<version>` with a `<name>` symlink, to support atomic self-update.
