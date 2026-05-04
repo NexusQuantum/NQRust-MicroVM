@@ -22,10 +22,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, Wrench } from "lucide-react";
 import type { BackendKind, StorageBackend } from "@/lib/types";
 import { useDeleteStorageBackend, useBackendHealth } from "@/lib/queries";
 import { BackendEditDialog } from "@/components/storage/backend-edit-dialog";
+import { LvmInitializeDialog } from "@/components/storage/lvm-initialize-dialog";
 
 const KIND_LABEL: Record<BackendKind, string> = {
   local_file: "Local file",
@@ -77,9 +78,37 @@ function formatBytes(n: number): string {
   return `${(n / 1024 ** 4).toFixed(2)} TiB`;
 }
 
+/** Show an "Initialize" wrench button on iscsi_lvm rows whose VG hasn't
+ *  been created yet. Health probe returns total_bytes only after a
+ *  vgcreate succeeds — so undefined / 0 means the VG is not ready. */
+function InitializeButton({
+  backend,
+  onClick,
+}: {
+  backend: StorageBackend;
+  onClick: () => void;
+}) {
+  const { data } = useBackendHealth(backend.id);
+  if (backend.kind !== "iscsi_lvm") return null;
+  const initialized = (data?.total_bytes ?? 0) > 0;
+  if (initialized) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={`Initialize ${backend.name}`}
+      title="Initialize volume group (one-time, destructive)"
+      onClick={onClick}
+    >
+      <Wrench className="h-4 w-4" />
+    </Button>
+  );
+}
+
 export function BackendTable({ backends }: { backends: StorageBackend[] }) {
   const del = useDeleteStorageBackend();
   const [editing, setEditing] = useState<StorageBackend | null>(null);
+  const [initializing, setInitializing] = useState<StorageBackend | null>(null);
 
   return (
     <>
@@ -129,6 +158,7 @@ export function BackendTable({ backends }: { backends: StorageBackend[] }) {
               {b.is_default ? <Badge>default</Badge> : <span className="text-muted-foreground">—</span>}
             </TableCell>
             <TableCell className="text-right">
+              <InitializeButton backend={b} onClick={() => setInitializing(b)} />
               <Button
                 variant="ghost"
                 size="icon"
@@ -177,6 +207,14 @@ export function BackendTable({ backends }: { backends: StorageBackend[] }) {
       open={editing !== null}
       onOpenChange={(open) => {
         if (!open) setEditing(null);
+      }}
+    />
+    <LvmInitializeDialog
+      backendId={initializing?.id ?? null}
+      backendName={initializing?.name ?? ""}
+      open={initializing !== null}
+      onOpenChange={(open) => {
+        if (!open) setInitializing(null);
       }}
     />
     </>

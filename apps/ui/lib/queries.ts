@@ -1469,6 +1469,23 @@ export function useDeleteStorageBackend() {
   });
 }
 
+export function useInitializeBackend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, confirm }: { id: string; confirm: string }) =>
+      facadeApi.initializeStorageBackend(id, confirm),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.storageBackends() });
+      toast.success("Volume group initialized");
+    },
+    onError: (e: unknown) => {
+      toast.error("Failed to initialize volume group", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+}
+
 export function useScanNfsExports(server: string, enabled: boolean) {
   return useQuery({
     queryKey: ["storage_backends", "scan", "nfs", server],

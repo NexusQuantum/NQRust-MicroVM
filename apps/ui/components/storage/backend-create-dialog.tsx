@@ -22,6 +22,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import type { BackendKind } from "@/lib/types";
 import { useCreateStorageBackend, useScanNfsExports, useScanIscsiTargets } from "@/lib/queries";
+import { LvmInitializeDialog } from "@/components/storage/lvm-initialize-dialog";
 
 interface Field {
   key: string;
@@ -394,8 +395,9 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
   // actual destructive-confirmation dialog; for now the CTA is a
   // placeholder that logs.
   const [postCreate, setPostCreate] = useState<
-    { kind: BackendKind; backendName: string } | null
+    { kind: BackendKind; backendName: string; backendId: string } | null
   >(null);
+  const [initOpen, setInitOpen] = useState(false);
 
   const spec = KIND_CONFIG[kind];
   const basicFields = spec.fields.filter((f) => !f.advanced);
@@ -458,7 +460,7 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
     }
     const submittedName = name.trim();
     const submittedKind = kind;
-    await create.mutateAsync({
+    const created = await create.mutateAsync({
       name: submittedName,
       kind,
       is_default: isDefault,
@@ -470,7 +472,11 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
         // post-create CTA is unmissable. Reset the form so the banner
         // is visually distinct from the input fields.
         reset();
-        setPostCreate({ kind: submittedKind, backendName: submittedName });
+        setPostCreate({
+          kind: submittedKind,
+          backendName: submittedName,
+          backendId: created.id,
+        });
       } else {
         reset();
         onOpenChange(false);
@@ -479,6 +485,7 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
   }
 
   return (
+    <>
     <Dialog
       open={open}
       onOpenChange={(o) => {
@@ -510,19 +517,7 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
               </p>
             </div>
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={() => {
-                  // Task 15 wires the destructive-confirmation dialog.
-                  // For now this is a hand-off point so the next task
-                  // has a clear place to plug in.
-                  // eslint-disable-next-line no-console
-                  console.log(
-                    "TODO: open initialize dialog for backend",
-                    postCreate.backendName,
-                  );
-                }}
-              >
+              <Button size="sm" onClick={() => setInitOpen(true)}>
                 Initialize Volume Group
               </Button>
               <Button
@@ -621,5 +616,20 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
         )}
       </DialogContent>
     </Dialog>
+    <LvmInitializeDialog
+      backendId={postCreate?.backendId ?? null}
+      backendName={postCreate?.backendName ?? ""}
+      open={initOpen}
+      onOpenChange={(o) => {
+        setInitOpen(o);
+        // After the operator has run (or skipped) the initialize step
+        // dismiss the create dialog along with its post-create banner.
+        if (!o && postCreate) {
+          setPostCreate(null);
+          onOpenChange(false);
+        }
+      }}
+    />
+    </>
   );
 }

@@ -774,6 +774,14 @@ export class FacadeApi {
     return apiClient.get<import("@/lib/types").BackendHealth>(`/storage_backends/${id}/health`);
   }
 
+  /** POST /v1/storage_backends/:id/initialize — runs the one-time
+   *  pvcreate + vgcreate for an iscsi_lvm backend. The `confirm` value
+   *  must equal "I understand this wipes the LUN" verbatim or the
+   *  manager returns 400. */
+  async initializeStorageBackend(id: string, confirm: string): Promise<void> {
+    await apiClient.post<void>(`/storage_backends/${id}/initialize`, { confirm });
+  }
+
   async getBackendConfig(id: string): Promise<import("@/lib/types").StorageBackendConfig> {
     return apiClient.get<import("@/lib/types").StorageBackendConfig>(`/storage_backends/${id}/config`);
   }
