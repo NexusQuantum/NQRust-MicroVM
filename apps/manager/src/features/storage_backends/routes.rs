@@ -178,8 +178,8 @@ async fn probe_nfs_backend(st: &AppState, row: &StorageBackendRow) -> anyhow::Re
     use anyhow::Context;
     use nexus_storage::{BackendInstanceId, ControlPlaneBackend};
 
-    let mut cfg: NfsConfig = serde_json::from_value(row.config_json.clone())
-        .context("decode nfs config for probe")?;
+    let mut cfg: NfsConfig =
+        serde_json::from_value(row.config_json.clone()).context("decode nfs config for probe")?;
     if cfg.agent_url.is_none() {
         let default_agent_url: Option<String> =
             sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
@@ -438,7 +438,13 @@ pub async fn health(Extension(st): Extension<AppState>, Path(id): Path<Uuid>) ->
     let repo = StorageBackendRepository::new(st.db.clone());
     match repo.get(id).await {
         Ok(Some(row)) => {
-            let h = check_backend_health(&row).await;
+            let default_agent_url: Option<String> =
+                sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
+                    .fetch_optional(&st.db)
+                    .await
+                    .ok()
+                    .flatten();
+            let h = check_backend_health(&row, default_agent_url.as_deref()).await;
             (StatusCode::OK, Json(h)).into_response()
         }
         Ok(None) => (

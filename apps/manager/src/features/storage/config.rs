@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use nexus_storage::{BackendKind, Capabilities};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -107,7 +107,18 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
             }
         }
         BackendKind::IscsiLvm => {
-            bail!("iscsi_lvm not yet implemented (Task 10)")
+            require_str(&raw.config, "portal")
+                .map_err(|e| anyhow!("backend '{}' (kind=iscsi_lvm): {e}", raw.name))?;
+            require_str(&raw.config, "iqn")
+                .map_err(|e| anyhow!("backend '{}' (kind=iscsi_lvm): {e}", raw.name))?;
+            require_str(&raw.config, "vg_name")
+                .map_err(|e| anyhow!("backend '{}' (kind=iscsi_lvm): {e}", raw.name))?;
+            Capabilities {
+                supports_native_snapshots: true,
+                supports_concurrent_attach: false,
+                supports_live_migration: true,
+                supports_clone_from_image: true,
+            }
         }
     };
 

@@ -2,6 +2,7 @@
 //! mutates anything on the storage system. Used by the UI to render
 //! a status indicator next to each backend in the list view.
 
+use crate::features::storage::backends::iscsi_lvm::IscsiLvmConfig;
 use crate::features::storage_backends::repo::StorageBackendRow;
 use serde::Serialize;
 use std::time::Duration;
@@ -21,17 +22,15 @@ pub struct BackendHealth {
     pub total_bytes: Option<u64>,
 }
 
-pub async fn check_backend_health(row: &StorageBackendRow) -> BackendHealth {
+pub async fn check_backend_health(
+    row: &StorageBackendRow,
+    default_agent_url: Option<&str>,
+) -> BackendHealth {
     match row.kind.as_str() {
         "local_file" => probe_local_file(row).await,
         "nfs" => probe_nfs(row).await,
         "truenas_iscsi" => probe_truenas(row).await,
-        "iscsi_lvm" => BackendHealth {
-            reachable: false,
-            status: "not yet implemented (Task 10)".into(),
-            used_bytes: None,
-            total_bytes: None,
-        },
+        "iscsi_lvm" => probe_iscsi_lvm(row, default_agent_url).await,
         other => BackendHealth {
             reachable: true,
             status: format!("skipped: {other} kind has no health probe"),
@@ -192,6 +191,102 @@ async fn probe_truenas(row: &StorageBackendRow) -> BackendHealth {
         Err(e) => BackendHealth {
             reachable: false,
             status: format!("unreachable: {e}"),
+            used_bytes: None,
+            total_bytes: None,
+        },
+    }
+}
+
+async fn probe_iscsi_lvm(
+    row: &StorageBackendRow,
+    default_agent_url: Option<&str>,
+) -> BackendHealth {
+    let cfg: IscsiLvmConfig = match serde_json::from_value(row.config_json.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            return BackendHealth {
+                reachable: false,
+                status: format!("config decode: {e}"),
+                used_bytes: None,
+                total_bytes: None,
+            };
+        }
+    };
+    let agent_url_owned: String = cfg
+        .agent_url
+        .clone()
+        .or_else(|| default_agent_url.map(|s| s.to_string()))
+        .unwrap_or_default();
+    if agent_url_owned.is_empty() {
+        return BackendHealth {
+            reachable: false,
+            status: "no agent_url".into(),
+            used_bytes: None,
+            total_bytes: None,
+        };
+    }
+    let base = {
+        let with_scheme =
+            if agent_url_owned.starts_with("http://") || agent_url_owned.starts_with("https://") {
+                agent_url_owned.clone()
+            } else {
+                format!("http://{agent_url_owned}")
+            };
+        with_scheme.trim_end_matches('/').to_string()
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return BackendHealth {
+                reachable: false,
+                status: format!("reqwest builder: {e}"),
+                used_bytes: None,
+                total_bytes: None,
+            };
+        }
+    };
+    // Best-effort: a session may already be open; ignore login errors.
+    let _ = client
+        .post(format!("{base}/v1/storage/iscsi_lvm/login"))
+        .json(&serde_json::json!({"iqn": cfg.iqn, "portal": cfg.portal}))
+        .send()
+        .await;
+    match client
+        .post(format!("{base}/v1/storage/iscsi_lvm/vg_status"))
+        .json(&serde_json::json!({"vg": cfg.vg_name}))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
+            Ok(v) => {
+                let size = v.get("size_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+                let free = v.get("free_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+                BackendHealth {
+                    reachable: true,
+                    status: "ok".into(),
+                    used_bytes: Some(size.saturating_sub(free)),
+                    total_bytes: Some(size),
+                }
+            }
+            Err(e) => BackendHealth {
+                reachable: false,
+                status: format!("vg_status decode: {e}"),
+                used_bytes: None,
+                total_bytes: None,
+            },
+        },
+        Ok(resp) => BackendHealth {
+            reachable: false,
+            status: format!("vg_status http {}", resp.status()),
+            used_bytes: None,
+            total_bytes: None,
+        },
+        Err(e) => BackendHealth {
+            reachable: false,
+            status: format!("vg_status: {e}"),
             used_bytes: None,
             total_bytes: None,
         },

@@ -8,11 +8,6 @@
 //! The on-host topology is captured in the locator JSON `{vg, lv}` so the
 //! agent can independently activate the LV when it attaches the volume.
 //! Mirrors the shape used by `apps/agent/src/features/storage/iscsi_lvm.rs`.
-//!
-//! NOTE: dead-code allowed at module scope because Task 9 lands the
-//! backend itself; the registry hookup that exercises these symbols is
-//! Task 10. Once that lands, the allow can be removed.
-#![allow(dead_code)]
 
 use nexus_storage::{
     BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts, StorageError,
@@ -30,12 +25,16 @@ pub struct IscsiLvmConfig {
     pub iqn: String,
     /// Volume group name on the LUN, e.g. `vg-nqrust`.
     pub vg_name: String,
-    /// LUN number to attach (defaults to 0).
+    /// LUN number to attach (defaults to 0). Currently informational —
+    /// the agent resolves the device from the iSCSI session symlinks.
     #[serde(default)]
+    #[allow(dead_code)]
     pub lun: u32,
     /// If true, the agent zeroes LV blocks before `lvremove`. Mirrors
-    /// Proxmox `LVMPlugin` `saferemove`. Default false.
+    /// Proxmox `LVMPlugin` `saferemove`. Default false. Forwarded to the
+    /// agent via `lv_remove` once that plumbing exists.
     #[serde(default)]
+    #[allow(dead_code)]
     pub saferemove: bool,
     /// Base URL of the agent that owns this iSCSI session, e.g.
     /// `http://127.0.0.1:9090`. The manager appends

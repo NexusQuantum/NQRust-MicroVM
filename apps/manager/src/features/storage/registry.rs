@@ -221,7 +221,20 @@ fn build_backend(
                 },
             ))
         }
-        BackendKind::IscsiLvm => Err(anyhow!("iscsi_lvm not yet implemented (Task 10)")),
+        BackendKind::IscsiLvm => {
+            let mut cfg: crate::features::storage::backends::iscsi_lvm::IscsiLvmConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' iscsi_lvm config", row.name))?;
+            if cfg.agent_url.is_none() {
+                cfg.agent_url = default_agent_url.map(|s| s.to_string());
+            }
+            Ok(Arc::new(
+                crate::features::storage::backends::iscsi_lvm::IscsiLvmControlPlaneBackend {
+                    id: BackendInstanceId(row.id),
+                    config: cfg,
+                },
+            ))
+        }
     }
 }
 
