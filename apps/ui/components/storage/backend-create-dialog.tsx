@@ -203,7 +203,20 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
   },
 };
 
-const KINDS: BackendKind[] = ["local_file", "nfs", "iscsi", "truenas_iscsi", "spdk_lvol", "iscsi_lvm"];
+// Recommended kinds shown by default in the dropdown. Covers the three
+// mainstream paths: single-host file, NAS, vendor-agnostic SAN.
+const BASIC_KINDS: BackendKind[] = ["local_file", "nfs", "iscsi_lvm"];
+
+// Advanced kinds — vendor-specific or operationally heavyweight. Hidden
+// behind a "Show advanced kinds" disclosure to keep the default UX simple
+// without removing capability:
+//   - iscsi (generic): pre-cut LUN passthrough, 1 VM per LUN. iscsi_lvm
+//     covers ~95% of this case with auto-provisioning.
+//   - truenas_iscsi: TrueNAS REST adapter for native ZFS snapshots / thin
+//     provisioning. Power-user mode for shops that want ZFS features.
+//   - spdk_lvol: NVMe vhost-user direct. Requires hugepages, vhost socket
+//     plumbing, kernel modules. High-throughput / clustering future.
+const ADVANCED_KINDS: BackendKind[] = ["iscsi", "truenas_iscsi", "spdk_lvol"];
 
 function NfsExportField({
   server,
@@ -384,10 +397,16 @@ function renderField(
 export function BackendCreateDialog({ open, onOpenChange }: Props) {
   const create = useCreateStorageBackend();
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<BackendKind>("nfs");
+  const [kind, setKind] = useState<BackendKind>("local_file");
   const [isDefault, setIsDefault] = useState(false);
   const [config, setConfig] = useState<Record<string, string | boolean>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Tier the kind dropdown: BASIC_KINDS (local_file, nfs, iscsi_lvm) shown
+  // by default, ADVANCED_KINDS (iscsi generic, truenas_iscsi, spdk_lvol)
+  // revealed via a toggle below the Select. Auto-on if the currently-
+  // selected kind is one of the advanced ones — keeps the form sane when
+  // the operator edits a row that already used an advanced kind.
+  const [showAdvancedKinds, setShowAdvancedKinds] = useState(false);
   // After a successful create of an iscsi_lvm backend the operator must
   // run the one-time `vgcreate` against the freshly-attached LUN. We
   // surface that as a transient post-create banner inside the same
@@ -405,7 +424,7 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
 
   function reset() {
     setName("");
-    setKind("nfs");
+    setKind("local_file");
     setIsDefault(false);
     setConfig({});
     setShowAdvanced(false);
@@ -553,14 +572,33 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {KINDS.map((k) => (
+                  {BASIC_KINDS.map((k) => (
                     <SelectItem key={k} value={k}>
                       {KIND_CONFIG[k].label}
                     </SelectItem>
                   ))}
+                  {(showAdvancedKinds || ADVANCED_KINDS.includes(kind)) &&
+                    ADVANCED_KINDS.map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {KIND_CONFIG[k].label}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">{spec.description}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground flex-1">{spec.description}</p>
+                {!ADVANCED_KINDS.includes(kind) && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedKinds((v) => !v)}
+                    className="text-xs text-primary hover:underline whitespace-nowrap"
+                  >
+                    {showAdvancedKinds
+                      ? "Hide advanced kinds"
+                      : `Show advanced kinds (${ADVANCED_KINDS.length})`}
+                  </button>
+                )}
+              </div>
             </div>
 
             {basicFields.map((f) => {
