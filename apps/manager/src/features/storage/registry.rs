@@ -5,17 +5,19 @@ use anyhow::{anyhow, Context, Result};
 use nexus_storage::{BackendInstanceId, BackendKind, ControlPlaneBackend};
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 /// Manager-side registry. Holds one trait object per active backend instance,
-/// keyed by `backend_id`. Built once at startup; immutable thereafter.
-/// Task 15 wires this into AppState — suppress dead-code warnings until then.
+/// keyed by `backend_id`. Built at startup from DB rows + TOML; mutated at
+/// runtime by storage_backends create/delete routes so UI-added backends are
+/// immediately usable for VM-create without a manager restart.
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct Registry {
-    by_id: HashMap<Uuid, Arc<dyn ControlPlaneBackend>>,
-    default_id: Option<Uuid>,
+    by_id: Arc<RwLock<HashMap<Uuid, Arc<dyn ControlPlaneBackend>>>>,
+    default_id: Arc<RwLock<Option<Uuid>>>,
+    pool: PgPool,
 }
 
 #[allow(dead_code)]
@@ -128,19 +130,72 @@ impl Registry {
             ));
         }
 
-        Ok(Registry { by_id, default_id })
+        Ok(Registry {
+            by_id: Arc::new(RwLock::new(by_id)),
+            default_id: Arc::new(RwLock::new(default_id)),
+            pool: pool.clone(),
+        })
     }
 
-    pub fn get(&self, id: Uuid) -> Option<&Arc<dyn ControlPlaneBackend>> {
-        self.by_id.get(&id)
+    pub fn get(&self, id: Uuid) -> Option<Arc<dyn ControlPlaneBackend>> {
+        self.by_id.read().ok()?.get(&id).cloned()
     }
 
     pub fn default_id(&self) -> Option<Uuid> {
-        self.default_id
+        *self.default_id.read().ok()?
     }
 
-    pub fn default_backend(&self) -> Option<&Arc<dyn ControlPlaneBackend>> {
-        self.default_id.and_then(|id| self.by_id.get(&id))
+    pub fn default_backend(&self) -> Option<Arc<dyn ControlPlaneBackend>> {
+        let did = (*self.default_id.read().ok()?)?;
+        self.by_id.read().ok()?.get(&did).cloned()
+    }
+
+    /// Insert (or replace) a backend in the live registry. Called by the
+    /// storage_backends create handler after a new row is upserted, so the
+    /// backend becomes immediately usable for VM-create without a restart.
+    pub async fn add(&self, row: &StorageBackendRow) -> Result<()> {
+        let default_agent_url: Option<String> =
+            sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await
+                .context("looking up default agent for live registry add")?;
+        let backend = build_backend(row, default_agent_url.as_deref())?;
+        // Best-effort probe (mirrors startup load).
+        if let Err(e) = backend.probe().await {
+            tracing::warn!(
+                backend = %row.name,
+                error = %e,
+                "live-registry insert: probe failed (will retry lazily)"
+            );
+        }
+        {
+            let mut by_id = self.by_id.write().expect("registry rwlock poisoned");
+            by_id.insert(row.id, backend);
+        }
+        if row.is_default {
+            *self.default_id.write().expect("registry rwlock poisoned") = Some(row.id);
+        }
+        tracing::info!(
+            backend_id = %row.id,
+            name = %row.name,
+            kind = %row.kind,
+            "storage_backend added to live registry"
+        );
+        Ok(())
+    }
+
+    /// Remove a backend from the live registry. Called after soft-delete so
+    /// VM-create no longer routes to a deleted backend.
+    pub fn remove(&self, id: Uuid) {
+        {
+            let mut by_id = self.by_id.write().expect("registry rwlock poisoned");
+            by_id.remove(&id);
+        }
+        let mut did = self.default_id.write().expect("registry rwlock poisoned");
+        if *did == Some(id) {
+            *did = None;
+        }
+        tracing::info!(backend_id = %id, "storage_backend removed from live registry");
     }
 }
 
@@ -248,9 +303,15 @@ impl Registry {
     ) -> Self {
         let mut by_id = std::collections::HashMap::new();
         by_id.insert(id, backend);
+        // The test pool is unused by the helpers tests typically exercise
+        // (`get`, `default_id`, `default_backend`); `add()` would dereference
+        // it but is not called from these tests.
+        let pool = sqlx::PgPool::connect_lazy("postgres://nobody@localhost/nobody")
+            .expect("lazy pool init does not actually connect");
         Registry {
-            by_id,
-            default_id: Some(id),
+            by_id: Arc::new(RwLock::new(by_id)),
+            default_id: Arc::new(RwLock::new(Some(id))),
+            pool,
         }
     }
 }

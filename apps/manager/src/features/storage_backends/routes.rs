@@ -167,6 +167,18 @@ pub async fn create(
         }
     }
 
+    // Insert into the live registry so the backend is immediately usable
+    // for VM-create without a manager restart. Best-effort: a failure here
+    // is logged but doesn't roll back the DB row — operators can still see
+    // the backend in the table; it'll come online on next manager restart.
+    if let Err(e) = st.registry.add(&row).await {
+        tracing::warn!(
+            backend = %row.name,
+            error = %e,
+            "create succeeded but live-registry insert failed (next restart will pick it up)"
+        );
+    }
+
     match row_to_wire(row) {
         Ok(w) => (StatusCode::CREATED, Json(w)).into_response(),
         Err(s) => (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response(),
@@ -255,6 +267,7 @@ pub async fn delete(Extension(st): Extension<AppState>, Path(id): Path<Uuid>) ->
         )
             .into_response();
     }
+    st.registry.remove(id);
     StatusCode::NO_CONTENT.into_response()
 }
 

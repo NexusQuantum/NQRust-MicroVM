@@ -254,7 +254,7 @@ pub async fn create_and_start(
     // block storage (iscsi_lvm), this issues `lvchange -aey` so this host
     // gets exclusive access. No-op for local_file / NFS.
     if let Some(handle) = spec.rootfs_volume_handle.as_ref() {
-        if let Some(backend) = st.registry.get(handle.backend_id.0).cloned() {
+        if let Some(backend) = st.registry.get(handle.backend_id.0) {
             backend.activate_volume(handle).await.with_context(|| {
                 format!(
                     "activating rootfs volume on backend {}",
@@ -703,7 +703,7 @@ async fn resolve_rootfs_attached_path(
         return Ok((vm.rootfs_path.clone(), false));
     };
 
-    let backend = match backend_id.and_then(|bid| st.registry.get(bid).cloned()) {
+    let backend = match backend_id.and_then(|bid| st.registry.get(bid)) {
         Some(b) => b,
         None => return Ok((vm.rootfs_path.clone(), false)),
     };
@@ -770,7 +770,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     // For shared-block backends (iscsi_lvm) this issues `lvchange -aey`.
     // No-op for local_file / NFS.
     if let Some(handle) = lookup_rootfs_volume_handle(st, vm.id).await? {
-        if let Some(backend) = st.registry.get(handle.backend_id.0).cloned() {
+        if let Some(backend) = st.registry.get(handle.backend_id.0) {
             backend.activate_volume(&handle).await.with_context(|| {
                 format!(
                     "activating rootfs volume on backend {} during restart",
@@ -900,7 +900,7 @@ pub async fn stop_only(
             let Some(bid) = backend_id else {
                 continue;
             };
-            let Some(backend) = st.registry.get(*bid).cloned() else {
+            let Some(backend) = st.registry.get(*bid) else {
                 continue;
             };
             let kind = backend.kind();
@@ -956,7 +956,7 @@ pub async fn stop_only(
     // (local_file, NFS).
     match lookup_rootfs_volume_handle(st, id).await {
         Ok(Some(handle)) => {
-            if let Some(backend) = st.registry.get(handle.backend_id.0).cloned() {
+            if let Some(backend) = st.registry.get(handle.backend_id.0) {
                 if let Err(e) = backend.deactivate_volume(&handle).await {
                     tracing::warn!(
                         vm_id = %id,
