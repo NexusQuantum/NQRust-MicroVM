@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod iscsi;
+pub mod iscsi_lvm;
 pub mod local_file;
 pub mod nfs;
 pub mod registry;
