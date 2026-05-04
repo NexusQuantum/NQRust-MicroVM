@@ -62,4 +62,18 @@ pub trait ControlPlaneBackend: Send + Sync {
     fn host_path_for(&self, handle: &VolumeHandle) -> Option<std::path::PathBuf> {
         Some(std::path::PathBuf::from(&handle.locator))
     }
+
+    /// Make a volume usable on this host. Backends with shared block
+    /// storage (LVM-on-iSCSI, FC LUNs) override this to do exclusive
+    /// activation (`lvchange -aey`). Default no-op for backends where
+    /// every host can access the file independently (NFS, local_file).
+    async fn activate_volume(&self, _handle: &VolumeHandle) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// Inverse of `activate_volume`. Called when the VM stops on this
+    /// host so another host can activate the same volume (live migration).
+    async fn deactivate_volume(&self, _handle: &VolumeHandle) -> Result<(), StorageError> {
+        Ok(())
+    }
 }

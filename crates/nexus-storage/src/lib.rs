@@ -162,5 +162,25 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(err, StorageError::NotSupported(_)));
         }
+
+        /// The trait provides default no-op `activate_volume`/`deactivate_volume`
+        /// implementations so that stateless backends (NFS, local_file) inherit
+        /// them for free. Backends with shared block storage (iscsi_lvm) override
+        /// these to do exclusive `lvchange -aey` / `lvchange -aln` activation.
+        #[tokio::test]
+        async fn default_activate_deactivate_are_noop_ok() {
+            // UnsupportedBackend does NOT override the new methods, so the
+            // trait default kicks in.
+            let backend = UnsupportedBackend;
+            let handle = VolumeHandle {
+                volume_id: Uuid::new_v4(),
+                backend_id: BackendInstanceId(Uuid::new_v4()),
+                backend_kind: BackendKind::Iscsi,
+                locator: String::new(),
+                size_bytes: 0,
+            };
+            backend.activate_volume(&handle).await.unwrap();
+            backend.deactivate_volume(&handle).await.unwrap();
+        }
     }
 }
