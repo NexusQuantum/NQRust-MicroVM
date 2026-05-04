@@ -155,6 +155,7 @@ fn build_backend(
         "truenas_iscsi" => BackendKind::TrueNasIscsi,
         "spdk_lvol" => BackendKind::SpdkLvol,
         "nfs" => BackendKind::Nfs,
+        "iscsi_lvm" => BackendKind::IscsiLvm,
         other => {
             return Err(anyhow!("unknown backend kind '{other}'"));
         }
@@ -220,6 +221,7 @@ fn build_backend(
                 },
             ))
         }
+        BackendKind::IscsiLvm => Err(anyhow!("iscsi_lvm not yet implemented (Task 10)")),
     }
 }
 

@@ -1720,6 +1720,8 @@ pub enum BackendKind {
     SpdkLvol,
     #[serde(rename = "nfs")]
     Nfs,
+    #[serde(rename = "iscsi_lvm")]
+    IscsiLvm,
 }
 
 #[derive(

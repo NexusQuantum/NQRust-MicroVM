@@ -1063,7 +1063,7 @@ export interface LicenseUploadRequest {
 // Storage Backend Types
 // ========================================
 
-export type BackendKind = "local_file" | "iscsi" | "truenas_iscsi" | "spdk_lvol" | "nfs";
+export type BackendKind = "local_file" | "iscsi" | "truenas_iscsi" | "spdk_lvol" | "nfs" | "iscsi_lvm";
 
 export interface CreateStorageBackendReq {
   name: string;

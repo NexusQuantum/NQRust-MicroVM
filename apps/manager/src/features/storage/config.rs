@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use nexus_storage::{BackendKind, Capabilities};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -105,6 +105,9 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 supports_live_migration: false,
                 supports_clone_from_image: true,
             }
+        }
+        BackendKind::IscsiLvm => {
+            bail!("iscsi_lvm not yet implemented (Task 10)")
         }
     };
 
