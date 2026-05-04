@@ -46,6 +46,17 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    // Register iscsi_lvm host-backend if iscsiadm is available on this host.
+    // Operators can force-enable via AGENT_ISCSI_AVAILABLE for environments
+    // where iscsiadm lives at a non-standard path.
+    if std::env::var("AGENT_ISCSI_AVAILABLE").is_ok()
+        || tokio::fs::metadata("/usr/bin/iscsiadm").await.is_ok()
+    {
+        storage_registry.register_for(
+            nexus_storage::BackendKind::IscsiLvm,
+            std::sync::Arc::new(features::storage::iscsi_lvm::IscsiLvmHostBackend),
+        );
+    }
     if let Ok(rpc_socket) = std::env::var("AGENT_SPDK_RPC_SOCKET") {
         let vhost_socket_dir =
             std::env::var("AGENT_SPDK_VHOST_SOCKET_DIR").unwrap_or_else(|_| "/var/tmp".into());

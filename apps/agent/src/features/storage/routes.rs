@@ -539,6 +539,7 @@ pub fn router(state: Arc<StorageState>) -> Router {
         .route("/nfs/clone_from_path", post(nfs_clone_from_path))
         .route("/nfs/snapshot", post(nfs_snapshot))
         .route("/nfs/clone_snapshot", post(nfs_clone_snapshot))
+        .nest("/iscsi_lvm", crate::features::storage::iscsi_lvm::router())
         .route("/supported_kinds", get(supported_kinds))
         .route("/backup", post(backup))
         .route("/restore", post(restore))

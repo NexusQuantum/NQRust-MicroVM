@@ -11,7 +11,12 @@
 
 use std::path::PathBuf;
 
-use nexus_storage::StorageError;
+use async_trait::async_trait;
+use axum::{http::StatusCode, response::IntoResponse, routing::post, Json, Router};
+use nexus_storage::{
+    AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle,
+};
+use serde::{Deserialize, Serialize};
 
 /// One row from `pvs --separator : --noheadings --units k --nosuffix
 /// --options pv_name,pv_size,vg_name,pv_uuid`.
@@ -726,5 +731,421 @@ mod init_tests {
         initialize_vg(std::path::Path::new(&device), &vg)
             .await
             .expect("idempotent");
+    }
+}
+
+// -------------------------------------------------------------------------
+// Locator + HostBackend impl
+// -------------------------------------------------------------------------
+
+/// Wire-format locator JSON for an iscsi_lvm volume. The manager-side
+/// control-plane backend (Task 9) serializes this into `VolumeHandle.locator`
+/// so the agent knows which LV to activate when attaching the volume.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IscsiLvmLocator {
+    pub vg: String,
+    pub lv: String,
+}
+
+/// Zero-sized agent-side host-backend for `BackendKind::IscsiLvm`. The iSCSI
+/// session is shared per-LUN across all VMs on this host and lives outside any
+/// individual volume's lifecycle, so attach/detach only manage LV activation.
+#[derive(Clone, Default)]
+pub struct IscsiLvmHostBackend;
+
+impl IscsiLvmHostBackend {
+    fn parse_locator(raw: &str) -> Result<IscsiLvmLocator, StorageError> {
+        serde_json::from_str(raw)
+            .map_err(|e| StorageError::InvalidLocator(format!("decode iscsi_lvm locator: {e}")))
+    }
+}
+
+#[async_trait]
+impl HostBackend for IscsiLvmHostBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::IscsiLvm
+    }
+
+    async fn attach(&self, volume: &VolumeHandle) -> Result<AttachedPath, StorageError> {
+        let loc = Self::parse_locator(&volume.locator)?;
+        lvchange_activate(&loc.vg, &loc.lv).await?;
+        let dev = PathBuf::from(format!("/dev/{}/{}", loc.vg, loc.lv));
+        Ok(AttachedPath::BlockDevice(dev))
+    }
+
+    async fn detach(
+        &self,
+        volume: &VolumeHandle,
+        _attached: AttachedPath,
+    ) -> Result<(), StorageError> {
+        let loc = Self::parse_locator(&volume.locator)?;
+        lvchange_deactivate(&loc.vg, &loc.lv).await
+    }
+
+    async fn populate_streaming(
+        &self,
+        attached: &AttachedPath,
+        source: &std::path::Path,
+        target_size_bytes: u64,
+    ) -> Result<(), StorageError> {
+        use tokio::io::AsyncWriteExt;
+        let dst_path = attached.path();
+        let mut src = tokio::fs::File::open(source).await?;
+        let mut dst = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(dst_path)
+            .await?;
+        tokio::io::copy(&mut src, &mut dst).await?;
+        dst.flush().await?;
+        // LV size is fixed at lvcreate time; target_size_bytes is informational
+        // for block backends.
+        let _ = target_size_bytes;
+        Ok(())
+    }
+
+    async fn resize2fs(&self, attached: &AttachedPath) -> Result<(), StorageError> {
+        super::local_file::run_resize2fs(attached.path()).await
+    }
+
+    async fn read_snapshot(
+        &self,
+        snap: &VolumeSnapshotHandle,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StorageError> {
+        // Snapshot locator carries the same {vg, lv} shape but referencing the
+        // snapshot LV. Activate exclusively, then open as a regular file.
+        let loc = Self::parse_locator(&snap.locator)?;
+        lvchange_activate(&loc.vg, &loc.lv).await?;
+        let dev = PathBuf::from(format!("/dev/{}/{}", loc.vg, loc.lv));
+        let f = tokio::fs::File::open(&dev).await?;
+        Ok(Box::new(f))
+    }
+}
+
+// -------------------------------------------------------------------------
+// HTTP routes (manager → agent)
+// -------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct LoginReq {
+    pub iqn: String,
+    pub portal: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LogoutReq {
+    pub iqn: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InitVgReq {
+    pub iqn: String,
+    pub portal: String,
+    pub lun: u32,
+    pub vg_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VgStatusReq {
+    pub vg: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VgStatusResp {
+    pub size_bytes: u64,
+    pub free_bytes: u64,
+    pub lv_count: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LvCreateReq {
+    pub vg: String,
+    pub name: String,
+    pub size_bytes: u64,
+    pub vm_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LvCreateResp {
+    pub device: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LvNameReq {
+    pub vg: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CloneFromPathReq {
+    pub source_path: PathBuf,
+    pub vg: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LvSnapshotReq {
+    pub vg: String,
+    pub source_lv: String,
+    pub snap_name: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LvSnapshotResp {
+    pub snap_name: String,
+}
+
+fn err_500(e: impl std::fmt::Display) -> axum::response::Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": format!("backend error: {e}")})),
+    )
+        .into_response()
+}
+
+async fn login_handler(Json(body): Json<LoginReq>) -> impl IntoResponse {
+    match iscsi_login(&body.iqn, &body.portal).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn logout_handler(Json(body): Json<LogoutReq>) -> impl IntoResponse {
+    match iscsi_logout(&body.iqn).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn init_vg_handler(Json(body): Json<InitVgReq>) -> impl IntoResponse {
+    // Ensure session, then locate the block device, then init the VG.
+    if let Err(e) = iscsi_login(&body.iqn, &body.portal).await {
+        return err_500(e);
+    }
+    // Wait briefly for udev to populate /dev/disk/by-path.
+    let mut device: Option<PathBuf> = None;
+    for _ in 0..30 {
+        if let Some(p) = resolve_iscsi_block_device(&body.iqn, &body.portal, body.lun).await {
+            device = Some(p);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let dev = match device {
+        Some(p) => p,
+        None => {
+            return err_500(format!(
+                "iscsi block device for {}@{} lun={} did not appear",
+                body.iqn, body.portal, body.lun
+            ))
+        }
+    };
+    match initialize_vg(&dev, &body.vg_name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn vg_status_handler(Json(body): Json<VgStatusReq>) -> impl IntoResponse {
+    use tokio::process::Command;
+    let out = match Command::new("vgs")
+        .args([
+            "--separator",
+            ":",
+            "--noheadings",
+            "--units",
+            "b",
+            "--unbuffered",
+            "--nosuffix",
+            "--options",
+            "vg_name,vg_size,vg_free,lv_count",
+            &body.vg,
+        ])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => return err_500(format!("vgs spawn: {e}")),
+    };
+    if !out.status.success() {
+        return err_500(format!(
+            "vgs failed: exit {:?}, stderr={}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = match stdout.lines().next() {
+        Some(l) => l,
+        None => return err_500(format!("vgs returned no rows for vg='{}'", body.vg)),
+    };
+    let info = match parse_vg_info(line) {
+        Some(i) => i,
+        None => return err_500(format!("could not parse vgs row: {line:?}")),
+    };
+    (
+        StatusCode::OK,
+        Json(VgStatusResp {
+            size_bytes: info.size_bytes,
+            free_bytes: info.free_bytes,
+            lv_count: info.lv_count,
+        }),
+    )
+        .into_response()
+}
+
+async fn lv_create_handler(Json(body): Json<LvCreateReq>) -> impl IntoResponse {
+    match lvcreate(&body.vg, &body.name, body.size_bytes, &body.vm_id).await {
+        Ok(device) => (StatusCode::OK, Json(LvCreateResp { device })).into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn lv_remove_handler(Json(body): Json<LvNameReq>) -> impl IntoResponse {
+    match lvremove(&body.vg, &body.name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn lv_activate_handler(Json(body): Json<LvNameReq>) -> impl IntoResponse {
+    match lvchange_activate(&body.vg, &body.name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn lv_deactivate_handler(Json(body): Json<LvNameReq>) -> impl IntoResponse {
+    match lvchange_deactivate(&body.vg, &body.name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn clone_from_path_handler(Json(body): Json<CloneFromPathReq>) -> impl IntoResponse {
+    use tokio::process::Command;
+    // Caller is expected to have already created+activated the LV via
+    // /lv_create. qemu-img convert handles raw and qcow2 sources transparently.
+    let dst = format!("/dev/{}/{}", body.vg, body.name);
+    let status = match Command::new("qemu-img")
+        .arg("convert")
+        .arg("-O")
+        .arg("raw")
+        .arg(&body.source_path)
+        .arg(&dst)
+        .status()
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => return err_500(format!("qemu-img spawn: {e}")),
+    };
+    if !status.success() {
+        return err_500(format!(
+            "qemu-img convert {} -> {} failed: exit {:?}",
+            body.source_path.display(),
+            dst,
+            status.code()
+        ));
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn lv_snapshot_handler(Json(body): Json<LvSnapshotReq>) -> impl IntoResponse {
+    use tokio::process::Command;
+    let size_arg = format!("{}b", body.size_bytes);
+    let source = format!("{}/{}", body.vg, body.source_lv);
+    let status = match Command::new("lvcreate")
+        .args([
+            "--snapshot",
+            "--name",
+            &body.snap_name,
+            "--size",
+            &size_arg,
+            &source,
+        ])
+        .status()
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => return err_500(format!("lvcreate --snapshot spawn: {e}")),
+    };
+    if !status.success() {
+        return err_500(format!(
+            "lvcreate --snapshot failed: exit {:?}",
+            status.code()
+        ));
+    }
+    (
+        StatusCode::OK,
+        Json(LvSnapshotResp {
+            snap_name: body.snap_name,
+        }),
+    )
+        .into_response()
+}
+
+/// Mounted under `/v1/storage/iscsi_lvm` by the parent storage router. Handlers
+/// are stateless — they call the iSCSI/LVM helper functions directly. The
+/// router is generic over the parent's state type `S` so it composes via
+/// `Router::nest` regardless of what state the parent carries.
+pub fn router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .route("/login", post(login_handler))
+        .route("/logout", post(logout_handler))
+        .route("/init_vg", post(init_vg_handler))
+        .route("/vg_status", post(vg_status_handler))
+        .route("/lv_create", post(lv_create_handler))
+        .route("/lv_remove", post(lv_remove_handler))
+        .route("/lv_activate", post(lv_activate_handler))
+        .route("/lv_deactivate", post(lv_deactivate_handler))
+        .route("/clone_from_path", post(clone_from_path_handler))
+        .route("/lv_snapshot", post(lv_snapshot_handler))
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+    use nexus_storage::{BackendInstanceId, BackendKind};
+    use uuid::Uuid;
+
+    #[test]
+    fn host_backend_kind_is_iscsi_lvm() {
+        let b = IscsiLvmHostBackend;
+        assert!(matches!(b.kind(), BackendKind::IscsiLvm));
+    }
+
+    #[test]
+    fn parse_locator_round_trip() {
+        let raw = serde_json::json!({"vg":"vg-nqrust","lv":"vm-100-disk-0"}).to_string();
+        let loc = IscsiLvmHostBackend::parse_locator(&raw).expect("parsed");
+        assert_eq!(loc.vg, "vg-nqrust");
+        assert_eq!(loc.lv, "vm-100-disk-0");
+    }
+
+    #[test]
+    fn parse_locator_rejects_garbage() {
+        let err = IscsiLvmHostBackend::parse_locator("not json").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidLocator(_)));
+    }
+
+    #[test]
+    fn volume_handle_locator_path_format() {
+        // Verify the device path format an agent would derive from a locator —
+        // pinning the wire-format → /dev/<vg>/<lv> contract used by attach.
+        let raw = serde_json::json!({"vg":"vg-x","lv":"vm-7"}).to_string();
+        let loc = IscsiLvmHostBackend::parse_locator(&raw).unwrap();
+        assert_eq!(format!("/dev/{}/{}", loc.vg, loc.lv), "/dev/vg-x/vm-7");
+
+        // Make sure VolumeHandle/VolumeSnapshotHandle still build with this kind.
+        let _ = VolumeHandle {
+            volume_id: Uuid::new_v4(),
+            backend_id: BackendInstanceId(Uuid::new_v4()),
+            backend_kind: BackendKind::IscsiLvm,
+            locator: raw,
+            size_bytes: 1024,
+        };
     }
 }
