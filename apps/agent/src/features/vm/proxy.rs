@@ -115,6 +115,7 @@ mod tests {
             run_dir: run_dir.to_string_lossy().to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            nfs_config: None,
         };
 
         let resolved = resolve_socket_path(&st, id, sock_file.to_str().unwrap())
@@ -140,6 +141,7 @@ mod tests {
             run_dir: run_dir.to_string_lossy().to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            nfs_config: None,
         };
 
         let nested = run_dir.join("vms").join("vm-abc").join("sock");
@@ -168,6 +170,7 @@ mod tests {
             run_dir: run_dir.to_string_lossy().to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            nfs_config: None,
         };
 
         let err = resolve_socket_path(&st, "vm-other", sock.to_str().unwrap())

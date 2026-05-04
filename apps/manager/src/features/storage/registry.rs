@@ -40,9 +40,15 @@ impl Registry {
         let toml_names: std::collections::HashSet<String> =
             validated.iter().map(|v| v.name.clone()).collect();
 
-        // Don't soft-delete localfile-default — it's the migration-seeded fallback.
+        // Sweep: soft-delete TOML-sourced rows that are no longer in the file.
+        // UI-sourced rows (source='ui') are operator-managed and survive
+        // restarts. Don't touch localfile-default either — it's seeded by
+        // migration as the fallback.
         for existing in repo.list_active().await? {
             if existing.name == "localfile-default" {
+                continue;
+            }
+            if existing.source == "ui" {
                 continue;
             }
             if !toml_names.contains(&existing.name) {
@@ -62,16 +68,24 @@ impl Registry {
                 &v.config,
                 &caps_json,
                 v.is_default,
+                "toml",
             )
             .await
             .with_context(|| format!("upserting storage_backend '{}'", v.name))?;
         }
 
         // 3. Build the in-memory map. Walk active rows from the DB (post-upsert).
+        // NFS can omit config.agent_url for single-host setups; in that case
+        // use the most recently-seen registered agent as the mount/file owner.
+        let default_agent_url: Option<String> =
+            sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
+                .fetch_optional(pool)
+                .await
+                .context("looking up default agent for storage backends")?;
         let mut by_id: HashMap<Uuid, Arc<dyn ControlPlaneBackend>> = HashMap::new();
         let mut default_id: Option<Uuid> = None;
         for row in repo.list_active().await? {
-            let trait_obj = match build_backend(&row) {
+            let trait_obj = match build_backend(&row, default_agent_url.as_deref()) {
                 Ok(o) => o,
                 Err(e) => {
                     tracing::warn!("storage_backend '{}' skipped: {e:#}", row.name);
@@ -85,6 +99,25 @@ impl Registry {
                     ));
                 }
                 default_id = Some(row.id);
+            }
+            tracing::info!(
+                backend_id = %row.id,
+                name = %row.name,
+                kind = %row.kind,
+                source = %row.source,
+                is_default = row.is_default,
+                "storage_backend loaded into registry"
+            );
+            // Eagerly probe so operators see reachability failures at
+            // startup rather than on first VM-create. Best-effort: a
+            // failed probe logs WARN but doesn't crash startup, since the
+            // agent might still be coming up.
+            if let Err(e) = trait_obj.probe().await {
+                tracing::warn!(
+                    backend = %row.name,
+                    error = %e,
+                    "storage_backend probe failed at startup (will retry lazily)"
+                );
             }
             by_id.insert(row.id, trait_obj);
         }
@@ -112,7 +145,10 @@ impl Registry {
 }
 
 #[allow(dead_code)]
-fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>> {
+fn build_backend(
+    row: &StorageBackendRow,
+    default_agent_url: Option<&str>,
+) -> Result<Arc<dyn ControlPlaneBackend>> {
     let kind: BackendKind = match row.kind.as_str() {
         "local_file" => BackendKind::LocalFile,
         "iscsi" => BackendKind::Iscsi,
@@ -169,9 +205,14 @@ fn build_backend(row: &StorageBackendRow) -> Result<Arc<dyn ControlPlaneBackend>
             ))
         }
         BackendKind::Nfs => {
-            let cfg: crate::features::storage::backends::nfs::NfsConfig =
+            let mut cfg: crate::features::storage::backends::nfs::NfsConfig =
                 serde_json::from_value(row.config_json.clone())
                     .with_context(|| format!("backend '{}' nfs config", row.name))?;
+            if cfg.agent_url.is_none() && !cfg.assume_mounted {
+                if let Some(addr) = default_agent_url {
+                    cfg.agent_url = Some(addr.to_string());
+                }
+            }
             Ok(Arc::new(
                 crate::features::storage::backends::nfs::NfsControlPlaneBackend {
                     id: BackendInstanceId(row.id),
@@ -287,10 +328,11 @@ mod tests {
                 "export": "/mnt/tank/vms"
             }),
             capabilities_json: serde_json::json!({}),
+            source: "toml".into(),
             deleted_at: None,
             created_at: chrono::Utc::now(),
         };
-        let backend = build_backend(&row).expect("build_backend");
+        let backend = build_backend(&row, Some("http://127.0.0.1:9090")).expect("build_backend");
         assert!(matches!(backend.kind(), nexus_storage::BackendKind::Nfs));
     }
 }

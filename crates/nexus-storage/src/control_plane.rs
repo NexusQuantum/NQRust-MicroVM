@@ -39,4 +39,27 @@ pub trait ControlPlaneBackend: Send + Sync {
     ) -> Result<VolumeHandle, StorageError>;
 
     async fn delete_snapshot(&self, snap: VolumeSnapshotHandle) -> Result<(), StorageError>;
+
+    /// Eager reachability check. Backends with non-trivial setup
+    /// (NFS mount, iSCSI login, REST auth) override this so operators
+    /// see failures at create-time / startup rather than first-provision.
+    /// Default is no-op for stateless backends like local_file.
+    async fn probe(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// Resolve a `VolumeHandle` to a real filesystem path on the host
+    /// for callers that need to open/mount/loopback the file (credential
+    /// injection, guest-agent installation, Firecracker drive attach).
+    ///
+    /// Default: treat the locator as a path. Backends with structured
+    /// locators (NFS = JSON of {server, export, file}) override this
+    /// to combine the locator with their config (mount_base) and
+    /// produce a path like `/var/lib/nqrust/nfs/<key>/<file>`.
+    ///
+    /// Returns `None` if the backend exposes no host-visible path
+    /// (e.g. a vhost-user device handed straight to Firecracker).
+    fn host_path_for(&self, handle: &VolumeHandle) -> Option<std::path::PathBuf> {
+        Some(std::path::PathBuf::from(&handle.locator))
+    }
 }

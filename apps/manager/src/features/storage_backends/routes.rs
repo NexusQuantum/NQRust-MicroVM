@@ -127,31 +127,73 @@ pub async fn create(
     // Idempotent on (name). A second POST with the same name updates
     // the existing row in place — that's the behaviour operators
     // expect when iterating on a backend's config in the UI form.
-    match repo
+    let row = match repo
         .upsert(
             &validated.name,
             validated.kind.as_db_str(),
             &validated.config,
             &capabilities_json,
             validated.is_default,
+            "ui",
         )
         .await
     {
-        Ok(row) => match row_to_wire(row) {
-            Ok(w) => (StatusCode::CREATED, Json(w)).into_response(),
-            Err(s) => {
-                (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response()
-            }
-        },
+        Ok(r) => r,
         Err(e) => {
             tracing::error!("storage_backends create failed: {e}");
-            (
+            return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "db"})),
             )
-                .into_response()
+                .into_response();
+        }
+    };
+
+    // For NFS: eagerly probe the agent-side mount so the operator sees
+    // "your share isn't reachable" right here in the create response,
+    // not later on first VM-create. On failure, undo the upsert so the
+    // table doesn't show a broken backend.
+    if validated.kind == nexus_storage::BackendKind::Nfs {
+        if let Err(e) = probe_nfs_backend(&st, &row).await {
+            let _ = repo.soft_delete_by_name(&row.name).await;
+            let chain: Vec<String> = e.chain().map(|c| c.to_string()).collect();
+            let detail = chain.join(" -> ");
+            tracing::warn!(backend = %row.name, error = ?e, "nfs backend probe failed; row rolled back");
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"error": format!("nfs mount probe failed: {detail}")})),
+            )
+                .into_response();
         }
     }
+
+    match row_to_wire(row) {
+        Ok(w) => (StatusCode::CREATED, Json(w)).into_response(),
+        Err(s) => (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response(),
+    }
+}
+
+async fn probe_nfs_backend(st: &AppState, row: &StorageBackendRow) -> anyhow::Result<()> {
+    use crate::features::storage::backends::nfs::{NfsConfig, NfsControlPlaneBackend};
+    use anyhow::Context;
+    use nexus_storage::{BackendInstanceId, ControlPlaneBackend};
+
+    let mut cfg: NfsConfig = serde_json::from_value(row.config_json.clone())
+        .context("decode nfs config for probe")?;
+    if cfg.agent_url.is_none() {
+        let default_agent_url: Option<String> =
+            sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
+                .fetch_optional(&st.db)
+                .await
+                .context("looking up default agent for nfs probe")?;
+        cfg.agent_url = default_agent_url;
+    }
+    let backend = NfsControlPlaneBackend {
+        id: BackendInstanceId(row.id),
+        config: cfg,
+    };
+    backend.probe().await.context("nfs mount probe")?;
+    Ok(())
 }
 
 #[utoipa::path(

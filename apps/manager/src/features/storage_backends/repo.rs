@@ -16,6 +16,7 @@ pub struct StorageBackendRow {
     pub config_json: JsonValue,
     pub capabilities_json: JsonValue,
     pub is_default: bool,
+    pub source: String,
     pub created_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
 }
@@ -60,16 +61,18 @@ impl StorageBackendRepository {
         config_json: &JsonValue,
         capabilities_json: &JsonValue,
         is_default: bool,
+        source: &str,
     ) -> sqlx::Result<StorageBackendRow> {
         sqlx::query_as::<_, StorageBackendRow>(
             r#"
-            INSERT INTO storage_backend (name, kind, config_json, capabilities_json, is_default, deleted_at)
-            VALUES ($1, $2, $3, $4, $5, NULL)
+            INSERT INTO storage_backend (name, kind, config_json, capabilities_json, is_default, source, deleted_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NULL)
             ON CONFLICT (name) DO UPDATE
               SET kind = EXCLUDED.kind,
                   config_json = EXCLUDED.config_json,
                   capabilities_json = EXCLUDED.capabilities_json,
                   is_default = EXCLUDED.is_default,
+                  source = EXCLUDED.source,
                   deleted_at = NULL
             RETURNING *
             "#,
@@ -79,6 +82,7 @@ impl StorageBackendRepository {
         .bind(config_json)
         .bind(capabilities_json)
         .bind(is_default)
+        .bind(source)
         .fetch_one(&self.pool)
         .await
     }

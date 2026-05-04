@@ -17,6 +17,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct StorageState {
     pub registry: HostBackendRegistry,
+    pub nfs_config: Option<crate::features::storage::nfs::NfsHostConfig>,
 }
 
 #[derive(Deserialize)]
@@ -159,6 +160,231 @@ pub async fn supported_kinds(State(s): State<Arc<StorageState>>) -> impl IntoRes
         .map(|k| k.as_db_str())
         .collect();
     (StatusCode::OK, Json(serde_json::json!({"kinds": kinds}))).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct NfsMountReq {
+    pub server: String,
+    pub export: String,
+}
+
+#[derive(Serialize)]
+pub struct NfsMountResp {
+    pub mount_point: PathBuf,
+}
+
+#[derive(Deserialize)]
+pub struct NfsCreateFileReq {
+    pub server: String,
+    pub export: String,
+    pub file: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Deserialize)]
+pub struct NfsDeleteFileReq {
+    pub server: String,
+    pub export: String,
+    pub file: String,
+}
+
+#[derive(Deserialize)]
+pub struct NfsCloneFromPathReq {
+    pub server: String,
+    pub export: String,
+    pub source_path: PathBuf,
+    pub file: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Deserialize)]
+pub struct NfsSnapshotReq {
+    pub server: String,
+    pub export: String,
+    pub file: String,
+    pub snapshot_file: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Deserialize)]
+pub struct NfsCloneSnapshotReq {
+    pub server: String,
+    pub export: String,
+    pub snapshot_file: String,
+    pub file: String,
+}
+
+#[derive(Serialize)]
+pub struct NfsCloneSnapshotResp {
+    pub size_bytes: u64,
+}
+
+fn nfs_backend(
+    state: &StorageState,
+) -> Result<crate::features::storage::nfs::NfsHostBackend, axum::response::Response> {
+    match state.nfs_config.clone() {
+        Some(config) => Ok(crate::features::storage::nfs::NfsHostBackend::new(config)),
+        None => Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "nfs backend is not enabled on this agent"})),
+        )
+            .into_response()),
+    }
+}
+
+pub async fn nfs_mount(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<NfsMountReq>,
+) -> impl IntoResponse {
+    let backend = match nfs_backend(&s) {
+        Ok(backend) => backend,
+        Err(resp) => return resp,
+    };
+    match backend.mount_export(&req.server, &req.export).await {
+        Ok(mount_point) => (StatusCode::OK, Json(NfsMountResp { mount_point })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn nfs_umount(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<NfsMountReq>,
+) -> impl IntoResponse {
+    let backend = match nfs_backend(&s) {
+        Ok(backend) => backend,
+        Err(resp) => return resp,
+    };
+    match backend.umount_export(&req.server, &req.export).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn nfs_create_file(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<NfsCreateFileReq>,
+) -> impl IntoResponse {
+    let backend = match nfs_backend(&s) {
+        Ok(backend) => backend,
+        Err(resp) => return resp,
+    };
+    match backend
+        .create_file(&req.server, &req.export, &req.file, req.size_bytes)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn nfs_delete_file(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<NfsDeleteFileReq>,
+) -> impl IntoResponse {
+    let backend = match nfs_backend(&s) {
+        Ok(backend) => backend,
+        Err(resp) => return resp,
+    };
+    match backend
+        .delete_file(&req.server, &req.export, &req.file)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn nfs_clone_from_path(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<NfsCloneFromPathReq>,
+) -> impl IntoResponse {
+    let backend = match nfs_backend(&s) {
+        Ok(backend) => backend,
+        Err(resp) => return resp,
+    };
+    match backend
+        .clone_from_path(
+            &req.server,
+            &req.export,
+            &req.source_path,
+            &req.file,
+            req.size_bytes,
+        )
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn nfs_snapshot(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<NfsSnapshotReq>,
+) -> impl IntoResponse {
+    let backend = match nfs_backend(&s) {
+        Ok(backend) => backend,
+        Err(resp) => return resp,
+    };
+    match backend
+        .snapshot_file(
+            &req.server,
+            &req.export,
+            &req.file,
+            &req.snapshot_file,
+            req.size_bytes,
+        )
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn nfs_clone_snapshot(
+    State(s): State<Arc<StorageState>>,
+    Json(req): Json<NfsCloneSnapshotReq>,
+) -> impl IntoResponse {
+    let backend = match nfs_backend(&s) {
+        Ok(backend) => backend,
+        Err(resp) => return resp,
+    };
+    match backend
+        .clone_snapshot_file(&req.server, &req.export, &req.snapshot_file, &req.file)
+        .await
+    {
+        Ok(size_bytes) => {
+            (StatusCode::OK, Json(NfsCloneSnapshotResp { size_bytes })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -306,6 +532,13 @@ pub fn router(state: Arc<StorageState>) -> Router {
         .route("/detach", post(detach))
         .route("/populate", post(populate))
         .route("/resize2fs", post(resize2fs))
+        .route("/nfs/mount", post(nfs_mount))
+        .route("/nfs/umount", post(nfs_umount))
+        .route("/nfs/create_file", post(nfs_create_file))
+        .route("/nfs/delete_file", post(nfs_delete_file))
+        .route("/nfs/clone_from_path", post(nfs_clone_from_path))
+        .route("/nfs/snapshot", post(nfs_snapshot))
+        .route("/nfs/clone_snapshot", post(nfs_clone_snapshot))
         .route("/supported_kinds", get(supported_kinds))
         .route("/backup", post(backup))
         .route("/restore", post(restore))

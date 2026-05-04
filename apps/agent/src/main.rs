@@ -9,6 +9,7 @@ pub struct AppState {
     pub run_dir: String,
     pub bridge: String,
     pub storage_registry: features::storage::registry::HostBackendRegistry,
+    pub nfs_config: Option<features::storage::nfs::NfsHostConfig>,
 }
 
 #[tokio::main]
@@ -29,20 +30,22 @@ async fn main() -> anyhow::Result<()> {
     let iscsi_host = std::sync::Arc::new(features::storage::iscsi::IscsiHostBackend);
     storage_registry.register_for(nexus_storage::BackendKind::Iscsi, iscsi_host.clone());
     storage_registry.register_for(nexus_storage::BackendKind::TrueNasIscsi, iscsi_host);
-    if let Ok(mount_base) = std::env::var("AGENT_NFS_MOUNT_BASE") {
+    let nfs_config = if let Ok(mount_base) = std::env::var("AGENT_NFS_MOUNT_BASE") {
         let assume_mounted = std::env::var("AGENT_NFS_ASSUME_MOUNTED")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        let config = features::storage::nfs::NfsHostConfig {
+            mount_base: std::path::PathBuf::from(mount_base),
+            assume_mounted,
+        };
         storage_registry.register_for(
             nexus_storage::BackendKind::Nfs,
-            std::sync::Arc::new(features::storage::nfs::NfsHostBackend::new(
-                features::storage::nfs::NfsHostConfig {
-                    mount_base: std::path::PathBuf::from(mount_base),
-                    assume_mounted,
-                },
-            )),
+            std::sync::Arc::new(features::storage::nfs::NfsHostBackend::new(config.clone())),
         );
-    }
+        Some(config)
+    } else {
+        None
+    };
     if let Ok(rpc_socket) = std::env::var("AGENT_SPDK_RPC_SOCKET") {
         let vhost_socket_dir =
             std::env::var("AGENT_SPDK_VHOST_SOCKET_DIR").unwrap_or_else(|_| "/var/tmp".into());
@@ -77,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),
         storage_registry,
+        nfs_config,
     };
 
     let heartbeat_state = state.clone();

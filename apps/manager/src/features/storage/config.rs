@@ -95,9 +95,10 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
             require_str(&raw.config, "export")
                 .map_err(|e| anyhow!("backend '{}' (kind=nfs): {e}", raw.name))?;
-            // No `manager_mount_path` requirement: the manager auto-mounts
-            // each `(server, export)` under `mount_base` (default
-            // `/var/lib/nqrust/nfs`). Operators don't run mount.nfs.
+            // No manager-side mount path requirement: privileged mount/file
+            // operations are delegated to an agent. `agent_url` may be omitted
+            // in single-host setups; registry loading fills it from the most
+            // recently registered host unless `assume_mounted=true`.
             Capabilities {
                 supports_native_snapshots: true,
                 supports_concurrent_attach: false,

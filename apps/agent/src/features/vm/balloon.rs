@@ -128,6 +128,7 @@ mod tests {
             run_dir: run_dir.to_string(),
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
+            nfs_config: None,
         }
     }
 

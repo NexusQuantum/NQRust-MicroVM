@@ -1397,15 +1397,8 @@ async fn provision_rootfs(
     .await
     .context("failed to record rootfs volume")?;
 
-    sqlx::query(
-        r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)"#,
-    )
-    .bind(alloc.volume_handle.volume_id)
-    .bind(vm_id)
-    .bind("rootfs")
-    .execute(&st.db)
-    .await
-    .context("inserting volume_attachment row")?;
+    // Note: volume_attachment INSERT happens later in `ensure_volume_registered`
+    // (after the VM row exists) — the FK on volume_attachment.vm_id requires it.
 
     // Task 12b: For slow-path backends (e.g. iSCSI), the locator is a JSON blob
     // (IQN+LUN), not a real path.  Use the attached block-device path that the
@@ -1418,7 +1411,19 @@ async fn provision_rootfs(
     // not supported in Plan 2. See TODO in create_drive / provision_data_disk.
     let firecracker_drive_path = match &alloc.attached_for_caller {
         Some(attached) => attached.path().to_string_lossy().into_owned(),
-        None => alloc.volume_handle.locator.clone(),
+        None => {
+            // Ask the backend to resolve the locator to a real host
+            // path. NFS in particular returns a JSON locator that
+            // would otherwise be passed verbatim to Firecracker.
+            let backend = st
+                .registry
+                .get(backend_id)
+                .ok_or_else(|| anyhow!("no backend with id {backend_id}"))?;
+            backend
+                .host_path_for(&alloc.volume_handle)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| alloc.volume_handle.locator.clone())
+        }
     };
     let size_bytes = alloc.volume_handle.size_bytes;
 

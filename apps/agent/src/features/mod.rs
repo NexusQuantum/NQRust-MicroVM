@@ -12,6 +12,7 @@ pub mod vm;
 pub fn router(state: AppState) -> Router {
     let storage_state = Arc::new(storage::routes::StorageState {
         registry: state.storage_registry.clone(),
+        nfs_config: state.nfs_config.clone(),
     });
     Router::new()
         .merge(health::router())

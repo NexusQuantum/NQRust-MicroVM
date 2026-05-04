@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use nexus_storage::{
     AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct NfsHostConfig {
@@ -35,11 +35,11 @@ impl NfsHostConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct NfsLocatorWire {
-    server: String,
-    export: String,
-    file: String,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NfsLocatorWire {
+    pub server: String,
+    pub export: String,
+    pub file: String,
 }
 
 pub struct NfsHostBackend {
@@ -51,7 +51,7 @@ impl NfsHostBackend {
         Self { config }
     }
 
-    async fn ensure_mounted(
+    pub async fn ensure_mounted(
         &self,
         server: &str,
         export: &str,
@@ -59,8 +59,12 @@ impl NfsHostBackend {
     ) -> Result<(), StorageError> {
         tokio::fs::create_dir_all(mount_point).await?;
         // Already mounted? findmnt prints the source if so; success exit.
+        // Use --mountpoint (exact match) — `--target` walks up parents and
+        // would return the rootfs mount when our directory isn't itself
+        // a mountpoint, falsely tripping the "mounted but as something
+        // else" branch below.
         let probe = tokio::process::Command::new("findmnt")
-            .arg("--target")
+            .arg("--mountpoint")
             .arg(mount_point)
             .arg("--noheadings")
             .arg("--output")
@@ -114,7 +118,7 @@ impl NfsHostBackend {
         Ok(())
     }
 
-    fn locator(&self, raw: &str) -> Result<NfsLocatorWire, StorageError> {
+    pub fn locator(&self, raw: &str) -> Result<NfsLocatorWire, StorageError> {
         let loc: NfsLocatorWire = serde_json::from_str(raw)
             .map_err(|e| StorageError::InvalidLocator(format!("decode nfs locator: {e}")))?;
         if loc.file.is_empty() || loc.file.contains('/') || loc.file.starts_with('.') {
@@ -125,6 +129,133 @@ impl NfsHostBackend {
         }
         Ok(loc)
     }
+
+    pub async fn mount_export(&self, server: &str, export: &str) -> Result<PathBuf, StorageError> {
+        let mount = self.config.mount_point_for(server, export);
+        if !self.config.assume_mounted {
+            self.ensure_mounted(server, export, &mount).await?;
+        } else {
+            tokio::fs::create_dir_all(&mount).await?;
+        }
+        Ok(mount)
+    }
+
+    pub async fn umount_export(&self, server: &str, export: &str) -> Result<(), StorageError> {
+        let mount = self.config.mount_point_for(server, export);
+        if self.config.assume_mounted {
+            return Ok(());
+        }
+        let status = tokio::process::Command::new("umount")
+            .arg(&mount)
+            .status()
+            .await
+            .map_err(|e| {
+                StorageError::backend(std::io::Error::other(format!("umount spawn: {e}")))
+            })?;
+        if !status.success() {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "umount {} exited {}",
+                mount.display(),
+                status
+            ))));
+        }
+        Ok(())
+    }
+
+    pub async fn create_file(
+        &self,
+        server: &str,
+        export: &str,
+        file: &str,
+        size_bytes: u64,
+    ) -> Result<(), StorageError> {
+        validate_file_name(file)?;
+        let mount = self.mount_export(server, export).await?;
+        let path = mount.join(file);
+        let f = tokio::fs::File::create(&path).await?;
+        f.set_len(size_bytes).await?;
+        Ok(())
+    }
+
+    pub async fn delete_file(
+        &self,
+        server: &str,
+        export: &str,
+        file: &str,
+    ) -> Result<(), StorageError> {
+        validate_file_name(file)?;
+        let mount = self.mount_export(server, export).await?;
+        let path = mount.join(file);
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(StorageError::from(e)),
+        }
+    }
+
+    pub async fn clone_from_path(
+        &self,
+        server: &str,
+        export: &str,
+        source_path: &std::path::Path,
+        file: &str,
+        size_bytes: u64,
+    ) -> Result<(), StorageError> {
+        validate_file_name(file)?;
+        let mount = self.mount_export(server, export).await?;
+        let dst = mount.join(file);
+        tokio::fs::copy(source_path, &dst).await?;
+        let cur = tokio::fs::metadata(&dst).await?.len();
+        if cur != size_bytes {
+            let f = tokio::fs::OpenOptions::new().write(true).open(&dst).await?;
+            f.set_len(size_bytes).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn snapshot_file(
+        &self,
+        server: &str,
+        export: &str,
+        file: &str,
+        snapshot_file: &str,
+        size_bytes: u64,
+    ) -> Result<(), StorageError> {
+        validate_file_name(file)?;
+        validate_file_name(snapshot_file)?;
+        let mount = self.mount_export(server, export).await?;
+        let src = mount.join(file);
+        let dst = mount.join(snapshot_file);
+        tokio::fs::copy(&src, &dst).await?;
+        let f = tokio::fs::OpenOptions::new().write(true).open(&dst).await?;
+        f.set_len(size_bytes).await?;
+        Ok(())
+    }
+
+    pub async fn clone_snapshot_file(
+        &self,
+        server: &str,
+        export: &str,
+        snapshot_file: &str,
+        file: &str,
+    ) -> Result<u64, StorageError> {
+        validate_file_name(snapshot_file)?;
+        validate_file_name(file)?;
+        let mount = self.mount_export(server, export).await?;
+        let src = mount.join(snapshot_file);
+        let dst = mount.join(file);
+        tokio::fs::copy(&src, &dst).await?;
+        Ok(tokio::fs::metadata(&dst).await?.len())
+    }
+}
+
+fn validate_file_name(file: &str) -> Result<(), StorageError> {
+    if file.is_empty() || file.contains('/') || file.starts_with('.') {
+        return Err(StorageError::InvalidLocator(format!(
+            "nfs file must be a plain filename (no '/', no leading '.'), got {file:?}"
+        )));
+    }
+    Ok(())
 }
 
 #[async_trait]
