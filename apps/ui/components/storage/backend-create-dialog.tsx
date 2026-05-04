@@ -28,7 +28,7 @@ interface Field {
   label: string;
   placeholder?: string;
   hint?: string;
-  type?: "text" | "password";
+  type?: "text" | "password" | "boolean";
   /** Hide the field until another field has a value. Used so the
    *  Export Path doesn't render before the operator has typed an NFS
    *  server (there's nothing to pick from). */
@@ -161,9 +161,48 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
       { key: "lvs_name", label: "LVS name", placeholder: "lvs0", hint: "Name of the SPDK logical volume store." },
     ],
   },
+  iscsi_lvm: {
+    label: "iSCSI + LVM (vendor-agnostic)",
+    description:
+      "Vendor-agnostic shared storage: one iSCSI LUN holds an LVM volume group, one LV per VM disk. Works against any iSCSI target (TrueNAS, ZFS, Pure, NetApp). Requires a one-time Volume Group initialization after creation.",
+    fields: [
+      {
+        key: "portal",
+        label: "iSCSI Portal (host:port)",
+        placeholder: "192.168.1.10:3260",
+        hint: "Discovery portal — host:port of the iSCSI target.",
+      },
+      {
+        key: "iqn",
+        label: "Target IQN",
+        placeholder: "iqn.2005-10.org.freenas.ctl:vmstore",
+        hint: "iSCSI Qualified Name of the target that holds the shared LUN.",
+      },
+      {
+        key: "vg_name",
+        label: "Volume Group Name",
+        placeholder: "vg-nqrust",
+        hint: "LVM volume group name. Created during the one-time initialize step.",
+      },
+      {
+        key: "lun",
+        label: "LUN",
+        placeholder: "0",
+        hint: "LUN number on the target. Defaults to 0.",
+        advanced: true,
+      },
+      {
+        key: "saferemove",
+        label: "Zero-out LV on delete (slower but secure)",
+        type: "boolean",
+        hint: "When enabled, dd zeroes the LV before lvremove. Slower but prevents data leakage between VMs.",
+        advanced: true,
+      },
+    ],
+  },
 };
 
-const KINDS: BackendKind[] = ["local_file", "nfs", "iscsi", "truenas_iscsi", "spdk_lvol"];
+const KINDS: BackendKind[] = ["local_file", "nfs", "iscsi", "truenas_iscsi", "spdk_lvol", "iscsi_lvm"];
 
 function NfsExportField({
   server,
@@ -275,13 +314,88 @@ interface Props {
   onOpenChange: (v: boolean) => void;
 }
 
+/** Render a single config field. Extracted so the basic and advanced
+ *  passes share the same rendering logic — including the iSCSI portal
+ *  discovery helper and boolean switches. */
+function renderField(
+  f: Field,
+  kind: BackendKind,
+  config: Record<string, string | boolean>,
+  setConfig: (c: Record<string, string | boolean>) => void,
+) {
+  if (f.type === "boolean") {
+    const checked = config[f.key] === true;
+    return (
+      <div
+        key={f.key}
+        className="flex items-center justify-between rounded-md border p-3"
+      >
+        <div className="space-y-0.5">
+          <Label htmlFor={`bk-cfg-${f.key}`} className="cursor-pointer">
+            {f.label}
+          </Label>
+          {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+        </div>
+        <Switch
+          id={`bk-cfg-${f.key}`}
+          checked={checked}
+          onCheckedChange={(v) => setConfig({ ...config, [f.key]: v })}
+        />
+      </div>
+    );
+  }
+  const strVal = typeof config[f.key] === "string" ? (config[f.key] as string) : "";
+  return (
+    <div key={f.key} className="space-y-1.5">
+      <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
+      {kind === "nfs" && f.key === "export" ? (
+        <NfsExportField
+          server={String(config["server"] ?? "")}
+          value={strVal}
+          onChange={(v) => setConfig({ ...config, [f.key]: v })}
+        />
+      ) : (kind === "iscsi" || kind === "truenas_iscsi" || kind === "iscsi_lvm") &&
+        f.key === "portal" ? (
+        <>
+          <Input
+            id={`bk-cfg-${f.key}`}
+            type="text"
+            value={strVal}
+            onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+            placeholder={f.placeholder}
+          />
+          <IscsiTargetDiscovery portal={strVal} />
+        </>
+      ) : (
+        <Input
+          id={`bk-cfg-${f.key}`}
+          type={f.type === "password" ? "password" : "text"}
+          value={strVal}
+          onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+          placeholder={f.placeholder}
+        />
+      )}
+      {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+    </div>
+  );
+}
+
 export function BackendCreateDialog({ open, onOpenChange }: Props) {
   const create = useCreateStorageBackend();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<BackendKind>("nfs");
   const [isDefault, setIsDefault] = useState(false);
-  const [config, setConfig] = useState<Record<string, string>>({});
+  const [config, setConfig] = useState<Record<string, string | boolean>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // After a successful create of an iscsi_lvm backend the operator must
+  // run the one-time `vgcreate` against the freshly-attached LUN. We
+  // surface that as a transient post-create banner inside the same
+  // dialog so the next step is impossible to miss. Task 15 wires the
+  // actual destructive-confirmation dialog; for now the CTA is a
+  // placeholder that logs.
+  const [postCreate, setPostCreate] = useState<
+    { kind: BackendKind; backendName: string } | null
+  >(null);
 
   const spec = KIND_CONFIG[kind];
   const basicFields = spec.fields.filter((f) => !f.advanced);
@@ -299,9 +413,19 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
     const cleaned: Record<string, unknown> = {};
     // Numeric config fields the manager expects as integers, not
     // strings. Coerce here since `<Input>` always returns strings.
-    const NUMERIC_KEYS = new Set(["portal_group_id", "initiator_group_id"]);
+    const NUMERIC_KEYS = new Set(["portal_group_id", "initiator_group_id", "lun"]);
     for (const f of spec.fields) {
-      const v = (config[f.key] ?? "").trim();
+      const raw = config[f.key];
+      // Booleans are stored natively in `config`; everything else is a
+      // string from <Input>. Treat them separately so we don't trim()
+      // a boolean.
+      if (f.type === "boolean") {
+        if (typeof raw === "boolean") {
+          cleaned[f.key] = raw;
+        }
+        continue;
+      }
+      const v = (typeof raw === "string" ? raw : "").trim();
       // A field is optional when it's tucked behind the Advanced
       // toggle (operators don't have to set it — the manager has
       // sane defaults), or when its label still says "(optional)"
@@ -320,8 +444,8 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
       }
       if (v) {
         if (NUMERIC_KEYS.has(f.key)) {
-          const n = Number(v);
-          if (Number.isFinite(n) && Number.isInteger(n)) {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n)) {
             cleaned[f.key] = n;
           }
           // Non-numeric input on a numeric field is silently dropped
@@ -332,15 +456,25 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
         }
       }
     }
+    const submittedName = name.trim();
+    const submittedKind = kind;
     await create.mutateAsync({
-      name: name.trim(),
+      name: submittedName,
       kind,
       is_default: isDefault,
       config: cleaned as Record<string, unknown>,
     });
     if (!create.isError) {
-      reset();
-      onOpenChange(false);
+      if (submittedKind === "iscsi_lvm") {
+        // Don't close the dialog yet — keep the operator here so the
+        // post-create CTA is unmissable. Reset the form so the banner
+        // is visually distinct from the input fields.
+        reset();
+        setPostCreate({ kind: submittedKind, backendName: submittedName });
+      } else {
+        reset();
+        onOpenChange(false);
+      }
     }
   }
 
@@ -349,7 +483,10 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
       open={open}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) reset();
+        if (!o) {
+          reset();
+          setPostCreate(null);
+        }
       }}
     >
       <DialogContent className="max-w-lg">
@@ -361,135 +498,127 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="bk-name">Name</Label>
-            <Input
-              id="bk-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. truenas-prod"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="bk-kind">Kind</Label>
-            <Select value={kind} onValueChange={(v) => { setKind(v as BackendKind); setConfig({}); }}>
-              <SelectTrigger id="bk-kind">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {KINDS.map((k) => (
-                  <SelectItem key={k} value={k}>
-                    {KIND_CONFIG[k].label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">{spec.description}</p>
-          </div>
-
-          {basicFields.map((f) => {
-            // Hide fields that depend on another field until that
-            // dependency has a value. Lets us drop the Export Path
-            // input until the operator types an NFS server.
-            if (f.requiresField && !String(config[f.requiresField] ?? "").trim()) {
-              return null;
-            }
-            return (
-              <div key={f.key} className="space-y-1.5">
-                <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
-                {kind === "nfs" && f.key === "export" ? (
-                  <NfsExportField
-                    server={String(config["server"] ?? "")}
-                    value={String(config[f.key] ?? "")}
-                    onChange={(v) => setConfig({ ...config, [f.key]: v })}
-                  />
-                ) : (kind === "iscsi" || kind === "truenas_iscsi") && f.key === "portal" ? (
-                  <>
-                    <Input
-                      id={`bk-cfg-${f.key}`}
-                      type="text"
-                      value={String(config[f.key] ?? "")}
-                      onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
-                      placeholder={f.placeholder}
-                    />
-                    <IscsiTargetDiscovery portal={String(config[f.key] ?? "")} />
-                  </>
-                ) : (
-                  <Input
-                    id={`bk-cfg-${f.key}`}
-                    type={f.type ?? "text"}
-                    value={String(config[f.key] ?? "")}
-                    onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
-                    placeholder={f.placeholder}
-                  />
-                )}
-                {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
-              </div>
-            );
-          })}
-
-          {advancedFields.length > 0 && (
-            <div className="space-y-3">
-              <button
-                type="button"
-                className="text-xs text-blue-600 hover:underline"
-                onClick={() => setShowAdvanced((v) => !v)}
-              >
-                {showAdvanced ? "Hide" : "Show"} advanced options ({advancedFields.length})
-              </button>
-              {showAdvanced &&
-                advancedFields.map((f) => (
-                  <div key={f.key} className="space-y-1.5">
-                    <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
-                    {(kind === "iscsi" || kind === "truenas_iscsi") && f.key === "portal" ? (
-                      <>
-                        <Input
-                          id={`bk-cfg-${f.key}`}
-                          type="text"
-                          value={String(config[f.key] ?? "")}
-                          onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
-                          placeholder={f.placeholder}
-                        />
-                        <IscsiTargetDiscovery portal={String(config[f.key] ?? "")} />
-                      </>
-                    ) : (
-                      <Input
-                        id={`bk-cfg-${f.key}`}
-                        type={f.type ?? "text"}
-                        value={String(config[f.key] ?? "")}
-                        onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
-                        placeholder={f.placeholder}
-                      />
-                    )}
-                    {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
-                  </div>
-                ))}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between rounded-md border p-3">
-            <div className="space-y-0.5">
-              <Label htmlFor="bk-default" className="cursor-pointer">
-                Set as default
-              </Label>
+        {postCreate && postCreate.kind === "iscsi_lvm" && (
+          <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/40">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">
+                Backend <span className="font-mono">{postCreate.backendName}</span> added.
+              </p>
               <p className="text-xs text-muted-foreground">
-                New VMs use the default backend when none is selected.
+                Initialize the LVM volume group on the shared LUN before VMs can use this
+                backend. This is destructive — anything already on the LUN will be erased.
               </p>
             </div>
-            <Switch id="bk-default" checked={isDefault} onCheckedChange={setIsDefault} />
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  // Task 15 wires the destructive-confirmation dialog.
+                  // For now this is a hand-off point so the next task
+                  // has a clear place to plug in.
+                  // eslint-disable-next-line no-console
+                  console.log(
+                    "TODO: open initialize dialog for backend",
+                    postCreate.backendName,
+                  );
+                }}
+              >
+                Initialize Volume Group
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setPostCreate(null);
+                  onOpenChange(false);
+                }}
+              >
+                Skip for now
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={create.isPending}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={!name.trim() || create.isPending}>
-            {create.isPending ? "Adding..." : "Add backend"}
-          </Button>
-        </DialogFooter>
+        {!postCreate && (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="bk-name">Name</Label>
+              <Input
+                id="bk-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. truenas-prod"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="bk-kind">Kind</Label>
+              <Select value={kind} onValueChange={(v) => { setKind(v as BackendKind); setConfig({}); }}>
+                <SelectTrigger id="bk-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {KINDS.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {KIND_CONFIG[k].label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{spec.description}</p>
+            </div>
+
+            {basicFields.map((f) => {
+              // Hide fields that depend on another field until that
+              // dependency has a value. Lets us drop the Export Path
+              // input until the operator types an NFS server.
+              if (
+                f.requiresField &&
+                !String(config[f.requiresField] ?? "").trim()
+              ) {
+                return null;
+              }
+              return renderField(f, kind, config, setConfig);
+            })}
+
+            {advancedFields.length > 0 && (
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  className="text-xs text-blue-600 hover:underline"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                >
+                  {showAdvanced ? "Hide" : "Show"} advanced options ({advancedFields.length})
+                </button>
+                {showAdvanced &&
+                  advancedFields.map((f) => renderField(f, kind, config, setConfig))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="bk-default" className="cursor-pointer">
+                  Set as default
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  New VMs use the default backend when none is selected.
+                </p>
+              </div>
+              <Switch id="bk-default" checked={isDefault} onCheckedChange={setIsDefault} />
+            </div>
+          </div>
+        )}
+
+        {!postCreate && (
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={create.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={!name.trim() || create.isPending}>
+              {create.isPending ? "Adding..." : "Add backend"}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );
