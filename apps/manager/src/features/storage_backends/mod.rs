@@ -1,9 +1,13 @@
 pub mod discovery;
 pub mod health;
+pub mod initialize;
 pub mod repo;
 pub mod routes;
 
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 
 pub fn router() -> Router {
     Router::new()
@@ -18,4 +22,5 @@ pub fn router() -> Router {
         )
         .route("/:id/config", get(routes::get_config))
         .route("/:id/health", get(routes::health))
+        .route("/:id/initialize", post(initialize::initialize))
 }
