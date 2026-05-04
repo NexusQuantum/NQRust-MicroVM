@@ -371,8 +371,31 @@ pub async fn initialize_vg(device: &std::path::Path, vg_name: &str) -> Result<()
         StorageError::backend(std::io::Error::other("device path is not valid UTF-8"))
     })?;
 
-    // Idempotency probe: parse `pvs <device>` output. Non-zero exit means "no
-    // PV here" → fall through to the create path.
+    // First-pass idempotency: does the VG already exist by name? If yes,
+    // we're done — no need to probe individual devices. This catches the
+    // common case (operator re-runs Initialize after deleting + re-adding
+    // the backend) without depending on `pvs <device>` correctly resolving
+    // every device-path representation.
+    let vg_probe = Command::new("vgs")
+        .args(["--noheadings", "--options", "vg_name", vg_name])
+        .output()
+        .await;
+    if let Ok(out) = vg_probe {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s == vg_name {
+                tracing::info!(
+                    vg = %vg_name,
+                    device = %device_str,
+                    "initialize_vg: VG already exists; idempotent skip"
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    // Second-pass idempotency probe: parse `pvs <device>` output. Non-zero
+    // exit means "no PV here" → fall through to the create path.
     let probe = Command::new("pvs")
         .args([
             "--separator",
