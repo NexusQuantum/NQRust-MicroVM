@@ -249,6 +249,21 @@ pub async fn create_and_start(
     }
 
     create_tap(&host.addr, id, &network.bridge).await?;
+
+    // Activate the rootfs volume on this host. For backends with shared
+    // block storage (iscsi_lvm), this issues `lvchange -aey` so this host
+    // gets exclusive access. No-op for local_file / NFS.
+    if let Some(handle) = spec.rootfs_volume_handle.as_ref() {
+        if let Some(backend) = st.registry.get(handle.backend_id.0).cloned() {
+            backend.activate_volume(handle).await.with_context(|| {
+                format!(
+                    "activating rootfs volume on backend {}",
+                    handle.backend_id.0
+                )
+            })?;
+        }
+    }
+
     spawn_firecracker(st, &host.addr, id, &paths).await?;
     if std::env::var("MANAGER_TEST_MODE").is_ok() {
         eprintln!("MANAGER_TEST_MODE: Skipping VM configuration");
@@ -437,6 +452,7 @@ pub async fn create_from_snapshot(
         rootfs_path: source_vm.rootfs_path.clone(),
         rootfs_is_vhost_user: false,
         rootfs_size_bytes: None,
+        rootfs_volume_handle: None,
     };
 
     let paths = VmPaths::new(id, &st.storage)
@@ -610,6 +626,47 @@ pub async fn create_from_snapshot(
     Ok(())
 }
 
+/// Look up the rootfs `VolumeHandle` for a VM, if one exists in the
+/// `volume_attachment` table. Used by activate/deactivate hooks in the
+/// VM lifecycle to call `backend.activate_volume`/`deactivate_volume`.
+///
+/// Returns `Ok(None)` for legacy VMs without a `volume_attachment` row,
+/// or VMs whose backend_id is not (or no longer) in the registry.
+async fn lookup_rootfs_volume_handle(
+    st: &AppState,
+    vm_id: Uuid,
+) -> Result<Option<nexus_storage::VolumeHandle>> {
+    let row: Option<(uuid::Uuid, String, Option<uuid::Uuid>, i64)> = sqlx::query_as(
+        r#"SELECT v.id, v.path, v.backend_id, v.size_bytes
+           FROM volume v
+           JOIN volume_attachment va ON va.volume_id = v.id
+           WHERE va.vm_id = $1 AND va.drive_id = 'rootfs'
+           ORDER BY va.attached_at DESC
+           LIMIT 1"#,
+    )
+    .bind(vm_id)
+    .fetch_optional(&st.db)
+    .await
+    .context("looking up rootfs volume_attachment for handle")?;
+
+    let Some((volume_id, locator, backend_id, size_bytes)) = row else {
+        return Ok(None);
+    };
+    let Some(bid) = backend_id else {
+        return Ok(None);
+    };
+    let Some(backend) = st.registry.get(bid) else {
+        return Ok(None);
+    };
+    Ok(Some(nexus_storage::VolumeHandle {
+        volume_id,
+        backend_id: nexus_storage::BackendInstanceId(bid),
+        backend_kind: backend.kind(),
+        locator,
+        size_bytes: size_bytes.max(0) as u64,
+    }))
+}
+
 /// Resolve the rootfs block-device path to hand to Firecracker.
 ///
 /// For LocalFile volumes the stored `vm.rootfs_path` is already a real
@@ -701,12 +758,27 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
         rootfs_path: resolved_rootfs_path,
         rootfs_is_vhost_user,
         rootfs_size_bytes: None,
+        rootfs_volume_handle: None,
     };
 
     let network = select_network(&host.capabilities_json)?;
 
     // Create TAP devices for all NICs (including eth0 and additional NICs)
     create_all_tap_devices(st, &host.addr, vm.id, &network.bridge).await?;
+
+    // Activate the rootfs volume on this host before booting Firecracker.
+    // For shared-block backends (iscsi_lvm) this issues `lvchange -aey`.
+    // No-op for local_file / NFS.
+    if let Some(handle) = lookup_rootfs_volume_handle(st, vm.id).await? {
+        if let Some(backend) = st.registry.get(handle.backend_id.0).cloned() {
+            backend.activate_volume(&handle).await.with_context(|| {
+                format!(
+                    "activating rootfs volume on backend {} during restart",
+                    handle.backend_id.0
+                )
+            })?;
+        }
+    }
 
     spawn_firecracker(st, &host.addr, vm.id, &paths).await?;
     configure_vm(st, &host.addr, vm.id, &spec, &paths).await?;
@@ -876,6 +948,32 @@ pub async fn stop_only(
             .mark_detached(id, &drive_id)
             .await
             .context("marking volume_attachment detached")?;
+    }
+
+    // Deactivate the rootfs volume so a different host can activate it
+    // (live migration prep / clean shutdown). Best-effort: log warn on
+    // failure. No-op for backends without exclusive activation semantics
+    // (local_file, NFS).
+    match lookup_rootfs_volume_handle(st, id).await {
+        Ok(Some(handle)) => {
+            if let Some(backend) = st.registry.get(handle.backend_id.0).cloned() {
+                if let Err(e) = backend.deactivate_volume(&handle).await {
+                    tracing::warn!(
+                        vm_id = %id,
+                        error = %e,
+                        "deactivate_volume failed; continuing"
+                    );
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(
+                vm_id = %id,
+                error = %e,
+                "lookup_rootfs_volume_handle failed during stop; skipping deactivate"
+            );
+        }
     }
 
     super::repo::update_state(&st.db, id, "stopped").await?;
@@ -1251,6 +1349,12 @@ struct ResolvedVmSpec {
     rootfs_is_vhost_user: bool,
     #[allow(dead_code)]
     rootfs_size_bytes: Option<u64>,
+    /// `Some` for backends that own real volumes (iscsi_lvm, NFS, etc.)
+    /// when allocated via the storage registry. `None` for direct path
+    /// injection (legacy / pre-copied rootfs from container/function flow)
+    /// or when the VM was created from a snapshot.
+    #[allow(dead_code)]
+    rootfs_volume_handle: Option<nexus_storage::VolumeHandle>,
 }
 
 async fn resolve_vm_spec(
@@ -1262,7 +1366,7 @@ async fn resolve_vm_spec(
 ) -> Result<ResolvedVmSpec> {
     let kernel_path =
         resolve_image_path(st, req.kernel_image_id, req.kernel_path, "kernel").await?;
-    let (rootfs_path, rootfs_size_bytes) = provision_rootfs(
+    let (rootfs_path, rootfs_size_bytes, rootfs_volume_handle) = provision_rootfs(
         st,
         req.rootfs_image_id,
         req.rootfs_path,
@@ -1282,6 +1386,7 @@ async fn resolve_vm_spec(
         rootfs_path,
         rootfs_is_vhost_user: false,
         rootfs_size_bytes,
+        rootfs_volume_handle,
     })
 }
 
@@ -1322,7 +1427,7 @@ async fn provision_rootfs(
     req_backend_id: Option<Uuid>,
     vm_host_id: Uuid,
     host_addr: &str,
-) -> Result<(String, Option<u64>)> {
+) -> Result<(String, Option<u64>, Option<nexus_storage::VolumeHandle>)> {
     // Determine source path (from registry or direct)
     let source_path = if let Some(id) = image_id {
         let image = st
@@ -1352,7 +1457,7 @@ async fn provision_rootfs(
     if is_already_vm_copy {
         // Already a per-VM copy from container/function feature, use it directly
         info!(vm_id = %vm_id, source = %source_path, "using pre-copied rootfs from container/function feature");
-        return Ok((source_path, None));
+        return Ok((source_path, None, None));
     }
 
     // For regular VMs: allocate rootfs through the storage Registry.
@@ -1427,7 +1532,11 @@ async fn provision_rootfs(
     };
     let size_bytes = alloc.volume_handle.size_bytes;
 
-    Ok((firecracker_drive_path, Some(size_bytes)))
+    Ok((
+        firecracker_drive_path,
+        Some(size_bytes),
+        Some(alloc.volume_handle),
+    ))
 }
 
 fn ensure_allowed_path(st: &AppState, path: &str) -> Result<()> {
