@@ -205,16 +205,17 @@ test_vm_lifecycle() {
   fi
 
   # Find the LV via the volume row's locator. provision_rootfs writes the
-  # rootfs volume row with name='rootfs-<vm_id>'. We look it up by name —
-  # the volume_attachment join doesn't work because ensure_volume_registered
-  # has a separate bug where it tries to insert a duplicate volume row using
-  # fs::metadata on a block device (returns size 0 → positive_size constraint
-  # rejects → no volume_attachment row gets created).
-  sleep 2
-  local volume_locator
-  # Note: volume table doesn't have a deleted_at column (rows are hard-deleted on cascade).
-  volume_locator=$(PGPASSWORD=nexus psql -h 127.0.0.1 -p 5432 -U nexus -d nexus -At \
-    -c "SELECT path FROM volume WHERE name='rootfs-$vm_id' LIMIT 1;" 2>/dev/null | head -1)
+  # rootfs volume row with name='rootfs-<vm_id>'. Look it up by name — the
+  # volume_attachment join doesn't work because ensure_volume_registered
+  # has a separate bug (block-device fs::metadata returns 0 → positive_size
+  # constraint rejects the duplicate insert → no volume_attachment row).
+  local volume_locator=""
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    volume_locator=$(PGPASSWORD=nexus psql -h 127.0.0.1 -p 5432 -U nexus -d nexus -At \
+      -c "SELECT path FROM volume WHERE name='rootfs-$vm_id' LIMIT 1;" 2>&1 | head -1)
+    [[ -n "$volume_locator" && "$volume_locator" == \{* ]] && break
+    sleep 2
+  done
   lv_name=$(echo "$volume_locator" | jq -r '.lv // empty' 2>/dev/null || true)
   if [[ -n "$lv_name" ]]; then ok "host: LV created in VG: $lv_name"
   else fail "host: no LV resolved from volume row (locator=$volume_locator)"; return; fi
