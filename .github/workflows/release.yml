@@ -211,6 +211,12 @@ jobs:
   build-images:
     name: Build Base Images
     needs: [ci-gate, build-binaries]
+    # Skip the heavy image-build for prerelease tags (alpha/beta/rc) —
+    # those only ship software changes; kernel + rootfs artifacts haven't
+    # moved since the previous stable release. The install bootstrap and
+    # the auto-update path fall back to the prior stable's image URLs
+    # when a prerelease release doesn't carry them.
+    if: ${{ !contains(github.ref_name, '-alpha') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-rc') }}
     runs-on: self-hosted
     # This job builds VM images (kernels, rootfs, runtimes)
     # Requires: KVM access, ~10GB disk space, internet for downloads
@@ -791,6 +797,10 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [build-binaries, build-ui, build-images]
+    # build-images is skipped on prerelease tags (alpha/beta/rc) — `always()`
+    # together with `result != 'failure'` lets us proceed when build-images
+    # is `skipped` while still blocking on actual failures.
+    if: ${{ always() && needs.build-binaries.result == 'success' && needs.build-ui.result == 'success' && needs.build-images.result != 'failure' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -805,6 +815,9 @@ jobs:
           path: artifacts/
 
       - name: Decompress large images (except container-runtime which exceeds 2GB limit)
+        # build-images job is skipped for alpha/beta/rc tags, so the
+        # base-images artifact won't exist for those releases.
+        if: ${{ needs.build-images.result == 'success' }}
         run: |
           cd artifacts/base-images
           for gz in *.gz; do
@@ -835,16 +848,22 @@ jobs:
           find artifacts/ -type f -name "nqrust-*" -exec cp {} release/ \;
           find artifacts/ -type f -name "nqr-installer-*" -exec cp {} release/ \;
           cp nqrust-installer.tar.gz release/
-          # Copy base images (uncompressed .ext4 and kernel)
-          cp artifacts/base-images/vmlinux-5.10.fc.bin release/
-          cp artifacts/base-images/alpine-3.18-minimal.ext4 release/
-          cp artifacts/base-images/busybox-1.35.ext4 release/
-          cp artifacts/base-images/ubuntu-24.04-minimal.ext4 release/
-          cp artifacts/base-images/node-runtime.ext4 release/
-          cp artifacts/base-images/python-runtime.ext4 release/
-          cp artifacts/base-images/bun-runtime.ext4 release/
-          # Container runtime stays compressed (>2GB uncompressed exceeds GitHub limit)
-          cp artifacts/base-images/container-runtime.ext4.gz release/
+          # Base images are only present when build-images ran. Skip the
+          # copy when it didn't (alpha/beta/rc tags). Operators installing
+          # a prerelease pull images from the prior stable release URL.
+          if [ -d artifacts/base-images ]; then
+            cp artifacts/base-images/vmlinux-5.10.fc.bin release/
+            cp artifacts/base-images/alpine-3.18-minimal.ext4 release/
+            cp artifacts/base-images/busybox-1.35.ext4 release/
+            cp artifacts/base-images/ubuntu-24.04-minimal.ext4 release/
+            cp artifacts/base-images/node-runtime.ext4 release/
+            cp artifacts/base-images/python-runtime.ext4 release/
+            cp artifacts/base-images/bun-runtime.ext4 release/
+            # Container runtime stays compressed (>2GB uncompressed exceeds GitHub limit)
+            cp artifacts/base-images/container-runtime.ext4.gz release/
+          else
+            echo "::notice::No base-images artifact (prerelease build) — release will not include kernel/rootfs files."
+          fi
           ls -lh release/
 
       - name: Generate checksums
@@ -856,8 +875,10 @@ jobs:
           sha256sum nqr-installer-* >> checksums.txt
           sha256sum nqrust-ui.tar.gz >> checksums.txt
           sha256sum nqrust-installer.tar.gz >> checksums.txt
-          sha256sum vmlinux-*.bin >> checksums.txt
-          sha256sum *.ext4 >> checksums.txt
+          # Image artifacts are absent on prerelease builds — every line below
+          # is a no-op then.
+          sha256sum vmlinux-*.bin >> checksums.txt 2>/dev/null || true
+          sha256sum *.ext4 >> checksums.txt 2>/dev/null || true
           sha256sum *.ext4.gz >> checksums.txt 2>/dev/null || true
           cat checksums.txt
 
