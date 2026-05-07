@@ -219,6 +219,7 @@ pub struct NfsCloneSnapshotResp {
     pub size_bytes: u64,
 }
 
+#[allow(clippy::result_large_err)] // axum's Response is intentionally large; boxing it adds noise.
 fn nfs_backend(
     state: &StorageState,
 ) -> Result<crate::features::storage::nfs::NfsHostBackend, axum::response::Response> {
