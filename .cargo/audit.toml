@@ -13,11 +13,22 @@
 # Ignore proc-macro-error unmaintained warning (RUSTSEC-2024-0370)
 # This comes from utoipa-gen, which is actively maintained and will update
 # its dependencies when alternatives are available.
+#
+# Ignore rustls-webpki 0.101.x advisories (RUSTSEC-2026-0098/0099/0104)
+# These come from aws-smithy-http-client v1.1.10 which pins rustls 0.21
+# (and thus rustls-webpki 0.101). Vulnerable code paths are in CRL parsing
+# and cert name-constraint checking — only reachable when nqrust talks to
+# an S3 backup target presenting unusual certificates, which is an opt-in
+# feature, not the primary code path. Will drop these ignores once
+# aws-smithy-http-client ships a version on rustls 0.23 / webpki 0.103.
 
 [advisories]
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2024-0436",
     "RUSTSEC-2024-0370",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
 ]
 
