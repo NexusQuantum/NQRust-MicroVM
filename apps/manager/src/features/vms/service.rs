@@ -774,7 +774,15 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     let (resolved_rootfs_path, rootfs_is_vhost_user) = resolve_rootfs_attached_path(st, vm)
         .await
         .context("resolving rootfs attached path")?;
-    if !rootfs_is_vhost_user {
+    // Skip allowed-path validation for paths produced by a backend's
+    // host_path_for resolution. Vhost-user sockets (/var/tmp/...) and
+    // kernel block devices (/dev/<vg>/<lv> from iscsi_lvm, /dev/sd*
+    // from generic iscsi) are trusted because they came from a backend
+    // we control, not from user input. The image_root/storage_root
+    // check exists to gate user-supplied direct paths.
+    let is_backend_device =
+        rootfs_is_vhost_user || resolved_rootfs_path.starts_with("/dev/");
+    if !is_backend_device {
         ensure_allowed_path(st, &resolved_rootfs_path)?;
     }
 
