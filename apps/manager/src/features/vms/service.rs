@@ -343,14 +343,42 @@ pub async fn create_and_start(
         }
     }
 
-    // Auto-register rootfs volume if it doesn't exist
-    info!(vm_id = %id, rootfs = %spec.rootfs_path, host_id = %host.id, "attempting to auto-register rootfs volume");
-    match ensure_volume_registered(st, id, &spec.rootfs_path, host.id).await {
-        Ok(_) => {
-            info!(vm_id = %id, rootfs = %spec.rootfs_path, "volume auto-registration successful or already exists")
+    // Attach the rootfs volume to this VM. Two cases:
+    //   1. provision_rootfs already inserted the volume row (handle is Some):
+    //      we just need to add the volume_attachment row keyed by handle.volume_id.
+    //      This is the path for backends that return a structured locator
+    //      (iscsi_lvm, nfs, truenas_iscsi) — fs::metadata on the resolved
+    //      block-device path returns size 0, which the legacy code below
+    //      can't handle.
+    //   2. handle is None (legacy local_file via direct host path): fall
+    //      through to ensure_volume_registered which infers everything from
+    //      the file path.
+    if let Some(handle) = spec.rootfs_volume_handle.as_ref() {
+        if let Err(e) = sqlx::query(
+            r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id) VALUES ($1, $2, $3)
+               ON CONFLICT DO NOTHING"#,
+        )
+        .bind(handle.volume_id)
+        .bind(id)
+        .bind("rootfs")
+        .execute(&st.db)
+        .await
+        {
+            warn!(vm_id = %id, volume_id = %handle.volume_id, error = ?e,
+                "failed to attach rootfs volume (deactivate hooks may not fire on stop)");
+        } else {
+            info!(vm_id = %id, volume_id = %handle.volume_id,
+                "rootfs volume attached via handle");
         }
-        Err(e) => {
-            warn!(vm_id = %id, rootfs = %spec.rootfs_path, error = ?e, "failed to auto-register rootfs volume")
+    } else {
+        info!(vm_id = %id, rootfs = %spec.rootfs_path, host_id = %host.id, "attempting to auto-register rootfs volume");
+        match ensure_volume_registered(st, id, &spec.rootfs_path, host.id).await {
+            Ok(_) => {
+                info!(vm_id = %id, rootfs = %spec.rootfs_path, "volume auto-registration successful or already exists")
+            }
+            Err(e) => {
+                warn!(vm_id = %id, rootfs = %spec.rootfs_path, error = ?e, "failed to auto-register rootfs volume")
+            }
         }
     }
 
