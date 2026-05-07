@@ -212,8 +212,9 @@ test_vm_lifecycle() {
   # rejects → no volume_attachment row gets created).
   sleep 2
   local volume_locator
+  # Note: volume table doesn't have a deleted_at column (rows are hard-deleted on cascade).
   volume_locator=$(PGPASSWORD=nexus psql -h 127.0.0.1 -p 5432 -U nexus -d nexus -At \
-    -c "SELECT path FROM volume WHERE name='rootfs-$vm_id' AND deleted_at IS NULL LIMIT 1;" 2>/dev/null | head -1)
+    -c "SELECT path FROM volume WHERE name='rootfs-$vm_id' LIMIT 1;" 2>/dev/null | head -1)
   lv_name=$(echo "$volume_locator" | jq -r '.lv // empty' 2>/dev/null || true)
   if [[ -n "$lv_name" ]]; then ok "host: LV created in VG: $lv_name"
   else fail "host: no LV resolved from volume row (locator=$volume_locator)"; return; fi
