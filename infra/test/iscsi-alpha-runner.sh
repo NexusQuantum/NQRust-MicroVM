@@ -204,18 +204,16 @@ test_vm_lifecycle() {
     return
   fi
 
-  # Find the LV via the volume row's locator (LV names are keyed by
-  # volume_id, not vm_id). Look up the rootfs volume that's attached
-  # to this VM in the manager API.
+  # Find the LV via the volume row's locator. provision_rootfs writes the
+  # rootfs volume row with name='rootfs-<vm_id>'. We look it up by name —
+  # the volume_attachment join doesn't work because ensure_volume_registered
+  # has a separate bug where it tries to insert a duplicate volume row using
+  # fs::metadata on a block device (returns size 0 → positive_size constraint
+  # rejects → no volume_attachment row gets created).
   sleep 2
   local volume_locator
-  volume_locator=$(curl_api "$MANAGER/v1/vms/$vm_id/drives" 2>/dev/null \
-    | jq -r '.items[]? | select(.drive_id=="rootfs") | .path // empty' | head -1 || true)
-  if [[ -z "$volume_locator" ]]; then
-    # Fallback: query DB directly
-    volume_locator=$(PGPASSWORD=nexus psql -h 127.0.0.1 -p 5432 -U nexus -d nexus -At \
-      -c "SELECT v.path FROM volume v JOIN volume_attachment va ON va.volume_id=v.id WHERE va.vm_id='$vm_id' AND va.detached_at IS NULL;" 2>/dev/null | head -1)
-  fi
+  volume_locator=$(PGPASSWORD=nexus psql -h 127.0.0.1 -p 5432 -U nexus -d nexus -At \
+    -c "SELECT path FROM volume WHERE name='rootfs-$vm_id' AND deleted_at IS NULL LIMIT 1;" 2>/dev/null | head -1)
   lv_name=$(echo "$volume_locator" | jq -r '.lv // empty' 2>/dev/null || true)
   if [[ -n "$lv_name" ]]; then ok "host: LV created in VG: $lv_name"
   else fail "host: no LV resolved from volume row (locator=$volume_locator)"; return; fi
