@@ -111,7 +111,11 @@ spec:
                 bus: virtio
               name: cidisk
           interfaces:
-            - masquerade: {}
+            # bridge: VM shares the pod's network interface directly so the
+            # pod IP IS the VM IP. Avoids the KubeVirt masquerade slirp
+            # NAT layer which was unreachable from the host on this k3s
+            # install (other VMs hit the same issue).
+            - bridge: {}
               model: virtio
               name: default
         machine:
