@@ -75,6 +75,11 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "dnsmasq",
             "net-tools",
             "lsof",
+            // Storage backends (added in v0.3.0-alpha.1):
+            "open-iscsi", // iscsiadm — iscsi / truenas_iscsi / iscsi_lvm
+            "lvm2",       // pvcreate/vgcreate/lvcreate — iscsi_lvm
+            "qemu-utils", // qemu-img — clone_from_image on block backends
+            "nfs-common", // mount.nfs — nfs backend (manager auto-mount)
         ],
         PackageManager::Dnf | PackageManager::Yum => vec![
             "curl",
@@ -85,6 +90,11 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "dnsmasq",
             "net-tools",
             "lsof",
+            // Storage backends (added in v0.3.0-alpha.1):
+            "iscsi-initiator-utils",
+            "lvm2",
+            "qemu-img",
+            "nfs-utils",
         ],
     }
 }

@@ -23,6 +23,15 @@ install_apt_packages() {
         net-tools
         sudo
         lsof
+        # Storage backends:
+        #   open-iscsi  — iscsiadm, used by `iscsi`, `truenas_iscsi`, `iscsi_lvm`
+        #   lvm2        — pvcreate / vgcreate / lvcreate, used by `iscsi_lvm`
+        #   qemu-utils  — qemu-img, used by clone-from-image on block backends
+        #   nfs-common  — mount.nfs, used by `nfs` backend (manager auto-mount)
+        open-iscsi
+        lvm2
+        qemu-utils
+        nfs-common
     )
 
     # Add PostgreSQL if installing locally
@@ -31,6 +40,10 @@ install_apt_packages() {
     fi
 
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+
+    # iscsid (open-iscsi daemon) needs to be enabled for persistent sessions
+    # required by the iscsi_lvm backend's `node.startup=automatic` setting.
+    sudo systemctl enable --now iscsid >/dev/null 2>&1 || true
 
     log_success "System packages installed"
 }
@@ -61,6 +74,11 @@ install_yum_packages() {
         net-tools
         sudo
         lsof
+        # Storage backends — see Debian arm above for rationale.
+        iscsi-initiator-utils
+        lvm2
+        qemu-img
+        nfs-utils
     )
 
     # Add PostgreSQL if installing locally
@@ -69,6 +87,10 @@ install_yum_packages() {
     fi
 
     sudo $pkg_manager install -y "${packages[@]}"
+
+    # iscsid (open-iscsi daemon) needs to be enabled for persistent sessions
+    # required by the iscsi_lvm backend's `node.startup=automatic` setting.
+    sudo systemctl enable --now iscsid >/dev/null 2>&1 || true
 
     log_success "System packages installed"
 }

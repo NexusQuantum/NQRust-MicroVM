@@ -7,13 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-alpha.1] - 2026-05-05
+
+Alpha release introducing the `iscsi_lvm` storage backend (vendor-agnostic
+shared block storage), live registry updates without manager restart, and
+the platform auto-update mechanism.
+
 ### Added
-- Platform auto-update: Settings → Updates page lets admins apply new releases either by uploading a `.nqupdate` bundle (airgap) or by enabling internet checks against a configured manifest URL. Apply order is manager → agents (rolling) → UI; running VMs are not disturbed by agent restart. See `docs/superpowers/specs/2026-04-28-platform-auto-update-design.md`.
+- Platform auto-update: Settings → Updates page lets admins apply new releases either by uploading a `.nqupdate` bundle (airgap) or by enabling internet checks against a configured manifest URL. Apply order is manager → agents (rolling) → UI; running VMs are not disturbed by agent restart.
 - **`iscsi_lvm` storage backend** — vendor-agnostic auto-provisioning of per-VM block devices on top of any iSCSI target. Mirrors Proxmox VE's LVM-on-iSCSI mode. Adds `BackendKind::IscsiLvm`, `activate_volume`/`deactivate_volume` trait hooks, agent routes under `/v1/storage/iscsi_lvm/*`, and a manager `POST /v1/storage_backends/:id/initialize` endpoint with destructive-confirmation UI flow. See `docs/runbooks/iscsi-lvm-troubleshooting.md`.
+- **NFS auto-mount via the agent** — manager runs unprivileged and delegates `mount.nfs` to the agent over `/v1/storage/nfs/*` so operators don't need to SSH to mount NFS exports manually.
+- **Storage backend live registry** — adding or deleting a backend through the UI is reflected in the manager's in-memory registry immediately; no restart needed before VM-create can pick up the new backend.
+- **UI-sourced backends survive manager restart** — `storage_backend.source` column tracks `'toml'` vs `'ui'`; the startup TOML reconciler only soft-deletes rows it owns.
+- **Tiered backend kind dropdown** — Add Backend wizard shows three recommended kinds by default (`local_file`, `nfs`, `iscsi_lvm`) with "Show advanced kinds" disclosure for `iscsi`, `truenas_iscsi`, `spdk_lvol`. Default selection is `local_file` (zero-deps).
+- **Host package dependencies expanded** — installer + air-gapped bundle now ship `open-iscsi`, `lvm2`, `qemu-utils`, `nfs-common`. `iscsid` is enabled automatically post-install.
 
 ### Changed
 - Manager and agent binaries are now installed under `/opt/nqrust/bin/<name>.<version>` with a `<name>` symlink, to support atomic self-update.
 - systemd units now set `RestartForceExitStatus=42` so a clean self-update exit triggers a restart on the new binary.
+- `ControlPlaneBackend` trait gains `probe()`, `host_path_for()`, `activate_volume()`, and `deactivate_volume()` methods (default no-ops). `iscsi_lvm` overrides them; other backends inherit the defaults.
+- VM lifecycle calls `activate_volume` before Firecracker spawn and `deactivate_volume` on stop. No-op for stateless backends; iscsi_lvm uses these for `lvchange -aey` exclusive activation.
 
 ## [0.1.0] - 2024-XX-XX
 

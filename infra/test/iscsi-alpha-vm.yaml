@@ -1,0 +1,132 @@
+# Test VM for the iscsi_lvm storage backend full-fledge integration test.
+# Apply with: kubectl apply -f infra/test/iscsi-alpha-vm.yaml
+#
+# What's inside:
+#   - Ubuntu 24.04 (Noble) cloud image, 80Gi disk, 4 vCPU, 6Gi RAM
+#   - cloud-init pre-installs nested KVM tooling, open-iscsi, lvm2,
+#     qemu-utils, nfs-common — everything the iscsi_lvm backend needs
+#   - root login enabled with the same SSH key + password as nqrb-demo,
+#     so SSH from the host works without re-keying
+#
+# After cloudinit completes, fetch + install the v0.3.0-alpha.1 release
+# binaries from /opt/nqrust/bin, then run the comprehensive test suite
+# documented in docs/runbooks/iscsi-lvm-troubleshooting.md against the
+# live TrueNAS at 192.168.18.171.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iscsi-alpha
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iscsi-alpha-ud
+  namespace: iscsi-alpha
+type: Opaque
+stringData:
+  userdata: |
+    #cloud-config
+    hostname: iscsi-alpha
+    ssh_pwauth: true
+    disable_root: false
+    users:
+      - name: root
+        lock_passwd: false
+        plain_text_passwd: evalroot
+        ssh_authorized_keys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAenPGYSo1Q3XsR6hzwxHzFw0/OJDGXTCsG1LLgPZ720 kleopasevan@gmail.com
+    package_update: true
+    packages:
+      - openssh-server
+      - sudo
+      - curl
+      - jq
+      # Nested-KVM Firecracker prerequisites
+      - qemu-system-x86
+      - qemu-utils
+      - bridge-utils
+      - dnsmasq
+      - iproute2
+      - iptables
+      - net-tools
+      - lsof
+      - screen
+      # Storage-backend prereqs (the whole point of this VM)
+      - open-iscsi
+      - lvm2
+      - nfs-common
+      # PostgreSQL
+      - postgresql
+      - postgresql-contrib
+    runcmd:
+      - touch /var/lib/cloud/ready
+      - systemctl enable --now iscsid || true
+      - systemctl enable --now postgresql || true
+      # Configure PG: allow local trust auth + create nexus user/db
+      - sudo -u postgres psql -c "CREATE USER nexus WITH PASSWORD 'nexus' SUPERUSER;" || true
+      - sudo -u postgres createdb -O nexus nexus || true
+      # Ensure /opt/nqrust exists for the binaries
+      - mkdir -p /opt/nqrust/bin /srv/images /srv/fc/vms /var/lib/nqrust/nfs
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: iscsi-alpha-disk
+  namespace: iscsi-alpha
+spec:
+  source:
+    http:
+      url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+  storage:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 80Gi
+    storageClassName: local-path
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: iscsi-alpha
+  namespace: iscsi-alpha
+spec:
+  running: true
+  template:
+    metadata:
+      labels:
+        kubevirt.io/vm: iscsi-alpha
+    spec:
+      domain:
+        cpu:
+          cores: 4
+          model: host-passthrough
+        devices:
+          disks:
+            - disk:
+                bus: virtio
+              name: rootdisk
+            - disk:
+                bus: virtio
+              name: cidisk
+          interfaces:
+            - masquerade: {}
+              model: virtio
+              name: default
+        machine:
+          type: q35
+        memory:
+          guest: 6Gi
+        resources: {}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - dataVolume:
+            name: iscsi-alpha-disk
+          name: rootdisk
+        - cloudInitNoCloud:
+            secretRef:
+              name: iscsi-alpha-ud
+          name: cidisk
