@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-09
+
+Stable release. Same code as `0.3.0-alpha.2` — re-tagged after the
+in-VM integration suite (23/23) ran clean against the released musl
+artifact, confirming the alpha label no longer reflected reality.
+Aggregated content of `0.3.0-alpha.1` + `0.3.0-alpha.2` shown below.
+
 ## [0.3.0-alpha.2] - 2026-05-09
 
 Bug-fix alpha brings the in-VM E2E integration test suite to 23/23

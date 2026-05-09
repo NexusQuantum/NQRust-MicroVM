@@ -211,12 +211,14 @@ jobs:
   build-images:
     name: Build Base Images
     needs: [ci-gate, build-binaries]
-    # Skip the heavy image-build for prerelease tags (alpha/beta/rc) —
-    # those only ship software changes; kernel + rootfs artifacts haven't
-    # moved since the previous stable release. The install bootstrap and
-    # the auto-update path fall back to the prior stable's image URLs
-    # when a prerelease release doesn't carry them.
-    if: ${{ !contains(github.ref_name, '-alpha') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-rc') }}
+    # Skip image-build by default. Kernel + rootfs artifacts only change
+    # rarely; the install bootstrap + auto-update path pull them from the
+    # last release that did carry them (currently v0.2.3). Set the
+    # `BUILD_IMAGES` repo variable to `true` (Settings → Variables) on
+    # releases that genuinely change the kernel build, an Alpine version
+    # bump, etc. — then this job runs the full debootstrap/mkfs.ext4
+    # toolchain, which requires passwordless sudo on the runner.
+    if: ${{ vars.BUILD_IMAGES == 'true' }}
     runs-on: self-hosted
     # This job builds VM images (kernels, rootfs, runtimes)
     # Requires: KVM access, ~10GB disk space, internet for downloads
