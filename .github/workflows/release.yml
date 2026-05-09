@@ -894,8 +894,11 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-          # Check if this is a pre-release (v0.x.x or contains -alpha, -beta, -rc)
-          if [[ "$VERSION" =~ ^v0\. ]] || [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+          # Pre-release only when the tag explicitly says so (-alpha, -beta, -rc).
+          # We dropped the blanket "v0.x.x is always prerelease" rule because
+          # 0.x is the project's normal range — it shouldn't permanently
+          # disqualify everything from being marked Latest on GitHub.
+          if [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
             echo "prerelease=true" >> $GITHUB_OUTPUT
           else
             echo "prerelease=false" >> $GITHUB_OUTPUT
