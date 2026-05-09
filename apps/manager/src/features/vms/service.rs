@@ -780,8 +780,7 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
     // from generic iscsi) are trusted because they came from a backend
     // we control, not from user input. The image_root/storage_root
     // check exists to gate user-supplied direct paths.
-    let is_backend_device =
-        rootfs_is_vhost_user || resolved_rootfs_path.starts_with("/dev/");
+    let is_backend_device = rootfs_is_vhost_user || resolved_rootfs_path.starts_with("/dev/");
     if !is_backend_device {
         ensure_allowed_path(st, &resolved_rootfs_path)?;
     }
