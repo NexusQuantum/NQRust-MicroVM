@@ -1,6 +1,6 @@
 [package]
 name = "nqr-installer"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 edition.workspace = true
 description = "NQR-MicroVM Installer - Rust Firecracker MicroVM Platform by Nexus"
 authors = ["Nexus"]

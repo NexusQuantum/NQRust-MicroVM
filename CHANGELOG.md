@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-alpha.2] - 2026-05-09
+
+Bug-fix alpha brings the in-VM E2E integration test suite to 23/23
+passing. Two iscsi_lvm bugs found and fixed during the test run:
+
+### Fixed
+- **`ensure_volume_registered` failed for block-device rootfs paths**
+  (iscsi_lvm, generic iscsi). `fs::metadata().len()` returns 0 for
+  block devices, which violated the `positive_size` CHECK constraint
+  on the `volume` table — and as a side effect no `volume_attachment`
+  row got written, so `lookup_rootfs_volume_handle` returned None and
+  the `deactivate_volume` hook never fired on stop. Replaced with a
+  direct attachment INSERT when `provision_rootfs` already provided
+  the volume handle (commit `98c99a6`).
+- **`restart_vm` rejected `/dev/<vg>/<lv>` paths**. `ensure_allowed_path`
+  only permits `MANAGER_IMAGE_ROOT` and `MANAGER_STORAGE_ROOT` subtrees;
+  backend-resolved block-device paths from `host_path_for()` are
+  trusted (they came from a backend we control, not user input) and
+  now bypass the check (commit `49eb4a7`). VM start used to return 500
+  on iscsi_lvm-backed VMs after a stop.
+
+### Added
+- `infra/test/iscsi-alpha-vm.yaml` — KubeVirt VM spec (Ubuntu 24.04 +
+  bridge networking + nested-KVM-friendly) for running the integration
+  suite without TrueNAS.
+- `infra/test/iscsi-alpha-install.sh` — installs the alpha into the
+  test VM, falling back to the prior stable for kernel/rootfs.
+- `infra/test/iscsi-alpha-runner.sh` — comprehensive runner: 23
+  assertions across backend CRUD, validation, initialize lifecycle,
+  VM lifecycle on iscsi_lvm, and live registry behaviour.
+- `infra/test/HANDOFF.md` — operator runbook for replaying the test
+  inside a fresh KubeVirt VM.
+
 ## [0.3.0-alpha.1] - 2026-05-05
 
 Alpha release introducing the `iscsi_lvm` storage backend (vendor-agnostic
