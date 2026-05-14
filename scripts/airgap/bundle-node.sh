@@ -67,15 +67,30 @@ if [[ "${file_size}" -lt 10000000 ]]; then
 fi
 
 # Download pnpm standalone binary
-# The UI service uses pnpm to start Next.js
-log_info "Downloading pnpm standalone binary..."
-PNPM_URL="https://github.com/pnpm/pnpm/releases/latest/download/pnpm-linux-x64"
+# As of v11 (mid-2026) pnpm ships the standalone distribution as a
+# tarball (pnpm-linux-x64.tar.gz) containing both the entry binary and
+# its supporting dist/ directory. Older releases shipped a single
+# `pnpm-linux-x64` binary which still appears in `latest/download/` URL
+# patterns referenced in old docs — that path now 404s.
+log_info "Downloading pnpm standalone tarball..."
+PNPM_URL="https://github.com/pnpm/pnpm/releases/latest/download/pnpm-linux-x64.tar.gz"
+PNPM_TGZ="${OUTPUT_DIR}/pnpm-linux-x64.tar.gz"
 
-if curl -fsSL "${PNPM_URL}" -o "${OUTPUT_DIR}/pnpm"; then
+if curl -fsSL "${PNPM_URL}" -o "${PNPM_TGZ}"; then
+    log_info "Extracting pnpm into ${OUTPUT_DIR}"
+    # Tarball layout: top-level `pnpm` binary + `dist/` runtime tree.
+    # Extract into OUTPUT_DIR so the binary sits next to node/ and the
+    # required dist/ tree lands alongside it.
+    tar -xzf "${PNPM_TGZ}" -C "${OUTPUT_DIR}"
+    rm -f "${PNPM_TGZ}"
     chmod +x "${OUTPUT_DIR}/pnpm"
-    log_success "pnpm downloaded"
+    if [ ! -f "${OUTPUT_DIR}/pnpm" ] || [ ! -d "${OUTPUT_DIR}/dist" ]; then
+        log_error "pnpm tarball layout changed: expected ${OUTPUT_DIR}/pnpm + ${OUTPUT_DIR}/dist/"
+        exit 1
+    fi
+    log_success "pnpm extracted ($(du -sh "${OUTPUT_DIR}/dist" 2>/dev/null | cut -f1) of runtime)"
 else
-    log_error "Failed to download pnpm"
+    log_error "Failed to download pnpm tarball from ${PNPM_URL}"
     exit 1
 fi
 
