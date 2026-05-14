@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`smb` storage backend (CIFS)** — Vendor-agnostic SMB share support, parallel to `nfs`. Agent runs `mount.cifs`; credentials stored per-backend in a 0600-mode file outside the DB (Proxmox-style). UI supports authenticated and anonymous (`-o guest`) shares plus password rotation in the Edit dialog. SMB version select (`default`/2.0/2.1/3/3.0/3.11), domain, subdir, and freeform extra options exposed as advanced fields. New host package: `cifs-utils`. See `docs/runbooks/smb-troubleshooting.md`.
+
 ## [0.3.0] - 2026-05-09
 
 Stable release. Same code as `0.3.0-alpha.2` — re-tagged after the

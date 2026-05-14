@@ -63,7 +63,7 @@ Serverless functions · Web terminal · Real-time metrics · No cloud dependency
 
 **Serverless Functions** — Node.js, Python, or Ruby functions that execute on demand in isolated VMs. Webhook-ready with a built-in code editor and execution playground.
 
-**Pluggable Storage** — Mix-and-match backends from a single UI: local file (zero deps), NFS (auto-mount via the agent), and `iscsi_lvm` (vendor-agnostic per-VM block devices on top of any iSCSI target — Proxmox-equivalent, no per-vendor REST adapter required). Add or remove backends without restarting the manager.
+**Pluggable Storage** — Mix-and-match backends from a single UI: local file (zero deps), NFS and SMB/CIFS (auto-mount via the agent), and `iscsi_lvm` (vendor-agnostic per-VM block devices on top of any iSCSI target — Proxmox-equivalent, no per-vendor REST adapter required). Add or remove backends without restarting the manager.
 
 ---
 
@@ -79,7 +79,7 @@ Serverless functions · Web terminal · Real-time metrics · No cloud dependency
 | 📸 | **Snapshots** | Full and differential VM snapshots with instant restore |
 | 📦 | **Image Registry** | Kernels, rootfs, and Docker images — import from URL, local path, or DockerHub |
 | 🌐 | **Flexible Networking** | NAT, Isolated, Bridged, and VXLAN overlay networks |
-| 💾 | **Pluggable Storage** | Local file (default), NFS auto-mount, vendor-agnostic iSCSI+LVM, TrueNAS REST, SPDK vhost-user — add or remove backends from the UI without restart |
+| 💾 | **Pluggable Storage** | Local file (default), NFS auto-mount, SMB/CIFS, vendor-agnostic iSCSI+LVM, TrueNAS REST, SPDK vhost-user — add or remove backends from the UI without restart |
 | 🔀 | **Port Forwarding** | Route external traffic to services running inside VMs |
 | 🏢 | **Multi-Host Clustering** | Add agent nodes to a shared manager — scale across physical machines |
 | 👥 | **RBAC** | Admin / User / Viewer roles, resource ownership, per-user preferences |
@@ -142,6 +142,7 @@ Each VM picks where its rootfs (and additional disks) live. Backends register fr
 |---|---|---|---|
 | **`local_file`** | default | Files under `/srv/fc/vms/<vm>/storage/` | Single-host, dev/demo, no SAN |
 | **`nfs`** | yes | Manager delegates `mount.nfs` to the agent; one file per VM under the share | Homelab / NAS-backed setups |
+| **`smb`** | yes | Mount any SMB/CIFS share via the agent; one file per VM under the share | NAS / Windows-file-server-backed setups |
 | **`iscsi_lvm`** | yes | One LUN on any iSCSI target → LVM VG → per-VM `lvcreate` (Proxmox-equivalent) | Multi-VM on shared block storage, vendor-agnostic |
 | **`truenas_iscsi`** | advanced | TrueNAS REST creates per-VM zvol + extent + target | TrueNAS users wanting native ZFS snapshots and thin provisioning |
 | **`iscsi`** (generic) | advanced | Pre-cut LUN, 1 VM per LUN — passthrough only | Legacy LUN passthrough |
