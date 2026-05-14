@@ -277,11 +277,35 @@ test_delete_clears_cred() {
   log "T8: Delete backend clears cred file on agent"
   if [[ -z "${AUTH_BACKEND_ID:-}" ]]; then skip "no AUTH_BACKEND_ID"; return; fi
 
-  local code
-  code=$(curl_api -X DELETE "$MANAGER/v1/storage_backends/$AUTH_BACKEND_ID" \
-    -o /dev/null -w "%{http_code}")
-  if [[ "$code" == "204" ]]; then ok "DELETE backend -> 204"
-  else fail "DELETE backend -> $code"; fi
+  # First call: T5's deleted VM left a 'rootfs-*' volume row behind (the same
+  # behaviour the iscsi-alpha runner documents at T6a). The manager should
+  # reject this delete with 409 to protect the backend.
+  local resp code body
+  resp=$(curl_api -X DELETE "$MANAGER/v1/storage_backends/$AUTH_BACKEND_ID" -w "\n%{http_code}")
+  code=$(echo "$resp" | tail -1)
+  body=$(echo "$resp" | head -n -1)
+  if [[ "$code" == "409" ]]; then
+    ok "DELETE backend with live volume -> 409 (correctly protected)"
+  elif [[ "$code" == "204" ]]; then
+    ok "DELETE backend -> 204 (no live volumes)"
+  else
+    fail "DELETE backend (initial) -> $code: $body"
+    return
+  fi
+
+  # Clear the orphan volume rows and the share file, then retry — backend
+  # should delete cleanly.
+  if [[ "$code" == "409" ]]; then
+    local share_dir="/var/lib/nqrust/smb/$SMB_HOST:$SMB_SHARE"
+    sudo find "$share_dir" -maxdepth 1 -name "smb-*.raw" -delete 2>/dev/null || true
+    PGPASSWORD=nexus psql -h 127.0.0.1 -p 5432 -U nexus -d nexus \
+      -c "DELETE FROM volume WHERE backend_id='$AUTH_BACKEND_ID';" >/dev/null 2>&1 || true
+
+    code=$(curl_api -X DELETE "$MANAGER/v1/storage_backends/$AUTH_BACKEND_ID" \
+      -o /dev/null -w "%{http_code}")
+    if [[ "$code" == "204" ]]; then ok "DELETE backend after volume cleanup -> 204"
+    else fail "DELETE backend after cleanup -> $code"; fi
+  fi
 
   sleep 1
   if sudo test -f "/etc/nqrust/storage-creds/$AUTH_BACKEND_ID.cred"; then

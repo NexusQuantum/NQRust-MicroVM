@@ -13,9 +13,17 @@ Adds SMB / CIFS as a first-class external storage backend, mirroring the
 NFS integration delivered in v0.3.0. The agent owns the privileged
 `mount.cifs` call and a per-backend 0600 credential file (Proxmox-style,
 outside the DB); the manager stays unprivileged and configures the
-backend through the existing storage_backends API + UI. Verified
-end-to-end (27/27) against real Samba 4.19.5 with `mount.cifs` from
-`cifs-utils 7.5`.
+backend through the existing storage_backends API + UI.
+
+Verified end-to-end inside a fresh Ubuntu 24.04 KubeVirt VM (Firecracker
+nested-KVM), against a real Samba 4.19.5 server with `mount.cifs` from
+`cifs-utils 7.5`: 19/19 assertions across backend CRUD, validation,
+health probe, anonymous (guest) backend, Firecracker VM lifecycle with
+rootfs on the SMB share, edit-in-place password rotation, and protected
+backend delete. See `infra/test/smb-runner.sh` for the runner, and
+`infra/test/smb-docker-runner.sh` for the lower-level privileged-Docker
+variant that exercises the agent's `/v1/storage/smb/*` routes directly
+(27/27).
 
 ### Added
 - **`smb` storage backend (CIFS)** — Vendor-agnostic SMB share support, parallel to `nfs`. Agent runs `mount.cifs` with per-backend credential files (`/etc/nqrust/storage-creds/<id>.cred`, mode 0600). Manager talks to agent over `/v1/storage/smb/*` for set/clear credentials, mount/umount, file lifecycle (create_file, delete_file, snapshot, clone_from_path, clone_from_snapshot).
