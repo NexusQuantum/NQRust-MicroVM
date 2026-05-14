@@ -2,6 +2,47 @@
 
 use std::path::PathBuf;
 
+/// Compute the canonical cred-file path for a backend.
+pub fn cred_file_path(backend_id: &uuid::Uuid) -> std::path::PathBuf {
+    std::path::PathBuf::from("/etc/nqrust/storage-creds").join(format!("{backend_id}.cred"))
+}
+
+/// Write credentials atomically with mode 0600 + the directory created if
+/// missing. Overwrites any existing file (used for rotation).
+pub async fn write_cred_file(
+    path: &std::path::Path,
+    username: &str,
+    password: &str,
+    domain: Option<&str>,
+) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::AsyncWriteExt;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+        // Lock down the parent dir too so no other user can list cred files.
+        // Best-effort — ignore failures (e.g. when run as non-root in tests).
+        let _ = tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).await;
+    }
+    let mut f = tokio::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .await?;
+    f.write_all(format!("username={username}\npassword={password}\n").as_bytes())
+        .await?;
+    if let Some(d) = domain.filter(|d| !d.trim().is_empty()) {
+        f.write_all(format!("domain={d}\n").as_bytes()).await?;
+    }
+    Ok(())
+}
+
+/// Remove the credential file. Best-effort — missing file is not an error.
+pub async fn delete_cred_file(path: &std::path::Path) {
+    let _ = tokio::fs::remove_file(path).await;
+}
+
 /// Build the argv for `/bin/mount -t cifs ... -o ...`. Returns the args
 /// AFTER the `mount` executable name (so the caller does
 /// `Command::new("mount").args(&args)`).
@@ -179,6 +220,66 @@ mod arg_tests {
         assert_eq!(
             mp.to_string_lossy(),
             "/var/lib/nqrust/smb/192.168.1.5:vm_data"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cred_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn cred_file_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.cred");
+        write_cred_file(&path, "user", "pass", Some("DOM"))
+            .await
+            .unwrap();
+        let perms = tokio::fs::metadata(&path).await.unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o600);
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains("username=user"), "{content}");
+        assert!(content.contains("password=pass"), "{content}");
+        assert!(content.contains("domain=DOM"), "{content}");
+    }
+
+    #[tokio::test]
+    async fn cred_file_no_domain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nodomain.cred");
+        write_cred_file(&path, "u", "p", None).await.unwrap();
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(!content.contains("domain="), "{content}");
+    }
+
+    #[tokio::test]
+    async fn cred_file_empty_domain_treated_as_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("emptydom.cred");
+        write_cred_file(&path, "u", "p", Some("   ")).await.unwrap();
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(!content.contains("domain="), "{content}");
+    }
+
+    #[tokio::test]
+    async fn delete_cred_file_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ghost.cred");
+        delete_cred_file(&path).await; // not present, should not panic
+        write_cred_file(&path, "u", "p", None).await.unwrap();
+        assert!(tokio::fs::try_exists(&path).await.unwrap());
+        delete_cred_file(&path).await;
+        assert!(!tokio::fs::try_exists(&path).await.unwrap());
+    }
+
+    #[test]
+    fn cred_file_path_uses_uuid_under_storage_creds() {
+        let id = uuid::Uuid::nil();
+        let p = cred_file_path(&id);
+        assert_eq!(
+            p.to_string_lossy(),
+            "/etc/nqrust/storage-creds/00000000-0000-0000-0000-000000000000.cred"
         );
     }
 }
