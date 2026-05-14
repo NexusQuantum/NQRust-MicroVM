@@ -206,8 +206,8 @@ network:
   interface: "${DETECTED_INTERFACE:-eth0}"
 
 components:
-  manager: $([ "${INSTALL_COMPONENTS}" == *"manager"* ] && echo "true" || echo "false")
-  agent: $([ "${INSTALL_COMPONENTS}" == *"agent"* ] && echo "true" || echo "false")
+  manager: $([[ "${INSTALL_COMPONENTS}" == *"manager"* ]] && echo "true" || echo "false")
+  agent: $([[ "${INSTALL_COMPONENTS}" == *"agent"* ]] && echo "true" || echo "false")
   ui: ${WITH_UI:-true}
   container_runtime: ${WITH_CONTAINER_RUNTIME:-false}
 
