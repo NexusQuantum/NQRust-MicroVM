@@ -775,12 +775,17 @@ pub async fn restart_vm(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
         .await
         .context("resolving rootfs attached path")?;
     // Skip allowed-path validation for paths produced by a backend's
-    // host_path_for resolution. Vhost-user sockets (/var/tmp/...) and
-    // kernel block devices (/dev/<vg>/<lv> from iscsi_lvm, /dev/sd*
-    // from generic iscsi) are trusted because they came from a backend
-    // we control, not from user input. The image_root/storage_root
-    // check exists to gate user-supplied direct paths.
-    let is_backend_device = rootfs_is_vhost_user || resolved_rootfs_path.starts_with("/dev/");
+    // host_path_for resolution. Trusted prefixes:
+    //   - vhost-user sockets (/var/tmp/...)
+    //   - kernel block devices (/dev/<vg>/<lv> from iscsi_lvm, /dev/sd*
+    //     from generic iscsi)
+    //   - per-backend mount bases under /var/lib/nqrust/ (nfs, smb)
+    // These came from a backend we control, not user input. The
+    // image_root/storage_root check exists to gate user-supplied
+    // direct paths.
+    let is_backend_device = rootfs_is_vhost_user
+        || resolved_rootfs_path.starts_with("/dev/")
+        || resolved_rootfs_path.starts_with("/var/lib/nqrust/");
     if !is_backend_device {
         ensure_allowed_path(st, &resolved_rootfs_path)?;
     }
