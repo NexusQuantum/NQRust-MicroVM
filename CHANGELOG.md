@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-14
+
+Adds SMB / CIFS as a first-class external storage backend, mirroring the
+NFS integration delivered in v0.3.0. The agent owns the privileged
+`mount.cifs` call and a per-backend 0600 credential file (Proxmox-style,
+outside the DB); the manager stays unprivileged and configures the
+backend through the existing storage_backends API + UI.
+
+Verified end-to-end inside a fresh Ubuntu 24.04 KubeVirt VM (Firecracker
+nested-KVM), against a real Samba 4.19.5 server with `mount.cifs` from
+`cifs-utils 7.5`: 19/19 assertions across backend CRUD, validation,
+health probe, anonymous (guest) backend, Firecracker VM lifecycle with
+rootfs on the SMB share, edit-in-place password rotation, and protected
+backend delete. See `infra/test/smb-runner.sh` for the runner, and
+`infra/test/smb-docker-runner.sh` for the lower-level privileged-Docker
+variant that exercises the agent's `/v1/storage/smb/*` routes directly
+(27/27).
+
+### Added
+- **`smb` storage backend (CIFS)** — Vendor-agnostic SMB share support, parallel to `nfs`. Agent runs `mount.cifs` with per-backend credential files (`/etc/nqrust/storage-creds/<id>.cred`, mode 0600). Manager talks to agent over `/v1/storage/smb/*` for set/clear credentials, mount/umount, file lifecycle (create_file, delete_file, snapshot, clone_from_path, clone_from_snapshot).
+- **UI form for SMB** with authenticated and anonymous (`-o guest`) modes, password rotation in the Edit dialog, and a typed SMB-version select (`default` / 2.0 / 2.1 / 3 / 3.0 / 3.11). Domain, subdir, and freeform mount options exposed under "Show advanced".
+- **Host package**: `cifs-utils` added to apt + dnf installer flows and to the air-gapped Debian bundle.
+- **Migration `0039_smb_backend_kind.sql`** — allows `kind = 'smb'` in the `storage_backend` table CHECK constraint (forward-only, per release migration policy).
+- `docs/runbooks/smb-troubleshooting.md` — eight failure modes (exit 13/32, version mismatch, anonymous, password rotation, probe timeout, missing cred file, etc.) with reference commands.
+- `infra/test/smb-docker-runner.sh` — privileged-container E2E test that brings up Samba and exercises every agent SMB route (set/clear credentials, mount/umount, idempotency, create/delete files, snapshot, clone-from-snapshot, clone-from-path, anonymous mount, wrong-password rejection).
+
+### Changed
+- `CreateStorageBackendReq` accepts an optional top-level `password` field for SMB; it is never persisted to the DB but is forwarded to the agent on create/update.
+- UI `Field` type extended with `"password"` and `"select"` (with `options`) so the storage form schema can describe each backend kind declaratively.
+- `BackendKind` enum + wire string `"smb"` added; `Smb` variant registered in the registry, config validator, and health probe (`df -B1 --output=used,size` for capacity).
+
 ## [0.3.0] - 2026-05-09
 
 Stable release. Same code as `0.3.0-alpha.2` — re-tagged after the

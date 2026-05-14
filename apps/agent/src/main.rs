@@ -46,6 +46,18 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    // Register SMB host-backend if mount.cifs is available on this host.
+    // mount.cifs is shipped by cifs-utils; check both /usr/sbin (Debian/
+    // Ubuntu) and /sbin (Alpine/older distros) before giving up.
+    if tokio::fs::metadata("/usr/sbin/mount.cifs").await.is_ok()
+        || tokio::fs::metadata("/sbin/mount.cifs").await.is_ok()
+    {
+        storage_registry.register_for(
+            nexus_storage::BackendKind::Smb,
+            std::sync::Arc::new(features::storage::smb::SmbHostBackend),
+        );
+    }
+
     // Register iscsi_lvm host-backend if iscsiadm is available on this host.
     // Operators can force-enable via AGENT_ISCSI_AVAILABLE for environments
     // where iscsiadm lives at a non-standard path.

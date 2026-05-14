@@ -14,7 +14,7 @@ The **Settings** page lets you configure your account profile, platform appearan
 
 ![Image: Settings page overview](/images/settings/settings-overview.png)
 
-Settings are organized into six tabs:
+Settings are organized into seven tabs:
 
 | Tab | What you can configure |
 |-----|----------------------|
@@ -23,6 +23,7 @@ Settings are organized into six tabs:
 | **Logging** | Activity logs, export |
 | **Defaults** | Default VM resource sizes |
 | **System** | Platform info and database stats |
+| **SSO** | Single Sign-On identity providers (OIDC) |
 | **License** | Software license activation and status |
 
 ---
@@ -144,3 +145,37 @@ For offline activation, use the **Upload License File** option to upload a `.lic
 ### EULA
 
 The License tab also shows your EULA acceptance status and links to the full End User License Agreement. Click **View EULA** to open the full agreement.
+
+---
+
+## SSO Tab
+
+Configure **Single Sign-On** so users can authenticate against an external identity provider (OIDC) instead of a local username + password. Useful for organizations that already have an IdP like Keycloak, Okta, Auth0, or Azure AD.
+
+### Adding a provider
+
+1. Go to **Settings → SSO**.
+2. Click **Add Provider**.
+3. Fill in:
+   - **Display name** — shown to users on the login page (e.g. `Corporate SSO`).
+   - **Issuer URL** — the OIDC issuer (e.g. `https://idp.example.com/realms/main`).
+   - **Client ID** / **Client secret** — credentials from your IdP application.
+   - **Redirect URI** — copy this from the provider form and register it in your IdP.
+   - **Scopes** — usually `openid email profile`.
+4. Click **Save**.
+
+The provider appears as a `Sign in with <name>` button on the login page.
+
+### User provisioning
+
+When a new user successfully authenticates via SSO for the first time, NQRust-MicroVM auto-creates a local user record bound to their IdP `sub` claim. Subsequent logins reuse the same record. You can manage these users from **Users** in the sidebar.
+
+### Removing a provider
+
+Open **Settings → SSO**, click **Remove** on the provider row. Existing SSO-authenticated users keep their accounts but can no longer log in through that provider until you re-add it.
+
+---
+
+## Platform Updates
+
+A platform self-update mechanism (airgap `.nqupdate` bundles + internet manifest mode) is in development and not yet exposed in this UI build. Until it ships, update the platform by re-running the installer with the new release — see [Installation](../../getting-started/installation/).

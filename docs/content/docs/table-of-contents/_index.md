@@ -56,6 +56,16 @@ This section provides an overview of all documentation included in NQRust-MicroV
 
 ---
 
+### **Storage Backends**
+
+- [**Storage Backends Overview**](../storage/) — local file storage and external SMB / NFS / iSCSI
+- [Manage Backends - Add, edit, set default, remove](../storage/manage-backends/)
+- [Add external SMB / CIFS backend - Samba and Windows shares](../storage/smb-backend/) (new in v0.4.0)
+- [Add external NFS backend - Linux/Unix NFS exports](../storage/nfs-backend/)
+- [Add external iSCSI backend - Vendor-agnostic block storage with per-VM LVs](../storage/iscsi-backend/)
+
+---
+
 ### **Volumes**
 
 - [**Volumes Overview**](../volumes/)

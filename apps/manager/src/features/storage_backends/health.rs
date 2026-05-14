@@ -31,6 +31,7 @@ pub async fn check_backend_health(
         "nfs" => probe_nfs(row).await,
         "truenas_iscsi" => probe_truenas(row).await,
         "iscsi_lvm" => probe_iscsi_lvm(row, default_agent_url).await,
+        "smb" => probe_smb(row, default_agent_url).await,
         other => BackendHealth {
             reachable: true,
             status: format!("skipped: {other} kind has no health probe"),
@@ -287,6 +288,64 @@ async fn probe_iscsi_lvm(
         Err(e) => BackendHealth {
             reachable: false,
             status: format!("vg_status: {e}"),
+            used_bytes: None,
+            total_bytes: None,
+        },
+    }
+}
+
+async fn probe_smb(row: &StorageBackendRow, default_agent_url: Option<&str>) -> BackendHealth {
+    use crate::features::storage::backends::smb::{SmbConfig, SmbControlPlaneBackend};
+    use nexus_storage::{BackendInstanceId, ControlPlaneBackend};
+
+    let mut cfg: SmbConfig = match serde_json::from_value(row.config_json.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            return BackendHealth {
+                reachable: false,
+                status: format!("config decode: {e}"),
+                used_bytes: None,
+                total_bytes: None,
+            }
+        }
+    };
+    if cfg.agent_url.is_none() {
+        cfg.agent_url = default_agent_url.map(|s| s.to_string());
+    }
+    let mount_point = cfg.mount_point();
+    let backend = SmbControlPlaneBackend {
+        id: BackendInstanceId(row.id),
+        config: cfg,
+    };
+    match backend.probe().await {
+        Ok(()) => {
+            // Probe succeeded; try to read disk usage from the mount.
+            // Manager runs unprivileged — best-effort, may return None.
+            let (used, total) = match tokio::process::Command::new("df")
+                .args(["-B1", "--output=used,size", &mount_point.to_string_lossy()])
+                .output()
+                .await
+            {
+                Ok(out) if out.status.success() => {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    let line = s.lines().nth(1).unwrap_or("");
+                    let mut parts = line.split_whitespace();
+                    let used = parts.next().and_then(|n| n.parse::<u64>().ok());
+                    let total = parts.next().and_then(|n| n.parse::<u64>().ok());
+                    (used, total)
+                }
+                _ => (None, None),
+            };
+            BackendHealth {
+                reachable: true,
+                status: "ok".into(),
+                used_bytes: used,
+                total_bytes: total,
+            }
+        }
+        Err(e) => BackendHealth {
+            reachable: false,
+            status: format!("probe: {e}"),
             used_bytes: None,
             total_bytes: None,
         },

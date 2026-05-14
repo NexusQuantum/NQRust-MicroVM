@@ -1063,13 +1063,16 @@ export interface LicenseUploadRequest {
 // Storage Backend Types
 // ========================================
 
-export type BackendKind = "local_file" | "iscsi" | "truenas_iscsi" | "spdk_lvol" | "nfs" | "iscsi_lvm";
+export type BackendKind = "local_file" | "iscsi" | "truenas_iscsi" | "spdk_lvol" | "nfs" | "iscsi_lvm" | "smb";
 
 export interface CreateStorageBackendReq {
   name: string;
   kind: BackendKind;
   is_default?: boolean;
   config: Record<string, unknown>;
+  /** SMB-only: top-level sibling of `config`. Forwarded by the manager to the
+   *  agent's /set_credentials route and never persisted in the database. */
+  password?: string;
 }
 
 export interface Capabilities {

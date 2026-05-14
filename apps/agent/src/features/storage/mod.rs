@@ -6,4 +6,5 @@ pub mod nfs;
 pub mod registry;
 pub mod routes;
 pub mod s3;
+pub mod smb;
 pub mod spdk_lvol;

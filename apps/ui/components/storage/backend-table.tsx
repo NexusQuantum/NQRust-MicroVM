@@ -35,9 +35,10 @@ const KIND_LABEL: Record<BackendKind, string> = {
   spdk_lvol: "SPDK lvol",
   nfs: "NFS",
   iscsi_lvm: "iSCSI + LVM",
+  smb: "SMB / CIFS",
 };
 
-const EXTERNAL_KINDS: BackendKind[] = ["iscsi", "truenas_iscsi", "nfs", "iscsi_lvm"];
+const EXTERNAL_KINDS: BackendKind[] = ["iscsi", "truenas_iscsi", "nfs", "iscsi_lvm", "smb"];
 
 function StatusDot({ id }: { id: string }) {
   const { data, isLoading } = useBackendHealth(id);

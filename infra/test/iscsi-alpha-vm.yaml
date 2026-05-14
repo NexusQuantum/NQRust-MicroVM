@@ -56,6 +56,10 @@ stringData:
       - open-iscsi
       - lvm2
       - nfs-common
+      - cifs-utils
+      - samba
+      - samba-common-bin
+      - smbclient
       # PostgreSQL
       - postgresql
       - postgresql-contrib

@@ -211,6 +211,7 @@ fn build_backend(
         "spdk_lvol" => BackendKind::SpdkLvol,
         "nfs" => BackendKind::Nfs,
         "iscsi_lvm" => BackendKind::IscsiLvm,
+        "smb" => BackendKind::Smb,
         other => {
             return Err(anyhow!("unknown backend kind '{other}'"));
         }
@@ -285,6 +286,20 @@ fn build_backend(
             }
             Ok(Arc::new(
                 crate::features::storage::backends::iscsi_lvm::IscsiLvmControlPlaneBackend {
+                    id: BackendInstanceId(row.id),
+                    config: cfg,
+                },
+            ))
+        }
+        BackendKind::Smb => {
+            let mut cfg: crate::features::storage::backends::smb::SmbConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' smb config", row.name))?;
+            if cfg.agent_url.is_none() {
+                cfg.agent_url = default_agent_url.map(|s| s.to_string());
+            }
+            Ok(Arc::new(
+                crate::features::storage::backends::smb::SmbControlPlaneBackend {
                     id: BackendInstanceId(row.id),
                     config: cfg,
                 },

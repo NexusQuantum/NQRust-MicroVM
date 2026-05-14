@@ -80,6 +80,9 @@ pub struct CreateStorageBackendReq {
     pub is_default: bool,
     #[serde(default)]
     pub config: JsonValue,
+    /// SMB-only: send to agent's /set_credentials route; never persisted in DB.
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 #[utoipa::path(
@@ -167,6 +170,24 @@ pub async fn create(
         }
     }
 
+    // SMB: deliver credentials to the agent (if any) then probe. On failure,
+    // roll back the row and best-effort clear any cred file we just wrote so
+    // the agent doesn't keep stale creds for a backend that no longer exists.
+    if validated.kind == nexus_storage::BackendKind::Smb {
+        if let Err(e) = probe_smb_backend(&st, &row, req.password.as_deref()).await {
+            let _ = repo.soft_delete_by_name(&row.name).await;
+            let _ = clear_smb_credentials_on_agent(&st, &row).await;
+            let chain: Vec<String> = e.chain().map(|c| c.to_string()).collect();
+            let detail = chain.join(" -> ");
+            tracing::warn!(backend = %row.name, error = ?e, "smb backend probe failed; row rolled back");
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"error": format!("smb mount probe failed: {detail}")})),
+            )
+                .into_response();
+        }
+    }
+
     // Insert into the live registry so the backend is immediately usable
     // for VM-create without a manager restart. Best-effort: a failure here
     // is logged but doesn't roll back the DB row — operators can still see
@@ -205,6 +226,173 @@ async fn probe_nfs_backend(st: &AppState, row: &StorageBackendRow) -> anyhow::Re
         config: cfg,
     };
     backend.probe().await.context("nfs mount probe")?;
+    Ok(())
+}
+
+async fn probe_smb_backend(
+    st: &AppState,
+    row: &StorageBackendRow,
+    password: Option<&str>,
+) -> anyhow::Result<()> {
+    use crate::features::storage::backends::smb::{SmbConfig, SmbControlPlaneBackend};
+    use anyhow::Context;
+    use nexus_storage::{BackendInstanceId, ControlPlaneBackend};
+
+    let mut cfg: SmbConfig =
+        serde_json::from_value(row.config_json.clone()).context("decode smb config for probe")?;
+    if cfg.agent_url.is_none() {
+        let default_agent_url: Option<String> =
+            sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
+                .fetch_optional(&st.db)
+                .await
+                .context("looking up default agent for smb probe")?;
+        cfg.agent_url = default_agent_url;
+    }
+    let agent_url = cfg
+        .agent_url
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("smb backend has no agent_url and no registered agent host")
+        })?
+        .to_string();
+
+    // If the share is authenticated (username present) AND we received a
+    // password on this request, push the cred file to the agent before the
+    // probe — otherwise the probe's mount.cifs will fail with EACCES.
+    if let (Some(username), Some(password)) =
+        (cfg.username.as_deref().filter(|u| !u.is_empty()), password)
+    {
+        set_smb_credentials_on_agent(
+            &agent_url,
+            row.id,
+            username,
+            password,
+            cfg.domain.as_deref(),
+        )
+        .await
+        .context("delivering smb credentials to agent")?;
+    }
+
+    let backend = SmbControlPlaneBackend {
+        id: BackendInstanceId(row.id),
+        config: cfg,
+    };
+    backend.probe().await.context("smb mount probe")?;
+    Ok(())
+}
+
+async fn set_smb_credentials_on_agent(
+    agent_url: &str,
+    backend_id: uuid::Uuid,
+    username: &str,
+    password: &str,
+    domain: Option<&str>,
+) -> anyhow::Result<()> {
+    let url = format!(
+        "{}/v1/storage/smb/set_credentials",
+        agent_url.trim_end_matches('/')
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({
+            "backend_id": backend_id,
+            "username": username,
+            "password": password,
+            "domain": domain,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("agent set_credentials failed: HTTP {status}: {body}");
+    }
+    Ok(())
+}
+
+/// Push (or rewrite) the per-backend SMB cred file on the agent. Used by
+/// the UPDATE handler when the operator submits a new password without
+/// re-probing the share. Errors propagate so the caller can decide whether
+/// to surface them (we currently just log).
+async fn refresh_smb_credentials_on_agent(
+    st: &AppState,
+    row: &StorageBackendRow,
+    password: &str,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let cfg: crate::features::storage::backends::smb::SmbConfig =
+        serde_json::from_value(row.config_json.clone()).context("decode smb config for refresh")?;
+    let username = cfg
+        .username
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("smb backend has no username; cannot store password without a user")
+        })?
+        .to_string();
+    let agent_url = if let Some(u) = cfg.agent_url.clone().filter(|u| !u.is_empty()) {
+        u
+    } else {
+        let fallback: Option<String> =
+            sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
+                .fetch_optional(&st.db)
+                .await
+                .context("looking up default agent for smb cred refresh")?;
+        fallback
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("no agent_url and no registered agent host"))?
+    };
+    set_smb_credentials_on_agent(
+        &agent_url,
+        row.id,
+        &username,
+        password,
+        cfg.domain.as_deref(),
+    )
+    .await
+    .context("delivering smb credentials to agent")?;
+    Ok(())
+}
+
+/// Best-effort: tells the agent to remove the per-backend cred file. Used on
+/// rollback after a failed probe and on backend delete. Swallows network
+/// errors — the caller is already on a cleanup path.
+async fn clear_smb_credentials_on_agent(
+    st: &AppState,
+    row: &StorageBackendRow,
+) -> anyhow::Result<()> {
+    let cfg: crate::features::storage::backends::smb::SmbConfig =
+        serde_json::from_value(row.config_json.clone())?;
+    let agent_url = if let Some(u) = cfg.agent_url.filter(|u| !u.is_empty()) {
+        u
+    } else {
+        let fallback: Option<String> =
+            sqlx::query_scalar("SELECT addr FROM host ORDER BY last_seen_at DESC LIMIT 1")
+                .fetch_optional(&st.db)
+                .await
+                .ok()
+                .flatten();
+        match fallback {
+            Some(u) if !u.is_empty() => u,
+            _ => return Ok(()),
+        }
+    };
+    let full_url = format!(
+        "{}/v1/storage/smb/clear_credentials",
+        agent_url.trim_end_matches('/')
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let _ = client
+        .post(&full_url)
+        .json(&serde_json::json!({ "backend_id": row.id }))
+        .send()
+        .await;
     Ok(())
 }
 
@@ -266,6 +454,19 @@ pub async fn delete(Extension(st): Extension<AppState>, Path(id): Path<Uuid>) ->
             Json(serde_json::json!({"error": "db"})),
         )
             .into_response();
+    }
+    // SMB: best-effort cred wipe on the agent so we don't leave an orphan
+    // `/etc/nqrust/storage-creds/<id>.cred` behind after the backend is
+    // gone. Agent unreachable / 5xx is fine — the file is small and the
+    // backend_id can't be reused anyway.
+    if row.kind == "smb" {
+        if let Err(e) = clear_smb_credentials_on_agent(&st, &row).await {
+            tracing::warn!(
+                backend = %row.name,
+                error = %e,
+                "smb credential clear failed during delete (orphan cred file may remain)"
+            );
+        }
     }
     st.registry.remove(id);
     StatusCode::NO_CONTENT.into_response()
@@ -546,6 +747,7 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(req): Json<CreateStorageBackendReq>,
 ) -> impl IntoResponse {
+    let password = req.password.clone();
     let validated = match validate(RawBackendEntry {
         name: req.name.clone(),
         kind: req.kind,
@@ -582,12 +784,29 @@ pub async fn update(
         )
         .await
     {
-        Ok(Some(row)) => match row_to_wire(row) {
-            Ok(w) => (StatusCode::OK, Json(w)).into_response(),
-            Err(s) => {
-                (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response()
+        Ok(Some(row)) => {
+            // SMB: refresh the cred file on the agent if the caller sent a
+            // new password. We do NOT re-probe on update — the operator is
+            // mid-edit and a transient share outage shouldn't block them
+            // from saving. Failure here is logged but not fatal.
+            if row.kind == "smb" {
+                if let Some(pw) = password.as_deref() {
+                    if let Err(e) = refresh_smb_credentials_on_agent(&st, &row, pw).await {
+                        tracing::warn!(
+                            backend = %row.name,
+                            error = %e,
+                            "smb credential refresh failed during update"
+                        );
+                    }
+                }
             }
-        },
+            match row_to_wire(row) {
+                Ok(w) => (StatusCode::OK, Json(w)).into_response(),
+                Err(s) => {
+                    (s, Json(serde_json::json!({"error": "row deserialization"}))).into_response()
+                }
+            }
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "not found"})),
