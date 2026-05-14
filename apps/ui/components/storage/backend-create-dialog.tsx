@@ -620,7 +620,7 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
         }
       }}
     >
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Add storage backend</DialogTitle>
           <DialogDescription>
@@ -659,7 +659,7 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
         )}
 
         {!postCreate && (
-          <div className="space-y-4">
+          <div className="flex-1 overflow-y-auto pr-1 space-y-4 min-h-0">
             <div className="space-y-1.5">
               <Label htmlFor="bk-name">Name</Label>
               <Input
