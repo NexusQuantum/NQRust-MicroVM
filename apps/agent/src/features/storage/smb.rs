@@ -1,12 +1,17 @@
 //! SMB / CIFS host backend (Tasks 3–5: cred + arg helpers + mount drivers).
 //!
-//! Several functions below are flagged `dead_code` until Task 7 wires
-//! them to HTTP routes (the manager calls them via `agent_client`).
-//! Until then, suppress the lint at the module level so CI stays green.
-#![allow(dead_code)]
+//! Task 7 wires these helpers to HTTP routes (the manager calls them via
+//! `agent_client`) and registers `SmbHostBackend` against the agent's
+//! `HostBackendRegistry` so the manager learns this host can serve SMB
+//! volumes.
 
 use std::path::PathBuf;
 
+use async_trait::async_trait;
+use axum::{http::StatusCode, response::IntoResponse, routing::post, Json, Router};
+use nexus_storage::{
+    AttachedPath, BackendKind, HostBackend, StorageError, VolumeHandle, VolumeSnapshotHandle,
+};
 use serde::{Deserialize, Serialize};
 
 /// Wire-form locator for SMB-backed volumes. Mirrors `NfsLocatorWire` but
@@ -34,6 +39,10 @@ impl SmbLocator {
         Ok(())
     }
 
+    // Used by the manager-side encoder in a later task; agent only decodes
+    // today via `from_locator_str` but we keep the symmetric helper here
+    // so wire-format changes update both sides at once.
+    #[allow(dead_code)]
     pub fn to_locator_string(&self) -> Result<String, nexus_storage::StorageError> {
         serde_json::to_string(self).map_err(|e| {
             nexus_storage::StorageError::InvalidLocator(format!("encode smb locator: {e}"))
@@ -411,6 +420,300 @@ pub async fn unmount(mp: &std::path::Path) -> Result<(), nexus_storage::StorageE
         .status()
         .await;
     Ok(())
+}
+
+// -------------------------------------------------------------------------
+// HostBackend impl (manager → agent attach/detach for VM lifecycle)
+// -------------------------------------------------------------------------
+
+/// Default mount base used when the agent isn't given a per-backend
+/// override. Mirrors what `ensure_mounted` expects callers to pass via
+/// the /mount route's `mount_base` field.
+const DEFAULT_SMB_MOUNT_BASE: &str = "/var/lib/nqrust/smb";
+
+#[derive(Clone, Default)]
+pub struct SmbHostBackend;
+
+#[async_trait]
+impl HostBackend for SmbHostBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::Smb
+    }
+
+    async fn attach(&self, volume: &VolumeHandle) -> Result<AttachedPath, StorageError> {
+        let loc = SmbLocator::from_locator_str(&volume.locator)?;
+        // The host backend doesn't carry mount_base config (that's stored
+        // by the manager-side control-plane backend), so default to the
+        // same path ensure_mounted uses. If the operator overrides the
+        // mount base, they must also POST /mount before attach to populate
+        // that path before any VM resolves the volume.
+        let mp = mount_point_for(DEFAULT_SMB_MOUNT_BASE, &loc.server, &loc.share);
+        let path = mp.join(&loc.file);
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Err(StorageError::backend(std::io::Error::other(format!(
+                "smb volume file not present at {} (call /v1/storage/smb/mount first)",
+                path.display()
+            ))));
+        }
+        Ok(AttachedPath::File(path))
+    }
+
+    async fn detach(
+        &self,
+        _volume: &VolumeHandle,
+        _attached: AttachedPath,
+    ) -> Result<(), StorageError> {
+        // The mount is shared across all VMs on this backend; we don't
+        // unmount per-VM. Operators issue /umount via the dedicated route
+        // when they want to drop the share.
+        Ok(())
+    }
+
+    async fn populate_streaming(
+        &self,
+        attached: &AttachedPath,
+        source: &std::path::Path,
+        target_size_bytes: u64,
+    ) -> Result<(), StorageError> {
+        use tokio::io::AsyncWriteExt;
+        let dst_path = attached.path();
+        let mut src = tokio::fs::File::open(source).await?;
+        let mut dst = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dst_path)
+            .await?;
+        tokio::io::copy(&mut src, &mut dst).await?;
+        let cur = tokio::fs::metadata(dst_path).await?.len();
+        if target_size_bytes > cur {
+            dst.set_len(target_size_bytes).await?;
+        }
+        dst.flush().await?;
+        Ok(())
+    }
+
+    async fn resize2fs(&self, attached: &AttachedPath) -> Result<(), StorageError> {
+        super::local_file::run_resize2fs(attached.path()).await
+    }
+
+    async fn read_snapshot(
+        &self,
+        snap: &VolumeSnapshotHandle,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StorageError> {
+        let loc = SmbLocator::from_locator_str(&snap.locator)?;
+        let mp = mount_point_for(DEFAULT_SMB_MOUNT_BASE, &loc.server, &loc.share);
+        let path = mp.join(&loc.file);
+        let f = tokio::fs::File::open(&path).await?;
+        Ok(Box::new(f))
+    }
+}
+
+// -------------------------------------------------------------------------
+// HTTP routes (manager → agent control plane)
+// -------------------------------------------------------------------------
+
+fn err_500(e: impl std::fmt::Display) -> axum::response::Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": format!("backend error: {e}")})),
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetCredentialsReq {
+    pub backend_id: uuid::Uuid,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub domain: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClearCredentialsReq {
+    pub backend_id: uuid::Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MountReq {
+    pub backend_id: uuid::Uuid,
+    #[serde(default)]
+    pub mount_base: Option<String>,
+    pub server: String,
+    pub share: String,
+    #[serde(default)]
+    pub subdir: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub smb_version: Option<String>,
+    #[serde(default)]
+    pub options: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MountResp {
+    pub mount_point: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UmountReq {
+    pub mount_point: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFileReq {
+    pub mount_point: PathBuf,
+    pub file: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteFileReq {
+    pub mount_point: PathBuf,
+    pub file: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CloneFromPathReq {
+    pub source_path: PathBuf,
+    pub mount_point: PathBuf,
+    pub file: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CloneFromPathResp {
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SnapshotReq {
+    pub mount_point: PathBuf,
+    pub source_file: String,
+    pub snap_file: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CloneFromSnapshotReq {
+    pub mount_point: PathBuf,
+    pub snap_file: String,
+    pub file: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CloneFromSnapshotResp {
+    pub size_bytes: u64,
+}
+
+async fn set_credentials_handler(Json(body): Json<SetCredentialsReq>) -> impl IntoResponse {
+    let path = cred_file_path(&body.backend_id);
+    match write_cred_file(
+        &path,
+        &body.username,
+        &body.password,
+        body.domain.as_deref(),
+    )
+    .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn clear_credentials_handler(Json(body): Json<ClearCredentialsReq>) -> impl IntoResponse {
+    let path = cred_file_path(&body.backend_id);
+    delete_cred_file(&path).await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn mount_handler(Json(body): Json<MountReq>) -> impl IntoResponse {
+    let mount_base = body
+        .mount_base
+        .unwrap_or_else(|| DEFAULT_SMB_MOUNT_BASE.to_string());
+    match ensure_mounted(
+        body.backend_id,
+        std::path::Path::new(&mount_base),
+        &body.server,
+        &body.share,
+        body.subdir.as_deref(),
+        body.username.as_deref(),
+        body.domain.as_deref(),
+        body.smb_version.as_deref(),
+        body.options.as_deref(),
+    )
+    .await
+    {
+        Ok(mount_point) => (StatusCode::OK, Json(MountResp { mount_point })).into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn umount_handler(Json(body): Json<UmountReq>) -> impl IntoResponse {
+    match unmount(&body.mount_point).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn create_file_handler(Json(body): Json<CreateFileReq>) -> impl IntoResponse {
+    match create_file(&body.mount_point, &body.file, body.size_bytes).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn delete_file_handler(Json(body): Json<DeleteFileReq>) -> impl IntoResponse {
+    match delete_file(&body.mount_point, &body.file).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn clone_from_path_handler(Json(body): Json<CloneFromPathReq>) -> impl IntoResponse {
+    match clone_from_path(&body.source_path, &body.mount_point, &body.file).await {
+        Ok(size_bytes) => (StatusCode::OK, Json(CloneFromPathResp { size_bytes })).into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn snapshot_handler(Json(body): Json<SnapshotReq>) -> impl IntoResponse {
+    match snapshot(&body.mount_point, &body.source_file, &body.snap_file).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err_500(e),
+    }
+}
+
+async fn clone_from_snapshot_handler(Json(body): Json<CloneFromSnapshotReq>) -> impl IntoResponse {
+    match clone_from_snapshot(&body.mount_point, &body.snap_file, &body.file).await {
+        Ok(size_bytes) => {
+            (StatusCode::OK, Json(CloneFromSnapshotResp { size_bytes })).into_response()
+        }
+        Err(e) => err_500(e),
+    }
+}
+
+/// Build the `/v1/storage/smb/*` sub-router. Stateless — handlers call
+/// the module-level helpers directly and the cred files live on disk, so
+/// no per-request state is needed. Generic over the parent's state type
+/// `S` so it composes via `Router::nest` regardless of what the parent
+/// router carries.
+pub fn router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .route("/set_credentials", post(set_credentials_handler))
+        .route("/clear_credentials", post(clear_credentials_handler))
+        .route("/mount", post(mount_handler))
+        .route("/umount", post(umount_handler))
+        .route("/create_file", post(create_file_handler))
+        .route("/delete_file", post(delete_file_handler))
+        .route("/clone_from_path", post(clone_from_path_handler))
+        .route("/snapshot", post(snapshot_handler))
+        .route("/clone_from_snapshot", post(clone_from_snapshot_handler))
 }
 
 #[cfg(test)]
