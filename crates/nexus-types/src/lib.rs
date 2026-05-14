@@ -1722,6 +1722,8 @@ pub enum BackendKind {
     Nfs,
     #[serde(rename = "iscsi_lvm")]
     IscsiLvm,
+    #[serde(rename = "smb")]
+    Smb,
 }
 
 #[derive(

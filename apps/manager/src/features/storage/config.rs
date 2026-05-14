@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use nexus_storage::{BackendKind, Capabilities};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -119,6 +119,9 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
                 supports_live_migration: true,
                 supports_clone_from_image: true,
             }
+        }
+        BackendKind::Smb => {
+            bail!("smb not yet implemented (Task 9)")
         }
     };
 

@@ -35,6 +35,8 @@ pub enum BackendKind {
     Nfs,
     #[serde(rename = "iscsi_lvm")]
     IscsiLvm,
+    #[serde(rename = "smb")]
+    Smb,
 }
 
 impl BackendKind {
@@ -46,6 +48,7 @@ impl BackendKind {
             BackendKind::SpdkLvol => "spdk_lvol",
             BackendKind::Nfs => "nfs",
             BackendKind::IscsiLvm => "iscsi_lvm",
+            BackendKind::Smb => "smb",
         }
     }
 }

@@ -211,6 +211,7 @@ fn build_backend(
         "spdk_lvol" => BackendKind::SpdkLvol,
         "nfs" => BackendKind::Nfs,
         "iscsi_lvm" => BackendKind::IscsiLvm,
+        "smb" => BackendKind::Smb,
         other => {
             return Err(anyhow!("unknown backend kind '{other}'"));
         }
@@ -290,6 +291,7 @@ fn build_backend(
                 },
             ))
         }
+        BackendKind::Smb => Err(anyhow!("smb not yet implemented (Task 9)")),
     }
 }
 

@@ -31,6 +31,12 @@ pub async fn check_backend_health(
         "nfs" => probe_nfs(row).await,
         "truenas_iscsi" => probe_truenas(row).await,
         "iscsi_lvm" => probe_iscsi_lvm(row, default_agent_url).await,
+        "smb" => BackendHealth {
+            reachable: false,
+            status: "not yet implemented (Task 9)".into(),
+            used_bytes: None,
+            total_bytes: None,
+        },
         other => BackendHealth {
             reachable: true,
             status: format!("skipped: {other} kind has no health probe"),
