@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-14
+
+Patch release rolling up post-v0.4.0 fixes surfaced while shipping
+the release: a real UI bug in the storage backend dialog, the
+installer's non-interactive entry point that was a stub since the
+file was created, and three release-pipeline workflow fixes that
+unblocked the air-gapped bundle build for the first time since
+v0.3.0.
+
+### Fixed
+- **UI: storage backend dialog grew off-screen with advanced options**.
+  Expanding SMB or iSCSI + LVM advanced fields pushed the dialog to
+  ~1263px tall — Cancel and Add buttons clipped below the viewport.
+  Cap `DialogContent` at `max-h-[90vh]` with flex-column layout; the
+  form body scrolls internally with the header and footer pinned
+  (commit `837b9b6`).
+- **Installer: `--non-interactive` was a stub**. `run_non_interactive`
+  printed "Non-interactive installation not yet implemented" and
+  exited 0, leaving the Test Installer CI red since November 2025
+  and any scripted production install dead in the water. Implemented
+  by reusing `executor::run_installation` (the same orchestrator the
+  TUI uses) and streaming `InstallMessage` events to stdout, with a
+  clear root-required error when run as non-root (commit `b7aed60`).
+- **Installer config.sh: glob matching used `[ ]` instead of `[[ ]]`**.
+  Two `[ "$INSTALL_COMPONENTS" == *"manager"* ]` checks silently
+  evaluated to false (POSIX `[` treats `*` literally), so the
+  generated `config.yaml` always reported `manager: false` and
+  `agent: false` regardless of `--mode`. Caught by shellcheck SC2081
+  in the new Test Installer workflow (commit `ae8d1c6`).
+
+### CI
+- **Air-gapped bundle: dropped `sudo apt-get`** on the self-hosted
+  Arch (omarchy) runner; replaced with a tool-presence check that
+  fails fast with a pacman hint. Bundle build had been red since
+  v0.3.0 (commit `09cdcb4`).
+- **Air-gapped bundle: pnpm now ships as `.tar.gz`** (since v11),
+  not a bare binary. Update `scripts/airgap/bundle-node.sh` to
+  download and extract the tarball + `dist/` runtime tree (commit
+  `66e8dd8`).
+- **Test Installer rewritten** to build the installer from source,
+  verify the CLI surface (`--help` for install + uninstall both
+  list `--non-interactive`), assert the non-interactive path is no
+  longer a stub, and shellcheck every `lib/*.sh` at severity=error.
+  Replaces the old workflow that tried full systemd / postgres /
+  KVM installs in GHA containers — paths now exercised in
+  `infra/test/*-runner.sh` instead.
+
 ## [0.4.0] - 2026-05-14
 
 Adds SMB / CIFS as a first-class external storage backend, mirroring the
