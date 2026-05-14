@@ -40,7 +40,7 @@ On the **SMB server**:
 
 Go to **Storage** → **Add backend**. In the dialog, set **Kind** to **SMB / CIFS**.
 
-![Add backend dialog with SMB / CIFS selected, showing basic + advanced fields](/images/storage/smb-create-dialog.png)
+![Add backend dialog with SMB / CIFS selected, basic fields shown](/images/storage/add-backend-smb-basic.png)
 
 ### Basic fields
 
@@ -54,12 +54,14 @@ Go to **Storage** → **Add backend**. In the dialog, set **Kind** to **SMB / CI
 
 ### Advanced fields (click **Show advanced options**)
 
+![Add backend dialog with SMB advanced fields expanded](/images/storage/add-backend-smb-advanced.png)
+
 | Field | Default | Notes |
 |---|---|---|
 | **Domain / Workgroup** | — | For Active Directory shares, the AD domain or workgroup name |
 | **SMB version** | `default` | Pin protocol version with `-o vers=`. Options: `default` (kernel negotiates), `2.0`, `2.1`, `3`, `3.0`, `3.11` |
 | **Subdirectory** | — | Optional path *inside* the share, e.g. `vm-rootfs` if you want all VM files under `//server/share/vm-rootfs/` |
-| **Extra mount options** | — | Raw `-o` options appended to the mount command (advanced) |
+| **Extra mount options** | — | Raw `-o` options appended to the mount command (advanced — e.g. `uid=33,gid=33,file_mode=0660`) |
 | **Mount base directory** | `/var/lib/nqrust/smb` | Where on the host the agent mounts shares — defaults to a per-server-share subdirectory |
 
 Click **Add backend**. The manager validates the form, forwards credentials to the agent, runs `mount.cifs` once to confirm reachability, then inserts the backend into the live registry. The Storage table now shows your SMB backend with live capacity from `df`.
@@ -77,6 +79,12 @@ Useful for legacy NAS appliances with a public read/write share, or for testing 
 ## Creating a VM on the SMB backend
 
 In the **Create VM** wizard, **Boot Source** step (step 4), set the **Storage backend** dropdown to your SMB backend.
+
+![VM Create wizard step 4 — Boot Source with storage backend dropdown](/images/storage/vm-create-boot-source.png)
+
+The dropdown lists every backend the manager knows about. Default backend is preselected; pick the SMB backend instead.
+
+![Storage backend dropdown open showing localfile-default + smb-via-ui](/images/storage/vm-create-backend-dropdown.png)
 
 When the VM is created, the manager:
 

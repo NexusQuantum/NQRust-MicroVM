@@ -23,8 +23,8 @@ Settings are organized into seven tabs:
 | **Logging** | Activity logs, export |
 | **Defaults** | Default VM resource sizes |
 | **System** | Platform info and database stats |
+| **SSO** | Single Sign-On identity providers (OIDC) |
 | **License** | Software license activation and status |
-| **Updates** | Platform self-update (airgap bundles or internet manifest) — added in v0.3.0 |
 
 ---
 
@@ -148,34 +148,34 @@ The License tab also shows your EULA acceptance status and links to the full End
 
 ---
 
-## Updates Tab
+## SSO Tab
 
-Added in **v0.3.0** — lets admins apply new NQRust-MicroVM releases without leaving the dashboard. Two delivery modes:
+Configure **Single Sign-On** so users can authenticate against an external identity provider (OIDC) instead of a local username + password. Useful for organizations that already have an IdP like Keycloak, Okta, Auth0, or Azure AD.
 
-### Airgap mode (upload `.nqupdate` bundle)
+### Adding a provider
 
-1. Download a release bundle from your release distribution channel (file is `nqrust-vX.Y.Z.nqupdate`).
-2. Go to **Settings → Updates**.
-3. Drag the bundle into the upload area or click **Choose file** and pick it.
-4. The page shows the bundle's version + checksum once parsed.
-5. Click **Apply update** and confirm.
+1. Go to **Settings → SSO**.
+2. Click **Add Provider**.
+3. Fill in:
+   - **Display name** — shown to users on the login page (e.g. `Corporate SSO`).
+   - **Issuer URL** — the OIDC issuer (e.g. `https://idp.example.com/realms/main`).
+   - **Client ID** / **Client secret** — credentials from your IdP application.
+   - **Redirect URI** — copy this from the provider form and register it in your IdP.
+   - **Scopes** — usually `openid email profile`.
+4. Click **Save**.
 
-The platform applies the update in order: **Manager → Agents (rolling) → UI**. Running VMs are **not** disturbed by agent restart — the agent re-attaches to live Firecracker sockets on startup.
+The provider appears as a `Sign in with <name>` button on the login page.
 
-If the new manager fails its post-update health check, the auto-updater rolls the manager binary back to the prior version automatically. Database migrations are **not** rolled back (they're forward-only per release policy — see the developer docs).
+### User provisioning
 
-### Internet mode (manifest URL)
+When a new user successfully authenticates via SSO for the first time, NQRust-MicroVM auto-creates a local user record bound to their IdP `sub` claim. Subsequent logins reuse the same record. You can manage these users from **Users** in the sidebar.
 
-If your platform has outbound network:
+### Removing a provider
 
-1. Toggle **Enable internet update checks**.
-2. Provide a manifest URL (e.g. `https://updates.example.com/manifest.json`).
-3. The manager polls the manifest periodically; when a newer version is available, the page shows it under **Available updates**.
-4. Click **Apply** to start the rolling upgrade.
+Open **Settings → SSO**, click **Remove** on the provider row. Existing SSO-authenticated users keep their accounts but can no longer log in through that provider until you re-add it.
 
-### Notes
+---
 
-- Both modes go through the same apply pipeline; only the *delivery* differs.
-- The `.nqupdate` bundle bundles the manager, agent, guest-agent, UI, and any new migrations.
-- Each component binary is installed under `/opt/nqrust/bin/<name>.<version>` with a `<name>` symlink — old versions are kept around to enable rollback.
-- systemd units use `RestartForceExitStatus=42` so a clean self-update exit triggers a restart on the new binary.
+## Platform Updates
+
+A platform self-update mechanism (airgap `.nqupdate` bundles + internet manifest mode) is in development and not yet exposed in this UI build. Until it ships, update the platform by re-running the installer with the new release — see [Installation](../../getting-started/installation/).

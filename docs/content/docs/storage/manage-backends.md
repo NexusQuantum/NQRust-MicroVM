@@ -11,7 +11,7 @@ The **Storage** page (sidebar → HOST → Storage) lists every backend the mana
 
 ## Backend table
 
-![Storage backends table](/images/storage/smb-backend-table.png)
+![Storage backends table with default local_file and an SMB backend](/images/storage/backend-table-with-smb.png)
 
 Each row shows:
 
@@ -33,7 +33,7 @@ Click **Refresh** to re-run the health probe and capacity check.
 
 Click **Add backend** in the top right of the Storage page. The dialog adapts its fields to the selected kind.
 
-![Add backend dialog showing SMB form](/images/storage/smb-create-dialog.png)
+![Add backend dialog showing SMB form fields](/images/storage/add-backend-smb-basic.png)
 
 **Tiered Kind dropdown** — the default selector shows the four most-used kinds (`local_file`, `NFS`, `SMB / CIFS`, `iSCSI + LVM`). Click **Show advanced kinds** to expose `iSCSI` (generic), `TrueNAS iSCSI`, and `SPDK lvol`.
 
