@@ -29,7 +29,10 @@ interface Field {
   label: string;
   placeholder?: string;
   hint?: string;
-  type?: "text" | "password" | "boolean";
+  type?: "text" | "password" | "boolean" | "select";
+  /** Choices when `type === "select"`. The first entry is treated as the
+   *  default — submit logic still honours an explicit value if set. */
+  options?: string[];
   /** Hide the field until another field has a value. Used so the
    *  Export Path doesn't render before the operator has typed an NFS
    *  server (there's nothing to pick from). */
@@ -77,6 +80,68 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
         label: "Mount base",
         placeholder: "/var/lib/nqrust/nfs",
         hint: "Where the manager creates per-(server, export) mount points. Default /var/lib/nqrust/nfs.",
+        advanced: true,
+      },
+    ],
+  },
+  smb: {
+    label: "SMB / CIFS",
+    description:
+      "Vendor-agnostic SMB share. Works against Samba, Windows shares, and most NAS appliances. Per-VM rootfs files live on the share.",
+    fields: [
+      {
+        key: "server",
+        label: "Server (host or IP)",
+        placeholder: "fileserver.local",
+        hint: "SMB server hostname or IP.",
+      },
+      {
+        key: "share",
+        label: "Share name",
+        placeholder: "vms",
+        hint: "Name of the share exported by the SMB server (the segment after `//server/`).",
+      },
+      {
+        key: "username",
+        label: "Username (leave blank for guest access)",
+        placeholder: "vm-admin",
+        hint: "Leave username and password blank to mount the share with `-o guest`.",
+      },
+      {
+        key: "password",
+        label: "Password",
+        type: "password",
+        hint: "Forwarded to the agent's credential store. Never persisted in the manager DB.",
+      },
+      {
+        key: "domain",
+        label: "Domain / Workgroup",
+        placeholder: "WORKGROUP",
+        advanced: true,
+      },
+      {
+        key: "smb_version",
+        label: "SMB version",
+        type: "select",
+        options: ["default", "2.0", "2.1", "3", "3.0", "3.11"],
+        advanced: true,
+        hint: "Protocol version pinned via `-o vers=`. Use `default` to let the kernel negotiate.",
+      },
+      {
+        key: "subdir",
+        label: "Subdirectory (inside the share)",
+        placeholder: "tenant-a",
+        advanced: true,
+      },
+      {
+        key: "options",
+        label: "Extra mount options",
+        placeholder: "uid=33,gid=33,file_mode=0660",
+        advanced: true,
+      },
+      {
+        key: "mount_base",
+        label: "Mount base directory (defaults to /var/lib/nqrust/smb)",
         advanced: true,
       },
     ],
@@ -205,7 +270,7 @@ const KIND_CONFIG: Record<BackendKind, { label: string; description: string; fie
 
 // Recommended kinds shown by default in the dropdown. Covers the three
 // mainstream paths: single-host file, NAS, vendor-agnostic SAN.
-const BASIC_KINDS: BackendKind[] = ["local_file", "nfs", "iscsi_lvm"];
+const BASIC_KINDS: BackendKind[] = ["local_file", "nfs", "smb", "iscsi_lvm"];
 
 // Advanced kinds — vendor-specific or operationally heavyweight. Hidden
 // behind a "Show advanced kinds" disclosure to keep the default UX simple
@@ -358,6 +423,34 @@ function renderField(
       </div>
     );
   }
+  if (f.type === "select") {
+    const opts = f.options ?? [];
+    const current =
+      typeof config[f.key] === "string" && (config[f.key] as string).length > 0
+        ? (config[f.key] as string)
+        : (opts[0] ?? "");
+    return (
+      <div key={f.key} className="space-y-1.5">
+        <Label htmlFor={`bk-cfg-${f.key}`}>{f.label}</Label>
+        <Select
+          value={current}
+          onValueChange={(v) => setConfig({ ...config, [f.key]: v })}
+        >
+          <SelectTrigger id={`bk-cfg-${f.key}`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {opts.map((o) => (
+              <SelectItem key={o} value={o}>
+                {o}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {f.hint && <p className="text-xs text-muted-foreground">{f.hint}</p>}
+      </div>
+    );
+  }
   const strVal = typeof config[f.key] === "string" ? (config[f.key] as string) : "";
   return (
     <div key={f.key} className="space-y-1.5">
@@ -479,11 +572,23 @@ export function BackendCreateDialog({ open, onOpenChange }: Props) {
     }
     const submittedName = name.trim();
     const submittedKind = kind;
+    // SMB ships the password as a top-level sibling of `config` so the
+    // manager can forward it to the agent's /set_credentials endpoint
+    // without persisting it in the DB. Pluck it out of `cleaned` here.
+    let smbPassword: string | undefined;
+    if (submittedKind === "smb") {
+      const raw = cleaned["password"];
+      if (typeof raw === "string" && raw.length > 0) {
+        smbPassword = raw;
+      }
+      delete cleaned["password"];
+    }
     const created = await create.mutateAsync({
       name: submittedName,
       kind,
       is_default: isDefault,
       config: cleaned as Record<string, unknown>,
+      ...(smbPassword ? { password: smbPassword } : {}),
     });
     if (!create.isError) {
       if (submittedKind === "iscsi_lvm") {

@@ -1070,6 +1070,9 @@ export interface CreateStorageBackendReq {
   kind: BackendKind;
   is_default?: boolean;
   config: Record<string, unknown>;
+  /** SMB-only: top-level sibling of `config`. Forwarded by the manager to the
+   *  agent's /set_credentials route and never persisted in the database. */
+  password?: string;
 }
 
 export interface Capabilities {
