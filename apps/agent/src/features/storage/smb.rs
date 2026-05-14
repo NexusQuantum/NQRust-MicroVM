@@ -7,6 +7,152 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
+/// Wire-form locator for SMB-backed volumes. Mirrors `NfsLocatorWire` but
+/// adds `share`/`subdir` (CIFS namespacing). The mount-point already
+/// accounts for `server` + `share` + `subdir`, so file-lifecycle helpers
+/// here only need the plain `file` name to resolve `<mount>/<file>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmbLocator {
+    pub server: String,
+    pub share: String,
+    pub subdir: Option<String>,
+    pub file: String,
+}
+
+impl SmbLocator {
+    /// Reject filenames that could escape the mount (`..`, `/`) or that
+    /// reference hidden files. Same rule as the NFS module so the manager
+    /// can validate uniformly regardless of backend kind.
+    pub fn validate_file(file: &str) -> Result<(), nexus_storage::StorageError> {
+        if file.is_empty() || file.contains('/') || file.starts_with('.') {
+            return Err(nexus_storage::StorageError::InvalidLocator(format!(
+                "smb locator.file must be a plain filename (no '/', no leading '.'), got {file:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn to_locator_string(&self) -> Result<String, nexus_storage::StorageError> {
+        serde_json::to_string(self).map_err(|e| {
+            nexus_storage::StorageError::InvalidLocator(format!("encode smb locator: {e}"))
+        })
+    }
+
+    pub fn from_locator_str(s: &str) -> Result<Self, nexus_storage::StorageError> {
+        let loc: SmbLocator = serde_json::from_str(s).map_err(|e| {
+            nexus_storage::StorageError::InvalidLocator(format!("decode smb locator: {e}"))
+        })?;
+        Self::validate_file(&loc.file)?;
+        Ok(loc)
+    }
+}
+
+/// Create a sparse file of `size_bytes` at `<mount_point>/<file>`.
+///
+/// `set_len` on a freshly created file produces a sparse file — a 10 GiB
+/// VM disk is allocated instantaneously without consuming backing-store
+/// bytes until written.
+pub async fn create_file(
+    mount_point: &std::path::Path,
+    file: &str,
+    size_bytes: u64,
+) -> Result<(), nexus_storage::StorageError> {
+    SmbLocator::validate_file(file)?;
+    let path = mount_point.join(file);
+    let f = tokio::fs::File::create(&path).await.map_err(|e| {
+        nexus_storage::StorageError::backend(std::io::Error::other(format!(
+            "create {}: {e}",
+            path.display()
+        )))
+    })?;
+    f.set_len(size_bytes).await.map_err(|e| {
+        nexus_storage::StorageError::backend(std::io::Error::other(format!(
+            "set_len {}: {e}",
+            path.display()
+        )))
+    })?;
+    Ok(())
+}
+
+/// Remove `<mount_point>/<file>`. Idempotent — missing file is not an
+/// error so delete is safe to retry.
+pub async fn delete_file(
+    mount_point: &std::path::Path,
+    file: &str,
+) -> Result<(), nexus_storage::StorageError> {
+    SmbLocator::validate_file(file)?;
+    let path = mount_point.join(file);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(nexus_storage::StorageError::backend(std::io::Error::other(
+            format!("remove {}: {e}", path.display()),
+        ))),
+    }
+}
+
+/// Copy `source_path` -> `<mount_point>/<file>` (byte-by-byte; works
+/// across filesystems). Returns the number of bytes written.
+pub async fn clone_from_path(
+    source_path: &std::path::Path,
+    mount_point: &std::path::Path,
+    file: &str,
+) -> Result<u64, nexus_storage::StorageError> {
+    SmbLocator::validate_file(file)?;
+    let dst = mount_point.join(file);
+    tokio::fs::copy(source_path, &dst).await.map_err(|e| {
+        nexus_storage::StorageError::backend(std::io::Error::other(format!(
+            "copy {} -> {}: {e}",
+            source_path.display(),
+            dst.display()
+        )))
+    })
+}
+
+/// Copy `<mount_point>/<source_file>` -> `<mount_point>/<snap_file>`. CIFS
+/// has no server-side clone in v1, so this is a real byte copy.
+pub async fn snapshot(
+    mount_point: &std::path::Path,
+    source_file: &str,
+    snap_file: &str,
+) -> Result<(), nexus_storage::StorageError> {
+    SmbLocator::validate_file(source_file)?;
+    SmbLocator::validate_file(snap_file)?;
+    let src = mount_point.join(source_file);
+    let dst = mount_point.join(snap_file);
+    tokio::fs::copy(&src, &dst).await.map_err(|e| {
+        nexus_storage::StorageError::backend(std::io::Error::other(format!(
+            "snapshot copy {} -> {}: {e}",
+            src.display(),
+            dst.display()
+        )))
+    })?;
+    Ok(())
+}
+
+/// Copy `<mount_point>/<snap_file>` -> `<mount_point>/<new_file>` and
+/// return the number of bytes copied. Used to materialise a writable
+/// volume from a previously-taken snapshot.
+pub async fn clone_from_snapshot(
+    mount_point: &std::path::Path,
+    snap_file: &str,
+    new_file: &str,
+) -> Result<u64, nexus_storage::StorageError> {
+    SmbLocator::validate_file(snap_file)?;
+    SmbLocator::validate_file(new_file)?;
+    let src = mount_point.join(snap_file);
+    let dst = mount_point.join(new_file);
+    tokio::fs::copy(&src, &dst).await.map_err(|e| {
+        nexus_storage::StorageError::backend(std::io::Error::other(format!(
+            "clone-from-snapshot copy {} -> {}: {e}",
+            src.display(),
+            dst.display()
+        )))
+    })
+}
+
 /// Compute the canonical cred-file path for a backend.
 pub fn cred_file_path(backend_id: &uuid::Uuid) -> std::path::PathBuf {
     std::path::PathBuf::from("/etc/nqrust/storage-creds").join(format!("{backend_id}.cred"))
@@ -461,5 +607,103 @@ mod cred_tests {
             p.to_string_lossy(),
             "/etc/nqrust/storage-creds/00000000-0000-0000-0000-000000000000.cred"
         );
+    }
+}
+
+#[cfg(test)]
+mod locator_tests {
+    use super::*;
+
+    #[test]
+    fn locator_round_trips_json() {
+        let l = SmbLocator {
+            server: "srv".into(),
+            share: "vms".into(),
+            subdir: Some("tenant-a".into()),
+            file: "rootfs-abc.raw".into(),
+        };
+        let s = l.to_locator_string().unwrap();
+        let back = SmbLocator::from_locator_str(&s).unwrap();
+        assert_eq!(l.server, back.server);
+        assert_eq!(l.share, back.share);
+        assert_eq!(l.subdir, back.subdir);
+        assert_eq!(l.file, back.file);
+    }
+
+    #[test]
+    fn locator_rejects_slash_in_file() {
+        assert!(SmbLocator::validate_file("foo.raw").is_ok());
+        assert!(SmbLocator::validate_file("foo/bar").is_err());
+        assert!(SmbLocator::validate_file(".hidden").is_err());
+        assert!(SmbLocator::validate_file("").is_err());
+    }
+
+    #[test]
+    fn from_locator_str_validates() {
+        let bad = r#"{"server":"s","share":"sh","subdir":null,"file":"../etc/shadow"}"#;
+        assert!(SmbLocator::from_locator_str(bad).is_err());
+    }
+}
+
+#[cfg(test)]
+mod file_lifecycle_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn create_file_makes_sparse_file_of_requested_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_file(tmp.path(), "test.raw", 10 * 1024 * 1024)
+            .await
+            .unwrap();
+        let md = tokio::fs::metadata(tmp.path().join("test.raw"))
+            .await
+            .unwrap();
+        assert_eq!(md.len(), 10 * 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn create_file_rejects_bad_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(create_file(tmp.path(), "../escape", 0).await.is_err());
+        assert!(create_file(tmp.path(), "with/slash", 0).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_file_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        delete_file(tmp.path(), "ghost.raw").await.unwrap(); // not present
+        create_file(tmp.path(), "real.raw", 4096).await.unwrap();
+        delete_file(tmp.path(), "real.raw").await.unwrap();
+        assert!(!tokio::fs::try_exists(tmp.path().join("real.raw"))
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn clone_from_path_copies_bytes() {
+        let src = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(src.path(), b"hello world").unwrap();
+        let mnt = tempfile::tempdir().unwrap();
+        let bytes = clone_from_path(src.path(), mnt.path(), "dst.raw")
+            .await
+            .unwrap();
+        assert_eq!(bytes, 11);
+        let content = tokio::fs::read(mnt.path().join("dst.raw")).await.unwrap();
+        assert_eq!(content, b"hello world");
+    }
+
+    #[tokio::test]
+    async fn snapshot_then_clone_from_snapshot_recovers_bytes() {
+        let mnt = tempfile::tempdir().unwrap();
+        tokio::fs::write(mnt.path().join("orig.raw"), b"abcdefg")
+            .await
+            .unwrap();
+        snapshot(mnt.path(), "orig.raw", "snap.raw").await.unwrap();
+        let n = clone_from_snapshot(mnt.path(), "snap.raw", "clone.raw")
+            .await
+            .unwrap();
+        assert_eq!(n, 7);
+        let restored = tokio::fs::read(mnt.path().join("clone.raw")).await.unwrap();
+        assert_eq!(restored, b"abcdefg");
     }
 }
