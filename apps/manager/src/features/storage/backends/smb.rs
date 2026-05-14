@@ -6,11 +6,6 @@
 //! The SMB-ness is captured in the locator JSON `{server, share, subdir,
 //! file}` so the agent independently re-mounts the share on the agent host
 //! when it attaches the volume — same pattern as the NFS backend.
-//
-// The wiring into `config.rs` / `registry.rs` lands in a follow-up task;
-// until then this module is exercised only by its inline tests, which is
-// why every public item below would otherwise look "dead" to clippy.
-#![allow(dead_code)]
 
 use nexus_storage::{
     BackendInstanceId, BackendKind, Capabilities, ControlPlaneBackend, CreateOpts, StorageError,

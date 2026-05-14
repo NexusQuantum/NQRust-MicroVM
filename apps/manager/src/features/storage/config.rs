@@ -121,7 +121,29 @@ pub fn validate(raw: RawBackendEntry) -> Result<ValidatedBackend> {
             }
         }
         BackendKind::Smb => {
-            bail!("smb not yet implemented (Task 9)")
+            require_str(&raw.config, "server")
+                .map_err(|e| anyhow!("backend '{}' (kind=smb): {e}", raw.name))?;
+            require_str(&raw.config, "share")
+                .map_err(|e| anyhow!("backend '{}' (kind=smb): {e}", raw.name))?;
+            // smb_version (optional) must be one of the allowed values.
+            if let Some(v) = raw.config.get("smb_version").and_then(|v| v.as_str()) {
+                let allowed = ["default", "2.0", "2.1", "3", "3.0", "3.11"];
+                if !allowed.contains(&v) {
+                    bail!(
+                        "backend '{}' (kind=smb): invalid smb_version: {v} (allowed: {})",
+                        raw.name,
+                        allowed.join(", ")
+                    );
+                }
+            }
+            // SMB is a file protocol like NFS — supports clone_from_image,
+            // copy-based snapshots (not native), no concurrent attach guarantees.
+            Capabilities {
+                supports_clone_from_image: true,
+                supports_native_snapshots: false,
+                supports_concurrent_attach: false,
+                supports_live_migration: false,
+            }
         }
     };
 

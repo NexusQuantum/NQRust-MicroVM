@@ -291,7 +291,20 @@ fn build_backend(
                 },
             ))
         }
-        BackendKind::Smb => Err(anyhow!("smb not yet implemented (Task 9)")),
+        BackendKind::Smb => {
+            let mut cfg: crate::features::storage::backends::smb::SmbConfig =
+                serde_json::from_value(row.config_json.clone())
+                    .with_context(|| format!("backend '{}' smb config", row.name))?;
+            if cfg.agent_url.is_none() {
+                cfg.agent_url = default_agent_url.map(|s| s.to_string());
+            }
+            Ok(Arc::new(
+                crate::features::storage::backends::smb::SmbControlPlaneBackend {
+                    id: BackendInstanceId(row.id),
+                    config: cfg,
+                },
+            ))
+        }
     }
 }
 
