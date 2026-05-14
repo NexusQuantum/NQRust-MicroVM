@@ -28,10 +28,12 @@ install_apt_packages() {
         #   lvm2        — pvcreate / vgcreate / lvcreate, used by `iscsi_lvm`
         #   qemu-utils  — qemu-img, used by clone-from-image on block backends
         #   nfs-common  — mount.nfs, used by `nfs` backend (manager auto-mount)
+        #   cifs-utils  — mount.cifs, used by `smb` backend (manager auto-mount)
         open-iscsi
         lvm2
         qemu-utils
         nfs-common
+        cifs-utils
     )
 
     # Add PostgreSQL if installing locally
@@ -79,6 +81,7 @@ install_yum_packages() {
         lvm2
         qemu-img
         nfs-utils
+        cifs-utils
     )
 
     # Add PostgreSQL if installing locally

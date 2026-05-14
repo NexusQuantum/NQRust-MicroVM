@@ -80,6 +80,7 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "lvm2",       // pvcreate/vgcreate/lvcreate — iscsi_lvm
             "qemu-utils", // qemu-img — clone_from_image on block backends
             "nfs-common", // mount.nfs — nfs backend (manager auto-mount)
+            "cifs-utils", // mount.cifs — smb backend (manager auto-mount)
         ],
         PackageManager::Dnf | PackageManager::Yum => vec![
             "curl",
@@ -95,6 +96,7 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "lvm2",
             "qemu-img",
             "nfs-utils",
+            "cifs-utils",
         ],
     }
 }

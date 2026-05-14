@@ -75,6 +75,7 @@ PACKAGES=(
     "lvm2"            # pvcreate / vgcreate / lvcreate — required by iscsi_lvm
     "qemu-utils"      # qemu-img — clone_from_image on block backends
     "nfs-common"      # mount.nfs — required by nfs backend (manager auto-mount)
+    "cifs-utils"      # mount.cifs — required by smb backend (manager auto-mount)
 )
 
 PACKAGE_LIST="${PACKAGES[*]}"
