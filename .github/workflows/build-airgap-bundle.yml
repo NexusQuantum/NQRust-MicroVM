@@ -83,10 +83,22 @@ jobs:
           df -h /tmp
           df -h .
 
-      - name: Install system dependencies
+      - name: Check system dependencies
+        # Runs on the self-hosted Arch (omarchy) runner where apt-get is
+        # unavailable and passwordless sudo is not configured. All four
+        # tools are present in a default install — just verify and fail
+        # fast with a clear message if any go missing.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl jq gzip tar
+          missing=()
+          for cmd in curl jq gzip tar; do
+            command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::missing required tools on self-hosted runner: ${missing[*]}"
+            echo "install them with: sudo pacman -S ${missing[*]}"
+            exit 1
+          fi
+          echo "all bundle tools present: curl jq gzip tar"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
