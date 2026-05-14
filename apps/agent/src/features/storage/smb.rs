@@ -1,4 +1,9 @@
-//! SMB / CIFS host backend (Task 3 — arg builders only).
+//! SMB / CIFS host backend (Tasks 3–5: cred + arg helpers + mount drivers).
+//!
+//! Several functions below are flagged `dead_code` until Task 7 wires
+//! them to HTTP routes (the manager calls them via `agent_client`).
+//! Until then, suppress the lint at the module level so CI stays green.
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 
@@ -46,6 +51,7 @@ pub async fn delete_cred_file(path: &std::path::Path) {
 /// Build the argv for `/bin/mount -t cifs ... -o ...`. Returns the args
 /// AFTER the `mount` executable name (so the caller does
 /// `Command::new("mount").args(&args)`).
+#[allow(clippy::too_many_arguments)]
 pub fn build_mount_args(
     server: &str,
     share: &str,
@@ -111,6 +117,154 @@ pub fn mount_point_for(base: &str, server: &str, share: &str) -> PathBuf {
     let share_safe = share.trim_start_matches('/').replace('/', "_");
     let server_safe = server.replace([':', '/'], "_");
     PathBuf::from(base).join(format!("{server_safe}:{share_safe}"))
+}
+
+/// Build the expected `findmnt` SOURCE string for an SMB mount. This must
+/// match what mount.cifs writes into `/proc/self/mountinfo` — namely the
+/// `//<server>/<share>[/<subdir>]` form with raw IPv6 wrapped in `[]`.
+fn expected_source(server: &str, share: &str, subdir: Option<&str>) -> String {
+    let server_h = if server.contains(':') && !server.starts_with('[') {
+        format!("[{server}]")
+    } else {
+        server.to_string()
+    };
+    let mut s = format!("//{server_h}/{share}");
+    if let Some(sub) = subdir.map(str::trim).filter(|s| !s.is_empty()) {
+        s.push('/');
+        s.push_str(sub.trim_start_matches('/'));
+    }
+    s
+}
+
+/// Idempotent mount. If already mounted with the expected source, returns
+/// the mount-point path. If mounted with a different source, errors out.
+/// Otherwise issues `mount -t cifs ...` using `build_mount_args`.
+#[allow(clippy::too_many_arguments)]
+pub async fn ensure_mounted(
+    backend_id: uuid::Uuid,
+    mount_base: &std::path::Path,
+    server: &str,
+    share: &str,
+    subdir: Option<&str>,
+    username: Option<&str>,
+    domain: Option<&str>,
+    smb_version: Option<&str>,
+    extra_options: Option<&str>,
+) -> Result<std::path::PathBuf, nexus_storage::StorageError> {
+    let base_str = mount_base.to_string_lossy();
+    let mp = mount_point_for(&base_str, server, share);
+    tokio::fs::create_dir_all(&mp).await?;
+
+    // Probe existing mount via `findmnt --mountpoint` (exact match — not
+    // `--target`, which walks up parents and would falsely report the
+    // rootfs when our directory isn't itself a mountpoint).
+    let want = expected_source(server, share, subdir);
+    let probe = tokio::process::Command::new("findmnt")
+        .arg("--mountpoint")
+        .arg(&mp)
+        .arg("--noheadings")
+        .arg("--output")
+        .arg("SOURCE")
+        .output()
+        .await;
+    let source_line = match probe {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        // findmnt exited non-zero: the path is not a mountpoint.
+        Ok(_) => String::new(),
+        Err(e) => {
+            return Err(nexus_storage::StorageError::backend(std::io::Error::other(
+                format!("findmnt not available: {e}"),
+            )));
+        }
+    };
+    if source_line == want {
+        return Ok(mp);
+    }
+    if !source_line.is_empty() {
+        return Err(nexus_storage::StorageError::backend(std::io::Error::other(
+            format!(
+                "{} is mounted but as '{}', not '{}'",
+                mp.display(),
+                source_line,
+                want
+            ),
+        )));
+    }
+
+    // Verify the cred file exists when authenticated. The manager's
+    // create handler writes it before invoking mount; if it's missing
+    // here, fail with a clear message instead of letting mount.cifs
+    // fall through to a cryptic "permission denied".
+    let cred_path = cred_file_path(&backend_id);
+    let cred_arg = if username
+        .map(str::trim)
+        .map(|u| !u.is_empty())
+        .unwrap_or(false)
+    {
+        if !tokio::fs::try_exists(&cred_path).await.unwrap_or(false) {
+            return Err(nexus_storage::StorageError::backend(std::io::Error::other(
+                format!(
+                    "credentials file missing for backend {backend_id}: {}",
+                    cred_path.display()
+                ),
+            )));
+        }
+        Some(cred_path.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+
+    let args = build_mount_args(
+        server,
+        share,
+        subdir,
+        cred_arg.as_deref(),
+        username,
+        domain,
+        smb_version,
+        extra_options,
+        &mp.to_string_lossy(),
+    );
+
+    let out = tokio::process::Command::new("mount")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| {
+            nexus_storage::StorageError::backend(std::io::Error::other(format!(
+                "mount.cifs spawn: {e}"
+            )))
+        })?;
+    if !out.status.success() {
+        let code = out
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        let stderr_tail = String::from_utf8_lossy(&out.stderr);
+        let tail = stderr_tail.trim();
+        let tail = if tail.len() > 512 {
+            &tail[tail.len() - 512..]
+        } else {
+            tail
+        };
+        return Err(nexus_storage::StorageError::backend(std::io::Error::other(
+            format!(
+                "mount.cifs failed: exit {code}; check credentials, smbversion, options ({tail})"
+            ),
+        )));
+    }
+    Ok(mp)
+}
+
+/// Best-effort unmount. Missing mount point is not an error — we always
+/// return Ok(()).
+pub async fn unmount(mp: &std::path::Path) -> Result<(), nexus_storage::StorageError> {
+    let _ = tokio::process::Command::new("umount")
+        .arg(mp)
+        .status()
+        .await;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -221,6 +375,32 @@ mod arg_tests {
             mp.to_string_lossy(),
             "/var/lib/nqrust/smb/192.168.1.5:vm_data"
         );
+    }
+
+    #[test]
+    fn expected_source_matches_mount_cifs_source_string() {
+        assert_eq!(expected_source("srv", "share", None), "//srv/share");
+        assert_eq!(
+            expected_source("srv", "share", Some("tenant-a")),
+            "//srv/share/tenant-a"
+        );
+        assert_eq!(
+            expected_source("srv", "share", Some("/tenant-a")),
+            "//srv/share/tenant-a"
+        );
+        // IPv6 servers are bracketed so findmnt's SOURCE column matches
+        // what mount.cifs wrote.
+        assert_eq!(
+            expected_source("fe80::1", "share", None),
+            "//[fe80::1]/share"
+        );
+        // Pre-bracketed IPv6 isn't double-wrapped.
+        assert_eq!(
+            expected_source("[fe80::1]", "share", None),
+            "//[fe80::1]/share"
+        );
+        // Empty subdir is treated as None.
+        assert_eq!(expected_source("srv", "share", Some("   ")), "//srv/share");
     }
 }
 
