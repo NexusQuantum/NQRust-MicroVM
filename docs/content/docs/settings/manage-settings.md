@@ -14,7 +14,7 @@ The **Settings** page lets you configure your account profile, platform appearan
 
 ![Image: Settings page overview](/images/settings/settings-overview.png)
 
-Settings are organized into six tabs:
+Settings are organized into seven tabs:
 
 | Tab | What you can configure |
 |-----|----------------------|
@@ -24,6 +24,7 @@ Settings are organized into six tabs:
 | **Defaults** | Default VM resource sizes |
 | **System** | Platform info and database stats |
 | **License** | Software license activation and status |
+| **Updates** | Platform self-update (airgap bundles or internet manifest) — added in v0.3.0 |
 
 ---
 
@@ -144,3 +145,37 @@ For offline activation, use the **Upload License File** option to upload a `.lic
 ### EULA
 
 The License tab also shows your EULA acceptance status and links to the full End User License Agreement. Click **View EULA** to open the full agreement.
+
+---
+
+## Updates Tab
+
+Added in **v0.3.0** — lets admins apply new NQRust-MicroVM releases without leaving the dashboard. Two delivery modes:
+
+### Airgap mode (upload `.nqupdate` bundle)
+
+1. Download a release bundle from your release distribution channel (file is `nqrust-vX.Y.Z.nqupdate`).
+2. Go to **Settings → Updates**.
+3. Drag the bundle into the upload area or click **Choose file** and pick it.
+4. The page shows the bundle's version + checksum once parsed.
+5. Click **Apply update** and confirm.
+
+The platform applies the update in order: **Manager → Agents (rolling) → UI**. Running VMs are **not** disturbed by agent restart — the agent re-attaches to live Firecracker sockets on startup.
+
+If the new manager fails its post-update health check, the auto-updater rolls the manager binary back to the prior version automatically. Database migrations are **not** rolled back (they're forward-only per release policy — see the developer docs).
+
+### Internet mode (manifest URL)
+
+If your platform has outbound network:
+
+1. Toggle **Enable internet update checks**.
+2. Provide a manifest URL (e.g. `https://updates.example.com/manifest.json`).
+3. The manager polls the manifest periodically; when a newer version is available, the page shows it under **Available updates**.
+4. Click **Apply** to start the rolling upgrade.
+
+### Notes
+
+- Both modes go through the same apply pipeline; only the *delivery* differs.
+- The `.nqupdate` bundle bundles the manager, agent, guest-agent, UI, and any new migrations.
+- Each component binary is installed under `/opt/nqrust/bin/<name>.<version>` with a `<name>` symlink — old versions are kept around to enable rollback.
+- systemd units use `RestartForceExitStatus=42` so a clean self-update exit triggers a restart on the new binary.

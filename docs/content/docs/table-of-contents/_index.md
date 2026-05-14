@@ -56,6 +56,14 @@ This section provides an overview of all documentation included in NQRust-MicroV
 
 ---
 
+### **Storage Backends**
+
+- [**Storage Backends Overview**](../storage/) — where VM disks live (local, NFS, SMB, iSCSI, LVM)
+- [Manage Backends - Add, edit, set default, remove](../storage/manage-backends/)
+- [SMB / CIFS Backend - Samba and Windows shares](../storage/smb-backend/) (v0.4.0)
+
+---
+
 ### **Volumes**
 
 - [**Volumes Overview**](../volumes/)
