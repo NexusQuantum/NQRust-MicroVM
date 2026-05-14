@@ -972,9 +972,98 @@ fn run_preflight_checks(app: &mut App) {
     app.preflight_checks = preflight::run_preflight_checks();
 }
 
-fn run_non_interactive(_config: InstallConfig) -> Result<()> {
-    println!("Non-interactive installation not yet implemented");
-    println!("Use the TUI installer for now.");
+fn run_non_interactive(config: InstallConfig) -> Result<()> {
+    use crate::app::{LogLevel, Status};
+    use crate::installer::executor::{self, InstallMessage};
+    use std::sync::mpsc;
+
+    if !installer::is_root() {
+        anyhow::bail!("non-interactive install must be run as root (use sudo)");
+    }
+
+    println!("╔════════════════════════════════════════════════╗");
+    println!("║  NQR-MicroVM Installer (non-interactive)       ║");
+    println!("╚════════════════════════════════════════════════╝");
+    println!();
+    println!("  Mode:         {:?}", config.mode);
+    println!("  Source:       {:?}", config.install_source);
+    println!("  Install dir:  {}", config.install_dir.display());
+    println!("  Data dir:     {}", config.data_dir.display());
+    println!("  Config dir:   {}", config.config_dir.display());
+    println!("  Network:      {:?}", config.network_mode);
+    println!();
+
+    let (tx, rx) = mpsc::channel::<InstallMessage>();
+
+    // Run the same orchestration the TUI uses, just in a worker thread,
+    // and stream progress to stdout as plain lines.
+    let install_thread = std::thread::spawn(move || executor::run_installation(config, tx));
+
+    let mut fatal_error: Option<String> = None;
+    let mut had_phase_error = false;
+    for msg in rx {
+        match msg {
+            InstallMessage::PhaseStart(phase) => {
+                println!();
+                println!("==> {:?}", phase);
+            }
+            InstallMessage::PhaseProgress(_phase, detail) => {
+                println!("    {}", detail);
+            }
+            InstallMessage::PhaseComplete(phase, status) => match status {
+                Status::Success => println!("OK  {:?}", phase),
+                Status::Warning => println!("WARN {:?}", phase),
+                Status::Error => {
+                    println!("ERR  {:?}", phase);
+                    had_phase_error = true;
+                }
+                Status::Pending | Status::InProgress | Status::Skipped => {}
+            },
+            InstallMessage::Log(entry) => {
+                let prefix = match entry.level {
+                    LogLevel::Info => "  ",
+                    LogLevel::Success => "OK ",
+                    LogLevel::Warning => "!! ",
+                    LogLevel::Error => "ERR ",
+                    LogLevel::Debug => ".. ",
+                };
+                println!("{}{}", prefix, entry.message);
+            }
+            InstallMessage::PreflightResult(checks) => {
+                for c in &checks {
+                    let tag = match c.status {
+                        Status::Success => "OK  ",
+                        Status::Warning => "WARN",
+                        Status::Error => "ERR ",
+                        _ => "    ",
+                    };
+                    println!("  [{}] {}", tag, c.name);
+                    if let Some(msg) = &c.message {
+                        if !msg.is_empty() {
+                            println!("         {}", msg);
+                        }
+                    }
+                }
+            }
+            InstallMessage::Error(err) => {
+                fatal_error = Some(err);
+            }
+        }
+    }
+
+    install_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("install thread panicked"))??;
+
+    if let Some(err) = fatal_error {
+        anyhow::bail!("install failed: {err}");
+    }
+    if had_phase_error {
+        anyhow::bail!("install completed with phase errors");
+    }
+
+    println!();
+    println!("✓ Installation finished. Verify with: systemctl status nqrust-manager nqrust-agent");
     Ok(())
 }
 
