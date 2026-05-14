@@ -1,13 +1,13 @@
 +++
-title = "SMB / CIFS backend"
-description = "Use a Samba or Windows SMB share as VM rootfs storage (added in v0.4.0)"
+title = "Add external SMB / CIFS backend"
+description = "Use a Samba or Windows SMB share as external VM disk storage (new in v0.4.0)"
 weight = 87
 date = 2026-05-14
 +++
 
-The **SMB / CIFS** backend lets you put VM rootfs files on any SMB share — a Samba server, a Windows share, a NAS appliance — without baking vendor-specific code into the platform. Each VM gets a `.raw` file on the share; the agent mounts the share once and reuses the mount across VMs on the same backend.
+The **external SMB / CIFS** backend lets you put VM rootfs files on any SMB share — a Samba server, a Windows share, a NAS appliance — without baking vendor-specific code into the platform. Each VM gets a `.raw` file on the share; the agent mounts the share once and reuses the mount across VMs on the same backend.
 
-This backend was added in **v0.4.0** (2026-05-14) and parallels the [NFS backend](../) shipped in v0.3.0.
+New in **v0.4.0** (2026-05-14) and parallels the [external NFS backend](../nfs-backend/) shipped in v0.3.0.
 
 ---
 
@@ -15,9 +15,9 @@ This backend was added in **v0.4.0** (2026-05-14) and parallels the [NFS backend
 
 - You already have a Samba or Windows SMB server and want VM rootfs files to live there.
 - You need shared file-level storage but can't run NFS (e.g. mixed Windows + Linux environment).
-- You're using a NAS appliance that speaks SMB (Synology, QNAP, TrueNAS, etc.).
+- You're using a NAS appliance that speaks SMB (Synology, QNAP, etc.).
 
-If you want **block-level** shared storage instead, use [iSCSI + LVM](../).
+If you want **block-level** shared storage instead, use the [external iSCSI backend](../iscsi-backend/).
 
 ---
 

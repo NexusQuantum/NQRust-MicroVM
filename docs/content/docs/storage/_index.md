@@ -1,34 +1,35 @@
 +++
 title = "Storage Backends"
-description = "Where VM disks live — local files, NFS, SMB / CIFS, iSCSI, LVM-on-iSCSI, and SPDK lvol."
+description = "Where VM disks live — local files plus external SMB/CIFS, NFS, and iSCSI."
 weight = 85
 date = 2026-05-14
 +++
 
-A **storage backend** is a place where VM rootfs and data disks live. NQRust-MicroVM ships with several backend kinds so you can pick whichever matches your existing infrastructure — from a single laptop directory to enterprise SAN.
+A **storage backend** is a place where VM rootfs and data disks live. NQRust-MicroVM ships with **local file** storage out of the box, plus three **external storage** integrations so you can put VM disks on your existing NAS or SAN.
 
 ---
 
-## Backend kinds at a glance
+## Local vs external storage
 
-| Kind | Best for | What lives where | Setup |
-|---|---|---|---|
-| **Local file** | Dev / single-host | `.raw` files under `MANAGER_STORAGE_ROOT` (default `/srv/fc/vms`) | Zero — works out of the box |
-| **NFS** | Shared file storage, simple ops | `.raw` files on a remote NFS export, agent runs `mount.nfs` | Provide server + export path |
-| **SMB / CIFS** | Windows / Samba / NAS appliances | `.raw` files on an SMB share, agent runs `mount.cifs` | Provide server + share, optional credentials |
-| **iSCSI + LVM** | Shared block storage, vendor-agnostic | Per-VM `LV` on a shared iSCSI target, agent runs `iscsiadm` + `lvchange` | One-time `Initialize` button wipes the LUN |
-| **iSCSI (generic)** | Pre-provisioned LUNs (advanced) | One LUN per VM, no LVM | Provide IQN + LUN map |
-| **TrueNAS iSCSI** | TrueNAS / Core / Scale | iSCSI extents managed via TrueNAS REST API | API key + dataset |
-| **SPDK lvol** | High-performance NVMe over fabrics | Logical volumes inside an SPDK pool | Provide RPC socket + pool name |
+- **Local file (default)** — VM disks live as `.raw` files on the manager host's filesystem. Zero setup, ideal for dev and single-host deployments.
+- **External storage** — VM disks live on a remote server you already operate. Three external kinds are supported:
 
-Three kinds (`local_file`, `nfs`, `smb`, `iscsi_lvm`) are recommended for most users and show up as the default options in the **Add backend** dialog. The remaining kinds are visible under **Show advanced kinds**.
+  | External backend | What you need | What lives where |
+  |---|---|---|
+  | [**External SMB / CIFS**](smb-backend/) (new in v0.4.0) | Samba server, Windows share, or NAS appliance | `.raw` files on an SMB share. Agent runs `mount.cifs` |
+  | [**External NFS**](nfs-backend/) | NFS server with an export | `.raw` files on the NFS export. Agent runs `mount.nfs` |
+  | [**External iSCSI**](iscsi-backend/) | iSCSI target (any vendor) | Per-VM Logical Volume on a shared iSCSI LUN. Agent runs `iscsiadm` + `lvchange` |
+
+Pick the external backend that matches your existing infrastructure — there's no vendor lock-in.
 
 ---
 
 ## Where to next
 
-- [**Manage storage backends**](manage-backends/) — Add, edit, set default, and remove backends through the UI
-- [**SMB / CIFS backend**](smb-backend/) — Vendor-agnostic SMB share support (added in v0.4.0)
+- [**Manage storage backends**](manage-backends/) — Add, edit, set as default, and remove backends through the UI
+- [**Add an external SMB / CIFS backend**](smb-backend/) — Samba, Windows shares, NAS appliances
+- [**Add an external NFS backend**](nfs-backend/) — Linux/Unix NFS servers
+- [**Add an external iSCSI backend**](iscsi-backend/) — Vendor-agnostic block storage with auto-provisioned per-VM LVs
 - [**Volumes**](../volumes/) — Persistent data disks attached to VMs
 
 ---

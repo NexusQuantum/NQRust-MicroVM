@@ -19,7 +19,7 @@ Each row shows:
 |---|---|
 | **Status** | Green = the backend probed successfully; amber/red = unreachable or misconfigured |
 | **Name** | Operator-chosen identifier (must be unique) |
-| **Kind** | One of `Local file`, `NFS`, `SMB / CIFS`, `iSCSI + LVM`, `iSCSI`, `TrueNAS iSCSI`, `SPDK lvol` |
+| **Kind** | `Local file` (default) or one of the external kinds: `NFS`, `SMB / CIFS`, `iSCSI + LVM` |
 | **Capabilities** | What this backend supports — `clone-from-image`, `snapshot`, `external` |
 | **Capacity** | Live `used / total` from `df` (file-based) or `vgs` (LVM) |
 | **Default** | The backend new VMs use when none is explicitly selected |
@@ -35,19 +35,24 @@ Click **Add backend** in the top right of the Storage page. The dialog adapts it
 
 ![Add backend dialog showing SMB form fields](/images/storage/add-backend-smb-basic.png)
 
-**Tiered Kind dropdown** — the default selector shows the four most-used kinds (`local_file`, `NFS`, `SMB / CIFS`, `iSCSI + LVM`). Click **Show advanced kinds** to expose `iSCSI` (generic), `TrueNAS iSCSI`, and `SPDK lvol`.
+**Kind dropdown** — pick from the four supported kinds:
+
+- **Local file** (default, zero setup)
+- **NFS** — external Linux/Unix NFS export → [guide](../nfs-backend/)
+- **SMB / CIFS** — external Samba / Windows share / NAS appliance → [guide](../smb-backend/) (new in v0.4.0)
+- **iSCSI + LVM** — external vendor-agnostic iSCSI with auto-provisioned LVs → [guide](../iscsi-backend/)
 
 **Common fields** (all kinds):
 
 - **Name** — Used in audit logs, VM-create dropdowns, and the URL `/v1/storage_backends/<id>`. Pick something distinct.
 - **Set as default** — New VMs without an explicit `backend_id` will land on the default backend.
 
-**Per-kind fields** appear inline as you change the **Kind** dropdown — see the dedicated page for each backend kind for the meaning of each field.
+**Per-kind fields** appear inline as you change the **Kind** dropdown — see the dedicated guide for each backend kind for the meaning of each field.
 
 When you click **Add backend**:
 
 1. The manager validates the config (required fields, enum constraints).
-2. For backends that need them (SMB, TrueNAS, SPDK), credentials are forwarded to the agent's credential store immediately — they are **never persisted in the manager database**.
+2. For backends that need them (SMB with username/password, iSCSI with CHAP), credentials are forwarded to the agent's credential store immediately — they are **never persisted in the manager database**.
 3. The manager probes the backend to confirm reachability.
 4. The new backend is inserted into the live registry — VM-create can target it on the next API call.
 5. A toast confirms `Storage backend added`.
@@ -58,7 +63,7 @@ If validation fails the dialog stays open and shows the server's error message. 
 
 ## Editing a backend
 
-Click the **Edit** button on a backend row. Most fields are mutable — the kind itself is not. For authenticated backends (SMB, TrueNAS) the dialog has a separate **Rotate password** section: leave it blank to keep the current password, fill it to push a new one to the agent's credential store.
+Click the **Edit** button on a backend row. Most fields are mutable — the kind itself is not. For authenticated external backends (SMB with credentials, iSCSI with CHAP) the dialog has a separate **Rotate password** section: leave it blank to keep the current password, fill it to push a new one to the agent's credential store.
 
 After save, the manager re-probes the backend and updates the live registry. Existing VMs already running against the backend are unaffected — only the next mount or operation picks up the new config.
 
