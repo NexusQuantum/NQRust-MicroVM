@@ -8,6 +8,7 @@ pub mod networks;
 pub mod storage;
 pub mod tap;
 pub mod vm;
+pub mod vmm_routes;
 
 pub fn router(state: AppState) -> Router {
     let storage_state = Arc::new(storage::routes::StorageState {
@@ -19,6 +20,7 @@ pub fn router(state: AppState) -> Router {
         .merge(inventory::router())
         .nest("/agent/v1/vms", vm::router().merge(tap::router()))
         .nest("/agent/v1/networks", networks::router())
+        .nest("/agent/v1/vmm", vmm_routes::router())
         .nest("/v1/storage", storage::routes::router(storage_state))
         .layer(Extension(state))
 }

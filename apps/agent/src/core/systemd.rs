@@ -45,6 +45,34 @@ pub async fn spawn_fc_scope_with_screen(
     Ok(())
 }
 
+/// Apply or update cgroup resource properties on a running transient scope.
+/// Used to enforce memory / cpu limits on Firecracker scopes after the
+/// manager has finalized the machine-config (the FC binary's vcpu/mem
+/// aren't known at spawn time).
+#[allow(dead_code)] // Called by the manager via a follow-up route in 0.5.x.
+pub async fn set_scope_properties(unit: &str, properties: &[String]) -> Result<()> {
+    if properties.is_empty() {
+        return Ok(());
+    }
+    let mut cmd = Command::new("sudo");
+    cmd.arg("-n").arg("systemctl").arg("set-property").arg(unit);
+    for p in properties {
+        cmd.arg(p);
+    }
+    let output = cmd.output().await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("not loaded") || stderr.contains("could not be found") {
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "systemctl set-property {unit} failed: {}",
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
 pub async fn stop_unit(unit: &str) -> Result<()> {
     let output = Command::new("sudo")
         .args(["-n", "systemctl", "stop", unit])

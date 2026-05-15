@@ -116,6 +116,7 @@ mod tests {
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
             nfs_config: None,
+            vmm_registry: crate::vmm::VmmRegistry::empty(),
         };
 
         let resolved = resolve_socket_path(&st, id, sock_file.to_str().unwrap())
@@ -142,6 +143,7 @@ mod tests {
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
             nfs_config: None,
+            vmm_registry: crate::vmm::VmmRegistry::empty(),
         };
 
         let nested = run_dir.join("vms").join("vm-abc").join("sock");
@@ -171,6 +173,7 @@ mod tests {
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
             nfs_config: None,
+            vmm_registry: crate::vmm::VmmRegistry::empty(),
         };
 
         let err = resolve_socket_path(&st, "vm-other", sock.to_str().unwrap())

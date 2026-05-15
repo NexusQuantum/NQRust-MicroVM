@@ -129,6 +129,7 @@ mod tests {
             bridge: "fcbr0".into(),
             storage_registry: Default::default(),
             nfs_config: None,
+            vmm_registry: crate::vmm::VmmRegistry::empty(),
         }
     }
 
