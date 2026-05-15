@@ -5,6 +5,7 @@ use axum::{
 
 pub mod guest_agent;
 pub mod port_forwards;
+pub mod qemu_service; // QEMU-backed create/start path (0.5.0)
 pub mod repo; // db
 pub mod routes; // handlers
 pub mod service; // orchestration

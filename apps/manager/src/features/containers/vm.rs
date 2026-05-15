@@ -91,6 +91,15 @@ pub async fn create_container_vm(
         network_id: None,
         port_forwards: vec![],
         backend_id: None,
+        // Containers are always Firecracker-backed Linux microVMs.
+        vmm_kind: None,
+        boot_mode: None,
+        guest_os: None,
+        enable_vnc: false,
+        disk_image_id: None,
+        installer_iso_id: None,
+        firmware_path: None,
+        nvram_template_path: None,
     };
 
     // Create and start VM

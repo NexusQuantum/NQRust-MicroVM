@@ -86,6 +86,25 @@ pub async fn create_and_start(
         return create_from_snapshot(st, id, name, template_id, snapshot, None).await;
     }
 
+    // ---- Pluggable VMM dispatcher (0.5.0) ----
+    // If the caller asked for QEMU explicitly, or the boot mode auto-selects to
+    // QEMU (UEFI/PVH), branch to the QEMU service. Anything else (default,
+    // or explicit Firecracker) continues through the legacy FC code path below.
+    let kind_explicit = req.vmm_kind;
+    let kind_auto = req.boot_mode.as_ref().map(::nexus_vmm::auto_select);
+    let chosen_kind = kind_explicit.or(kind_auto);
+    if matches!(chosen_kind, Some(::nexus_vmm::VmmKind::Qemu)) {
+        return crate::features::vms::qemu_service::create_and_start_qemu(
+            st,
+            id,
+            req,
+            template_id,
+            user_id,
+            audit_username,
+        )
+        .await;
+    }
+
     let host = st
         .hosts
         .first_healthy()
@@ -2917,16 +2936,7 @@ mod tests {
                 mem_mib: 512,
                 kernel_image_id: Some(kernel.id),
                 rootfs_image_id: Some(rootfs.id),
-                kernel_path: None,
-                rootfs_path: None,
-                source_snapshot_id: None,
-                username: None,
-                password: None,
-                tags: vec![],
-                rootfs_size_mb: None,
-                network_id: None,
-                port_forwards: vec![],
-                backend_id: None,
+                ..Default::default()
             },
             None,
             None,
@@ -2991,18 +3001,9 @@ mod tests {
                 name: "vm".into(),
                 vcpu: 1,
                 mem_mib: 512,
-                kernel_image_id: None,
-                rootfs_image_id: None,
                 kernel_path: Some("/srv/images/vmlinux".into()),
                 rootfs_path: Some("/srv/images/rootfs".into()),
-                source_snapshot_id: None,
-                username: None,
-                password: None,
-                tags: vec![],
-                rootfs_size_mb: None,
-                network_id: None,
-                port_forwards: vec![],
-                backend_id: None,
+                ..Default::default()
             },
             None,
             None,
