@@ -10,3 +10,4 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 utoipa = { workspace = true }
+nexus-vmm = { path = "../nexus-vmm" }
