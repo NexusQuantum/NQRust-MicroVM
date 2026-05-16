@@ -23,4 +23,5 @@ pub fn router() -> Router {
             get(routes::dockerhub_download_progress),
         )
         .route("/dockerhub/preload", post(routes::dockerhub_preload))
+        .route("/import/vmdk", post(routes::import_vmdk))
 }

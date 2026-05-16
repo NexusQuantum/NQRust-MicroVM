@@ -299,6 +299,157 @@ pub async fn dockerhub_preload(
     ))
 }
 
+/// Import a VMware VMDK (or any qemu-img-readable disk) as a registered
+/// image, optionally running virt-v2v to adapt the guest drivers from
+/// VMware's vmxnet3/pvscsi to virtio. Pure server-side operation: the
+/// VMDK must already live somewhere the manager can read.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct ImportVmdkRequest {
+    /// Filesystem path of the source VMDK / qcow2 / raw disk. Must be
+    /// readable by the manager process.
+    pub source_path: String,
+    /// Name for the resulting image. Defaults to the source filename.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// If true, run `virt-v2v -i disk` to convert the guest's drivers from
+    /// VMware paravirt to virtio. Recommended when importing Windows or
+    /// older Linux guests. Pure-format conversion (qemu-img convert) is
+    /// used when false — faster, but the guest may not boot if it was
+    /// using vmxnet3 / pvscsi inside.
+    #[serde(default = "default_true")]
+    pub run_virt_v2v: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/images/import/vmdk",
+    request_body = ImportVmdkRequest,
+    responses(
+        (status = 200, description = "VMDK imported", body = CreateImageResp),
+        (status = 400, description = "Source not readable"),
+        (status = 500, description = "virt-v2v / qemu-img conversion failed"),
+    ),
+    tag = "Images"
+)]
+pub async fn import_vmdk(
+    Extension(st): Extension<AppState>,
+    Json(req): Json<ImportVmdkRequest>,
+) -> Result<Json<CreateImageResp>, StatusCode> {
+    let source = std::path::Path::new(&req.source_path);
+    if tokio::fs::metadata(source).await.is_err() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let name = req
+        .name
+        .clone()
+        .or_else(|| {
+            source
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "imported".to_string());
+    let dest_dir = st.images.root().join("imported");
+    if let Err(e) = tokio::fs::create_dir_all(&dest_dir).await {
+        tracing::error!(?e, "create import dest dir");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let dest = dest_dir.join(format!("{name}.qcow2"));
+
+    if req.run_virt_v2v {
+        // virt-v2v -i disk <source> -o local -of qcow2 -os <dest_dir> -on <name>
+        let out = tokio::process::Command::new("virt-v2v")
+            .args([
+                "-i",
+                "disk",
+                source.to_str().unwrap_or(""),
+                "-o",
+                "local",
+                "-of",
+                "qcow2",
+                "-os",
+            ])
+            .arg(&dest_dir)
+            .arg("-on")
+            .arg(&name)
+            .output()
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "virt-v2v spawn (is libguestfs-tools installed?)");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !out.status.success() {
+            tracing::error!(stderr=%String::from_utf8_lossy(&out.stderr), "virt-v2v failed");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    } else {
+        // Plain qemu-img convert. Faster, but no driver adaptation.
+        let out = tokio::process::Command::new("qemu-img")
+            .arg("convert")
+            .arg("-O")
+            .arg("qcow2")
+            .arg(source)
+            .arg(&dest)
+            .output()
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "qemu-img spawn");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !out.status.success() {
+            tracing::error!(stderr=%String::from_utf8_lossy(&out.stderr), "qemu-img convert failed");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    let meta = tokio::fs::metadata(&dest)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sha = sha256_file(&dest).await.unwrap_or_default();
+    let image_req = nexus_types::CreateImageReq {
+        kind: "rootfs".to_string(),
+        name,
+        host_path: dest.display().to_string(),
+        sha256: sha,
+        size: meta.len() as i64,
+        project: Some("imported".to_string()),
+    };
+    let image = st.images.insert(&image_req).await.map_err(map_repo_error)?;
+    // Tag as uefi_disk — modern VMware exports are typically UEFI; operator
+    // can adjust via image PATCH if needed.
+    let _ = sqlx::query(
+        r#"UPDATE image
+            SET image_kind = 'uefi_disk',
+                guest_os_hint = 'linux',
+                disk_format = 'qcow2',
+                nvram_template_path = '/usr/share/edk2/x64/OVMF_VARS.4m.fd'
+            WHERE id = $1"#,
+    )
+    .bind(image.id)
+    .execute(&st.db)
+    .await;
+    Ok(Json(CreateImageResp { id: image.id }))
+}
+
+async fn sha256_file(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+    let mut f = tokio::fs::File::open(path).await.ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 65536];
+    loop {
+        let n = f.read(&mut buf).await.ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(hex::encode(hasher.finalize()))
+}
+
 #[utoipa::path(
     post,
     path = "/v1/images/upload",

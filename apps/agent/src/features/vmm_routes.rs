@@ -37,6 +37,13 @@ pub fn router() -> Router {
         .route("/:id/snapshot", post(snapshot))
         .route("/:id/cdrom/eject", post(cdrom_eject))
         .route("/:id/console/vnc/ws", get(vnc_ws_bridge))
+        .route("/:id/disk/add", post(disk_add))
+        .route("/:id/disk/remove", post(disk_remove))
+        .route("/:id/nic/add", post(nic_add))
+        .route("/:id/nic/remove", post(nic_remove))
+        .route("/:id/migrate/incoming", post(migrate_incoming))
+        .route("/:id/migrate/outgoing", post(migrate_outgoing))
+        .route("/:id/backup/disk", post(backup_disk))
 }
 
 /// List which VMM kinds this agent has installed, with their version strings.
@@ -452,4 +459,329 @@ async fn vnc_proxy(ws: WebSocket, sock_path: PathBuf) {
         _ = ws_to_uds => {}
         _ = uds_to_ws => {}
     }
+}
+
+// ============================================================================
+// Hot-add / hot-remove device routes (QEMU only)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct DiskAddRequest {
+    pub vmm_kind: VmmKind,
+    pub drive_id: String,
+    pub source: PathBuf,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub cdrom: bool,
+}
+
+async fn disk_add(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<DiskAddRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.vmm_kind != VmmKind::Qemu {
+        return Err((StatusCode::BAD_REQUEST, "hot-add is qemu-only".into()));
+    }
+    let handle = qmp_handle(&st, id).await?;
+    let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let fmt = req.format.as_deref().unwrap_or("raw");
+    // blockdev-add creates a node QEMU can attach to a device.
+    let node_args = serde_json::json!({
+        "driver": fmt,
+        "node-name": req.drive_id,
+        "file": {
+            "driver": "file",
+            "filename": req.source.display().to_string(),
+        },
+        "read-only": req.read_only || req.cdrom,
+    });
+    qmp.execute("blockdev-add", Some(node_args))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let dev_args = serde_json::json!({
+        "driver": "virtio-blk-pci",
+        "drive": req.drive_id,
+        "id": format!("{}-dev", req.drive_id),
+    });
+    qmp.execute("device_add", Some(dev_args))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({"ok": true, "drive_id": req.drive_id})))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiskRemoveRequest {
+    pub vmm_kind: VmmKind,
+    pub drive_id: String,
+}
+
+async fn disk_remove(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<DiskRemoveRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.vmm_kind != VmmKind::Qemu {
+        return Err((StatusCode::BAD_REQUEST, "hot-remove is qemu-only".into()));
+    }
+    let handle = qmp_handle(&st, id).await?;
+    let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let dev_id = format!("{}-dev", req.drive_id);
+    qmp.execute("device_del", Some(json!({ "id": dev_id })))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // blockdev-del may fail until the guest releases the device; non-fatal.
+    let _ = qmp
+        .execute("blockdev-del", Some(json!({ "node-name": req.drive_id })))
+        .await;
+    Ok(Json(json!({"ok": true, "drive_id": req.drive_id})))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NicAddRequest {
+    pub vmm_kind: VmmKind,
+    pub iface_id: String,
+    pub host_dev: String,
+    pub mac: String,
+}
+
+async fn nic_add(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<NicAddRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.vmm_kind != VmmKind::Qemu {
+        return Err((StatusCode::BAD_REQUEST, "hot-add is qemu-only".into()));
+    }
+    let handle = qmp_handle(&st, id).await?;
+    let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let netdev_args = serde_json::json!({
+        "type": "tap",
+        "id": req.iface_id,
+        "ifname": req.host_dev,
+        "script": "no",
+        "downscript": "no",
+    });
+    qmp.execute("netdev_add", Some(netdev_args))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let dev_args = serde_json::json!({
+        "driver": "virtio-net-pci",
+        "netdev": req.iface_id,
+        "mac": req.mac,
+        "id": format!("{}-dev", req.iface_id),
+    });
+    qmp.execute("device_add", Some(dev_args))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({"ok": true, "iface_id": req.iface_id})))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NicRemoveRequest {
+    pub vmm_kind: VmmKind,
+    pub iface_id: String,
+}
+
+async fn nic_remove(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<NicRemoveRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.vmm_kind != VmmKind::Qemu {
+        return Err((StatusCode::BAD_REQUEST, "hot-remove is qemu-only".into()));
+    }
+    let handle = qmp_handle(&st, id).await?;
+    let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let dev_id = format!("{}-dev", req.iface_id);
+    qmp.execute("device_del", Some(json!({ "id": dev_id })))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let _ = qmp
+        .execute("netdev_del", Some(json!({ "id": req.iface_id })))
+        .await;
+    Ok(Json(json!({"ok": true, "iface_id": req.iface_id})))
+}
+
+/// Helper: rebind to the live VmmHandle.
+async fn qmp_handle(st: &AppState, id: Uuid) -> Result<nexus_vmm::VmmHandle, (StatusCode, String)> {
+    let driver = st
+        .vmm_registry
+        .get(VmmKind::Qemu)
+        .ok_or_else(|| (StatusCode::PRECONDITION_FAILED, "qemu not installed".into()))?;
+    let run_dir = PathBuf::from(&st.run_dir);
+    driver
+        .rebind(&run_dir, id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "no live vmm".into()))
+}
+
+// ============================================================================
+// Live migration routes (QEMU only)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)] // wired-up in the migration-orchestration follow-up
+pub struct MigrateIncomingRequest {
+    /// Listen on this TCP port for the inbound migration stream.
+    pub listen_port: u16,
+}
+
+/// Configure this agent's QEMU to start in "incoming" migration mode. The
+/// guest is paused until the source completes the migrate.
+async fn migrate_incoming(
+    Extension(_st): Extension<AppState>,
+    Path(_id): Path<Uuid>,
+    Json(_req): Json<MigrateIncomingRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // For 0.5.0 we accept the request but require the boot to be wired
+    // with -incoming externally. The full automation (boot with -incoming,
+    // wait for migration to complete, transition to running) is reserved
+    // for the migration-orchestration follow-up.
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "live migration target setup is reserved for the v0.5.x migration-orchestration follow-up"
+            .into(),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MigrateOutgoingRequest {
+    /// `tcp:host:port` URI of the target's incoming-migration listener.
+    pub target_uri: String,
+}
+
+/// Drive QMP `migrate` to send the running guest's state to a target host.
+/// Polls `query-migrate` until completion or failure.
+async fn migrate_outgoing(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<MigrateOutgoingRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let handle = qmp_handle(&st, id).await?;
+    let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    qmp.execute(
+        "migrate",
+        Some(serde_json::json!({ "uri": req.target_uri })),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Poll for completion. 10 minute hard cap.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    loop {
+        let s: serde_json::Value = qmp
+            .execute::<serde_json::Value>("query-migrate", None)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        match s.get("status").and_then(|v| v.as_str()) {
+            Some("completed") => break,
+            Some("failed") | Some("cancelled") => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("migrate {:?}", s),
+                ));
+            }
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err((
+                StatusCode::REQUEST_TIMEOUT,
+                "migrate timed out after 10 minutes".into(),
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    Ok(Json(json!({"ok": true})))
+}
+
+// ============================================================================
+// QEMU backup primitive — qemu-img convert disk to a target path
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct BackupDiskRequest {
+    pub vmm_kind: VmmKind,
+    /// Source disk path on the agent host (typically the rootfs path).
+    pub source: PathBuf,
+    /// Destination path on the agent host for the qcow2 copy.
+    pub destination: PathBuf,
+    /// qcow2 / raw. Defaults to qcow2 for a compact backup.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Pass `-c` to qemu-img for a compressed (smaller, slower) backup.
+    #[serde(default)]
+    pub compress: bool,
+}
+
+/// Snapshot a running QEMU VM's disk to a backup target file. Pauses the
+/// guest briefly via QMP so the disk is consistent, runs `qemu-img
+/// convert` to the destination path, then resumes. Destination can be on
+/// any agent-visible filesystem (local, NFS, S3 mount). Restore is just
+/// a normal VM create with the resulting qcow2 as the disk image.
+async fn backup_disk(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<BackupDiskRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.vmm_kind != VmmKind::Qemu {
+        return Err((StatusCode::BAD_REQUEST, "backup is qemu-only".into()));
+    }
+    let handle = qmp_handle(&st, id).await?;
+    let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    qmp.execute::<serde_json::Value>("stop", None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(p) = req.destination.parent() {
+        let _ = tokio::fs::create_dir_all(p).await;
+    }
+    let fmt = req.format.as_deref().unwrap_or("qcow2");
+    let mut cmd = tokio::process::Command::new("qemu-img");
+    cmd.arg("convert").arg("-O").arg(fmt);
+    if req.compress {
+        cmd.arg("-c");
+    }
+    cmd.arg(&req.source).arg(&req.destination);
+    let out = cmd.output().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("spawn qemu-img: {e}"),
+        )
+    })?;
+    // Always resume the guest, even if convert failed.
+    let _ = qmp.execute::<serde_json::Value>("cont", None).await;
+    if !out.status.success() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "qemu-img convert failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        ));
+    }
+    let size = tokio::fs::metadata(&req.destination)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+    Ok(Json(json!({
+        "ok": true,
+        "destination": req.destination,
+        "size_bytes": size,
+    })))
 }

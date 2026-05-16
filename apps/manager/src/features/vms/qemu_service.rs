@@ -454,6 +454,245 @@ async fn persist_volume_attachment(
     Ok(())
 }
 
+/// Reschedule a QEMU VM onto a new host (HA / host-death recovery).
+/// Differs from live_migrate in that the source VM is assumed dead — we
+/// don't try to coordinate state transfer, just boot a fresh QEMU on the
+/// target pointing at the same backend-allocated disk. Requires the disk
+/// to live on shared storage (iSCSI / NFS / SPDK / TrueNAS).
+pub async fn reschedule(st: &AppState, vm_id: Uuid, target_host_id: Uuid) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id)
+        .await
+        .context("load vm row")?;
+    let host_repo = crate::features::hosts::repo::HostRepository::new(st.db.clone());
+    let target_host = host_repo
+        .get(target_host_id)
+        .await
+        .context("load target host")?;
+    let kinds = host_repo
+        .vmm_kinds_installed(target_host_id)
+        .await
+        .context("query target vmm_kinds_installed")?;
+    if !kinds.iter().any(|k| k == "qemu") {
+        bail!("target host {target_host_id} does not have qemu installed");
+    }
+    // Pull the saved boot_mode so we can re-boot with the right config.
+    let boot_mode_json: Option<serde_json::Value> =
+        sqlx::query_scalar(r#"SELECT boot_mode FROM vm WHERE id = $1"#)
+            .bind(vm_id)
+            .fetch_optional(&st.db)
+            .await
+            .context("load saved boot_mode")?
+            .flatten();
+    let Some(boot_mode_json) = boot_mode_json else {
+        bail!("vm has no persisted boot_mode (was it created on 0.5.0?)");
+    };
+    let boot_mode: BootMode =
+        serde_json::from_value(boot_mode_json).context("decode persisted boot_mode")?;
+
+    let fit = host_repo
+        .try_reserve(target_host_id, vm.vcpu, vm.mem_mib as i64)
+        .await
+        .unwrap_or(true);
+    if !fit {
+        bail!("target host {target_host_id} is at capacity");
+    }
+
+    // Re-attach the volume on the target if there is one. For overlay-mode
+    // VMs (no backend_id), reschedule isn't supported — the overlay only
+    // exists on the source host.
+    let vol_handle = sqlx::query_as::<_, (Uuid, Uuid, String, i64)>(
+        r#"SELECT v.id, v.backend_id, v.path, v.size_bytes
+           FROM volume v
+           JOIN volume_attachment va ON va.volume_id = v.id
+           WHERE va.vm_id = $1 AND va.drive_id = 'rootfs'
+           ORDER BY va.attached_at DESC LIMIT 1"#,
+    )
+    .bind(vm_id)
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten();
+    let Some((volume_id, backend_id, locator, size_bytes)) = vol_handle else {
+        let _ = host_repo
+            .release_reservation(target_host_id, vm.vcpu, vm.mem_mib as i64)
+            .await;
+        bail!(
+            "vm has no shared-storage volume — reschedule requires backend-allocated disk; \
+             use snapshot+restore for local-overlay VMs"
+        );
+    };
+    let backend = st
+        .registry
+        .get(backend_id)
+        .ok_or_else(|| anyhow!("backend {backend_id} not found"))?;
+    let handle = nexus_storage::VolumeHandle {
+        volume_id,
+        backend_id: nexus_storage::BackendInstanceId(backend_id),
+        backend_kind: backend.kind(),
+        locator,
+        size_bytes: size_bytes.max(0) as u64,
+    };
+    backend
+        .activate_volume(&handle)
+        .await
+        .context("activate shared volume on target")?;
+    let attached = crate::features::storage::agent_rpc::agent_attach(&target_host.addr, &handle)
+        .await
+        .context("attach shared volume on target")?;
+    let disk_path = attached.path().to_string_lossy().into_owned();
+
+    // Boot the QEMU on the target. We reuse the persisted boot_mode and the
+    // same VM id so the platform treats it as the same VM (now homed on the
+    // new host).
+    let body = json!({
+        "vmm_kind": "qemu",
+        "vcpu": vm.vcpu,
+        "mem_mib": vm.mem_mib,
+        "boot": boot_mode,
+        "disks": [{
+            "drive_id": "rootfs",
+            "source": disk_path,
+            "read_only": false,
+            "root_device": true,
+            "format": "raw",
+            "cdrom": false,
+        }],
+        "nics": [{
+            "iface_id": "net0",
+            "host_dev": "user",
+            "mac": generate_mac(vm_id),
+        }],
+        "enable_vnc": false,
+        "enable_balloon": true,
+        "enable_rng": true,
+    });
+    let http = Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .context("build http client")?;
+    let resp = http
+        .post(format!("{}/agent/v1/vmm/{}/boot", target_host.addr, vm.id))
+        .json(&body)
+        .send()
+        .await
+        .context("agent boot request")?;
+    if !resp.status().is_success() {
+        let _ = host_repo
+            .release_reservation(target_host_id, vm.vcpu, vm.mem_mib as i64)
+            .await;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("target agent returned {status}: {body}");
+    }
+    // Release the source's reservation.
+    let _ = host_repo
+        .release_reservation(vm.host_id, vm.vcpu, vm.mem_mib as i64)
+        .await;
+    sqlx::query(
+        r#"UPDATE vm SET host_id = $2, state = 'running', updated_at = now() WHERE id = $1"#,
+    )
+    .bind(vm_id)
+    .bind(target_host_id)
+    .execute(&st.db)
+    .await
+    .context("update vm host_id after reschedule")?;
+    Ok(())
+}
+
+/// Live-migrate a QEMU VM to another healthy host. Both source and target
+/// must have `qemu` in `vmm_kinds_installed` AND share the disk via a
+/// storage backend (iSCSI / NFS / SPDK / TrueNAS). Local-file overlays
+/// won't migrate because the target host can't see the source's local
+/// qcow2 file.
+///
+/// 0.5.0 caveat: the target-side `qemu -incoming tcp:0.0.0.0:port` setup
+/// requires manual orchestration on the target before this call. The
+/// agent's `/migrate/incoming` route currently returns 501; the full
+/// orchestration ships in a focused 0.5.x follow-up. This function is
+/// useful today for migrating to a target whose QEMU has been
+/// pre-launched in incoming mode (operator workflow).
+pub async fn live_migrate(
+    st: &AppState,
+    vm_id: Uuid,
+    target_host_id: Uuid,
+    target_port: u16,
+) -> Result<()> {
+    let vm = super::repo::get(&st.db, vm_id)
+        .await
+        .context("load vm row")?;
+    if vm.host_id == target_host_id {
+        bail!("vm is already on target host {}", target_host_id);
+    }
+    // Verify target is healthy AND has qemu installed AND has capacity.
+    let host_repo = crate::features::hosts::repo::HostRepository::new(st.db.clone());
+    let target_host = host_repo
+        .get(target_host_id)
+        .await
+        .context("load target host")?;
+    let kinds = host_repo
+        .vmm_kinds_installed(target_host_id)
+        .await
+        .context("query target vmm_kinds_installed")?;
+    if !kinds.iter().any(|k| k == "qemu") {
+        bail!("target host {target_host_id} does not have qemu installed");
+    }
+    let fit = host_repo
+        .try_reserve(target_host_id, vm.vcpu, vm.mem_mib as i64)
+        .await
+        .unwrap_or(true);
+    if !fit {
+        bail!("target host {target_host_id} is at capacity");
+    }
+    // Tell source to start the QMP migrate.
+    let target_uri = format!(
+        "tcp:{}:{}",
+        target_host
+            .addr
+            .trim_start_matches("http://")
+            .split(':')
+            .next()
+            .unwrap_or("127.0.0.1"),
+        target_port
+    );
+    let http = Client::builder()
+        .timeout(Duration::from_secs(900)) // up to 15 min for big VMs
+        .build()
+        .context("build http client")?;
+    let resp = http
+        .post(format!(
+            "{}/agent/v1/vmm/{}/migrate/outgoing",
+            vm.host_addr, vm.id
+        ))
+        .json(&json!({ "target_uri": target_uri }))
+        .send()
+        .await
+        .context("agent migrate/outgoing request")?;
+    if !resp.status().is_success() {
+        // Release the reservation on failure.
+        let _ = host_repo
+            .release_reservation(target_host_id, vm.vcpu, vm.mem_mib as i64)
+            .await;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("source agent returned {status} on migrate: {body}");
+    }
+    // Release the source's reservation; the source VM is gone.
+    let _ = host_repo
+        .release_reservation(vm.host_id, vm.vcpu, vm.mem_mib as i64)
+        .await;
+    // Update the VM row's host_id. host_addr is now derived from the host
+    // table via JOIN so we just point at the new host_id and let downstream
+    // queries pick up the new agent URL automatically.
+    let _ = target_host;
+    sqlx::query(r#"UPDATE vm SET host_id = $2, updated_at = now() WHERE id = $1"#)
+        .bind(vm_id)
+        .bind(target_host_id)
+        .execute(&st.db)
+        .await
+        .context("update vm host_id after migrate")?;
+    Ok(())
+}
+
 /// Pick a healthy host that has the requested VMM kind installed. Returns
 /// the first match — same posture as the FC `first_healthy` selector.
 async fn pick_host(

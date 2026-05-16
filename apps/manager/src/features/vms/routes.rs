@@ -95,6 +95,103 @@ pub async fn shell_websocket(
     })
 }
 
+/// Browser ↔ noVNC bridge. Mirrors `shell_websocket` but targets the
+/// agent's VNC WS endpoint instead of the shell. Used by the UI's
+/// in-browser noVNC client for graphical install / Windows access.
+#[utoipa::path(
+    get,
+    path = "/v1/vms/{id}/console/vnc/ws",
+    params(VmPathParams),
+    responses(
+        (status = 101, description = "WebSocket connection established"),
+        (status = 404, description = "VM not found"),
+        (status = 400, description = "VM has no VNC console"),
+    ),
+    tag = "VMs"
+)]
+pub async fn vnc_websocket(
+    ws: WebSocketUpgrade,
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+) -> axum::response::Response {
+    let vm = match super::repo::get(&st.db, id).await {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::NOT_FOUND, "VM not found").into_response(),
+    };
+    // Only QEMU VMs with console_kind='vnc' have a VNC endpoint.
+    let vmm_kind: String = sqlx::query_scalar(r#"SELECT vmm_kind FROM vm WHERE id = $1"#)
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or_else(|_| "firecracker".into());
+    if vmm_kind != "qemu" {
+        return (StatusCode::BAD_REQUEST, "VNC console is qemu-only").into_response();
+    }
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = proxy_to_agent_vnc(vm.host_addr, id, socket).await {
+            tracing::error!("VNC proxy error: {:?}", e);
+        }
+    })
+}
+
+async fn proxy_to_agent_vnc(
+    host_addr: String,
+    vm_id: Uuid,
+    client_ws: WebSocket,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let agent_url = format!(
+        "ws://{}/agent/v1/vmm/{}/console/vnc/ws?vmm_kind=qemu",
+        host_addr.trim_start_matches("http://"),
+        vm_id
+    );
+    tracing::info!("Connecting to agent VNC at: {}", agent_url);
+    let (agent_stream, _) = connect_async(&agent_url).await?;
+    let (mut agent_write, mut agent_read) = agent_stream.split();
+    let (mut client_write, mut client_read) = client_ws.split();
+
+    let client_to_agent = async {
+        while let Some(msg) = client_read.next().await {
+            match msg {
+                Ok(Message::Binary(data)) => {
+                    if agent_write.send(WsMessage::Binary(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Text(text)) => {
+                    if agent_write.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Close(_)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    };
+    let agent_to_client = async {
+        while let Some(msg) = agent_read.next().await {
+            match msg {
+                Ok(WsMessage::Binary(data)) => {
+                    if client_write.send(Message::Binary(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(WsMessage::Text(text)) => {
+                    if client_write.send(Message::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(WsMessage::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+    };
+    tokio::select! {
+        _ = client_to_agent => {}
+        _ = agent_to_client => {}
+    }
+    Ok(())
+}
+
 async fn proxy_to_agent_shell(
     host_addr: String,
     vm_id: Uuid,
@@ -676,6 +773,84 @@ pub async fn resume(
                 Json(ErrorResponse {
                     error: "Failed to resume VM".to_string(),
                     fault_message: Some(err_str),
+                }),
+            )
+        })?;
+    Ok(Json(OkResponse::default()))
+}
+
+/// Reschedule a QEMU VM onto a different host (HA / host-death recovery).
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct RescheduleRequest {
+    pub target_host_id: Uuid,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/reschedule",
+    params(VmPathParams),
+    request_body = RescheduleRequest,
+    responses(
+        (status = 200, description = "VM rescheduled", body = OkResponse),
+        (status = 400, description = "Reschedule preconditions not met"),
+    ),
+    tag = "VMs"
+)]
+pub async fn reschedule(
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+    Json(req): Json<RescheduleRequest>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    super::qemu_service::reschedule(&st, id, req.target_host_id)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Reschedule failed".to_string(),
+                    fault_message: Some(err.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(OkResponse::default()))
+}
+
+/// Live-migrate a QEMU VM to another host.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct MigrateRequest {
+    /// UUID of the target host. Must have `qemu` in vmm_kinds_installed.
+    pub target_host_id: Uuid,
+    /// TCP port the target QEMU is listening on with `-incoming`. The
+    /// operator pre-launches the target VM in incoming mode for now;
+    /// full target-side orchestration is a 0.5.x follow-up.
+    pub target_port: u16,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/migrate",
+    params(VmPathParams),
+    request_body = MigrateRequest,
+    responses(
+        (status = 200, description = "Migration succeeded", body = OkResponse),
+        (status = 400, description = "Invalid migration target"),
+        (status = 502, description = "Agent reported migration failure"),
+    ),
+    tag = "VMs"
+)]
+pub async fn migrate(
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+    Json(req): Json<MigrateRequest>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    super::qemu_service::live_migrate(&st, id, req.target_host_id, req.target_port)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: "Failed to migrate VM".to_string(),
+                    fault_message: Some(err.to_string()),
                 }),
             )
         })?;

@@ -25,6 +25,8 @@ pub fn router() -> Router {
         .route("/:id/pause", post(routes::pause))
         .route("/:id/resume", post(routes::resume))
         .route("/:id/install-complete", post(routes::install_complete))
+        .route("/:id/migrate", post(routes::migrate))
+        .route("/:id/reschedule", post(routes::reschedule))
         .route("/:id/flush-metrics", post(routes::flush_metrics))
         .route("/:id/ctrl-alt-del", post(routes::ctrl_alt_del))
         .route(
@@ -47,6 +49,7 @@ pub fn router() -> Router {
         .route("/:id/shell", get(routes::get_shell_credentials))
         .route("/:id/shell/ws", get(routes::shell_websocket))
         .route("/:id/metrics/ws", get(routes::metrics_websocket))
+        .route("/:id/console/vnc/ws", get(routes::vnc_websocket))
         .route("/:id/guest-ip", post(routes::update_guest_ip))
         .route(
             "/:id/machine-config",
