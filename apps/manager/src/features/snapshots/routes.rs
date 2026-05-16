@@ -11,6 +11,26 @@ use uuid::Uuid;
 
 use super::repo::{NewSnapshotRow, SnapshotRepository};
 
+/// Look up the source VM's vmm_kind. Default to 'firecracker' on any error
+/// so legacy code paths (pre-0.5.0 VMs) keep working.
+async fn vm_vmm_kind(db: &sqlx::PgPool, vm_id: Uuid) -> String {
+    sqlx::query_scalar::<_, String>(r#"SELECT vmm_kind FROM vm WHERE id = $1"#)
+        .bind(vm_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or_else(|_| "firecracker".to_string())
+}
+
+/// Look up a snapshot row's vmm_kind. Default to 'firecracker' for legacy
+/// rows that pre-date the 0040 migration's backfill.
+async fn snapshot_vmm_kind(db: &sqlx::PgPool, snapshot_id: Uuid) -> String {
+    sqlx::query_scalar::<_, String>(r#"SELECT vmm_kind FROM snapshot WHERE id = $1"#)
+        .bind(snapshot_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or_else(|_| "firecracker".to_string())
+}
+
 /// Group of derived agent URLs used during snapshot creation.
 ///
 /// Pure-logic helper extracted from `create` so the URL construction can be
@@ -147,6 +167,16 @@ pub async fn create(
     let vm = crate::features::vms::repo::get(&st.db, vm_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // Snapshots are per-backend. The Firecracker-shaped REST path below
+    // doesn't speak QMP, so refuse early with 400 for QEMU VMs. The
+    // QEMU-backed snapshot route is a follow-up; the trait method
+    // VmmDriver::snapshot is already implemented in the QEMU driver but
+    // the manager route to call it is not yet wired.
+    if vm_vmm_kind(&st.db, vm.id).await != "firecracker" {
+        tracing::warn!(vm_id=%vm.id, "snapshot create rejected: this route only supports firecracker VMs in 0.5.0");
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let snapshot_id = Uuid::new_v4();
     let snapshot_name = resolve_snapshot_name(
@@ -364,6 +394,21 @@ pub async fn instantiate(
     let source_vm = crate::features::vms::repo::get(&st.db, snapshot.vm_id)
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    // Gate cross-backend restore: the FC-shaped instantiate path can't
+    // produce a QEMU VM, and vice versa. Refuse with 400 when the snapshot
+    // was taken on a different VMM than what the instantiate path supports.
+    let src_kind = vm_vmm_kind(&st.db, snapshot.vm_id).await;
+    let snap_kind = snapshot_vmm_kind(&st.db, snapshot.id).await;
+    if snap_kind != "firecracker" || src_kind != "firecracker" {
+        tracing::warn!(
+            snapshot_id=%snapshot.id,
+            snapshot_vmm_kind=%snap_kind,
+            source_vmm_kind=%src_kind,
+            "snapshot instantiate rejected: only firecracker snapshots are supported in 0.5.0",
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let vm_id = Uuid::new_v4();
     let name = resolve_instantiate_name(payload.name, snapshot.name.as_deref(), snapshot.id);

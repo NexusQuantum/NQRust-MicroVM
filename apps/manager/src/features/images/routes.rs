@@ -317,6 +317,9 @@ pub async fn upload_image(
     let mut kind: Option<String> = None;
     let mut name: Option<String> = None;
     let mut project: Option<String> = None;
+    // 0.5.0+ VMM-aware fields.
+    let mut image_kind: Option<String> = None;
+    let mut nvram_template_path: Option<String> = None;
 
     // Extract metadata fields first
     while let Some(field) = multipart
@@ -335,6 +338,13 @@ pub async fn upload_image(
             }
             "project" => {
                 project = Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
+            "image_kind" => {
+                image_kind = Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
+            "nvram_template_path" => {
+                nvram_template_path =
+                    Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
             }
             "file" => {
                 // We'll handle file in the next pass
@@ -389,6 +399,35 @@ pub async fn upload_image(
     };
 
     let image = st.images.insert(&image_req).await.map_err(map_repo_error)?;
+
+    // Persist the VMM-aware fields if the client supplied them. Defaults
+    // ('linux_kernel' for the strict enum) are already set by the migration.
+    if image_kind.is_some() || nvram_template_path.is_some() {
+        let effective_kind = image_kind.as_deref().unwrap_or("linux_kernel");
+        // Validate against the strict enum so the CHECK constraint won't
+        // bounce us at INSERT time.
+        let allowed = matches!(
+            effective_kind,
+            "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso"
+        );
+        if !allowed {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        if let Err(e) = sqlx::query(
+            r#"UPDATE image
+                SET image_kind = $2,
+                    nvram_template_path = COALESCE($3, nvram_template_path)
+                WHERE id = $1"#,
+        )
+        .bind(image.id)
+        .bind(effective_kind)
+        .bind(nvram_template_path.as_deref())
+        .execute(&st.db)
+        .await
+        {
+            tracing::warn!(image_id=%image.id, error=?e, "failed to set image_kind / nvram_template_path");
+        }
+    }
 
     Ok(Json(CreateImageResp { id: image.id }))
 }

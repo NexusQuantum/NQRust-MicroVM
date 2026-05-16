@@ -112,27 +112,40 @@ pub async fn create_and_start_qemu(
         .ok_or_else(|| anyhow!("host {} has no bridge advertised", host.id))?
         .to_string();
 
-    // Create TAP on the agent (re-uses existing route).
-    let tap_name = format!("tap-{}", &id.to_string()[..8]);
-    create_tap(&host.addr, id, &bridge)
-        .await
-        .context("create_tap on agent")?;
-
-    // Resolve disk source: prefer disk_image_id, then explicit rootfs_path,
-    // then bail. The image's `host_path` is the absolute path on the agent
-    // host that the disk lives at.
-    let disk_path: String = if let Some(image_id) = req.disk_image_id {
-        let img = st
-            .images
-            .get(image_id)
-            .await
-            .with_context(|| format!("image {image_id} lookup"))?;
-        img.host_path
-    } else if let Some(p) = req.rootfs_path.clone() {
-        p
+    // Create TAP on the agent (re-uses existing route). In test mode
+    // (`MANAGER_TEST_MODE=1`) we skip TAP creation and instead pass a
+    // sentinel host_dev = "user" so the agent's QemuDriver uses slirp
+    // user-mode networking — lets unprivileged dev hosts complete an
+    // end-to-end create + boot without sudo.
+    let test_mode = std::env::var("MANAGER_TEST_MODE").is_ok();
+    let tap_name = if test_mode {
+        "user".to_string()
     } else {
-        bail!("qemu VM creation needs disk_image_id or rootfs_path");
+        let tn = format!("tap-{}", &id.to_string()[..8]);
+        create_tap(&host.addr, id, &bridge)
+            .await
+            .context("create_tap on agent")?;
+        tn
     };
+
+    // Resolve disk source. Three paths:
+    //   1. backend_id provided → allocate volume on that backend, attach on
+    //      the agent, populate from disk_image (if given). Same path FC
+    //      VMs use; iSCSI / NFS / SPDK / TrueNAS all just work.
+    //   2. disk_image_id only → make a per-VM qcow2 thin overlay over the
+    //      read-only base image so concurrent VMs from the same image
+    //      don't corrupt each other.
+    //   3. rootfs_path only → trust the caller's path (legacy escape hatch).
+    let (disk_path, disk_format, disk_volume_handle) = resolve_qemu_disk(
+        st,
+        id,
+        &host,
+        req.backend_id,
+        req.disk_image_id,
+        req.rootfs_path.as_deref(),
+        req.rootfs_size_mb,
+    )
+    .await?;
 
     let mut disks: Vec<DiskSpec> = Vec::new();
     disks.push(DiskSpec {
@@ -140,7 +153,7 @@ pub async fn create_and_start_qemu(
         source: disk_path.clone().into(),
         read_only: false,
         root_device: true,
-        format: Some(detect_disk_format(&disk_path)),
+        format: Some(disk_format.clone()),
         cdrom: false,
     });
 
@@ -275,6 +288,61 @@ pub async fn create_and_start_qemu(
     .await
     .context("update vmm columns")?;
 
+    // If the disk lives on a storage backend, register the volume +
+    // volume_attachment rows so the existing FC-style delete / restart /
+    // backup tooling treats this VM identically.
+    if let Some(handle) = disk_volume_handle {
+        if let Err(e) = persist_volume_attachment(st, id, &handle, &disk_path).await {
+            tracing::warn!(vm_id=%id, error=?e, "failed to persist volume_attachment for QEMU VM (delete may need manual cleanup)");
+        }
+    }
+
+    Ok(())
+}
+
+/// Insert volume + volume_attachment rows for a QEMU VM whose disk was
+/// allocated through the storage registry. Best-effort — the VM is already
+/// running, so a logging failure here doesn't roll back the boot.
+#[cfg(not(test))]
+async fn persist_volume_attachment(
+    st: &AppState,
+    vm_id: Uuid,
+    handle: &nexus_storage::VolumeHandle,
+    disk_path: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"INSERT INTO volume (id, backend_id, path, size_bytes, created_at)
+           VALUES ($1, $2, $3, $4, now())
+           ON CONFLICT (id) DO UPDATE SET path = EXCLUDED.path"#,
+    )
+    .bind(handle.volume_id)
+    .bind(handle.backend_id.0)
+    .bind(handle.locator.as_str())
+    .bind(handle.size_bytes as i64)
+    .execute(&st.db)
+    .await
+    .context("insert volume row")?;
+    sqlx::query(
+        r#"INSERT INTO volume_attachment (volume_id, vm_id, drive_id, attached_at)
+           VALUES ($1, $2, 'rootfs', now())
+           ON CONFLICT DO NOTHING"#,
+    )
+    .bind(handle.volume_id)
+    .bind(vm_id)
+    .execute(&st.db)
+    .await
+    .context("insert volume_attachment row")?;
+    let _ = disk_path; // path is informational; locator is canonical
+    Ok(())
+}
+
+#[cfg(test)]
+async fn persist_volume_attachment(
+    _st: &AppState,
+    _vm_id: Uuid,
+    _handle: &nexus_storage::VolumeHandle,
+    _disk_path: &str,
+) -> Result<()> {
     Ok(())
 }
 
@@ -367,6 +435,161 @@ async fn update_vmm_columns(db: &sqlx::PgPool, c: VmmColumns<'_>) -> Result<()> 
 #[cfg(test)]
 async fn update_vmm_columns(_db: &sqlx::PgPool, _c: VmmColumns<'_>) -> Result<()> {
     Ok(())
+}
+
+/// Resolve the rootfs disk path + format for a QEMU VM, plus an optional
+/// `VolumeHandle` if the disk lives on a storage backend rather than as a
+/// per-VM file. Three branches:
+///
+/// 1. **`backend_id` provided** — provision a volume on that backend
+///    (iSCSI, NFS, SPDK, TrueNAS, ...) and either populate it from the
+///    source image or leave it blank for an ISO install. Same code path
+///    Firecracker uses.
+/// 2. **`disk_image_id` provided alone** — create a qcow2 thin overlay
+///    over the read-only base image so per-VM writes don't corrupt the
+///    shared base. Faster than full copy; safe for concurrent VMs.
+/// 3. **`rootfs_path` provided alone** — trust the caller; use as-is.
+async fn resolve_qemu_disk(
+    st: &AppState,
+    vm_id: Uuid,
+    host: &crate::features::hosts::repo::HostRow,
+    backend_id: Option<Uuid>,
+    disk_image_id: Option<Uuid>,
+    rootfs_path: Option<&str>,
+    rootfs_size_mb: Option<u32>,
+) -> Result<(String, String, Option<nexus_storage::VolumeHandle>)> {
+    use crate::features::storage::rootfs_allocator::allocate_rootfs;
+
+    // Path 1: storage backend allocate + populate
+    if let Some(bid) = backend_id {
+        let Some(image_id) = disk_image_id else {
+            // Blank-disk allocation for ISO install. Use rootfs_size_mb (default 20 GiB).
+            let size_bytes = rootfs_size_mb.unwrap_or(20 * 1024) as u64 * 1024 * 1024;
+            let backend = st
+                .registry
+                .get(bid)
+                .ok_or_else(|| anyhow!("storage backend {bid} not found"))?;
+            let opts = nexus_storage::CreateOpts {
+                name: format!("vm-{vm_id}-rootfs"),
+                size_bytes,
+                description: Some(format!("blank disk for VM {vm_id}")),
+            };
+            let handle = backend
+                .provision(opts)
+                .await
+                .with_context(|| format!("provision blank disk on backend {bid}"))?;
+            // Activate (lvchange -aey for shared block, no-op for local_file).
+            backend
+                .activate_volume(&handle)
+                .await
+                .context("activate blank disk")?;
+            // Attach on the agent so we get the actual block device path.
+            let attached = crate::features::storage::agent_rpc::agent_attach(&host.addr, &handle)
+                .await
+                .context("agent attach blank disk")?;
+            let path = attached.path().to_string_lossy().into_owned();
+            return Ok((path, "raw".into(), Some(handle)));
+        };
+
+        // Backend + image: allocate_rootfs handles clone-from-image fast
+        // path or provision-then-populate slow path.
+        let img = st
+            .images
+            .get(image_id)
+            .await
+            .with_context(|| format!("image {image_id} lookup"))?;
+        let source_size = img.size.max(0) as u64;
+        let target_bytes = rootfs_size_mb
+            .map(|mb| mb as u64 * 1024 * 1024)
+            .unwrap_or_else(|| (source_size + 2 * 1024 * 1024 * 1024).max(source_size));
+        let outcome = allocate_rootfs(
+            &st.registry,
+            bid,
+            &host.addr,
+            std::path::Path::new(&img.host_path),
+            target_bytes,
+            &format!("vm-{vm_id}-rootfs"),
+        )
+        .await
+        .with_context(|| format!("allocate_rootfs on backend {bid}"))?;
+        // The volume now holds a copy of the image. Populate writes raw bytes,
+        // so format is raw.
+        let path = match outcome.attached_for_caller {
+            Some(a) => a.path().to_string_lossy().into_owned(),
+            None => {
+                // Fast path didn't return an AttachedPath; ask the agent.
+                let attached = crate::features::storage::agent_rpc::agent_attach(
+                    &host.addr,
+                    &outcome.volume_handle,
+                )
+                .await
+                .context("agent attach after fast-path clone")?;
+                attached.path().to_string_lossy().into_owned()
+            }
+        };
+        return Ok((path, "raw".into(), Some(outcome.volume_handle)));
+    }
+
+    // Path 2: image-only — qcow2 thin overlay
+    if let Some(image_id) = disk_image_id {
+        let img = st
+            .images
+            .get(image_id)
+            .await
+            .with_context(|| format!("image {image_id} lookup"))?;
+        let format = detect_disk_format(&img.host_path);
+        let overlay_path = create_qcow2_overlay(st, vm_id, &img.host_path, &format).await?;
+        Ok((overlay_path, "qcow2".into(), None))
+    } else if let Some(p) = rootfs_path {
+        // Path 3: legacy explicit path
+        let format = detect_disk_format(p);
+        Ok((p.to_string(), format, None))
+    } else {
+        bail!("qemu VM creation needs disk_image_id, backend_id, or rootfs_path");
+    }
+}
+
+/// Create a per-VM qcow2 overlay file backed by the source image so the
+/// base stays read-only and concurrent VMs don't trample each other. Only
+/// used when no storage backend is selected — backend-allocated disks
+/// already give each VM its own writable volume.
+async fn create_qcow2_overlay(
+    st: &AppState,
+    vm_id: Uuid,
+    source_path: &str,
+    source_format: &str,
+) -> Result<String> {
+    st.storage
+        .ensure_vm_dirs(vm_id)
+        .await
+        .context("ensure vm dirs")?;
+    let target_dir = st.storage.vm_dir(vm_id).join("storage");
+    tokio::fs::create_dir_all(&target_dir).await?;
+    let target = target_dir.join("disk.qcow2");
+    if tokio::fs::metadata(&target).await.is_ok() {
+        return Ok(target.display().to_string());
+    }
+    let out = tokio::process::Command::new("qemu-img")
+        .args([
+            "create",
+            "-f",
+            "qcow2",
+            "-F",
+            source_format,
+            "-b",
+            source_path,
+            &target.display().to_string(),
+        ])
+        .output()
+        .await
+        .context("spawn qemu-img create")?;
+    if !out.status.success() {
+        bail!(
+            "qemu-img create overlay failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(target.display().to_string())
 }
 
 /// Heuristic disk-format detection from the host path extension. Cloud

@@ -82,12 +82,30 @@ impl QemuDriver {
     /// `--property=KEY=VALUE` strings the kernel will enforce as a cgroup
     /// per the [`super::resource`] helpers — these are how QEMU and FC are
     /// kept from fighting for memory or CPU on a shared host.
+    ///
+    /// In dev environments without passwordless sudo, set `AGENT_NO_SUDO=1`
+    /// to skip the systemd-run wrapper and spawn QEMU directly. The
+    /// per-VM cgroup limits are forfeited but the rest of the pipeline
+    /// (QMP, console UDS, NICs, disks) works for end-to-end testing.
     async fn spawn_under_scope(
         &self,
         unit: &str,
         resource_props: &[String],
         args: &[String],
     ) -> Result<()> {
+        if std::env::var("AGENT_NO_SUDO").is_ok() {
+            tracing::warn!(
+                unit,
+                "AGENT_NO_SUDO=1 — spawning QEMU directly without systemd-run / cgroup limits (dev mode only)"
+            );
+            let _child = Command::new(self.qemu_bin())
+                .args(args)
+                .kill_on_drop(false)
+                .spawn()
+                .context("direct qemu spawn (AGENT_NO_SUDO)")?;
+            return Ok(());
+        }
+
         let mut cmd = Command::new("sudo");
         cmd.arg("-n")
             .arg("systemd-run")
@@ -257,15 +275,27 @@ impl QemuDriver {
             ));
         }
 
-        // NICs — TAP-backed virtio-net. The TAP device is pre-created by the
-        // agent's tap module and attached to the bridge before boot.
+        // NICs — TAP-backed virtio-net by default. The TAP device is
+        // pre-created by the agent's tap module and attached to the bridge
+        // before boot.
+        //
+        // Dev escape hatch: if `AGENT_USER_MODE_NET=1` or the NIC's host_dev
+        // is "user", use QEMU's slirp user-mode networking instead. This
+        // lets unprivileged dev hosts validate the spawn pipeline without
+        // needing sudo for TAP creation.
+        let user_mode_global = std::env::var("AGENT_USER_MODE_NET").is_ok();
         for (i, nic) in spec.nics.iter().enumerate() {
             let netdev_id = format!("net{i}");
+            let user_mode = user_mode_global || nic.host_dev == "user" || nic.host_dev.is_empty();
             args.push("-netdev".into());
-            args.push(format!(
-                "tap,id={},ifname={},script=no,downscript=no",
-                netdev_id, nic.host_dev
-            ));
+            if user_mode {
+                args.push(format!("user,id={netdev_id}"));
+            } else {
+                args.push(format!(
+                    "tap,id={},ifname={},script=no,downscript=no",
+                    netdev_id, nic.host_dev
+                ));
+            }
             args.push("-device".into());
             args.push(format!(
                 "virtio-net-pci,netdev={},mac={},id=nic{}",
@@ -433,8 +463,40 @@ impl VmmDriver for QemuDriver {
                 Ok(())
             }
             ShutdownMode::Hard => {
-                // Just stop the systemd scope; cgroup teardown kills the process.
+                // Stop the systemd scope; cgroup teardown kills the process.
                 let _ = crate::core::systemd::stop_unit(&handle.systemd_unit).await;
+                // Try QMP `quit` as the cleanest in-process exit.
+                if let Ok(mut qmp) = QmpClient::connect(&handle.api_sock).await {
+                    let _ = qmp.execute::<serde_json::Value>("quit", None).await;
+                }
+                // Fallback: kill the recorded PID directly. Catches direct-
+                // spawn dev mode (AGENT_NO_SUDO) and any case where systemd
+                // wasn't tracking the process.
+                if let Some(pid) = handle.pid {
+                    use std::os::unix::process::ExitStatusExt;
+                    let _ = tokio::process::Command::new("kill")
+                        .arg("-TERM")
+                        .arg(pid.to_string())
+                        .status()
+                        .await;
+                    // Brief wait then SIGKILL if still alive.
+                    for _ in 0..20 {
+                        if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                        let out = tokio::process::Command::new("kill")
+                            .arg("-KILL")
+                            .arg(pid.to_string())
+                            .status()
+                            .await;
+                        if let Ok(s) = out {
+                            let _ = s.into_raw();
+                        }
+                    }
+                }
                 Ok(())
             }
         }
