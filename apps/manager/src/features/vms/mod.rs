@@ -24,6 +24,7 @@ pub fn router() -> Router {
         .route("/:id/stop", post(routes::stop))
         .route("/:id/pause", post(routes::pause))
         .route("/:id/resume", post(routes::resume))
+        .route("/:id/install-complete", post(routes::install_complete))
         .route("/:id/flush-metrics", post(routes::flush_metrics))
         .route("/:id/ctrl-alt-del", post(routes::ctrl_alt_del))
         .route(

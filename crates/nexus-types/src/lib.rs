@@ -116,6 +116,11 @@ pub struct CreateVmReq {
     pub rootfs_size_mb: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_id: Option<uuid::Uuid>,
+    /// Additional networks to attach (QEMU multi-NIC). Each entry gets a
+    /// dedicated TAP + virtio-net-pci device in the guest. The first NIC
+    /// remains `network_id`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_network_ids: Vec<uuid::Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub port_forwards: Vec<CreatePortForwardReq>,
     /// Storage backend to use for rootfs/data-disk allocation. If None, the
@@ -186,6 +191,7 @@ impl TemplateSpec {
             tags: vec![],
             rootfs_size_mb: self.rootfs_size_mb,
             network_id: None,
+            extra_network_ids: vec![],
             port_forwards: vec![],
             backend_id: None,
             vmm_kind: None,

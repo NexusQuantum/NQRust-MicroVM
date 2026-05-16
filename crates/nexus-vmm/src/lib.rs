@@ -231,6 +231,24 @@ pub struct VmSpec {
     /// the serial UDS. Only honored by backends with `features.vnc_console`.
     #[serde(default)]
     pub enable_vnc: bool,
+    /// If true, attach a software TPM 2.0 (swtpm sidecar) to the guest.
+    /// Required for Windows 11. Other Windows versions + Linux ignore it.
+    #[serde(default)]
+    pub enable_tpm: bool,
+    /// virtio-balloon device (memory pressure cooperation). QEMU only.
+    #[serde(default)]
+    pub enable_balloon: bool,
+    /// virtio-rng device (entropy source). QEMU only.
+    #[serde(default)]
+    pub enable_rng: bool,
+    /// virtio-vsock device with the given context id. QEMU only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vsock_cid: Option<u32>,
+    /// VFIO PCI devices to pass through. Each entry is a host PCI BDF like
+    /// "0000:01:00.0". Operator is responsible for unbinding from host drivers
+    /// and IOMMU group isolation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vfio_devices: Vec<String>,
     /// Log file path (one combined stderr/stdout log for the VMM process).
     pub log_path: PathBuf,
     /// Run directory — agent-owned per-VM directory for sockets, NVRAM, etc.
@@ -562,7 +580,7 @@ mod tests {
         assert!(f.cdrom);
 
         let w = features(VmmKind::Qemu, GuestOs::Windows);
-        assert!(w.windows_guest);
+        assert!(w.windows_guest, "windows_guest should be enabled in 0.5.0");
         assert!(w.uefi_boot);
         assert!(!w.balloon, "qemu+windows excludes virtio-balloon by policy");
     }

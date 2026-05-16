@@ -89,6 +89,7 @@ pub async fn create_container_vm(
         tags: vec!["type:container".to_string()],
         rootfs_size_mb: None,
         network_id: None,
+        extra_network_ids: vec![],
         port_forwards: vec![],
         backend_id: None,
         // Containers are always Firecracker-backed Linux microVMs.

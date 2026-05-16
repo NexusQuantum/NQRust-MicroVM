@@ -98,6 +98,9 @@ pub async fn create_and_start_qemu(
     _audit_username: &str,
 ) -> Result<()> {
     let (vmm_kind, _guest_os, boot_mode, enable_vnc) = validate_and_resolve(&req)?;
+    // Resolved guest_os used by several later branches (TPM auto-enable,
+    // virtio-win auto-attach, cloud-init seeding).
+    let guest_os_resolved = req.guest_os.unwrap_or(_guest_os);
 
     // Pick a host that has qemu installed AND fits the resource ask.
     let host = pick_host(st, vmm_kind, req.vcpu as i32, req.mem_mib as i64)
@@ -157,6 +160,44 @@ pub async fn create_and_start_qemu(
         cdrom: false,
     });
 
+    // Cloud-init NoCloud seed disk for UEFI Linux guests. Generated when
+    // the request supplies username + password (or, in a future extension,
+    // ssh keys / network-config / arbitrary user-data) AND the guest_os
+    // is Linux. Attached as a small CD-ROM with vfat label CIDATA which
+    // first-boot cloud-init scans and consumes.
+    let cloud_init_enabled = matches!(guest_os_resolved, GuestOs::LinuxDisk | GuestOs::LinuxKernel)
+        && (req.username.is_some() || req.password.is_some());
+    if cloud_init_enabled {
+        match build_cloud_init_iso(
+            st,
+            id,
+            req.name.as_str(),
+            req.username.as_deref().unwrap_or("nexus"),
+            req.password.as_deref(),
+        )
+        .await
+        {
+            Ok(seed_path) => {
+                tracing::info!(vm_id=%id, path=%seed_path, "attached cloud-init seed ISO");
+                disks.push(DiskSpec {
+                    drive_id: "cloudinit".into(),
+                    source: seed_path.into(),
+                    read_only: true,
+                    root_device: false,
+                    format: Some("raw".into()),
+                    cdrom: true,
+                });
+            }
+            Err(e) => {
+                tracing::warn!(
+                    vm_id=%id,
+                    error=?e,
+                    "cloud-init seed generation skipped (install genisoimage/xorriso/mkisofs for first-boot credential injection)"
+                );
+            }
+        }
+    }
+
     // Optional installer ISO attached as CD-ROM.
     if let Some(iso_id) = req.installer_iso_id {
         let iso = st
@@ -174,14 +215,62 @@ pub async fn create_and_start_qemu(
         });
     }
 
-    // Single NIC for now (eth0). Mac is chosen by the agent / TAP layer; for
-    // QEMU we generate one here so the guest sees a stable address.
-    let mac = generate_mac(id);
-    let nics = vec![NicSpec {
+    // Windows guests need virtio-win drivers during Setup — without them
+    // the installer can't see the virtio-blk root disk or the virtio-net
+    // NIC. Auto-attach the most recent registered virtio-win ISO as a
+    // second CD-ROM. Operator uploads it once via the image registry with
+    // `image_kind = installer_iso` and a name containing "virtio-win".
+    if matches!(guest_os_resolved, GuestOs::Windows) {
+        if let Ok(virtio_win_path) = find_virtio_win_iso(st).await {
+            tracing::info!(vm_id=%id, path=%virtio_win_path, "auto-attached virtio-win drivers ISO");
+            disks.push(DiskSpec {
+                drive_id: "virtio-win".into(),
+                source: virtio_win_path.into(),
+                read_only: true,
+                root_device: false,
+                format: Some("raw".into()),
+                cdrom: true,
+            });
+        } else {
+            tracing::warn!(
+                vm_id=%id,
+                "guest_os=windows but no virtio-win ISO registered — Windows Setup will fail to see virtio devices. \
+                 Upload virtio-win.iso to the image registry with image_kind=installer_iso and a name containing 'virtio-win'."
+            );
+        }
+    }
+
+    // Build the NIC list. First NIC is the primary (the network selected by
+    // network_id / host bridge). Additional NICs come from extra_network_ids
+    // — each gets its own TAP + virtio-net-pci device.
+    let mut nics = vec![NicSpec {
         iface_id: "net0".into(),
         host_dev: tap_name.clone(),
-        mac,
+        mac: generate_mac(id),
     }];
+    for (i, extra_net_id) in req.extra_network_ids.iter().enumerate() {
+        let extra_bridge = match resolve_network_bridge(st, *extra_net_id).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(network_id=%extra_net_id, error=?e, "skipping extra NIC — network lookup failed");
+                continue;
+            }
+        };
+        // Use a per-extra-NIC TAP. Keep names short — ifname max len is 15.
+        let extra_tap = format!("xtp-{}-{i}", &id.to_string()[..6]);
+        if !test_mode {
+            if let Err(e) = create_tap(&host.addr, *extra_net_id, &extra_bridge).await {
+                tracing::warn!(network_id=%extra_net_id, error=?e, "skipping extra NIC — TAP creation failed");
+                continue;
+            }
+        }
+        let mac = generate_extra_mac(id, i as u8);
+        nics.push(NicSpec {
+            iface_id: format!("net{}", i + 1),
+            host_dev: if test_mode { "user".into() } else { extra_tap },
+            mac,
+        });
+    }
 
     // Reserve capacity *after* host selection and *before* boot. The
     // reservation is released on VM delete.
@@ -199,6 +288,13 @@ pub async fn create_and_start_qemu(
         );
     }
 
+    // Auto-enable paravirt device flags based on guest_os.
+    // - enable_tpm: required for Windows 11; harmless on other guests
+    //   (silently no-op'd by the agent when swtpm isn't installed).
+    // - enable_balloon: saves host memory; cooperative pressure.
+    // - enable_rng: every modern guest benefits from virtio-rng.
+    let auto_tpm = matches!(guest_os_resolved, GuestOs::Windows);
+
     // Call the agent's pluggable-vmm boot route.
     let body = json!({
         "vmm_kind": vmm_kind.as_str(),
@@ -208,6 +304,9 @@ pub async fn create_and_start_qemu(
         "disks": disks,
         "nics": nics,
         "enable_vnc": enable_vnc,
+        "enable_tpm": auto_tpm,
+        "enable_balloon": true,
+        "enable_rng": true,
     });
 
     let http = Client::builder()
@@ -242,10 +341,19 @@ pub async fn create_and_start_qemu(
     let handle: BootResp = resp.json().await.context("decode agent boot response")?;
 
     // Persist VM row. Use vmm_kind = 'qemu', store boot_mode as JSON.
+    // VMs created with an installer ISO enter the 'installing' state so the
+    // UI can distinguish "still going through Windows Setup" from
+    // "post-install running"; the user (or future shutdown detector) calls
+    // /v1/vms/:id/install-complete to detach the ISO and transition.
+    let initial_state = if req.installer_iso_id.is_some() {
+        "installing"
+    } else {
+        "running"
+    };
     let row = super::repo::VmRow {
         id,
         name: req.name.clone(),
-        state: "running".into(),
+        state: initial_state.into(),
         host_id: host.id,
         template_id,
         host_addr: host.addr.clone(),
@@ -592,6 +700,123 @@ async fn create_qcow2_overlay(
     Ok(target.display().to_string())
 }
 
+/// Build a NoCloud cloud-init seed ISO with a minimal user-data that sets
+/// the hostname + creates the user + sets the password. Returns the host
+/// path of the generated ISO. Auto-detects genisoimage / mkisofs / xorriso
+/// in that order; returns Err if none are installed.
+async fn build_cloud_init_iso(
+    st: &AppState,
+    vm_id: Uuid,
+    hostname: &str,
+    username: &str,
+    password: Option<&str>,
+) -> anyhow::Result<String> {
+    st.storage.ensure_vm_dirs(vm_id).await?;
+    let work_dir = st.storage.vm_dir(vm_id).join("cloud-init");
+    tokio::fs::create_dir_all(&work_dir).await?;
+
+    let meta_data = format!("instance-id: nqr-{vm_id}\nlocal-hostname: {hostname}\n");
+    let user_data = if let Some(pw) = password {
+        // chpasswd: expire=False makes the password usable immediately
+        // (cloud-init's default is to expire it on first login).
+        format!(
+            "#cloud-config\n\
+             hostname: {hostname}\n\
+             ssh_pwauth: true\n\
+             users:\n\
+             - name: {username}\n\
+             \x20\x20sudo: ALL=(ALL) NOPASSWD:ALL\n\
+             \x20\x20shell: /bin/bash\n\
+             \x20\x20lock_passwd: false\n\
+             chpasswd:\n\
+             \x20\x20expire: false\n\
+             \x20\x20list: |\n\
+             \x20\x20\x20\x20{username}:{pw}\n"
+        )
+    } else {
+        format!("#cloud-config\nhostname: {hostname}\nssh_pwauth: false\n")
+    };
+    let network_config = "version: 2\nethernets:\n  eth0:\n    dhcp4: true\n";
+
+    tokio::fs::write(work_dir.join("meta-data"), meta_data).await?;
+    tokio::fs::write(work_dir.join("user-data"), user_data).await?;
+    tokio::fs::write(work_dir.join("network-config"), network_config).await?;
+
+    let iso_path = st
+        .storage
+        .vm_dir(vm_id)
+        .join("storage")
+        .join("cloud-init.iso");
+    if let Some(parent) = iso_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    // Try genisoimage → mkisofs → xorriso, in that order.
+    for cmd in ["genisoimage", "mkisofs", "xorriso"] {
+        let mut args: Vec<String> = if cmd == "xorriso" {
+            vec![
+                "-as".into(),
+                "mkisofs".into(),
+                "-volid".into(),
+                "CIDATA".into(),
+                "-joliet".into(),
+                "-rock".into(),
+                "-output".into(),
+                iso_path.display().to_string(),
+                work_dir.join("meta-data").display().to_string(),
+                work_dir.join("user-data").display().to_string(),
+                work_dir.join("network-config").display().to_string(),
+            ]
+        } else {
+            vec![
+                "-output".into(),
+                iso_path.display().to_string(),
+                "-volid".into(),
+                "CIDATA".into(),
+                "-joliet".into(),
+                "-rock".into(),
+                work_dir.join("meta-data").display().to_string(),
+                work_dir.join("user-data").display().to_string(),
+                work_dir.join("network-config").display().to_string(),
+            ]
+        };
+        // Note: --quiet is genisoimage-specific; xorriso/mkisofs accept it too.
+        args.insert(0, "-quiet".into());
+        match tokio::process::Command::new(cmd).args(&args).output().await {
+            Ok(out) if out.status.success() => {
+                return Ok(iso_path.display().to_string());
+            }
+            Ok(out) => {
+                tracing::debug!(
+                    cmd,
+                    stderr = %String::from_utf8_lossy(&out.stderr),
+                    "cloud-init ISO command failed; trying next"
+                );
+                continue;
+            }
+            Err(_) => continue, // binary not installed
+        }
+    }
+    anyhow::bail!("no ISO9660 tool found (install genisoimage, mkisofs, or xorriso)")
+}
+
+/// Find the most-recently-registered virtio-win drivers ISO. Heuristic
+/// match on `name ILIKE '%virtio-win%' AND image_kind = 'installer_iso'`.
+/// Returns the host_path of the first match. Error when none registered.
+async fn find_virtio_win_iso(st: &AppState) -> anyhow::Result<String> {
+    let row: Option<(String,)> = sqlx::query_as(
+        r#"SELECT host_path FROM image
+            WHERE image_kind = 'installer_iso'
+              AND name ILIKE '%virtio-win%'
+            ORDER BY created_at DESC
+            LIMIT 1"#,
+    )
+    .fetch_optional(&st.db)
+    .await?;
+    row.map(|(p,)| p)
+        .ok_or_else(|| anyhow!("no virtio-win ISO registered"))
+}
+
 /// Heuristic disk-format detection from the host path extension. Cloud
 /// images typically ship as qcow2 (with `.img` or `.qcow2` suffix); plain
 /// `.raw`, `.ext4`, or no extension default to raw. Operators with custom
@@ -621,6 +846,26 @@ fn detect_disk_format(path: &str) -> String {
 fn generate_mac(id: Uuid) -> String {
     let b = id.as_bytes();
     format!("52:54:00:{:02x}:{:02x}:{:02x}", b[13], b[14], b[15])
+}
+
+/// MAC for extra NICs. XOR the index into the final byte so each NIC gets
+/// a unique MAC that's still deterministic per (vm_id, nic_index).
+fn generate_extra_mac(id: Uuid, nic_index: u8) -> String {
+    let b = id.as_bytes();
+    format!(
+        "52:54:00:{:02x}:{:02x}:{:02x}",
+        b[13],
+        b[14],
+        b[15] ^ (nic_index + 1)
+    )
+}
+
+/// Look up a network's bridge name. Used for multi-NIC extra-network attach.
+async fn resolve_network_bridge(st: &AppState, network_id: Uuid) -> anyhow::Result<String> {
+    use crate::features::networks::repo::NetworkRepository;
+    let repo = NetworkRepository::new(st.db.clone());
+    let net = repo.get(network_id).await?;
+    Ok(net.bridge_name)
 }
 
 #[cfg(test)]
@@ -699,6 +944,7 @@ mod tests {
             tags: vec![],
             rootfs_size_mb: None,
             network_id: None,
+            extra_network_ids: vec![],
             port_forwards: vec![],
             backend_id: None,
             vmm_kind: None,

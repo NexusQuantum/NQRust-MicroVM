@@ -682,6 +682,85 @@ pub async fn resume(
     Ok(Json(OkResponse::default()))
 }
 
+/// Mark an `installing` VM as install-complete:
+/// - Calls the agent to QMP-eject the installer CD-ROM (drive_id="installer")
+/// - Transitions vm.state from "installing" → "running"
+/// On a subsequent stop+start the VM will boot from the disk image without
+/// the installer ISO still attached.
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/install-complete",
+    params(VmPathParams),
+    responses(
+        (status = 200, description = "Install marked complete", body = OkResponse),
+        (status = 400, description = "VM is not in installing state"),
+        (status = 404, description = "VM not found"),
+        (status = 502, description = "Agent eject failed"),
+    ),
+    tag = "VMs"
+)]
+pub async fn install_complete(
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let vm = super::repo::get(&st.db, id).await.map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "VM not found".into(),
+                fault_message: None,
+            }),
+        )
+    })?;
+    // Only QEMU VMs in 'installing' state are valid targets.
+    let vmm_kind: String = sqlx::query_scalar(r#"SELECT vmm_kind FROM vm WHERE id = $1"#)
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or_else(|_| "firecracker".into());
+    if vmm_kind != "qemu" || vm.state != "installing" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "VM is not in installing state".into(),
+                fault_message: Some(format!("vmm_kind={vmm_kind} state={}", vm.state)),
+            }),
+        ));
+    }
+    let http = reqwest::Client::new();
+    let url = format!("{}/agent/v1/vmm/{}/cdrom/eject", vm.host_addr, vm.id);
+    let resp = http
+        .post(&url)
+        .json(&serde_json::json!({"vmm_kind": "qemu", "drive_id": "installer"}))
+        .send()
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: "agent eject failed".into(),
+                    fault_message: Some(err.to_string()),
+                }),
+            )
+        })?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: "agent eject returned non-2xx".into(),
+                fault_message: Some(format!("{status}: {body}")),
+            }),
+        ));
+    }
+    let _ = sqlx::query(r#"UPDATE vm SET state = 'running', updated_at = now() WHERE id = $1"#)
+        .bind(id)
+        .execute(&st.db)
+        .await;
+    Ok(Json(OkResponse::default()))
+}
+
 #[utoipa::path(
     delete,
     path = "/v1/vms/{id}",

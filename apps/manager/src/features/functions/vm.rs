@@ -87,6 +87,7 @@ pub async fn create_function_vm(
         tags: vec!["type:function".to_string()],
         rootfs_size_mb: None,
         network_id: None,
+        extra_network_ids: vec![],
         port_forwards: vec![],
         backend_id: None,
         // Functions are always Firecracker-backed Linux microVMs.
