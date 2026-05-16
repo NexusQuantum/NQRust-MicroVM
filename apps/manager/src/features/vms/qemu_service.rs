@@ -52,9 +52,17 @@ pub fn validate_and_resolve(req: &CreateVmReq) -> Result<(VmmKind, GuestOs, Boot
 
     let guest_os = req.guest_os.unwrap_or(GuestOs::LinuxDisk);
 
-    let boot_mode = match (&req.boot_mode, req.disk_image_id, &req.kernel_path) {
+    // Determine the boot mode. Precedence:
+    //   1. Caller-supplied `boot_mode` wins.
+    //   2. disk_image_id OR installer_iso_id → UEFI (modern cloud + classic
+    //      ISO install both expect UEFI on q35).
+    //   3. kernel_path → LinuxKernel (direct kernel boot).
+    //   4. None of the above → fail.
+    let has_install_target =
+        req.disk_image_id.is_some() || req.installer_iso_id.is_some() || req.backend_id.is_some();
+    let boot_mode = match (&req.boot_mode, has_install_target, &req.kernel_path) {
         (Some(mode), _, _) => mode.clone(),
-        (None, Some(_), _) => BootMode::Uefi {
+        (None, true, _) => BootMode::Uefi {
             firmware: req
                 .firmware_path
                 .clone()
@@ -67,12 +75,14 @@ pub fn validate_and_resolve(req: &CreateVmReq) -> Result<(VmmKind, GuestOs, Boot
                     .into(),
             ),
         },
-        (None, None, Some(path)) if !path.is_empty() => BootMode::LinuxKernel {
+        (None, false, Some(path)) if !path.is_empty() => BootMode::LinuxKernel {
             kernel: path.into(),
             initrd: None,
             cmdline: "console=ttyS0".into(),
         },
-        _ => bail!("qemu VM creation needs one of: boot_mode, disk_image_id, or kernel_path"),
+        _ => bail!(
+            "qemu VM creation needs one of: boot_mode, disk_image_id, installer_iso_id, backend_id, or kernel_path"
+        ),
     };
 
     let feats = nexus_vmm::features(vmm_kind, guest_os);
@@ -892,8 +902,47 @@ async fn resolve_qemu_disk(
         let format = detect_disk_format(p);
         Ok((p.to_string(), format, None))
     } else {
-        bail!("qemu VM creation needs disk_image_id, backend_id, or rootfs_path");
+        // Path 4: blank local qcow2. Used when the caller wants to install
+        // from an ISO onto a fresh disk and didn't pick a storage backend.
+        // Size comes from `rootfs_size_mb` (default 20 GiB). The qcow2
+        // is sparse so the file only grows as the guest writes — a 20 GB
+        // declaration takes a few MB on disk until the installer fills it.
+        let size_mb = rootfs_size_mb.unwrap_or(20 * 1024);
+        let blank = create_blank_qcow2(st, vm_id, size_mb).await?;
+        Ok((blank, "qcow2".into(), None))
     }
+}
+
+/// Create a fresh per-VM blank qcow2 disk for ISO install flows that don't
+/// route through a storage backend. Size is in MiB. The qcow2 metadata
+/// declares the full virtual size; physical bytes are allocated lazily as
+/// the guest writes (sparse).
+async fn create_blank_qcow2(st: &AppState, vm_id: Uuid, size_mb: u32) -> anyhow::Result<String> {
+    st.storage.ensure_vm_dirs(vm_id).await?;
+    let dir = st.storage.vm_dir(vm_id).join("storage");
+    tokio::fs::create_dir_all(&dir).await?;
+    let target = dir.join("disk.qcow2");
+    if tokio::fs::metadata(&target).await.is_ok() {
+        return Ok(target.display().to_string());
+    }
+    let out = tokio::process::Command::new("qemu-img")
+        .args([
+            "create",
+            "-f",
+            "qcow2",
+            &target.display().to_string(),
+            &format!("{size_mb}M"),
+        ])
+        .output()
+        .await
+        .context("spawn qemu-img create (blank)")?;
+    if !out.status.success() {
+        bail!(
+            "qemu-img create blank failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(target.display().to_string())
 }
 
 /// Create a per-VM qcow2 overlay file backed by the source image so the

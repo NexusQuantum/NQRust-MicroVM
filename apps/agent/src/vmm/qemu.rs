@@ -241,6 +241,12 @@ impl QemuDriver {
 
         // Disks. Each gets a virtio-blk-pci device, except `cdrom: true` which
         // attaches as readonly virtio-blk with the disk media type forced.
+        //
+        // Bootindex policy: if any disk is a CD-ROM, give it the lowest
+        // bootindex so the installer media boots before the root disk
+        // (which is blank on a fresh ISO install). Otherwise the root_device
+        // disk gets bootindex=0.
+        let any_cdrom = spec.disks.iter().any(|d| d.cdrom);
         for (i, disk) in spec.disks.iter().enumerate() {
             let drive_id = if disk.drive_id.is_empty() {
                 format!("drv{i}")
@@ -262,10 +268,16 @@ impl QemuDriver {
                 ro
             ));
             args.push("-device".into());
-            let bootindex = if disk.root_device {
+            let bootindex = if any_cdrom {
+                if disk.cdrom {
+                    ",bootindex=0".to_string()
+                } else if disk.root_device {
+                    ",bootindex=1".to_string()
+                } else {
+                    String::new()
+                }
+            } else if disk.root_device {
                 ",bootindex=0".to_string()
-            } else if disk.cdrom {
-                ",bootindex=1".to_string()
             } else {
                 String::new()
             };
