@@ -84,6 +84,9 @@ export default function RegistryPage() {
   }
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [uploadKind, setUploadKind] = useState<"docker" | "kernel" | "rootfs">("docker")
+  const [uploadImageKind, setUploadImageKind] = useState<
+    "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso" | undefined
+  >(undefined)
 
   // Split images by type
   // Note: Internal system images (container-runtime, node-runtime, python-runtime, etc.)
@@ -91,8 +94,12 @@ export default function RegistryPage() {
   const vmImages = useMemo(() => images.filter((img) => img.kind !== "docker"), [images])
   const dockerImages = useMemo(() => images.filter((img) => img.kind === "docker"), [images])
 
-  const openUploadDialog = (kind: "docker" | "kernel" | "rootfs") => {
+  const openUploadDialog = (
+    kind: "docker" | "kernel" | "rootfs",
+    imageKind?: "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso",
+  ) => {
     setUploadKind(kind)
+    setUploadImageKind(imageKind)
     setUploadDialogOpen(true)
   }
 
@@ -193,7 +200,15 @@ export default function RegistryPage() {
                 </Button>
                 <Button onClick={() => openUploadDialog("rootfs")} size="sm" variant="outline">
                   <Upload className="mr-2 h-4 w-4" />
-                  Upload Rootfs
+                  Upload Rootfs (FC)
+                </Button>
+                <Button onClick={() => openUploadDialog("rootfs", "uefi_disk")} size="sm" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload UEFI Disk Image
+                </Button>
+                <Button onClick={() => openUploadDialog("rootfs", "installer_iso")} size="sm" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload Installer ISO
                 </Button>
               </div>
             </CardHeader>
@@ -241,6 +256,7 @@ export default function RegistryPage() {
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
         defaultKind={uploadKind}
+        defaultImageKind={uploadImageKind}
       />
     </div>
   )

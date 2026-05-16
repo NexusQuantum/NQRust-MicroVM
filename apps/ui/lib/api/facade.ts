@@ -310,12 +310,23 @@ export class FacadeApi {
     return apiClient.get(`/images/dockerhub/download/progress/${encodedImageName}`);
   }
 
-  async uploadImage(file: File, kind: "docker" | "kernel" | "rootfs", name?: string, project?: string): Promise<CreateImageResp> {
+  async uploadImage(
+    file: File,
+    kind: "docker" | "kernel" | "rootfs",
+    name?: string,
+    project?: string,
+    /** Strict VMM discriminator (0.5.0+). Drives QEMU routing. */
+    imageKind?: "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso",
+    /** For uefi_disk: OVMF_VARS template path the agent copies per-VM. */
+    nvramTemplatePath?: string,
+  ): Promise<CreateImageResp> {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("kind", kind);
     if (name) formData.append("name", name);
     if (project) formData.append("project", project);
+    if (imageKind) formData.append("image_kind", imageKind);
+    if (nvramTemplatePath) formData.append("nvram_template_path", nvramTemplatePath);
 
     const response = await fetch(`${apiClient.baseURL}/images/upload`, {
       method: "POST",

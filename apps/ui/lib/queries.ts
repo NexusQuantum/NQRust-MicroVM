@@ -436,8 +436,25 @@ export function useDownloadDockerImage() {
 export function useUploadImage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (params: { file: File; kind: "docker" | "kernel" | "rootfs"; name?: string; project?: string }) =>
-      facadeApi.uploadImage(params.file, params.kind, params.name, params.project),
+    mutationFn: (params: {
+      file: File;
+      kind: "docker" | "kernel" | "rootfs";
+      name?: string;
+      project?: string;
+      /** Strict VMM-aware discriminator (0.5.0+). When set, the manager
+       *  writes this into image.image_kind for QEMU routing. */
+      image_kind?: "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso";
+      /** For uefi_disk only: OVMF_VARS template the agent copies per-VM. */
+      nvram_template_path?: string;
+    }) =>
+      facadeApi.uploadImage(
+        params.file,
+        params.kind,
+        params.name,
+        params.project,
+        params.image_kind,
+        params.nvram_template_path,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
     },

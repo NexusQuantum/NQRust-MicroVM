@@ -13,9 +13,16 @@ interface UploadImageDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultKind?: "docker" | "kernel" | "rootfs"
+  /** Optional initial value for the 0.5.0 strict `image_kind` selector. */
+  defaultImageKind?: "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso"
 }
 
-export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }: UploadImageDialogProps) {
+export function UploadImageDialog({
+  open,
+  onOpenChange,
+  defaultKind = "docker",
+  defaultImageKind,
+}: UploadImageDialogProps) {
   const uploadImage = useUploadImage()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -27,17 +34,28 @@ export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }
   // legacy `kind` column above is preserved for backwards compat.
   const [imageKind, setImageKind] = useState<
     "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso"
-  >("linux_kernel")
+  >(defaultImageKind ?? "linux_kernel")
   const [nvramTemplatePath, setNvramTemplatePath] = useState<string>(
     "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
   )
 
-  // Auto-suggest image_kind from the legacy kind selector so users don't
-  // have to set both. They can still override.
+  // Apply parent-supplied default whenever the dialog opens so the
+  // "Upload UEFI Disk Image" button on the registry page lands users in
+  // the right mode without further clicks.
   useEffect(() => {
+    if (open && defaultImageKind) {
+      setImageKind(defaultImageKind)
+    }
+  }, [open, defaultImageKind])
+
+  // Auto-suggest image_kind from the legacy kind selector so users don't
+  // have to set both. They can still override. Skipped when the dialog
+  // was opened with an explicit defaultImageKind from the parent.
+  useEffect(() => {
+    if (defaultImageKind) return
     if (kind === "kernel") setImageKind("linux_kernel")
     else if (kind === "rootfs") setImageKind("linux_disk")
-  }, [kind])
+  }, [kind, defaultImageKind])
 
   const resetForm = useCallback(() => {
     setSelectedFile(null)
@@ -85,7 +103,7 @@ export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }
         image_kind: imageKind,
         nvram_template_path:
           imageKind === "uefi_disk" ? nvramTemplatePath : undefined,
-      } as any,
+      },
       {
         onSuccess: () => {
           onOpenChange(false)
