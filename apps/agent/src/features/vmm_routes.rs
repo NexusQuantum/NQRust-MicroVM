@@ -80,6 +80,9 @@ pub struct BootRequest {
     pub vsock_cid: Option<u32>,
     #[serde(default)]
     pub vfio_devices: Vec<String>,
+    /// For target-side of live migration: spawn QEMU with `-incoming <uri>`.
+    #[serde(default)]
+    pub incoming_uri: Option<String>,
 }
 
 async fn boot(
@@ -108,6 +111,7 @@ async fn boot(
         enable_rng: req.enable_rng,
         vsock_cid: req.vsock_cid,
         vfio_devices: req.vfio_devices,
+        incoming_uri: req.incoming_uri,
         log_path: run_dir.join(id.to_string()).join("vmm.log"),
         run_dir,
     };
@@ -633,28 +637,75 @@ async fn qmp_handle(st: &AppState, id: Uuid) -> Result<nexus_vmm::VmmHandle, (St
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // wired-up in the migration-orchestration follow-up
 pub struct MigrateIncomingRequest {
+    pub vmm_kind: VmmKind,
     /// Listen on this TCP port for the inbound migration stream.
     pub listen_port: u16,
+    /// Full VmSpec for the target QEMU. Mirrors BootRequest so the target
+    /// can reconstruct the same machine config the source had.
+    pub vcpu: u32,
+    pub mem_mib: u32,
+    pub boot: BootMode,
+    #[serde(default)]
+    pub disks: Vec<nexus_vmm::DiskSpec>,
+    #[serde(default)]
+    pub nics: Vec<nexus_vmm::NicSpec>,
+    #[serde(default)]
+    pub enable_vnc: bool,
+    #[serde(default)]
+    pub enable_tpm: bool,
+    #[serde(default)]
+    pub enable_balloon: bool,
+    #[serde(default)]
+    pub enable_rng: bool,
+    #[serde(default)]
+    pub vsock_cid: Option<u32>,
+    #[serde(default)]
+    pub vfio_devices: Vec<String>,
 }
 
 /// Configure this agent's QEMU to start in "incoming" migration mode. The
-/// guest is paused until the source completes the migrate.
+/// guest is paused until the source completes the migrate; once the
+/// stream replays fully, QEMU transitions to running automatically.
 async fn migrate_incoming(
-    Extension(_st): Extension<AppState>,
-    Path(_id): Path<Uuid>,
-    Json(_req): Json<MigrateIncomingRequest>,
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<MigrateIncomingRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    // For 0.5.0 we accept the request but require the boot to be wired
-    // with -incoming externally. The full automation (boot with -incoming,
-    // wait for migration to complete, transition to running) is reserved
-    // for the migration-orchestration follow-up.
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        "live migration target setup is reserved for the v0.5.x migration-orchestration follow-up"
-            .into(),
-    ))
+    if req.vmm_kind != VmmKind::Qemu {
+        return Err((StatusCode::BAD_REQUEST, "migration is qemu-only".into()));
+    }
+    let driver = st
+        .vmm_registry
+        .get(req.vmm_kind)
+        .ok_or_else(|| (StatusCode::PRECONDITION_FAILED, "qemu not installed".into()))?;
+    let run_dir = PathBuf::from(&st.run_dir);
+    let spec = VmSpec {
+        id,
+        vcpu: req.vcpu,
+        mem_mib: req.mem_mib,
+        boot: req.boot,
+        disks: req.disks,
+        nics: req.nics,
+        enable_vnc: req.enable_vnc,
+        enable_tpm: req.enable_tpm,
+        enable_balloon: req.enable_balloon,
+        enable_rng: req.enable_rng,
+        vsock_cid: req.vsock_cid,
+        vfio_devices: req.vfio_devices,
+        incoming_uri: Some(format!("tcp:0.0.0.0:{}", req.listen_port)),
+        log_path: run_dir.join(id.to_string()).join("vmm.log"),
+        run_dir,
+    };
+    let handle = driver
+        .boot(&spec)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({
+        "ok": true,
+        "listen_port": req.listen_port,
+        "api_sock": handle.api_sock,
+    })))
 }
 
 #[derive(Debug, Deserialize)]

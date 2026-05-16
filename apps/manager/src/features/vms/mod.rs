@@ -27,6 +27,7 @@ pub fn router() -> Router {
         .route("/:id/install-complete", post(routes::install_complete))
         .route("/:id/migrate", post(routes::migrate))
         .route("/:id/reschedule", post(routes::reschedule))
+        .route("/:id/backup", post(routes::backup_vm))
         .route("/:id/flush-metrics", post(routes::flush_metrics))
         .route("/:id/ctrl-alt-del", post(routes::ctrl_alt_del))
         .route(

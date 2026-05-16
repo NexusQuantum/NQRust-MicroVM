@@ -249,6 +249,12 @@ pub struct VmSpec {
     /// and IOMMU group isolation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vfio_devices: Vec<String>,
+    /// When set, this VM boots in "incoming migration" mode: QEMU starts
+    /// paused, listening on the given URI (e.g. `tcp:0.0.0.0:54321`) for an
+    /// inbound `migrate` stream. Once the source completes, the guest
+    /// resumes automatically. Used for live migration target-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incoming_uri: Option<String>,
     /// Log file path (one combined stderr/stdout log for the VMM process).
     pub log_path: PathBuf,
     /// Run directory — agent-owned per-VM directory for sockets, NVRAM, etc.

@@ -101,6 +101,7 @@ pub async fn create_container_vm(
         installer_iso_id: None,
         firmware_path: None,
         nvram_template_path: None,
+        ssh_authorized_keys: vec![],
     };
 
     // Create and start VM

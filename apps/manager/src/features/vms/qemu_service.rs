@@ -170,20 +170,31 @@ pub async fn create_and_start_qemu(
         cdrom: false,
     });
 
-    // Cloud-init NoCloud seed disk for UEFI Linux guests. Generated when
-    // the request supplies username + password (or, in a future extension,
-    // ssh keys / network-config / arbitrary user-data) AND the guest_os
-    // is Linux. Attached as a small CD-ROM with vfat label CIDATA which
-    // first-boot cloud-init scans and consumes.
-    let cloud_init_enabled = matches!(guest_os_resolved, GuestOs::LinuxDisk | GuestOs::LinuxKernel)
-        && (req.username.is_some() || req.password.is_some());
+    // Cloud-init NoCloud seed disk. cloud-init handles Linux; cloudbase-init
+    // (https://github.com/cloudbase/cloudbase-init) reads the SAME NoCloud
+    // datasource on Windows guests that have it installed. So we ship the
+    // same seed ISO for both — only the user-data block shape changes.
+    //
+    // Triggered when the caller supplies username/password OR ssh keys.
+    let cloud_init_enabled = matches!(
+        guest_os_resolved,
+        GuestOs::LinuxDisk | GuestOs::LinuxKernel | GuestOs::Windows
+    ) && (req.username.is_some()
+        || req.password.is_some()
+        || !req.ssh_authorized_keys.is_empty());
     if cloud_init_enabled {
+        let default_user = match guest_os_resolved {
+            GuestOs::Windows => "Administrator",
+            _ => "nexus",
+        };
         match build_cloud_init_iso(
             st,
             id,
             req.name.as_str(),
-            req.username.as_deref().unwrap_or("nexus"),
+            req.username.as_deref().unwrap_or(default_user),
             req.password.as_deref(),
+            &req.ssh_authorized_keys,
+            guest_os_resolved,
         )
         .await
         {
@@ -615,12 +626,12 @@ pub async fn reschedule(st: &AppState, vm_id: Uuid, target_host_id: Uuid) -> Res
 /// won't migrate because the target host can't see the source's local
 /// qcow2 file.
 ///
-/// 0.5.0 caveat: the target-side `qemu -incoming tcp:0.0.0.0:port` setup
-/// requires manual orchestration on the target before this call. The
-/// agent's `/migrate/incoming` route currently returns 501; the full
-/// orchestration ships in a focused 0.5.x follow-up. This function is
-/// useful today for migrating to a target whose QEMU has been
-/// pre-launched in incoming mode (operator workflow).
+/// Full target-side automation: the manager POSTs `/migrate/incoming` on
+/// the target with the source VM's full spec, which makes the target
+/// agent spawn QEMU paused with `-incoming tcp:0.0.0.0:<port>`. Then the
+/// manager POSTs `/migrate/outgoing` on the source to drive the QMP
+/// `migrate`. When the stream finishes, the source QEMU exits and the
+/// target's paused QEMU transitions to running automatically.
 pub async fn live_migrate(
     st: &AppState,
     vm_id: Uuid,
@@ -653,21 +664,125 @@ pub async fn live_migrate(
     if !fit {
         bail!("target host {target_host_id} is at capacity");
     }
-    // Tell source to start the QMP migrate.
-    let target_uri = format!(
-        "tcp:{}:{}",
-        target_host
-            .addr
-            .trim_start_matches("http://")
-            .split(':')
-            .next()
-            .unwrap_or("127.0.0.1"),
-        target_port
-    );
+    // Step 1: tell the target to spawn a paused QEMU listening for the
+    // incoming migration stream. We re-derive the spec from the source
+    // VM's persisted boot_mode + the volume_attachment on shared storage.
+    let boot_mode_json: Option<serde_json::Value> =
+        sqlx::query_scalar(r#"SELECT boot_mode FROM vm WHERE id = $1"#)
+            .bind(vm_id)
+            .fetch_optional(&st.db)
+            .await
+            .context("load saved boot_mode")?
+            .flatten();
+    let Some(boot_mode_json) = boot_mode_json else {
+        let _ = host_repo
+            .release_reservation(target_host_id, vm.vcpu, vm.mem_mib as i64)
+            .await;
+        bail!("vm has no persisted boot_mode");
+    };
+    let boot_mode_target: BootMode =
+        serde_json::from_value(boot_mode_json).context("decode persisted boot_mode")?;
+
+    // The target needs to mount the same shared volume on its host.
+    let vol_row = sqlx::query_as::<_, (Uuid, Uuid, String)>(
+        r#"SELECT v.id, v.backend_id, v.path
+           FROM volume v
+           JOIN volume_attachment va ON va.volume_id = v.id
+           WHERE va.vm_id = $1 AND va.drive_id = 'rootfs'
+           ORDER BY va.attached_at DESC LIMIT 1"#,
+    )
+    .bind(vm_id)
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten();
+    let Some((volume_id, backend_id, locator)) = vol_row else {
+        let _ = host_repo
+            .release_reservation(target_host_id, vm.vcpu, vm.mem_mib as i64)
+            .await;
+        bail!(
+            "live migration requires shared-storage volume; this VM uses local overlay. \
+             Use snapshot+restore to a target host instead."
+        );
+    };
+    let backend = st
+        .registry
+        .get(backend_id)
+        .ok_or_else(|| anyhow!("backend {backend_id} not in registry"))?;
+    let handle_for_target = nexus_storage::VolumeHandle {
+        volume_id,
+        backend_id: nexus_storage::BackendInstanceId(backend_id),
+        backend_kind: backend.kind(),
+        locator,
+        size_bytes: 0,
+    };
+    backend
+        .activate_volume(&handle_for_target)
+        .await
+        .context("activate shared volume on target")?;
+    let target_attached =
+        crate::features::storage::agent_rpc::agent_attach(&target_host.addr, &handle_for_target)
+            .await
+            .context("attach shared volume on target")?;
+    let target_disk_path = target_attached.path().to_string_lossy().into_owned();
+
     let http = Client::builder()
         .timeout(Duration::from_secs(900)) // up to 15 min for big VMs
         .build()
         .context("build http client")?;
+    let incoming_body = json!({
+        "vmm_kind": "qemu",
+        "listen_port": target_port,
+        "vcpu": vm.vcpu,
+        "mem_mib": vm.mem_mib,
+        "boot": boot_mode_target,
+        "disks": [{
+            "drive_id": "rootfs",
+            "source": target_disk_path,
+            "read_only": false,
+            "root_device": true,
+            "format": "raw",
+            "cdrom": false,
+        }],
+        // Target NIC uses user-mode by default; bridge-aware NIC setup is
+        // a follow-up. For TAP-based VMs, operator pre-creates the TAP.
+        "nics": [{
+            "iface_id": "net0",
+            "host_dev": "user",
+            "mac": generate_mac(vm_id),
+        }],
+        "enable_balloon": true,
+        "enable_rng": true,
+    });
+    let target_resp = http
+        .post(format!(
+            "{}/agent/v1/vmm/{}/migrate/incoming",
+            target_host.addr, vm_id
+        ))
+        .json(&incoming_body)
+        .send()
+        .await
+        .context("agent migrate/incoming request")?;
+    if !target_resp.status().is_success() {
+        let _ = host_repo
+            .release_reservation(target_host_id, vm.vcpu, vm.mem_mib as i64)
+            .await;
+        let status = target_resp.status();
+        let body = target_resp.text().await.unwrap_or_default();
+        bail!("target agent returned {status} on migrate/incoming: {body}");
+    }
+    // Brief pause to let -incoming socket bind before the source connects.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Step 2: tell the source to drive the QMP migrate.
+    let target_host_ip = target_host
+        .addr
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split(':')
+        .next()
+        .unwrap_or("127.0.0.1");
+    let target_uri = format!("tcp:{target_host_ip}:{target_port}");
     let resp = http
         .post(format!(
             "{}/agent/v1/vmm/{}/migrate/outgoing",
@@ -988,42 +1103,28 @@ async fn create_qcow2_overlay(
     Ok(target.display().to_string())
 }
 
-/// Build a NoCloud cloud-init seed ISO with a minimal user-data that sets
-/// the hostname + creates the user + sets the password. Returns the host
-/// path of the generated ISO. Auto-detects genisoimage / mkisofs / xorriso
-/// in that order; returns Err if none are installed.
+/// Build a NoCloud cloud-init seed ISO with a user-data block that sets
+/// the hostname + creates the user + sets the password + injects SSH keys.
+/// Cloudbase-init reads the same NoCloud datasource on Windows guests,
+/// so we shape the user-data slightly differently when `guest_os=windows`
+/// but use the same ISO layout. Returns the host path of the generated
+/// ISO. Auto-detects genisoimage / mkisofs / xorriso in that order;
+/// returns Err if none are installed.
 async fn build_cloud_init_iso(
     st: &AppState,
     vm_id: Uuid,
     hostname: &str,
     username: &str,
     password: Option<&str>,
+    ssh_keys: &[String],
+    guest_os: GuestOs,
 ) -> anyhow::Result<String> {
     st.storage.ensure_vm_dirs(vm_id).await?;
     let work_dir = st.storage.vm_dir(vm_id).join("cloud-init");
     tokio::fs::create_dir_all(&work_dir).await?;
 
     let meta_data = format!("instance-id: nqr-{vm_id}\nlocal-hostname: {hostname}\n");
-    let user_data = if let Some(pw) = password {
-        // chpasswd: expire=False makes the password usable immediately
-        // (cloud-init's default is to expire it on first login).
-        format!(
-            "#cloud-config\n\
-             hostname: {hostname}\n\
-             ssh_pwauth: true\n\
-             users:\n\
-             - name: {username}\n\
-             \x20\x20sudo: ALL=(ALL) NOPASSWD:ALL\n\
-             \x20\x20shell: /bin/bash\n\
-             \x20\x20lock_passwd: false\n\
-             chpasswd:\n\
-             \x20\x20expire: false\n\
-             \x20\x20list: |\n\
-             \x20\x20\x20\x20{username}:{pw}\n"
-        )
-    } else {
-        format!("#cloud-config\nhostname: {hostname}\nssh_pwauth: false\n")
-    };
+    let user_data = build_cloud_init_user_data(hostname, username, password, ssh_keys, guest_os);
     let network_config = "version: 2\nethernets:\n  eth0:\n    dhcp4: true\n";
 
     tokio::fs::write(work_dir.join("meta-data"), meta_data).await?;
@@ -1103,6 +1204,79 @@ async fn find_virtio_win_iso(st: &AppState) -> anyhow::Result<String> {
     .await?;
     row.map(|(p,)| p)
         .ok_or_else(|| anyhow!("no virtio-win ISO registered"))
+}
+
+/// Build the cloud-init user-data string for a given guest_os. Linux uses
+/// the standard cloud-init shape; Windows uses cloudbase-init's accepted
+/// subset (users/passwd via plain_text_passwd, ssh keys via authorized_keys).
+fn build_cloud_init_user_data(
+    hostname: &str,
+    username: &str,
+    password: Option<&str>,
+    ssh_keys: &[String],
+    guest_os: GuestOs,
+) -> String {
+    let mut s = String::from("#cloud-config\n");
+    s.push_str(&format!("hostname: {hostname}\n"));
+
+    match guest_os {
+        GuestOs::Windows => {
+            // cloudbase-init understands a small subset of cloud-config.
+            // `users` works for creating local accounts; `set_hostname` is
+            // already covered by the top-level hostname.
+            if password.is_some() || !ssh_keys.is_empty() {
+                s.push_str("users:\n");
+                s.push_str(&format!("  - name: {username}\n"));
+                s.push_str("    primary_group: Administrators\n");
+                if let Some(pw) = password {
+                    s.push_str(&format!("    plain_text_passwd: \"{pw}\"\n"));
+                    s.push_str("    lock_passwd: false\n");
+                }
+                if !ssh_keys.is_empty() {
+                    s.push_str("    ssh_authorized_keys:\n");
+                    for key in ssh_keys {
+                        // YAML-safe: quote each key
+                        s.push_str(&format!("      - \"{}\"\n", yaml_escape(key)));
+                    }
+                }
+            }
+        }
+        _ => {
+            // Linux: standard cloud-init shape.
+            s.push_str("ssh_pwauth: ");
+            s.push_str(if password.is_some() {
+                "true\n"
+            } else {
+                "false\n"
+            });
+            s.push_str("users:\n");
+            s.push_str(&format!("  - name: {username}\n"));
+            s.push_str("    sudo: ALL=(ALL) NOPASSWD:ALL\n");
+            s.push_str("    shell: /bin/bash\n");
+            s.push_str("    lock_passwd: false\n");
+            if !ssh_keys.is_empty() {
+                s.push_str("    ssh_authorized_keys:\n");
+                for key in ssh_keys {
+                    s.push_str(&format!("      - \"{}\"\n", yaml_escape(key)));
+                }
+            }
+            if let Some(pw) = password {
+                s.push_str("chpasswd:\n");
+                s.push_str("  expire: false\n");
+                s.push_str("  list: |\n");
+                s.push_str(&format!("    {username}:{pw}\n"));
+            }
+        }
+    }
+
+    s
+}
+
+/// Conservative YAML escape: backslashes + double-quotes only. SSH keys
+/// don't normally contain either, but defensive in case the input has
+/// shell-escaped characters.
+fn yaml_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Heuristic disk-format detection from the host path extension. Cloud
@@ -1243,6 +1417,7 @@ mod tests {
             installer_iso_id: None,
             firmware_path: None,
             nvram_template_path: None,
+            ssh_authorized_keys: vec![],
         }
     }
 }

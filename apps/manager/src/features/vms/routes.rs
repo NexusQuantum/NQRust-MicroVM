@@ -779,6 +779,160 @@ pub async fn resume(
     Ok(Json(OkResponse::default()))
 }
 
+/// Back up a VM. For VMs whose rootfs lives on a registered storage volume
+/// (the production path), delegates to the existing volume-backup pipeline
+/// which handles chunked-encrypted upload via nexus-backup. For QEMU VMs
+/// using a local qcow2 overlay (no storage backend), drives the agent's
+/// /backup/disk primitive to write the qcow2 to a backup target directory.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct BackupVmRequest {
+    /// Backup target UUID (for volume-backed VMs — uses the existing
+    /// nexus-backup chunked upload pipeline). Required when the VM has a
+    /// volume_attachment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<Uuid>,
+    /// Destination path on the agent host (for overlay-backed QEMU VMs).
+    /// Should live on a network-mounted backup share. Required when the VM
+    /// has no volume_attachment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_path: Option<String>,
+    /// `qcow2` or `raw`. Defaults to qcow2 for a compact backup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    /// Pass `-c` to qemu-img for compressed backup output.
+    #[serde(default)]
+    pub compress: bool,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/backup",
+    params(VmPathParams),
+    request_body = BackupVmRequest,
+    responses(
+        (status = 200, description = "Backup created", body = OkResponse),
+        (status = 400, description = "Invalid request"),
+        (status = 502, description = "Agent reported failure"),
+    ),
+    tag = "VMs"
+)]
+pub async fn backup_vm(
+    Extension(st): Extension<AppState>,
+    Path(VmPathParams { id }): Path<VmPathParams>,
+    Json(req): Json<BackupVmRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let vm = super::repo::get(&st.db, id).await.map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "VM not found".into(),
+                fault_message: None,
+            }),
+        )
+    })?;
+    // Find the rootfs volume_attachment, if any.
+    let vol_id: Option<Uuid> = sqlx::query_scalar(
+        r#"SELECT volume_id FROM volume_attachment
+             WHERE vm_id = $1 AND drive_id = 'rootfs'
+             ORDER BY attached_at DESC LIMIT 1"#,
+    )
+    .bind(id)
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten();
+
+    // Path A: volume-backed → use existing chunked-encrypted backup pipeline.
+    if let (Some(volume_id), Some(target_id)) = (vol_id, req.target_id) {
+        let backup_id = crate::features::backups::service::create_backup(&st, volume_id, target_id)
+            .await
+            .map_err(|err| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "volume backup failed".into(),
+                        fault_message: Some(err.to_string()),
+                    }),
+                )
+            })?;
+        return Ok(Json(serde_json::json!({
+            "ok": true,
+            "mode": "volume-backup",
+            "backup_id": backup_id,
+            "volume_id": volume_id,
+        })));
+    }
+
+    // Path B: local overlay → ask the agent to qemu-img convert to the
+    // backup destination. Caller is responsible for the destination path
+    // being on a backup-safe filesystem (network share, etc.).
+    let destination = req.destination_path.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "destination_path required for overlay-backed VMs".into(),
+                fault_message: Some(
+                    "VM has no volume_attachment; provide destination_path on a backup-target filesystem"
+                        .into(),
+                ),
+            }),
+        )
+    })?;
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1800)) // up to 30 min for large disks
+        .build()
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "http client".into(),
+                    fault_message: Some(err.to_string()),
+                }),
+            )
+        })?;
+    let resp = http
+        .post(format!(
+            "{}/agent/v1/vmm/{}/backup/disk",
+            vm.host_addr, vm.id
+        ))
+        .json(&serde_json::json!({
+            "vmm_kind": "qemu",
+            "source": vm.rootfs_path,
+            "destination": destination,
+            "format": req.format.clone().unwrap_or_else(|| "qcow2".into()),
+            "compress": req.compress,
+        }))
+        .send()
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: "agent backup request failed".into(),
+                    fault_message: Some(err.to_string()),
+                }),
+            )
+        })?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: "agent backup returned non-2xx".into(),
+                fault_message: Some(format!("{status}: {body}")),
+            }),
+        ));
+    }
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "mode": "overlay-backup",
+        "destination": destination,
+        "size_bytes": body.get("size_bytes"),
+    })))
+}
+
 /// Reschedule a QEMU VM onto a different host (HA / host-death recovery).
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct RescheduleRequest {

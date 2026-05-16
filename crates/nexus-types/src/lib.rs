@@ -157,6 +157,11 @@ pub struct CreateVmReq {
     /// Optional override of the OVMF VARS template path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nvram_template_path: Option<String>,
+    /// SSH authorized_keys entries to inject into the guest via cloud-init.
+    /// Each string is one full key line (`ssh-ed25519 AAA... comment`). Works
+    /// for Linux (cloud-init) and Windows (cloudbase-init + OpenSSH).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssh_authorized_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -202,6 +207,7 @@ impl TemplateSpec {
             installer_iso_id: None,
             firmware_path: None,
             nvram_template_path: None,
+            ssh_authorized_keys: vec![],
         }
     }
 }

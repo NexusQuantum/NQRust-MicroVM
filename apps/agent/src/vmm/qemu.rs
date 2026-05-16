@@ -361,6 +361,14 @@ impl QemuDriver {
             args.push("tpm-crb,tpmdev=tpm0".into()); // CRB works for both x86 and arm64
         }
 
+        // Live-migration target-side: start QEMU paused, listening for an
+        // inbound migrate stream on this URI. Once the source completes the
+        // QMP `migrate` to us, the guest resumes automatically.
+        if let Some(uri) = &spec.incoming_uri {
+            args.push("-incoming".into());
+            args.push(uri.clone());
+        }
+
         // Combined log file (stderr/stdout from QEMU itself).
         args.push("-D".into());
         args.push(self.log_file(vm_dir).display().to_string());
@@ -845,6 +853,7 @@ mod tests {
             enable_rng: false,
             vsock_cid: None,
             vfio_devices: vec![],
+            incoming_uri: None,
             log_path: PathBuf::from("/tmp/qemu.log"),
             run_dir: PathBuf::from("/srv/fc"),
         }
