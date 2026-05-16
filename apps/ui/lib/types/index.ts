@@ -99,6 +99,8 @@ export interface CreateVmReq {
   network_id?: string;
   port_forwards?: CreatePortForwardReq[];
   backend_id?: string;
+  /** Tags for the VM (informational filters, RBAC scoping, etc). */
+  tags?: string[];
   // ---- Pluggable VMM fields (0.5.0). Optional for back-compat. ----
   /** Backend to run on. "firecracker" or "qemu". Omit for auto-select. */
   vmm_kind?: VmmKind;
