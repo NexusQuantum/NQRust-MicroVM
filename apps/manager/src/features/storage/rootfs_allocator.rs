@@ -17,8 +17,15 @@ pub struct AllocOutcome {
 }
 
 /// Allocate a rootfs by:
-///   1. If backend supports clone_from_image → call it. `attached_for_caller`
-///      will be `None`.
+///   1. If backend supports clone_from_image → call it. The clone copies the
+///      source image and extends the backing file to `target_size_bytes`, but
+///      the ext4 superblock inside still reports the source-image size — so
+///      if the image is an ext4 rootfs and the caller asked for more space,
+///      attach the new volume and run `resize2fs` to grow the filesystem
+///      into the extra room. `attached_for_caller` is `Some(...)` whenever
+///      the attach succeeded (which lets the caller skip a second attach
+///      round-trip for VM start), and `None` only when no resize was needed
+///      *and* no attach was performed.
 ///   2. Otherwise (slow path) → provision empty volume, agent-attach it,
 ///      agent-populate it from `source_image`, optionally run `resize2fs` if
 ///      the image is an ext4 rootfs. `attached_for_caller` will be
@@ -46,9 +53,52 @@ pub async fn allocate_rootfs(
             .clone_from_image(source_image, opts)
             .await
             .with_context(|| format!("clone_from_image failed on backend {backend_id}"))?;
+
+        // Bug fix: clone_from_image extends the backing file/LV to the
+        // requested size, but the ext4 filesystem inside still has the
+        // source image's block count. Without resize2fs the guest only
+        // sees the original ~rootfs-image MB regardless of what the user
+        // typed in the wizard. Mirror the slow path: attach, then run
+        // resize2fs on ext4 rootfs sources when the caller asked for
+        // extra room.
+        let source_size = tokio::fs::metadata(source_image)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let needs_grow = target_size_bytes > source_size
+            && image_is_ext4_rootfs(source_image).await.unwrap_or(false);
+
+        let attached_for_caller = if needs_grow {
+            match crate::features::storage::agent_rpc::agent_attach(host_addr, &h).await {
+                Ok(attached) => {
+                    if let Err(e) = crate::features::storage::agent_rpc::agent_resize2fs(
+                        host_addr,
+                        h.backend_kind,
+                        &attached,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "resize2fs after clone_from_image failed (non-fatal): {e:#}"
+                        );
+                    }
+                    Some(attached)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "agent_attach after clone_from_image failed; \
+                         guest filesystem will not be grown to requested size: {e:#}"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         return Ok(AllocOutcome {
             volume_handle: h,
-            attached_for_caller: None,
+            attached_for_caller,
         });
     }
 
@@ -469,6 +519,193 @@ mod tests {
             destroy_count.load(Ordering::SeqCst),
             1,
             "backend.destroy() must be called once during cleanup"
+        );
+    }
+
+    /// Synthetic clone-capable backend used to exercise the fast-path
+    /// resize2fs call without touching real storage.
+    struct CloneCapableBackend {
+        clone_returns: nexus_storage::VolumeHandle,
+    }
+
+    #[async_trait::async_trait]
+    impl nexus_storage::ControlPlaneBackend for CloneCapableBackend {
+        fn kind(&self) -> nexus_storage::BackendKind {
+            nexus_storage::BackendKind::LocalFile
+        }
+        fn capabilities(&self) -> nexus_storage::Capabilities {
+            nexus_storage::Capabilities {
+                supports_clone_from_image: true,
+                ..Default::default()
+            }
+        }
+        async fn provision(
+            &self,
+            _opts: nexus_storage::CreateOpts,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported(
+                "provision".into(),
+            ))
+        }
+        async fn destroy(
+            &self,
+            _h: nexus_storage::VolumeHandle,
+        ) -> Result<(), nexus_storage::StorageError> {
+            Ok(())
+        }
+        async fn clone_from_image(
+            &self,
+            _src: &std::path::Path,
+            _opts: nexus_storage::CreateOpts,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Ok(self.clone_returns.clone())
+        }
+        async fn snapshot(
+            &self,
+            _v: &nexus_storage::VolumeHandle,
+            _name: &str,
+        ) -> Result<nexus_storage::VolumeSnapshotHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported("snapshot".into()))
+        }
+        async fn clone_from_snapshot(
+            &self,
+            _s: &nexus_storage::VolumeSnapshotHandle,
+        ) -> Result<nexus_storage::VolumeHandle, nexus_storage::StorageError> {
+            Err(nexus_storage::StorageError::NotSupported(
+                "clone_from_snapshot".into(),
+            ))
+        }
+        async fn delete_snapshot(
+            &self,
+            _s: nexus_storage::VolumeSnapshotHandle,
+        ) -> Result<(), nexus_storage::StorageError> {
+            Ok(())
+        }
+    }
+
+    /// Regression test for the "rootfs stuck at source-image size" bug:
+    /// the fast path must call `agent_resize2fs` after `clone_from_image`
+    /// whenever the source is an ext4 rootfs and the caller asked for
+    /// more bytes than the source has. Without this the wizard's
+    /// rootfs-size input is silently clamped to the source image's
+    /// filesystem size inside the guest.
+    #[tokio::test]
+    async fn fast_path_runs_resize2fs_when_growing_ext4_rootfs() {
+        let mut server = mockito::Server::new_async().await;
+
+        let attach_mock = server
+            .mock("POST", "/v1/storage/attach")
+            .with_status(200)
+            .with_body(
+                r#"{"attached":{"kind":"File","path":"/srv/fc/vms/test/storage/rootfs.ext4"}}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let resize_mock = server
+            .mock("POST", "/v1/storage/resize2fs")
+            .with_status(200)
+            .with_body(r#"{}"#)
+            .expect(1) // must be called exactly once after the clone
+            .create_async()
+            .await;
+
+        let backend_id = uuid::Uuid::new_v4();
+        let clone_returns = nexus_storage::VolumeHandle {
+            volume_id: uuid::Uuid::new_v4(),
+            backend_id: nexus_storage::BackendInstanceId(backend_id),
+            backend_kind: nexus_storage::BackendKind::LocalFile,
+            locator: "/srv/fc/vms/test/storage/rootfs.ext4".into(),
+            size_bytes: 5 * 1024 * 1024,
+        };
+        let backend: Arc<dyn nexus_storage::ControlPlaneBackend> =
+            Arc::new(CloneCapableBackend { clone_returns });
+        let registry = Registry::test_only_with_backend(backend_id, backend);
+
+        // Build a small ext4-magic source image (1 MiB) and ask for 5 MiB.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("rootfs.ext4");
+        let mut buf = vec![0u8; 1024 * 1024];
+        buf[1080] = 0x53;
+        buf[1081] = 0xEF;
+        std::fs::write(&src, &buf).unwrap();
+
+        let out = allocate_rootfs(
+            &registry,
+            backend_id,
+            &server.url(),
+            &src,
+            5 * 1024 * 1024,
+            "test",
+        )
+        .await
+        .expect("fast path should succeed");
+
+        attach_mock.assert_async().await;
+        resize_mock.assert_async().await;
+        assert!(
+            out.attached_for_caller.is_some(),
+            "fast path with grow must return attached_for_caller so the caller skips a re-attach"
+        );
+    }
+
+    /// When the source equals the requested size, the fast path must NOT
+    /// pay for an attach/resize round-trip — that would be wasted work
+    /// and would surprise callers that key off `attached_for_caller`.
+    #[tokio::test]
+    async fn fast_path_skips_resize2fs_when_size_unchanged() {
+        let mut server = mockito::Server::new_async().await;
+
+        let attach_mock = server
+            .mock("POST", "/v1/storage/attach")
+            .with_status(200)
+            .with_body(r#"{"attached":{"kind":"File","path":"/x"}}"#)
+            .expect(0)
+            .create_async()
+            .await;
+        let resize_mock = server
+            .mock("POST", "/v1/storage/resize2fs")
+            .with_status(200)
+            .with_body(r#"{}"#)
+            .expect(0)
+            .create_async()
+            .await;
+
+        let backend_id = uuid::Uuid::new_v4();
+        let clone_returns = nexus_storage::VolumeHandle {
+            volume_id: uuid::Uuid::new_v4(),
+            backend_id: nexus_storage::BackendInstanceId(backend_id),
+            backend_kind: nexus_storage::BackendKind::LocalFile,
+            locator: "/x".into(),
+            size_bytes: 1024 * 1024,
+        };
+        let backend: Arc<dyn nexus_storage::ControlPlaneBackend> =
+            Arc::new(CloneCapableBackend { clone_returns });
+        let registry = Registry::test_only_with_backend(backend_id, backend);
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("rootfs.ext4");
+        let mut buf = vec![0u8; 1024 * 1024];
+        buf[1080] = 0x53;
+        buf[1081] = 0xEF;
+        std::fs::write(&src, &buf).unwrap();
+
+        let out = allocate_rootfs(
+            &registry,
+            backend_id,
+            &server.url(),
+            &src,
+            1024 * 1024, // same as source
+            "test",
+        )
+        .await
+        .expect("fast path should succeed");
+
+        attach_mock.assert_async().await;
+        resize_mock.assert_async().await;
+        assert!(
+            out.attached_for_caller.is_none(),
+            "no resize needed → no attach → attached_for_caller must be None"
         );
     }
 }

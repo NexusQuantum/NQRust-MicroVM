@@ -1548,8 +1548,10 @@ async fn provision_rootfs(
     // Task 12b: For slow-path backends (e.g. iSCSI), the locator is a JSON blob
     // (IQN+LUN), not a real path.  Use the attached block-device path that the
     // agent already prepared so Firecracker receives a real /dev/... path.
-    // For the fast path (LocalFile clone_from_image), attached_for_caller is None
-    // and the locator is already a valid file path — fall back to it.
+    // For the fast path (LocalFile clone_from_image with no ext4 grow), attached_for_caller
+    // is None and the locator is already a valid file path — fall back to it. When the
+    // fast path grew the ext4 filesystem (rootfs_size_mb > source size), the allocator
+    // attached the volume so resize2fs could run, and we reuse that attachment here.
     //
     // NOTE: data disks allocated via `allocate_data_disk` go through `provision`
     // only and do not yet have an agent-attach step, so iSCSI data disks are

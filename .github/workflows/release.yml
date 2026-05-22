@@ -211,14 +211,19 @@ jobs:
   build-images:
     name: Build Base Images
     needs: [ci-gate, build-binaries]
-    # Skip image-build by default. Kernel + rootfs artifacts only change
-    # rarely; the install bootstrap + auto-update path pull them from the
-    # last release that did carry them (currently v0.2.3). Set the
-    # `BUILD_IMAGES` repo variable to `true` (Settings → Variables) on
-    # releases that genuinely change the kernel build, an Alpine version
-    # bump, etc. — then this job runs the full debootstrap/mkfs.ext4
-    # toolchain, which requires passwordless sudo on the runner.
-    if: ${{ vars.BUILD_IMAGES == 'true' }}
+    # Build images on every stable tag (vX.Y.Z) so the GitHub release
+    # carries the kernel + rootfs assets the general installer downloads
+    # via scripts/install/install.sh → nqr-installer → download_base_images.
+    # Skip on prereleases (alpha/beta/rc) since those are short-lived and
+    # operators are expected to install from a prior stable release. The
+    # `BUILD_IMAGES=true` repo variable forces a build for those tags
+    # when the kernel / rootfs / runtime sources actually changed.
+    #
+    # The earlier "skip by default" rule (commit history) assumed the
+    # installer would fall back to a previous release's assets — it
+    # never did, so v0.4.0 / v0.4.1 shipped without base images and the
+    # general installer silently produced an empty /srv/images.
+    if: ${{ vars.BUILD_IMAGES == 'true' || !contains(github.ref_name, '-') }}
     runs-on: self-hosted
     # This job builds VM images (kernels, rootfs, runtimes)
     # Requires: KVM access, ~10GB disk space, internet for downloads
