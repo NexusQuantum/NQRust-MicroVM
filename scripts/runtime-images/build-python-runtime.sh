@@ -93,6 +93,10 @@ cat > rootfs/tmp/setup.sh << 'SETUP_SCRIPT'
 #!/bin/sh
 set -e
 
+# chroot inherits the caller's PATH, which on some host distros (Arch)
+# omits /sbin and /usr/sbin where apk and most rootfs tooling live.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Update package index
 echo "Updating package index..."
 apk update || {
@@ -174,7 +178,7 @@ chmod +x rootfs/etc/init.d/runtime-server
 
 # Enable runtime server to start on boot
 print_step "Enabling runtime server..."
-chroot rootfs rc-update add runtime-server default
+chroot rootfs /sbin/rc-update add runtime-server default
 
 # Configure networking (DHCP)
 print_step "Configuring networking..."

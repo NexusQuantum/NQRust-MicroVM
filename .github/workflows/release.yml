@@ -336,7 +336,7 @@ jobs:
           echo 'nameserver 8.8.8.8' | sudo tee /mnt/alpine/etc/resolv.conf > /dev/null
 
           # Set root password (password: root)
-          sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd'
+          sudo chroot /mnt/alpine /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; echo "root:root" | chpasswd'
 
           # Create inittab for OpenRC (matches working dev image exactly)
           printf '%s\n' \
@@ -363,7 +363,7 @@ jobs:
             | sudo tee /mnt/alpine/etc/network/interfaces > /dev/null
 
           # Enable networking service in default runlevel
-          sudo chroot /mnt/alpine rc-update add networking default 2>/dev/null || \
+          sudo chroot /mnt/alpine /sbin/rc-update add networking default 2>/dev/null || \
             sudo ln -sf /etc/init.d/networking /mnt/alpine/etc/runlevels/default/networking
 
           # Create udhcpc default script
@@ -442,7 +442,7 @@ jobs:
           echo 'nameserver 8.8.8.8' | sudo tee /mnt/busybox/etc/resolv.conf > /dev/null
 
           # Set root password (password: root)
-          sudo chroot /mnt/busybox sh -c 'echo "root:root" | chpasswd'
+          sudo chroot /mnt/busybox /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; echo "root:root" | chpasswd'
 
           # Create inittab for OpenRC (matches working dev image exactly)
           printf '%s\n' \
@@ -469,7 +469,7 @@ jobs:
             | sudo tee /mnt/busybox/etc/network/interfaces > /dev/null
 
           # Enable networking service in default runlevel
-          sudo chroot /mnt/busybox rc-update add networking default 2>/dev/null || \
+          sudo chroot /mnt/busybox /sbin/rc-update add networking default 2>/dev/null || \
             sudo ln -sf /etc/init.d/networking /mnt/busybox/etc/runlevels/default/networking
 
           # Create udhcpc default script (matches working image)
@@ -531,10 +531,10 @@ jobs:
           sudo tar -xJf /tmp/ubuntu-rootfs.tar.xz -C /mnt/ubuntu
 
           # Set root password
-          sudo chroot /mnt/ubuntu sh -c 'echo "root:root" | chpasswd'
+          sudo chroot /mnt/ubuntu /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; echo "root:root" | chpasswd'
 
           # Enable serial console
-          sudo chroot /mnt/ubuntu systemctl enable serial-getty@ttyS0.service || true
+          sudo chroot /mnt/ubuntu /usr/bin/systemctl enable serial-getty@ttyS0.service || true
 
           # Set default TERM for serial console
           sudo mkdir -p /mnt/ubuntu/etc/profile.d
@@ -606,7 +606,11 @@ jobs:
           cat > rootfs/tmp/setup.sh << 'SETUP_SCRIPT'
           #!/bin/sh
           set -e
-          
+
+          # chroot inherits the caller's PATH, which on some host distros (Arch)
+          # omits /sbin and /usr/sbin where apk and most rootfs tooling live.
+          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
           # Update package index
           apk update
           
