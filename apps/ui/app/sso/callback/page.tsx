@@ -1,10 +1,20 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+export const dynamic = "force-dynamic"
+
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuthStore } from "@/lib/auth/store"
 
 export default function SsoCallbackPage() {
+  return (
+    <Suspense fallback={null}>
+      <SsoCallbackPageInner />
+    </Suspense>
+  )
+}
+
+function SsoCallbackPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { setAuth } = useAuthStore()

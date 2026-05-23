@@ -1,0 +1,10 @@
+# Things Vercel doesn't need from the apps/ui directory
+node_modules
+.next
+.turbo
+out
+dist
+*.log
+
+# Heavy assets we don't ship to demo
+content/api/overrides
