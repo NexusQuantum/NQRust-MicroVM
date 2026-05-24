@@ -28,7 +28,7 @@ other = "/ Cloud Platform"
 
 # ---------- hero ----------
 [hero-badge-tag]
-other = "Firecracker-powered platform · Now in private beta"
+other = "Firecracker-powered platform"
 
 [hero-h1-pre]
 other = "The self-hosted cloud"
