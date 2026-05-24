@@ -1,0 +1,187 @@
+/* ============================================================
+   NQRust Design System — Foundations
+   Source of truth for color + typography variables.
+   Extracted from NQRust-MicroVM/apps/ui/app/globals.css
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ----- Brand ----- */
+  --nq-orange: #ff5001;          /* Primary brand orange — logo, primary buttons, active nav */
+  --nq-orange-hover: #e64600;    /* hover state for primary actions */
+  --nq-orange-50:  #fff5ee;
+  --nq-orange-100: #ffe5d3;
+  --nq-orange-200: #ffc8a3;
+  --nq-orange-300: #ffa770;
+  --nq-orange-400: #ff7d3a;
+  --nq-orange-500: #ff5001;      /* same as --nq-orange */
+  --nq-orange-600: #e64600;
+  --nq-orange-700: #b83800;
+  --nq-orange-800: #8a2a00;
+  --nq-orange-900: #5c1c00;
+
+  /* Logo gradient — light → dark orange used in the NQ mark */
+  --nq-logo-grad-from: #ff9970;
+  --nq-logo-grad-to:   #8b2e0a;
+
+  /* ----- Neutrals (light theme) ----- */
+  --nq-bg:           #ffffff;     /* page background */
+  --nq-bg-muted:     #f7f7f7;     /* muted blocks, code chips */
+  --nq-bg-card:      #ffffff;     /* cards */
+  --nq-bg-sidebar:   #fafafa;     /* sidebar surface (~oklch 0.985) */
+  --nq-border:       #e7e9ee;     /* default border */
+  --nq-input:        #e7e9ee;
+  --nq-ring:         #9aa0a6;
+
+  /* On orange (light) the FG is the brand color itself — distinctive! */
+  --nq-fg-strong:    var(--nq-orange);  /* heading + body color in light mode */
+  --nq-fg:           var(--nq-orange);
+  --nq-fg-muted:     #6b7280;     /* muted-foreground oklch(0.556 0 0) */
+  --nq-fg-on-primary:#fcfcfd;     /* text on orange surfaces */
+  --nq-fg-secondary: var(--nq-orange);
+
+  /* ----- Status (semantic) — emerald/red/amber/blue/slate/cyan ----- */
+  --nq-status-running-bg:     #d1fae5;  --nq-status-running-fg:     #047857;  --nq-status-running-border: #a7f3d0;
+  --nq-status-stopped-bg:     #fee2e2;  --nq-status-stopped-fg:     #dc2626;  --nq-status-stopped-border: #fecaca;
+  --nq-status-paused-bg:      #fef3c7;  --nq-status-paused-fg:      #b45309;  --nq-status-paused-border:  #fde68a;
+  --nq-status-idle-bg:        #f1f5f9;  --nq-status-idle-fg:        #475569;  --nq-status-idle-border:    #e2e8f0;
+  --nq-status-executing-bg:   #dbeafe;  --nq-status-executing-fg:   #1d4ed8;  --nq-status-executing-border: #bfdbfe;
+  --nq-status-error-bg:       #fee2e2;  --nq-status-error-fg:       #b91c1c;  --nq-status-error-border:   #fecaca;
+  --nq-status-success-bg:     #d1fae5;  --nq-status-success-fg:     #047857;  --nq-status-success-border: #a7f3d0;
+  --nq-status-creating-bg:    #fef9c3;  --nq-status-creating-fg:    #a16207;  --nq-status-creating-border:#fef08a;
+  --nq-status-initializing-bg:#cffafe;  --nq-status-initializing-fg:#0e7490;  --nq-status-initializing-border:#a5f3fc;
+
+  /* Resource-type accents (used in dashboard stat tiles) */
+  --nq-accent-vm:        #2563eb;     --nq-accent-vm-soft:        rgba(59,130,246,0.10);
+  --nq-accent-function:  #ca8a04;     --nq-accent-function-soft:  rgba(234,179,8,0.10);
+  --nq-accent-container: #9333ea;     --nq-accent-container-soft: rgba(168,85,247,0.10);
+  --nq-accent-host:      #16a34a;     --nq-accent-host-soft:      rgba(34,197,94,0.10);
+
+  /* Hero gradient — soft yellow wash used behind page headers (yellow-50 → yellow-100/50) */
+  --nq-hero-from: #fefce8;
+  --nq-hero-to:   rgba(254, 249, 195, 0.5);
+  --nq-hero-glow: linear-gradient(135deg, rgba(250,204,21,0.30), rgba(202,138,4,0.30));
+
+  /* ----- Typography ----- */
+  --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* NQRust uses Montserrat for everything by design, including monospace fallback */
+  --font-display: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+
+  /* ----- Spacing / Radius / Shadow ----- */
+  --nq-radius:    0.5rem;            /* 8px — shadcn base */
+  --nq-radius-sm: 0.25rem;
+  --nq-radius-md: 0.375rem;
+  --nq-radius-lg: 0.5rem;
+  --nq-radius-xl: 0.75rem;
+  --nq-radius-pill: 9999px;
+
+  /* shadcn-style subtle shadows (x y blur spread color@opacity) */
+  --nq-shadow-xs: 0 1px 1px 0 rgba(0,0,0,0.05);
+  --nq-shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.06);
+  --nq-shadow-md: 0 2px 6px -1px rgba(0,0,0,0.08);
+  --nq-shadow-lg: 0 8px 24px -8px rgba(0,0,0,0.12);
+  --nq-shadow-xl: 0 16px 40px -12px rgba(0,0,0,0.16);
+
+  /* ----- Layout constants ----- */
+  --nq-sidebar-w:          16rem;   /* 256px expanded */
+  --nq-sidebar-w-collapsed: 4.5rem; /* 72px collapsed */
+  --nq-topbar-h:           4rem;    /* 64px */
+}
+
+/* ============================================================
+   Dark theme — applied via .dark on <html>
+   ============================================================ */
+.dark {
+  --nq-bg:         #251a14;         /* oklch(0.145 0 0) tinted warm */
+  --nq-bg-muted:   #2a2a2a;
+  --nq-bg-card:    #1d1410;
+  --nq-bg-sidebar: #1d1410;
+  --nq-border:     #3a2a20;
+  --nq-input:      #343434;
+  --nq-ring:       #777777;
+
+  --nq-fg:         #f6f6f6;
+  --nq-fg-strong:  #ffffff;
+  --nq-fg-muted:   #b4b4b4;
+  --nq-fg-on-primary: #ffffff;
+  --nq-fg-secondary: #f6f6f6;
+
+  --nq-hero-from: rgba(120, 53, 15, 0.30);
+  --nq-hero-to:   rgba(133, 77, 14, 0.20);
+
+  --nq-shadow-xs: 0 1px 2px 0 rgba(0,0,0,0.30);
+  --nq-shadow-sm: 0 1px 3px 0 rgba(0,0,0,0.40);
+  --nq-shadow-md: 0 4px 10px -2px rgba(0,0,0,0.50);
+  --nq-shadow-lg: 0 10px 32px -10px rgba(0,0,0,0.60);
+}
+
+/* ============================================================
+   Base / element-level helpers
+   ============================================================ */
+
+html, body {
+  font-family: var(--font-sans);
+  background: var(--nq-bg);
+  color: var(--nq-fg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Semantic type scale — mirrors the way the codebase uses Tailwind
+   (text-3xl/font-bold page headers; text-2xl card titles; text-sm body). */
+.nq-h1, h1.nq {
+  font-size: 1.875rem;     /* 30px */
+  line-height: 2.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--nq-fg-strong);
+}
+.nq-h2, h2.nq {
+  font-size: 1.5rem;        /* 24px */
+  line-height: 2rem;
+  font-weight: 700;
+  color: var(--nq-fg-strong);
+}
+.nq-h3, h3.nq {
+  font-size: 1.25rem;       /* 20px */
+  line-height: 1.75rem;
+  font-weight: 600;
+  color: var(--nq-fg-strong);
+}
+.nq-card-title {
+  font-size: 0.875rem;      /* card titles in stat tiles */
+  font-weight: 500;
+  color: var(--nq-fg-strong);
+}
+.nq-stat {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--nq-fg-strong);
+}
+.nq-body {
+  font-size: 0.875rem;      /* 14px — the default UI text size */
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--nq-fg);
+}
+.nq-muted {
+  color: var(--nq-fg-muted);
+  font-size: 0.875rem;
+}
+.nq-eyebrow {
+  font-size: 0.625rem;      /* 10px — sidebar section labels */
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nq-fg-muted);
+}
+.nq-code, code.nq {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background: var(--nq-bg-muted);
+  padding: 2px 6px;
+  border-radius: var(--nq-radius-md);
+  color: var(--nq-fg-strong);
+}

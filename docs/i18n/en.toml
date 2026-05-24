@@ -1,0 +1,513 @@
+# Landing page strings — English
+# Convention: keys are kebab-case, grouped by section prefix.
+
+# ---------- meta ----------
+[site-title-suffix]
+other = "Self-hosted cloud platform, powered by Rust"
+
+[site-meta-desc]
+other = "Modern Firecracker microVM orchestration platform"
+
+# ---------- nav ----------
+[nav-platform]
+other = "Platform"
+[nav-product]
+other = "Product"
+[nav-architecture]
+other = "Architecture"
+[nav-pricing]
+other = "Pricing"
+[nav-faq]
+other = "FAQ"
+[nav-docs]
+other = "Docs"
+[nav-contact-sales]
+other = "Contact sales"
+[nav-product-sub]
+other = "/ Cloud Platform"
+
+# ---------- hero ----------
+[hero-badge-tag]
+other = "Firecracker-powered platform · Now in private beta"
+
+[hero-h1-pre]
+other = "The self-hosted cloud"
+[hero-h1-em]
+other = "infrastructure"
+[hero-h1-post]
+other = "your <em>infrastructure</em> deserves."
+
+[hero-sub]
+other = "NQRust-MicroVM is a Rust-powered platform for running Firecracker microVMs, isolated Docker containers, and serverless functions — on your own hardware, from a single operator dashboard."
+
+[hero-cta-primary]
+other = "Demo"
+[hero-cta-outline]
+other = "Explore docs"
+
+[hero-meta-1-k]
+other = "Hardware isolation"
+[hero-meta-1-v]
+other = "Every workload runs inside its own KVM microVM."
+[hero-meta-2-k]
+other = "One operator surface"
+[hero-meta-2-v]
+other = "VMs, containers, functions, registry, storage."
+[hero-meta-3-k]
+other = "Stays on your hardware"
+[hero-meta-3-v]
+other = "No tenant. No outbound calls. No vendor lock."
+
+[hero-mini-title]
+other = "Virtual Machines"
+[hero-mini-sub]
+other = "42 running · 3 paused"
+[hero-mini-create]
+other = "Create VM"
+[hero-mini-tile-vms]
+other = "Total VMs"
+[hero-mini-tile-fns]
+other = "Functions"
+[hero-mini-tile-cts]
+other = "Containers"
+[hero-mini-tile-hosts]
+other = "Hosts"
+
+[hero-float-cluster]
+other = "Cluster status"
+[hero-float-cluster-v]
+other = "42 VMs healthy"
+[hero-float-snap]
+other = "Snapshot complete"
+[hero-float-snap-body]
+other = '<code class="inline-code">web-prod-04</code> restored to <b>v2.3.1</b>'
+
+# ---------- tagline strip ----------
+[tag-quote]
+other = "Nexus Quantum Technologies delivers a vertically integrated, Rust-powered cloud platform built for the Agentic AI era."
+[tag-attr]
+other = " — Nexus Quantum Rust"
+[tag-meta-1]
+other = "<b>Rust 1.85+</b> · <b>Next.js 15</b>"
+[tag-meta-2]
+other = "Self-hosted"
+[tag-meta-3]
+other = "Commercial license"
+
+# ---------- features (bento) ----------
+[feat-eyebrow]
+other = "Platform Capabilities"
+[feat-title-pre]
+other = "One operator console."
+[feat-title-em]
+other = "Every workload."
+[feat-sub]
+other = "VMs, containers, and serverless functions — managed from a single Next.js dashboard, backed by three lightweight Rust services. Built for platform engineers who would rather own their stack than rent it."
+
+[feat-vm-h]
+other = "Firecracker microVMs"
+[feat-vm-p]
+other = "Isolated Linux VMs with their own kernel, rootfs, CPU and memory limits. Templates and full snapshots make re-deployment a single click."
+
+[feat-ct-h]
+other = "Docker — inside a VM"
+[feat-ct-p]
+other = "Run any Docker workload with full API compatibility, with a Firecracker kernel underneath every container. Container escape is structurally impossible."
+[feat-ct-cmd-comment]
+other = "# pull and run, hardware-isolated"
+[feat-ct-cmd-ok]
+other = "✓ vm-c8a2f0 booted · container nginx-prod attached"
+
+[feat-fn-h]
+other = "Serverless functions"
+[feat-fn-p]
+other = "Node.js, Python, Ruby. Monaco editor, live execution logs, an interactive playground."
+
+[feat-term-h]
+other = "Web terminal — no SSH client needed"
+[feat-term-p]
+other = "Full xterm.js shell streamed over WebSocket. Tab into any VM straight from the browser."
+[feat-term-l1]
+other = "● nginx.service — A high performance web server"
+[feat-term-l2]
+other = "   Loaded: loaded (/lib/systemd/system/nginx.service; enabled)"
+[feat-term-l3]
+other = "   Active: <span class=\"ok\">active (running)</span> since Thu 2026-05-22 09:14:02 UTC"
+
+[feat-snap-h]
+other = "Snapshots & templates"
+[feat-snap-p]
+other = "Full and differential snapshots with instant restore. Save any VM as a re-deployable template."
+
+[feat-reg-h]
+other = "Image registry"
+[feat-reg-p]
+other = "Kernels, rootfs, and Docker images — import from URL, local path, or DockerHub."
+
+[feat-net-h]
+other = "Flexible networking"
+[feat-net-p]
+other = "NAT, isolated, bridged, and VXLAN overlay tunnels. Port-forward in two clicks."
+[feat-net-nat]
+other = "Default — internet via host"
+[feat-net-bridged]
+other = "VMs live on your LAN"
+[feat-net-vxlan]
+other = "Multi-host overlay"
+
+[feat-metrics-h]
+other = "Live metrics, straight from the guest"
+[feat-metrics-p]
+other = "A tiny guest agent auto-deployed inside every VM reports CPU, memory, network and disk over WebSocket. Watch your fleet breathe in real time."
+
+[feat-rbac-h]
+other = "Role-based access control"
+[feat-rbac-p]
+other = "Admin, User, Viewer roles with per-resource ownership and per-user preferences. Hand out the dashboard without handing out root."
+
+[feat-storage-h]
+other = "Pluggable storage"
+[feat-storage-p]
+other = "Mix local file, NFS, SMB, iSCSI+LVM, TrueNAS REST, and SPDK vhost-user. Add or remove backends from the UI without restarting the manager."
+
+# ---------- showcase ----------
+[show-eyebrow]
+other = "Operator Dashboard"
+[show-title]
+other = "One dashboard for your entire fleet."
+[show-sub]
+other = "Every operation in the API is in the UI. VMs, containers, functions, registry, networking, storage backends, hosts, users — all here, all real-time."
+
+[show-side-main]
+other = "MAIN"
+[show-side-host]
+other = "HOST"
+[show-side-dash]
+other = "Dashboard"
+[show-side-vms]
+other = "Virtual Machines"
+[show-side-cts]
+other = "Containers"
+[show-side-fns]
+other = "Functions"
+[show-side-reg]
+other = "Image Registry"
+[show-side-snap]
+other = "Snapshots"
+[show-side-hosts]
+other = "Hosts"
+[show-side-net]
+other = "Networking"
+[show-side-storage]
+other = "Storage"
+[show-side-users]
+other = "Users"
+[show-side-settings]
+other = "Settings"
+
+[show-search-ph]
+other = "Search VMs, functions, images…"
+
+[show-fd-hero-h]
+other = "Virtual Machines"
+[show-fd-hero-p]
+other = "Provision, monitor, and snapshot Firecracker microVMs across your hosts."
+[show-fd-cta-primary]
+other = "Create VM"
+[show-fd-cta-secondary]
+other = "Quick create"
+
+[show-fd-stat-vms]
+other = "Total VMs"
+[show-fd-stat-vms-sub]
+other = "↑ 6 this week"
+[show-fd-stat-running]
+other = "Running"
+[show-fd-stat-running-sub]
+other = "90.5% uptime"
+[show-fd-stat-cpu]
+other = "vCPU allocated"
+[show-fd-stat-cpu-sub]
+other = "of 256 available"
+[show-fd-stat-storage]
+other = "Storage used"
+[show-fd-stat-storage-sub]
+other = "across 3 backends"
+
+[show-fd-th-name]
+other = "Name"
+[show-fd-th-status]
+other = "Status"
+[show-fd-th-cpu]
+other = "CPU"
+[show-fd-th-mem]
+other = "Memory"
+[show-fd-th-ip]
+other = "IP"
+[show-fd-status-running]
+other = "Running"
+[show-fd-status-paused]
+other = "Paused"
+[show-fd-tag-prefix]
+other = "tag:"
+
+# ---------- architecture ----------
+[arch-eyebrow]
+other = "Architecture"
+[arch-title-pre]
+other = "Four lightweight pieces."
+[arch-title-em]
+other = "Nothing else."
+[arch-sub]
+other = "Three Rust services and a Next.js frontend coordinate everything. No Kubernetes control plane. No external scheduler. No mystery sidecars."
+
+[arch-comp-ui-n]
+other = "Web UI"
+[arch-comp-ui-d]
+other = "Next.js 15 / React 19 dashboard — terminal, metrics, full management"
+[arch-comp-mgr-n]
+other = "Manager"
+[arch-comp-mgr-d]
+other = "Central Rust API — VM lifecycle, registry, networking, RBAC"
+[arch-comp-host-n]
+other = "Host Agent"
+[arch-comp-host-d]
+other = "Runs on each KVM host, drives Firecracker via Unix sockets"
+[arch-comp-guest-n]
+other = "Guest Agent"
+[arch-comp-guest-d]
+other = "Tiny static binary auto-deployed inside every VM, reports metrics + IP"
+
+# ---------- storage ----------
+[stor-eyebrow]
+other = "Pluggable Storage"
+[stor-title-pre]
+other = "Bring"
+[stor-title-em]
+other = "any backend."
+[stor-title-post]
+other = "Swap them live."
+[stor-sub]
+other = "Mix local file, NFS auto-mount, SMB/CIFS, vendor-agnostic iSCSI+LVM, TrueNAS, or SPDK vhost-user. Add or remove backends from the UI — no manager restart."
+
+[stor-card-local-h]
+other = "Local file"
+[stor-card-local-p]
+other = "Files under /srv/fc/vms/. Zero dependencies — single-host and dev."
+[stor-card-nfs-h]
+other = "NFS"
+[stor-card-nfs-p]
+other = "Manager delegates mount.nfs to the agent. One file per VM under the share."
+[stor-card-smb-h]
+other = "SMB / CIFS"
+[stor-card-smb-p]
+other = "Mount any Windows file server or NAS share via the agent."
+[stor-card-iscsilvm-h]
+other = "iSCSI + LVM"
+[stor-card-iscsilvm-p]
+other = "One LUN per target → LVM VG → per-VM lvcreate. Vendor-agnostic."
+[stor-card-truenas-h]
+other = "TrueNAS"
+[stor-card-truenas-p]
+other = "REST creates per-VM zvol + extent + target. ZFS snapshots, thin provisioning."
+[stor-card-spdk-h]
+other = "SPDK vhost-user"
+[stor-card-spdk-p]
+other = "NVMe direct, high-throughput single-host. Future clustering primitive."
+[stor-card-iscsi-h]
+other = "iSCSI (passthrough)"
+[stor-card-iscsi-p]
+other = "Pre-cut LUN, one VM per LUN. Legacy passthrough."
+[stor-card-more-h]
+other = "More on the roadmap"
+[stor-card-more-p]
+other = "Ceph RBD and S3-backed block are next. Tell us what you need."
+
+# ---------- use cases ----------
+[uc-eyebrow]
+other = "Built For"
+[uc-title-pre]
+other = "When containers"
+[uc-title-em]
+other = "aren't isolated enough."
+[uc-sub]
+other = "Three flavors of team consistently choose microVMs over plain containers — usually because their workload model demands a kernel boundary."
+
+[uc-1-h]
+other = "Untrusted code execution"
+[uc-1-p]
+other = "Run customer code, sandboxed builds, or LLM-generated programs inside a VM that can't reach the host."
+[uc-1-i1]
+other = "Per-job VM, snapshot-restore in seconds"
+[uc-1-i2]
+other = "Network policy per workload"
+[uc-1-i3]
+other = "Resource caps that actually hold"
+
+[uc-2-h]
+other = "Agentic AI workloads"
+[uc-2-p]
+other = "Give an LLM agent a real Linux machine — a shell, a filesystem, a network — without giving it your host."
+[uc-2-i1]
+other = "Spin up disposable environments"
+[uc-2-i2]
+other = "Full Docker API for tool use"
+[uc-2-i3]
+other = "Browser terminal for human-in-the-loop"
+
+[uc-3-h]
+other = "On-prem multi-tenant platforms"
+[uc-3-p]
+other = "Hand internal teams self-service VMs with strict isolation, RBAC, and pluggable storage that maps to your existing SAN."
+[uc-3-i1]
+other = "Admin / User / Viewer roles"
+[uc-3-i2]
+other = "Per-resource ownership"
+[uc-3-i3]
+other = "Bring your own iSCSI / TrueNAS"
+
+# ---------- pricing ----------
+[price-eyebrow]
+other = "Pricing"
+[price-title-pre]
+other = "Commercial licensing,"
+[price-title-em]
+other = "tailored to your fleet."
+[price-sub]
+other = "NQRust-MicroVM is a commercial product. Pricing depends on host count, supported storage backends, and your support requirements — tell us about your fleet and we'll send a tailored quote."
+
+[price-b1]
+other = "Self-hosted on your own KVM hardware — nothing leaves your network"
+[price-b2]
+other = "Every platform capability — VMs, containers, functions, registry"
+[price-b3]
+other = "All storage backends, multi-host clustering, RBAC"
+[price-b4]
+other = "Onboarding, named support, airgapped install on request"
+
+[price-cta]
+other = "Request a quote"
+[price-foot-chip]
+other = "Quotes returned within 48 hours"
+[price-foot-note]
+other = "NDA + technical evaluation available on request"
+
+[price-card-tag]
+other = "Commercial license"
+[price-card-amount]
+other = "Contact us"
+[price-card-amount-sub]
+other = "Per-host annual license · volume tiers available"
+[price-card-includes]
+other = "What's included"
+[price-card-i1]
+other = "Unlimited VMs, containers, and functions per host"
+[price-card-i2]
+other = "Every storage backend, including iSCSI + LVM and TrueNAS"
+[price-card-i3]
+other = "VXLAN multi-host clustering & port forwarding"
+[price-card-i4]
+other = "SSO via SAML / OIDC, RBAC, audit logs"
+[price-card-i5]
+other = "Guided onboarding and migration assistance"
+[price-card-i6]
+other = "Production support with response-time SLAs"
+[price-card-cta]
+other = "Contact sales"
+
+# ---------- FAQ ----------
+[faq-eyebrow]
+other = "FAQ"
+[faq-title]
+other = "Questions, asked."
+
+[faq-q1]
+other = "How is this different from running plain Docker?"
+[faq-a1]
+other = "Docker shares a kernel between containers. NQRust-MicroVM runs each workload (whether a VM or a Docker container) inside its own Firecracker microVM with its own kernel, CPU, and memory boundary. Container-escape style attacks are structurally impossible, and noisy-neighbor effects largely disappear."
+
+[faq-q2]
+other = "Do we need to know Rust to operate it?"
+[faq-a2]
+other = "No. The Manager, Agent, and Guest Agent are written in Rust because it lets us ship a small, fast, statically-linked binary — but operators interact with the Next.js dashboard and the REST API. You can run the entire platform without touching the source."
+
+[faq-q3]
+other = "What hardware does it require?"
+[faq-a3]
+other = "Any x86_64 Linux box with KVM (Intel VT-x or AMD-V), 4 GB RAM minimum, 20 GB free disk. Ubuntu 22.04 / 24.04 LTS and Debian 11 are the supported distros today. Multi-host clusters add agents to a shared manager."
+
+[faq-q4]
+other = "How does the install work?"
+[faq-a4]
+other = "We ship a single Rust TUI installer (nqr-installer) that walks through KVM checks, networking, PostgreSQL, and systemd services. There's a one-command online flow and a fully-airgapped flow for sites without internet egress."
+
+[faq-q5]
+other = "Can we use our existing iSCSI / TrueNAS / SAN?"
+[faq-a5]
+other = "Yes. The storage layer is pluggable — add a backend from the UI without restarting the manager. Local file, NFS, SMB, iSCSI+LVM, and TrueNAS REST are visible by default; SPDK vhost-user and generic iSCSI passthrough sit behind an advanced disclosure."
+
+[faq-q6]
+other = "What about uptime, SLAs, and support?"
+[faq-a6]
+other = "Support tiers and SLAs are scoped during onboarding based on your fleet size and workload criticality. Every commercial license includes a dedicated Slack channel and a response-time SLA — we're happy to share our internal runbooks and example incident postmortems on request."
+
+[faq-q7]
+other = "Do you support airgapped installs?"
+[faq-a7]
+other = "Yes — the Rust TUI installer ships an offline mode that takes a single transferable binary and provisions everything (KVM, networking, PostgreSQL, systemd) without outbound internet access. Suitable for regulated environments and sites without egress."
+
+# ---------- CTA ----------
+[cta-h]
+other = "Ready to host your own cloud?"
+[cta-p]
+other = "Tell us about your fleet — host count, workloads, storage backends. We'll come back with a quote and a guided install in 48 hours."
+[cta-btn]
+other = "Request a quote"
+[cta-under]
+other = "Already running NQRust internally?"
+[cta-under-link]
+other = "Get in touch about a commercial license →"
+
+# ---------- footer ----------
+[foot-brand-desc]
+other = "The Rust-powered self-hosted cloud platform from Nexus Quantum Technologies."
+[foot-h-product]
+other = "Product"
+[foot-h-family]
+other = "Family"
+[foot-h-company]
+other = "Company"
+[foot-product-platform]
+other = "Platform"
+[foot-product-dash]
+other = "Operator dashboard"
+[foot-product-arch]
+other = "Architecture"
+[foot-product-storage]
+other = "Storage"
+[foot-product-pricing]
+other = "Pricing"
+[foot-company-contact]
+other = "Contact sales"
+[foot-company-docs]
+other = "Documentation"
+[foot-company-security]
+other = "Security & compliance"
+[foot-company-license]
+other = "License terms"
+[foot-company-status]
+other = "Status page"
+[foot-copyright]
+other = "© 2026 Nexus Quantum Technologies. All rights reserved."
+[foot-meta-license]
+other = "Commercial license"
+[foot-meta-built]
+other = "Built with Rust & caffeine"
+[foot-meta-status]
+other = "All systems operational"
+
+# ---------- language toggle ----------
+[lang-en-label]
+other = "EN"
+[lang-id-label]
+other = "ID"
