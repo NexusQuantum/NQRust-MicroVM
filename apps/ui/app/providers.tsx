@@ -93,17 +93,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <AuthProvider>
           <AuthInitializer>
             <ThemeSyncProvider>
-              {DEMO_MODE ? (
-                <DemoBootstrap>{children}</DemoBootstrap>
-              ) : (
-                <LicenseGuard>
-                  <EulaGuard>
-                    <AuthGuard>
-                      {children}
-                    </AuthGuard>
-                  </EulaGuard>
-                </LicenseGuard>
-              )}
+              <LicenseGuard>
+                <EulaGuard>
+                  <AuthGuard>
+                    <DemoBootstrap>{children}</DemoBootstrap>
+                  </AuthGuard>
+                </EulaGuard>
+              </LicenseGuard>
             </ThemeSyncProvider>
           </AuthInitializer>
           <ReactQueryDevtools initialIsOpen={false} />

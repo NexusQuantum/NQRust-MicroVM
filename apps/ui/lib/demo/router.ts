@@ -83,20 +83,32 @@ export async function handleMockRequest({ method, path, body }: MockRequest): Pr
 
   // Auth ----------------------------------------------------------------
   if (p === "/auth/login" && method === "POST") {
-    const username = body?.username || "demo"
+    const username = (body?.username ?? "").toString().trim()
+    const password = (body?.password ?? "").toString()
+    // Demo only accepts admin/admin so the login screen feels real.
+    if (username !== "admin" || password !== "admin") {
+      throw new Error(
+        JSON.stringify({
+          error: "Invalid credentials",
+          status: 401,
+          suggestion: "Use admin / admin to sign in to the demo.",
+          request_id: "demo",
+        }),
+      )
+    }
     return {
       token: "demo-token-" + Math.random().toString(36).slice(2),
       user: {
         id: "u-demo",
-        username,
+        username: "admin",
         role: "admin",
-        email: `${username}@demo.local`,
+        email: "admin@nqr-microvm.com",
         created_at: nowIso(),
       },
     }
   }
   if (p === "/auth/me" && method === "GET") {
-    return { id: "u-demo", username: "demo", role: "admin", created_at: nowIso(), timezone: "UTC" }
+    return { id: "u-demo", username: "admin", role: "admin", created_at: nowIso(), timezone: "UTC" }
   }
   if (p === "/auth/me/avatar" && method === "DELETE") return ok()
   if (p === "/auth/me/profile" && method === "PATCH") return ok()
