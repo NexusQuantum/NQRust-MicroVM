@@ -78,6 +78,7 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
   const [diskImageId, setDiskImageId] = useState<string | undefined>(undefined)
   const [installerIsoId, setInstallerIsoId] = useState<string | undefined>(undefined)
   const [enableVnc, setEnableVnc] = useState<boolean>(false)
+  const [sshKeys, setSshKeys] = useState<string>("")
   const [diskImageOptions, setDiskImageOptions] = useState<{ id: string; name: string; image_kind: string }[]>([])
   const [isoOptions, setIsoOptions] = useState<{ id: string; name: string }[]>([])
 
@@ -379,6 +380,10 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
             disk_image_id: diskImageId,
             installer_iso_id: installerIsoId,
             enable_vnc: enableVnc,
+            ssh_authorized_keys: sshKeys
+              .split("\n")
+              .map((k) => k.trim())
+              .filter((k) => k.length > 0),
             rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
             network_id: data.networkId || undefined,
             port_forwards: portForwards.length > 0 ? portForwards : undefined,
@@ -702,6 +707,20 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
                 <p className="text-xs text-muted-foreground">
                   Required for interactive Windows / graphical Linux installers.
                   Headless Linux can use the serial console without VNC.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ssh-keys">SSH Authorized Keys (Optional)</Label>
+                <Textarea
+                  id="ssh-keys"
+                  value={sshKeys}
+                  onChange={(e) => setSshKeys(e.target.value)}
+                  placeholder={"ssh-ed25519 AAAA... user@host\nssh-rsa AAAA... another@host"}
+                  rows={3}
+                />
+                <p className="text-xs text-muted-foreground">
+                  One key per line. Injected via cloud-init (Linux) or
+                  cloudbase-init (Windows) on first boot.
                 </p>
               </div>
               <BackendSelector

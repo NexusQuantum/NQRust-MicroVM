@@ -40,6 +40,12 @@ export interface Vm {
   guest_ip: string;
   tags: string[];
   created_by_user_id?: string;
+  // Pluggable VMM fields (0.5.0). Default to firecracker/linux_kernel/unix_serial.
+  vmm_kind?: VmmKind;
+  guest_os?: GuestOs;
+  /** "unix_serial" | "pty" | "vnc" — when "vnc", show the noVNC console. */
+  console_kind?: string;
+  vnc_listen?: string;
   created_at: string;
   updated_at: string;
   // Runtime metrics (populated separately, not from REST list)
@@ -114,6 +120,8 @@ export interface CreateVmReq {
   installer_iso_id?: string;
   firmware_path?: string;
   nvram_template_path?: string;
+  /** SSH public keys injected via cloud-init / cloudbase-init on first boot. */
+  ssh_authorized_keys?: string[];
 }
 
 export interface TemplateSpec {

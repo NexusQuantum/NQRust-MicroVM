@@ -394,6 +394,10 @@ pub async fn create_and_start_qemu(
         guest_ip: None,
         tags: req.tags.clone(),
         created_by_user_id: None,
+        vmm_kind: Some("qemu".to_string()),
+        guest_os: Some(guest_os_resolved.as_str().to_string()),
+        console_kind: Some(if enable_vnc { "vnc" } else { "unix_serial" }.to_string()),
+        vnc_listen: handle.vnc.clone(),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

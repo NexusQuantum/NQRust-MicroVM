@@ -318,6 +318,10 @@ pub async fn create_and_start(
             guest_ip: None, // Will be set when guest agent reports
             tags,
             created_by_user_id: None, // TODO: Set from authenticated user context
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -617,6 +621,10 @@ pub async fn create_from_snapshot(
             guest_ip: None,               // Will be set when guest agent reports
             tags: source_vm.tags.clone(), // Preserve tags from source VM
             created_by_user_id: source_vm.created_by_user_id, // Preserve ownership from source VM
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -3129,6 +3137,10 @@ mod tests {
             kernel_path: "/etc/passwd".into(),
             rootfs_path: "/srv/images/rootfs".into(),
             source_snapshot_id: None,
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -3209,6 +3221,10 @@ mod tests {
             kernel_path: kernel_path.clone(),
             rootfs_path: rootfs_path.clone(),
             source_snapshot_id: None,
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
             created_at: now,
             updated_at: now,
         };
@@ -3288,6 +3304,10 @@ mod tests {
             guest_ip: None,
             tags: vec![],
             created_by_user_id: None,
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
             created_at: now,
             updated_at: now,
         }

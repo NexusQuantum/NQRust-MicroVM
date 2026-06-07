@@ -726,6 +726,10 @@ mod tests {
             created_by_user_id: None,
             guest_ip: None,
             tags: vec![],
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

@@ -172,6 +172,54 @@ export class FacadeApi {
     await apiClient.post<OkResponse>(`/vms/${id}/stop`, {});
   }
 
+  // ---- Pluggable VMM day-2 ops (0.5.0, QEMU) ----
+
+  /** Mark an installing VM complete: eject installer ISO + boot from disk. */
+  async installComplete(id: string): Promise<void> {
+    await apiClient.post<OkResponse>(`/vms/${id}/install-complete`, {});
+  }
+
+  /** Live-migrate a QEMU VM to another host. */
+  async migrateVM(id: string, targetHostId: string, targetPort = 54321): Promise<void> {
+    await apiClient.post<OkResponse>(`/vms/${id}/migrate`, {
+      target_host_id: targetHostId,
+      target_port: targetPort,
+    });
+  }
+
+  /** Reschedule a QEMU VM onto another host (HA recovery, shared storage). */
+  async rescheduleVM(id: string, targetHostId: string): Promise<void> {
+    await apiClient.post<OkResponse>(`/vms/${id}/reschedule`, {
+      target_host_id: targetHostId,
+    });
+  }
+
+  /** Back up a VM. Volume-backed → nexus-backup target; overlay → qemu-img path. */
+  async backupVM(
+    id: string,
+    opts: { targetId?: string; destinationPath?: string; format?: string; compress?: boolean }
+  ): Promise<unknown> {
+    return apiClient.post<unknown>(`/vms/${id}/backup`, {
+      target_id: opts.targetId,
+      destination_path: opts.destinationPath,
+      format: opts.format,
+      compress: opts.compress ?? false,
+    });
+  }
+
+  /** Import a VMware VMDK (or any qemu-img disk) as a registered image. */
+  async importVmdk(
+    sourcePath: string,
+    name?: string,
+    runVirtV2v = true
+  ): Promise<CreateImageResp> {
+    return apiClient.post<CreateImageResp>(`/images/import/vmdk`, {
+      source_path: sourcePath,
+      name,
+      run_virt_v2v: runVirtV2v,
+    });
+  }
+
   /**
    * Update VM metadata (name, tags)
    * PATCH /v1/vms/:id

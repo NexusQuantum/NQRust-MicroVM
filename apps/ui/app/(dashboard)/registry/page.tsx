@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ImageRegistry } from "@/components/registry/image-registry"
 import { DockerHubBrowser } from "@/components/registry/dockerhub-browser"
 import { UploadImageDialog } from "@/components/registry/upload-image-dialog"
+import { ImportVmdkDialog } from "@/components/registry/import-vmdk-dialog"
 import { useRegistryImages } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, Box, Container as ContainerIcon, Upload, RefreshCw } from "lucide-react"
@@ -83,6 +84,7 @@ export default function RegistryPage() {
     refetch()
   }
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
+  const [importVmdkOpen, setImportVmdkOpen] = useState(false)
   const [uploadKind, setUploadKind] = useState<"docker" | "kernel" | "rootfs">("docker")
   const [uploadImageKind, setUploadImageKind] = useState<
     "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso" | undefined
@@ -210,6 +212,10 @@ export default function RegistryPage() {
                   <Upload className="mr-2 h-4 w-4" />
                   Upload Installer ISO
                 </Button>
+                <Button onClick={() => setImportVmdkOpen(true)} size="sm" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Import from VMware
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -258,6 +264,8 @@ export default function RegistryPage() {
         defaultKind={uploadKind}
         defaultImageKind={uploadImageKind}
       />
+
+      <ImportVmdkDialog open={importVmdkOpen} onOpenChange={setImportVmdkOpen} />
     </div>
   )
 }

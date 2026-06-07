@@ -1705,6 +1705,12 @@ impl From<super::repo::VmRow> for Vm {
             guest_ip: row.guest_ip,
             tags: row.tags,
             created_by_user_id: row.created_by_user_id,
+            vmm_kind: row.vmm_kind.unwrap_or_else(|| "firecracker".to_string()),
+            guest_os: row.guest_os.unwrap_or_else(|| "linux_kernel".to_string()),
+            console_kind: row
+                .console_kind
+                .unwrap_or_else(|| "unix_serial".to_string()),
+            vnc_listen: row.vnc_listen,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -1785,6 +1791,10 @@ mod tests {
             kernel_path: "/tmp/kernel".into(),
             rootfs_path: "/tmp/rootfs".into(),
             source_snapshot_id: None,
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
             created_at: now,
             updated_at: now,
         };

@@ -69,8 +69,33 @@ pub struct Vm {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_user_id: Option<uuid::Uuid>,
+    // ---- Pluggable VMM fields (0.5.0). Default for legacy/FC rows. ----
+    /// Backend running this VM: "firecracker" or "qemu". Drives which day-2
+    /// actions the UI surfaces (VNC console, migrate, install-complete).
+    #[serde(default = "default_vmm_kind")]
+    pub vmm_kind: String,
+    /// Guest OS class: "linux_kernel" / "linux_disk" / "windows" / "other".
+    #[serde(default = "default_guest_os")]
+    pub guest_os: String,
+    /// Console transport: "unix_serial" / "pty" / "vnc". When "vnc" the UI
+    /// shows the in-browser noVNC console.
+    #[serde(default = "default_console_kind")]
+    pub console_kind: String,
+    /// VNC listener (e.g. "unix:/srv/fc/<id>/vnc.sock") if the VM has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_listen: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn default_vmm_kind() -> String {
+    "firecracker".to_string()
+}
+fn default_guest_os() -> String {
+    "linux_kernel".to_string()
+}
+fn default_console_kind() -> String {
+    "unix_serial".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

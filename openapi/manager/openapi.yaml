@@ -2248,6 +2248,15 @@ components:
         enable_vnc:
           type: boolean
           description: QEMU only — exposes a VNC console UDS for graphical install / Windows.
+        extra_network_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |-
+            Additional networks to attach (QEMU multi-NIC). Each entry gets a
+            dedicated TAP + virtio-net-pci device in the guest. The first NIC
+            remains `network_id`.
         firmware_path:
           type: string
           description: |-
@@ -2309,6 +2318,14 @@ components:
           type: string
           format: uuid
           nullable: true
+        ssh_authorized_keys:
+          type: array
+          items:
+            type: string
+          description: |-
+            SSH authorized_keys entries to inject into the guest via cloud-init.
+            Each string is one full key line (`ssh-ed25519 AAA... comment`). Works
+            for Linux (cloud-init) and Windows (cloudbase-init + OpenSSH).
         tags:
           type: array
           items:

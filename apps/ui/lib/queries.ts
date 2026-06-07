@@ -608,6 +608,61 @@ export function useDeleteVM() {
   });
 }
 
+// ---- Pluggable VMM day-2 ops (0.5.0) ----
+
+export function useInstallComplete() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.installComplete(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    },
+  });
+}
+
+export function useMigrateVM() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, targetHostId, targetPort }: { id: string; targetHostId: string; targetPort?: number }) =>
+      facadeApi.migrateVM(id, targetHostId, targetPort),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    },
+  });
+}
+
+export function useRescheduleVM() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, targetHostId }: { id: string; targetHostId: string }) =>
+      facadeApi.rescheduleVM(id, targetHostId),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    },
+  });
+}
+
+export function useBackupVM() {
+  return useMutation({
+    mutationFn: ({ id, ...opts }: { id: string; targetId?: string; destinationPath?: string; format?: string; compress?: boolean }) =>
+      facadeApi.backupVM(id, opts),
+  });
+}
+
+export function useImportVmdk() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sourcePath, name, runVirtV2v }: { sourcePath: string; name?: string; runVirtV2v?: boolean }) =>
+      facadeApi.importVmdk(sourcePath, name, runVirtV2v),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
+    },
+  });
+}
+
 // Drive Management Queries and Mutations
 export function useVMDrives(vmId: string) {
   return useQuery({

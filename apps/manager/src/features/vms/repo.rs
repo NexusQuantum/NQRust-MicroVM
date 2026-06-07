@@ -23,6 +23,16 @@ pub struct VmRow {
     pub guest_ip: Option<String>,
     pub tags: Vec<String>,
     pub created_by_user_id: Option<Uuid>,
+    // Pluggable VMM columns (0.5.0). #[sqlx(default)] so the test in-memory
+    // store and any partial rows still deserialize.
+    #[sqlx(default)]
+    pub vmm_kind: Option<String>,
+    #[sqlx(default)]
+    pub guest_os: Option<String>,
+    #[sqlx(default)]
+    pub console_kind: Option<String>,
+    #[sqlx(default)]
+    pub vnc_listen: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -84,6 +94,10 @@ pub async fn list(db: &PgPool) -> sqlx::Result<Vec<VmRow>> {
                vm.guest_ip,
                vm.tags,
                vm.created_by_user_id,
+               vm.vmm_kind,
+               vm.guest_os,
+               vm.console_kind,
+               vm.vnc_listen,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -125,6 +139,10 @@ pub async fn list_by_host(db: &PgPool, host_id: Uuid) -> sqlx::Result<Vec<VmRow>
                vm.guest_ip,
                vm.tags,
                vm.created_by_user_id,
+               vm.vmm_kind,
+               vm.guest_os,
+               vm.console_kind,
+               vm.vnc_listen,
                vm.created_at,
                vm.updated_at
         FROM vm
@@ -174,6 +192,10 @@ pub async fn get(db: &PgPool, id: Uuid) -> sqlx::Result<VmRow> {
                vm.guest_ip,
                vm.tags,
                vm.created_by_user_id,
+               vm.vmm_kind,
+               vm.guest_os,
+               vm.console_kind,
+               vm.vnc_listen,
                vm.created_at,
                vm.updated_at
         FROM vm
