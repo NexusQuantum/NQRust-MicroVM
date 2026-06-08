@@ -1,8 +1,6 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-// @ts-expect-error - @novnc/novnc ships untyped ESM
-import RFB from "@novnc/novnc/lib/rfb"
 
 interface VncConsoleProps {
   vmId: string
@@ -45,35 +43,49 @@ export function VncConsole({
     const wsBase = base.replace(/^http/, "ws")
     const url = `${wsBase}/v1/vms/${vmId}/console/vnc/ws`
 
-    let rfb: any
-    try {
-      rfb = new RFB(containerRef.current, url, {
-        wsProtocols: ["binary"],
-      })
-      rfb.viewOnly = false
-      rfb.scaleViewport = scaleViewport
-      rfb.resizeSession = false
-      rfb.background = "rgb(20,20,20)"
+    let cancelled = false
 
-      rfb.addEventListener("connect", () => {
-        setStatus("connected")
-        setMessage("")
-      })
-      rfb.addEventListener("disconnect", (e: any) => {
-        setStatus("disconnected")
-        setMessage(e?.detail?.reason || "Disconnected")
-      })
-      rfb.addEventListener("securityfailure", (e: any) => {
-        setStatus("error")
-        setMessage(`Security failure: ${e?.detail?.reason || "unknown"}`)
-      })
-      rfbRef.current = rfb
-    } catch (err: any) {
-      setStatus("error")
-      setMessage(err?.message || String(err))
-    }
+    // Dynamically import noVNC inside the effect: it's a browser-only ESM
+    // package, so loading it lazily avoids SSR evaluation and lets the
+    // bundler resolve it without a static top-level import.
+    ;(async () => {
+      try {
+        // @ts-expect-error - @novnc/novnc ships untyped ESM; its exports map
+        // the package root directly to core/rfb.js (default export = RFB).
+        const mod = await import("@novnc/novnc")
+        const RFB = mod.default
+        if (cancelled || !containerRef.current) return
+        const rfb = new RFB(containerRef.current, url, {
+          wsProtocols: ["binary"],
+        })
+        rfb.viewOnly = false
+        rfb.scaleViewport = scaleViewport
+        rfb.resizeSession = false
+        rfb.background = "rgb(20,20,20)"
+
+        rfb.addEventListener("connect", () => {
+          setStatus("connected")
+          setMessage("")
+        })
+        rfb.addEventListener("disconnect", (e: any) => {
+          setStatus("disconnected")
+          setMessage(e?.detail?.reason || "Disconnected")
+        })
+        rfb.addEventListener("securityfailure", (e: any) => {
+          setStatus("error")
+          setMessage(`Security failure: ${e?.detail?.reason || "unknown"}`)
+        })
+        rfbRef.current = rfb
+      } catch (err: any) {
+        if (!cancelled) {
+          setStatus("error")
+          setMessage(err?.message || String(err))
+        }
+      }
+    })()
 
     return () => {
+      cancelled = true
       try {
         rfbRef.current?.disconnect?.()
       } catch {}
