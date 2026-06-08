@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.1] - 2026-06-08
+
+**Alpha** — first pluggable-VMM release. Adds **QEMU** as a second VMM
+backend alongside Firecracker, turning NQRust-MicroVM into a platform
+that runs both fast microVMs (Firecracker) and full classic VMs (QEMU:
+UEFI Linux, Windows, bring-your-own-ISO). Download and test; **not yet
+production-ready** — see caveats below.
+
+### Added
+- **Pluggable VMM backend abstraction** (`crates/nexus-vmm`): a
+  `VmmDriver` trait + `VmmKind` / `GuestOs` / `BootMode` / `ImageKind`
+  enums + a per-backend `FeatureSupport` matrix. Firecracker is a
+  thin trait-adapter over the existing path (unchanged behaviour);
+  QEMU is a new driver.
+- **QEMU q35 + KVM driver**: UEFI/OVMF boot, virtio-blk / virtio-net,
+  serial UDS console, optional VNC, QMP lifecycle, snapshot via QMP
+  migrate, swtpm (TPM 2.0 for Windows 11), virtio-balloon / -rng /
+  -vsock, VFIO PCI passthrough.
+- **VM-mode in the UI**: create wizard now offers microVM (Firecracker)
+  vs VM (QEMU) with disk-image / installer-ISO / VNC / SSH-key inputs.
+- **Image registry**: `image_kind` discriminator (linux_kernel /
+  linux_disk / uefi_disk / installer_iso), UEFI NVRAM template path,
+  dedicated upload buttons, and **virt-v2v VMware VMDK import**.
+- **ISO install lifecycle**: `installing` VM state + browser noVNC
+  console + one-click "Install Complete" (QMP CD-ROM eject).
+- **Day-2 ops for QEMU VMs** (UI + API): live migration (full
+  target-side orchestration), HA reschedule, VM backup (chunked
+  nexus-backup for volume-backed VMs, qemu-img for overlays),
+  cloud-init / cloudbase-init credential + SSH-key seeding.
+- **Resource orchestration**: per-VM `systemd-run` cgroup limits
+  (MemoryMax / CPUQuota / MemorySwapMax=0) + per-host atomic vcpu/mem
+  reservation so Firecracker and QEMU don't over-commit a shared host.
+- **Storage backend pairing**: QEMU disks route through the 0.4.x
+  storage registry (local_file / iSCSI / NFS / SPDK / TrueNAS).
+- DB migration `0040_vmm_backends.sql` — additive / forward-only.
+
+### Alpha caveats (read before deploying)
+- **Validated end-to-end on this build:** QEMU UEFI Linux cloud-image
+  VM create → pause → resume → delete (dev mode). Everything else is
+  code-complete + unit-tested but **not yet exercised against real
+  infrastructure**: Windows install, real iSCSI/NFS/SPDK, the
+  production sudo/systemd-run/cgroup path, TAP bridging for QEMU,
+  cross-host live migration, auto-HA, and virt-v2v.
+- **Dev escape hatches must stay OFF in any real deployment:**
+  `AGENT_NO_SUDO`, `AGENT_USER_MODE_NET`, `MANAGER_TEST_MODE`,
+  `LICENSE_DEV_MODE`. They bypass cgroup isolation, real networking,
+  and licensing respectively.
+- **Optional host packages** for full functionality: `swtpm` (Windows
+  11 TPM), `virtio-win` ISO (Windows drivers), `genisoimage`/`xorriso`
+  (cloud-init seed), `libguestfs-tools` (virt-v2v). The platform
+  degrades with warnings when absent.
+- No security review of the new routes yet; treat as untrusted-input
+  surface until reviewed.
+
 ## [0.4.1] - 2026-05-14
 
 Patch release rolling up post-v0.4.0 fixes surfaced while shipping
