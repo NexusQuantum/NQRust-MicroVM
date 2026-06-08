@@ -330,10 +330,38 @@ pub async fn create_and_start_qemu(
         "enable_rng": true,
     });
 
+    // Boot can be slow on busy hosts: qemu-img overlay over a large backing
+    // image + OVMF nvram copy + spawn + QMP readiness, all under load. A
+    // short timeout here both fails good boots AND orphans the spawned VM
+    // (the agent keeps going after our client gives up). Use a generous
+    // timeout, and on ANY boot failure fire a best-effort destroy so we
+    // never leave an unmanaged QEMU process behind.
     let http = Client::builder()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(300))
         .build()
         .context("build http client")?;
+
+    // Best-effort orphan cleanup helper: tell the agent to destroy whatever
+    // it may have spawned for this id, then release the host reservation.
+    async fn cleanup_after_boot_failure(
+        host_addr: &str,
+        id: Uuid,
+        host_repo: &crate::features::hosts::repo::HostRepository,
+        host_id: Uuid,
+        vcpu: i32,
+        mem_mib: i64,
+    ) {
+        let c = Client::builder().timeout(Duration::from_secs(30)).build();
+        if let Ok(c) = c {
+            let _ = c
+                .post(format!(
+                    "{host_addr}/agent/v1/vmm/{id}/destroy?vmm_kind=qemu"
+                ))
+                .send()
+                .await;
+        }
+        let _ = host_repo.release_reservation(host_id, vcpu, mem_mib).await;
+    }
 
     info!(vm_id=%id, host=%host.addr, "qemu boot via agent /agent/v1/vmm/:id/boot");
     let resp = match http
@@ -344,19 +372,30 @@ pub async fn create_and_start_qemu(
     {
         Ok(r) => r,
         Err(e) => {
-            // Roll back the reservation if the call itself failed.
-            let _ = host_repo
-                .release_reservation(host.id, req.vcpu as i32, req.mem_mib as i64)
-                .await;
+            cleanup_after_boot_failure(
+                &host.addr,
+                id,
+                &host_repo,
+                host.id,
+                req.vcpu as i32,
+                req.mem_mib as i64,
+            )
+            .await;
             return Err(anyhow!(e).context("agent boot request failed to send"));
         }
     };
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        let _ = host_repo
-            .release_reservation(host.id, req.vcpu as i32, req.mem_mib as i64)
-            .await;
+        cleanup_after_boot_failure(
+            &host.addr,
+            id,
+            &host_repo,
+            host.id,
+            req.vcpu as i32,
+            req.mem_mib as i64,
+        )
+        .await;
         bail!("agent returned {} on /boot: {}", status, text);
     }
     let handle: BootResp = resp.json().await.context("decode agent boot response")?;

@@ -130,6 +130,30 @@ impl QemuDriver {
         Ok(())
     }
 
+    /// Make the per-VM control sockets connectable by the agent user even
+    /// when QEMU runs as root (sudo systemd-run path). Uses `sudo -n chmod`
+    /// (the agent has NOPASSWD chmod in the standard install). Best-effort:
+    /// in dev mode (AGENT_NO_SUDO) the sockets are already agent-owned and
+    /// the chmod is harmless.
+    async fn relax_socket_perms(&self, vm_dir: &Path) {
+        if std::env::var("AGENT_NO_SUDO").is_ok() {
+            return; // agent owns the sockets already
+        }
+        for sock in [
+            self.qmp_sock(vm_dir),
+            self.serial_sock(vm_dir),
+            self.vnc_sock(vm_dir),
+        ] {
+            if sock.exists() {
+                let _ = Command::new("sudo")
+                    .args(["-n", "chmod", "0666"])
+                    .arg(&sock)
+                    .status()
+                    .await;
+            }
+        }
+    }
+
     /// Wait for the QMP socket to appear so we can connect.
     async fn wait_for_qmp(&self, sock: &Path) -> Result<()> {
         let deadline = std::time::Instant::now() + QMP_READY_TIMEOUT;
@@ -227,10 +251,15 @@ impl QemuDriver {
                 firmware,
                 nvram_template: _,
             } => {
+                // Resolve the OVMF code firmware. The caller's path may be a
+                // distro default that doesn't match this host (e.g. the
+                // manager defaults to Arch paths but the agent is on Ubuntu).
+                // Fall back to probing well-known per-distro locations.
+                let fw = resolve_ovmf_code(firmware);
                 args.push("-drive".into());
                 args.push(format!(
                     "if=pflash,format=raw,readonly=on,file={}",
-                    firmware.display()
+                    fw.display()
                 ));
                 if let Some(nv) = nvram_runtime {
                     args.push("-drive".into());
@@ -476,11 +505,54 @@ impl QemuDriver {
         if fs::metadata(dst).await.is_ok() {
             return Ok(());
         }
-        fs::copy(template, dst).await.with_context(|| {
-            format!("copy ovmf vars {} -> {}", template.display(), dst.display())
-        })?;
+        // Resolve the VARS template to a path that actually exists on this
+        // host (the caller's default may be for a different distro).
+        let src = resolve_ovmf_vars(template);
+        fs::copy(&src, dst)
+            .await
+            .with_context(|| format!("copy ovmf vars {} -> {}", src.display(), dst.display()))?;
         Ok(())
     }
+}
+
+/// Probe well-known OVMF_CODE locations across distros. Returns the caller's
+/// path if it exists, else the first existing candidate, else the caller's
+/// path unchanged (so the resulting error names what was actually requested).
+fn resolve_ovmf_code(requested: &Path) -> PathBuf {
+    if requested.exists() {
+        return requested.to_path_buf();
+    }
+    const CANDIDATES: &[&str] = &[
+        "/usr/share/OVMF/OVMF_CODE_4M.fd",       // Debian/Ubuntu (4M)
+        "/usr/share/OVMF/OVMF_CODE.fd",          // Debian/Ubuntu (legacy)
+        "/usr/share/edk2/x64/OVMF_CODE.4m.fd",   // Arch
+        "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd", // Fedora/RHEL
+        "/usr/share/qemu/OVMF_CODE.fd",          // misc
+    ];
+    CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+        .unwrap_or_else(|| requested.to_path_buf())
+}
+
+/// Probe well-known OVMF_VARS template locations across distros.
+fn resolve_ovmf_vars(requested: &Path) -> PathBuf {
+    if requested.exists() {
+        return requested.to_path_buf();
+    }
+    const CANDIDATES: &[&str] = &[
+        "/usr/share/OVMF/OVMF_VARS_4M.fd",
+        "/usr/share/OVMF/OVMF_VARS.fd",
+        "/usr/share/edk2/x64/OVMF_VARS.4m.fd",
+        "/usr/share/edk2-ovmf/x64/OVMF_VARS.fd",
+        "/usr/share/qemu/OVMF_VARS.fd",
+    ];
+    CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+        .unwrap_or_else(|| requested.to_path_buf())
 }
 
 #[async_trait]
@@ -555,6 +627,14 @@ impl VmmDriver for QemuDriver {
         self.wait_for_qmp(&self.qmp_sock(&vm_dir))
             .await
             .map_err(|_| VmmError::SocketTimeout { vm_id: spec.id })?;
+
+        // When QEMU was spawned via `sudo systemd-run` (production: non-root
+        // agent), the process runs as root and its QMP/serial/VNC sockets are
+        // root-owned with mode 0755 — the non-root agent can't connect (UDS
+        // connect needs write). Relax the socket modes so the agent (and the
+        // WS console bridges) can drive them. No-op in AGENT_NO_SUDO dev mode
+        // where the agent owns the sockets already.
+        self.relax_socket_perms(&vm_dir).await;
 
         // Negotiate QMP — confirms the VMM is alive and acceptable.
         let mut qmp = QmpClient::connect(&self.qmp_sock(&vm_dir))
@@ -882,6 +962,27 @@ mod tests {
         assert!(!joined.contains("-vnc"));
         // No -display when graphical disabled.
         assert!(joined.contains("-display none"));
+    }
+
+    #[test]
+    fn ovmf_resolver_keeps_existing_path_and_falls_back_otherwise() {
+        // An existing path is returned unchanged.
+        let real = std::path::Path::new("/etc/hostname"); // exists on linux test hosts
+        if real.exists() {
+            assert_eq!(resolve_ovmf_code(real), real.to_path_buf());
+        }
+        // A bogus requested path falls back to a known candidate IF one
+        // exists on this machine; otherwise returns the requested path
+        // unchanged (so the error names what was asked for).
+        let bogus = std::path::Path::new("/nonexistent/OVMF_CODE.fd");
+        let resolved = resolve_ovmf_code(bogus);
+        // Either it found a real candidate, or it echoed the bogus path back.
+        assert!(resolved == bogus.to_path_buf() || resolved.exists());
+        let resolved_vars = resolve_ovmf_vars(std::path::Path::new("/nonexistent/OVMF_VARS.fd"));
+        assert!(
+            resolved_vars == std::path::Path::new("/nonexistent/OVMF_VARS.fd").to_path_buf()
+                || resolved_vars.exists()
+        );
     }
 
     #[test]
