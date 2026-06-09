@@ -672,6 +672,17 @@ pub fn diff_host(vms: &[vms::repo::VmRow], inventory: &AgentInventory) -> HostPl
 
     let mut restart = Vec::new();
     for vm in vms {
+        // The in-place restart path (`restart_vm`) is Firecracker-specific: it
+        // rebuilds the FC kernel+rootfs boot and validates a kernel/rootfs path
+        // that QEMU VMs don't have. QEMU also runs as a systemd *service* with a
+        // QMP socket that the agent inventory (fc-*.scope + vms/<id>/sock) never
+        // enumerates, so a healthy QEMU VM always looks "absent" here. Without
+        // this guard the reconciler flags every running QEMU VM for restart,
+        // fails, and marks it "stopped" while QEMU keeps running. QEMU recovery
+        // is handled separately by qemu_service (dead-host reschedule).
+        if vm.vmm_kind.as_deref() == Some("qemu") {
+            continue;
+        }
         if vm.state == "running" {
             if let Some(presence) = status.get(&vm.id) {
                 if !presence.has_scope || !presence.has_socket {

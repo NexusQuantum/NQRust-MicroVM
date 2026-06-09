@@ -1168,7 +1168,13 @@ async fn build_cloud_init_iso(
 
     let meta_data = format!("instance-id: nqr-{vm_id}\nlocal-hostname: {hostname}\n");
     let user_data = build_cloud_init_user_data(hostname, username, password, ssh_keys, guest_os);
-    let network_config = "version: 2\nethernets:\n  eth0:\n    dhcp4: true\n";
+    // Match the NIC by name glob instead of hardcoding `eth0`. Modern Linux
+    // cloud images use predictable interface names (enp0s3, ens3, eno1, …), so
+    // a literal `eth0` stanza never matches — the NIC stays down and the guest
+    // never DHCPs. `e*` covers predictable (en*) and legacy (eth*) names; every
+    // ethernet NIC gets DHCP, which is the right default for bridged VMs.
+    let network_config =
+        "version: 2\nethernets:\n  primary:\n    match:\n      name: \"e*\"\n    dhcp4: true\n";
 
     tokio::fs::write(work_dir.join("meta-data"), meta_data).await?;
     tokio::fs::write(work_dir.join("user-data"), user_data).await?;

@@ -23,12 +23,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   destroy all failed with "no live vmm" — `destroy` silently no-opped and left
   the VM and its cgroup running. Fixed by self-healing `read_pid`: relax the
   pidfile via `sudo -n chmod` and retry (mirrors the socket-perms relax).
-- Both found and fixed via real end-to-end testing on a **stock Ubuntu 24.04**
-  host with the agent running **non-root** (the true production posture):
-  QEMU UEFI boot of an Ubuntu cloud image → cloud-init NoCloud seed → DHCP +
-  serial login → pause/resume/destroy with no orphan, cgroup limits enforced.
-  This exercises the "production sudo/systemd-run/cgroup path" that the
-  alpha.1 caveats flagged as not-yet-validated.
+- **Reconciler marked every running QEMU VM `stopped` (critical, manager-side).**
+  `diff_host` decides liveness from the agent inventory, which is
+  Firecracker-specific (`fc-*.scope` units + `vms/<id>/sock` paths). A QEMU VM
+  runs as `qemu-<id>.service` with its QMP socket elsewhere, so it always looked
+  "absent" → the reconciler flagged it for the FC-only in-place `restart_vm`,
+  which fails on the empty `kernel_path` and flips the VM to `stopped` (while
+  QEMU keeps running) ~seconds after boot. Fixed by excluding QEMU VMs from the
+  FC restart path in `diff_host` (QEMU recovery goes through `qemu_service`
+  reschedule, per the existing design).
+- **QEMU VMs never got network (manager-side).** The cloud-init network-config
+  hardcoded `eth0`, but modern cloud images use predictable names (`enp0s3`,
+  `ens3`, …) so the stanza never matched — the NIC stayed down and the guest
+  never DHCP'd. Fixed by matching `name: "e*"` (covers `en*` + legacy `eth*`).
+- All four found and fixed via real end-to-end testing on a **stock Ubuntu
+  24.04** host with the agent running **non-root** (the true production
+  posture). Agent-path: QEMU UEFI boot of an Ubuntu cloud image → cloud-init
+  NoCloud seed → DHCP + serial login → pause/resume/destroy with no orphan,
+  cgroup limits enforced. Full-stack: manager + Postgres + registered agent →
+  `POST /v1/vms` → qcow2 thin overlay over the base image + cloud-init ISO +
+  **real TAP on `fcbr0`** + agent boot → VM stays `running` → guest DHCPs to
+  `10.0.0.x` and pings the gateway. This exercises the "production
+  sudo/systemd-run/cgroup path" and "TAP bridging for QEMU" that the alpha.1
+  caveats flagged as not-yet-validated.
+
+### Known issues (QEMU, found in the same testing)
+- Deleting a QEMU VM stops the process but leaves its `tap-<id>` on the bridge
+  (orphan tap; the reconciler's orphan-cleanup eventually reaps it).
+- `guest_ip` stays null for bring-your-own images: IP reporting relies on the
+  in-guest agent, which isn't present in stock cloud images.
 
 ## [0.5.0-alpha.1] - 2026-06-08
 
