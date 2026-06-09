@@ -1,8 +1,11 @@
 //! QEMU VMM driver.
 //!
-//! Spawns `qemu-system-x86_64` inside a per-VM `systemd-run --scope` so the
-//! kernel enforces cgroup memory/cpu limits and the process is supervised
-//! alongside the rest of the host's units. Talks to QEMU over QMP for
+//! Spawns `qemu-system-x86_64` as a per-VM `systemd-run` transient *service*
+//! so the kernel enforces cgroup memory/cpu limits and the process is
+//! supervised by systemd (PID 1) — surviving agent restarts, which `rebind`
+//! relies on. A transient *scope* would be wrong here: `systemd-run --scope`
+//! runs the command synchronously (blocking until QEMU exits), so the boot
+//! path could never reach the QMP handshake. Talks to QEMU over QMP for
 //! lifecycle, snapshots, and metrics. Serial console is exposed as a Unix
 //! domain socket the WebSocket shell bridge can attach to.
 
@@ -74,20 +77,27 @@ impl QemuDriver {
     }
 
     fn systemd_unit(&self, vm_id: Uuid) -> String {
-        format!("qemu-{vm_id}.scope")
+        format!("qemu-{vm_id}.service")
     }
 
-    /// Spawn QEMU under a systemd transient scope. Caller is responsible for
-    /// having created the vm_dir. `resource_props` is the list of
+    /// Spawn QEMU under a systemd transient *service*. Caller is responsible
+    /// for having created the vm_dir. `resource_props` is the list of
     /// `--property=KEY=VALUE` strings the kernel will enforce as a cgroup
     /// per the [`super::resource`] helpers — these are how QEMU and FC are
     /// kept from fighting for memory or CPU on a shared host.
+    ///
+    /// We deliberately do NOT pass `--scope`: `systemd-run --scope` runs the
+    /// command synchronously and only returns once it exits, which would block
+    /// `boot()` for QEMU's entire lifetime (never reaching the QMP handshake or
+    /// the socket-perms relax). A transient service backgrounds QEMU under
+    /// systemd and returns immediately; `--collect` reaps the unit when QEMU
+    /// dies so the per-VM unit name is reusable.
     ///
     /// In dev environments without passwordless sudo, set `AGENT_NO_SUDO=1`
     /// to skip the systemd-run wrapper and spawn QEMU directly. The
     /// per-VM cgroup limits are forfeited but the rest of the pipeline
     /// (QMP, console UDS, NICs, disks) works for end-to-end testing.
-    async fn spawn_under_scope(
+    async fn spawn_under_unit(
         &self,
         unit: &str,
         resource_props: &[String],
@@ -106,10 +116,14 @@ impl QemuDriver {
             return Ok(());
         }
 
+        // NOTE: no `--scope`. `systemd-run --scope` is synchronous and blocks
+        // until the wrapped process exits — fatal here, since QEMU is a daemon.
+        // The default (a transient `.service`) backgrounds QEMU and returns at
+        // once. `--collect` GCs the unit when QEMU dies so the name is reusable.
         let mut cmd = Command::new("sudo");
         cmd.arg("-n")
             .arg("systemd-run")
-            .arg("--scope")
+            .arg("--collect")
             .arg(format!("--unit={unit}"))
             .arg("--property=KillMode=mixed")
             .arg("--property=TimeoutStopSec=10s");
@@ -479,7 +493,25 @@ impl QemuDriver {
     }
 
     async fn read_pid(&self, vm_dir: &Path) -> Option<u32> {
-        let raw = fs::read_to_string(self.pid_file(vm_dir)).await.ok()?;
+        let pid_file = self.pid_file(vm_dir);
+        // Fast path: already readable (dev mode, or perms previously relaxed).
+        if let Ok(raw) = fs::read_to_string(&pid_file).await {
+            return raw.trim().parse::<u32>().ok();
+        }
+        // Production path: QEMU ran as root via `sudo systemd-run`, so its
+        // pidfile is root-owned mode 0600 — unreadable by the non-root agent.
+        // Without the PID, `rebind` can't confirm liveness and every lifecycle
+        // op (pause/resume/shutdown/destroy) fails with "no live vmm", silently
+        // orphaning the VM. Relax it (like the control sockets) and retry.
+        // No-op in AGENT_NO_SUDO dev mode (the fast path already succeeded).
+        if std::env::var("AGENT_NO_SUDO").is_err() && pid_file.exists() {
+            let _ = Command::new("sudo")
+                .args(["-n", "chmod", "0644"])
+                .arg(&pid_file)
+                .status()
+                .await;
+        }
+        let raw = fs::read_to_string(&pid_file).await.ok()?;
         raw.trim().parse::<u32>().ok()
     }
 
@@ -620,7 +652,7 @@ impl VmmDriver for QemuDriver {
             .map_err(VmmError::Other)?;
 
         let resource_props = super::resource::vm_properties(spec.vcpu, spec.mem_mib);
-        self.spawn_under_scope(&unit, &resource_props, &args)
+        self.spawn_under_unit(&unit, &resource_props, &args)
             .await
             .map_err(VmmError::Other)?;
 
@@ -679,7 +711,7 @@ impl VmmDriver for QemuDriver {
                 Ok(())
             }
             ShutdownMode::Hard => {
-                // Stop the systemd scope; cgroup teardown kills the process.
+                // Stop the systemd service; cgroup teardown kills the process.
                 let _ = crate::core::systemd::stop_unit(&handle.systemd_unit).await;
                 // Try QMP `quit` as the cleanest in-process exit.
                 if let Ok(mut qmp) = QmpClient::connect(&handle.api_sock).await {
@@ -1020,23 +1052,23 @@ mod tests {
         assert!(!joined.contains("-display none"));
     }
 
-    /// Verify the exact argv production-mode `spawn_under_scope` builds.
+    /// Verify the exact argv production-mode `spawn_under_unit` builds.
     /// We can't easily run sudo+systemd-run from an unprivileged test
     /// harness, but we can assert the command line is correct, which is
     /// what the production cgroup-enforcement path depends on.
     #[test]
     fn systemd_run_argv_is_well_formed() {
-        // Exercise the exact arg construction used by spawn_under_scope.
+        // Exercise the exact arg construction used by spawn_under_unit.
         // Reconstruct the prefix here so the test pins down the contract
-        // (KillMode=mixed, TimeoutStopSec=10s, then resource properties,
-        // then -- qemu-system-x86_64 …).
-        let unit = "qemu-fake-uuid.scope";
+        // (transient service — NOT --scope — with --collect, KillMode=mixed,
+        // TimeoutStopSec=10s, then resource properties, then -- qemu …).
+        let unit = "qemu-fake-uuid.service";
         let resource_props = super::super::resource::vm_properties(2, 1024);
         let bin = "qemu-system-x86_64";
         let mut cmd: Vec<String> = vec![
             "-n".into(),
             "systemd-run".into(),
-            "--scope".into(),
+            "--collect".into(),
             format!("--unit={unit}"),
             "--property=KillMode=mixed".into(),
             "--property=TimeoutStopSec=10s".into(),
@@ -1048,8 +1080,12 @@ mod tests {
         cmd.push(bin.into());
 
         let joined = cmd.join(" ");
-        assert!(joined.contains("sudo: missing here?") || joined.contains("systemd-run"));
-        assert!(joined.contains("--unit=qemu-fake-uuid.scope"));
+        assert!(joined.contains("systemd-run"));
+        // The bug regression guard: a transient *service*, never a *scope*
+        // (which blocks until QEMU exits and wedges the boot path).
+        assert!(!joined.contains("--scope"), "must not use --scope");
+        assert!(joined.contains("--collect"));
+        assert!(joined.contains("--unit=qemu-fake-uuid.service"));
         assert!(joined.contains("--property=KillMode=mixed"));
         assert!(joined.contains("--property=MemoryMax=1024M"));
         assert!(joined.contains("--property=MemorySwapMax=0"));

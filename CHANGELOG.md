@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **QEMU production boot path was completely broken (critical).** The agent
+  spawned QEMU via `systemd-run --scope`, which runs *synchronously* and only
+  returns once the wrapped process exits — so `boot()` blocked for the VM's
+  entire lifetime and never reached the QMP handshake, the socket-perms relax,
+  or handle persistence. Every production-mode (non-`AGENT_NO_SUDO`) QEMU boot
+  hung until the manager's timeout and was then torn down. Fixed by spawning
+  QEMU as a transient **service** (`systemd-run --collect`, no `--scope`),
+  which backgrounds it under systemd (PID 1) — also letting VMs survive agent
+  restarts, which `rebind` depends on. (`qemu-<id>.scope` → `.service`.)
+- **QEMU lifecycle ops orphaned VMs (critical).** QEMU's root-written pidfile
+  is mode 0600, unreadable by the non-root agent, so `read_pid` returned
+  `None`, `rebind` couldn't confirm liveness, and pause / resume / shutdown /
+  destroy all failed with "no live vmm" — `destroy` silently no-opped and left
+  the VM and its cgroup running. Fixed by self-healing `read_pid`: relax the
+  pidfile via `sudo -n chmod` and retry (mirrors the socket-perms relax).
+- Both found and fixed via real end-to-end testing on a **stock Ubuntu 24.04**
+  host with the agent running **non-root** (the true production posture):
+  QEMU UEFI boot of an Ubuntu cloud image → cloud-init NoCloud seed → DHCP +
+  serial login → pause/resume/destroy with no orphan, cgroup limits enforced.
+  This exercises the "production sudo/systemd-run/cgroup path" that the
+  alpha.1 caveats flagged as not-yet-validated.
+
 ## [0.5.0-alpha.1] - 2026-06-08
 
 **Alpha** — first pluggable-VMM release. Adds **QEMU** as a second VMM
