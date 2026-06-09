@@ -804,7 +804,12 @@ async fn backup_disk(
     }
     let fmt = req.format.as_deref().unwrap_or("qcow2");
     let mut cmd = tokio::process::Command::new("qemu-img");
-    cmd.arg("convert").arg("-O").arg(fmt);
+    // `-U` skips qemu-img's shared-lock check: the live QEMU still holds the
+    // qcow2's write lock even while the guest is QMP-`stop`ped (pausing vCPUs
+    // doesn't close the file), so without this the convert fails with
+    // "Failed to get shared write lock". The preceding `stop` quiesces the
+    // guest, so reading the source unlocked is crash-consistent.
+    cmd.arg("convert").arg("-U").arg("-O").arg(fmt);
     if req.compress {
         cmd.arg("-c");
     }

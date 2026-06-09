@@ -64,13 +64,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by adding headroom: `MemoryMax = guest + max(512 MiB, 12.5%)`. Validated by
   booting the Ubuntu 24.04.3 live-server installer (Subiquity reached its
   language screen; the VM previously died at the exact guest-RAM size).
+- **QEMU live backup failed (agent-side).** `backup_disk` QMP-`stop`s the guest
+  then runs `qemu-img convert`, but `stop` only pauses vCPUs — QEMU keeps the
+  qcow2's write lock held, so the convert died with "Failed to get shared write
+  lock". Fixed with `qemu-img convert -U` (the preceding `stop` quiesces the
+  guest, so the unlocked read is crash-consistent). Validated: a 1.9 GiB qcow2
+  backup of a running VM.
 
 ### Validated this round (full-stack, stock Ubuntu 24.04 host)
 - **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
   enters `installing`, boots the installer from the ISO via OVMF/UEFI, VNC
   framebuffer shows the live Subiquity installer.
+- **Device extras:** virtio-rng (`/dev/hwrng`, active source `virtio_rng.0`),
+  virtio-vsock (`/dev/vsock` + modules, guest-cid wired), virtio-balloon (guest
+  lspci) all confirmed inside the guest.
+- **Multi-NIC:** a 2-NIC VM shows two virtio-net interfaces in the guest
+  (`enp0s3`+`enp0s4`), both up.
+- **Snapshots (create):** `POST /v1/vms/:id/snapshots` → QMP migrate-to-file
+  writes a full ~600 MiB VM+RAM state; listed via the API.
+- **Backup:** `POST /v1/vms/:id/backup` → consistent qcow2 of a running VM.
+- **UI:** `apps/ui` builds clean against the manager (all VM/storage/volume/
+  template routes compile).
 
 ### Known issues (QEMU, found in the same testing — not yet fixed)
+- **TPM (swtpm) blocked by AppArmor on Ubuntu.** swtpm works and the agent
+  spawns it correctly, but Ubuntu's `swtpm` AppArmor profile confines its
+  state/socket paths and denies the agent's per-VM dir under `FC_RUN_DIR`
+  (`/srv/fc`). The profile allows `/tmp/**`, `/var/lib/swtpm/**`, and a
+  `local/usr.bin.swtpm` include. Fix: ship a local AppArmor include granting the
+  run dir (keeps enforce), or store swtpm state under an already-allowed path.
+- **QEMU snapshot restore not implemented.** `POST /v1/snapshots/:id/instantiate`
+  is gated FC-only (the code returns 400 for QEMU with a "lands in a follow-up"
+  note). Snapshot *create* works; restore needs a QEMU path (boot `-incoming`
+  from the saved state).
 - **QEMU VMs can't be restarted.** `start_vm_by_id` → `restart_vm` is the
   Firecracker path; it validates an (empty for QEMU) `kernel_path` and fails.
   In-place QEMU restart needs its own path through `qemu_service` (reuse the
