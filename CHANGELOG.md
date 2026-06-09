@@ -70,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock". Fixed with `qemu-img convert -U` (the preceding `stop` quiesces the
   guest, so the unlocked read is crash-consistent). Validated: a 1.9 GiB qcow2
   backup of a running VM.
+- **QEMU VMs couldn't be restarted (manager-side).** `start_vm_by_id` → the
+  Firecracker `restart_vm`, which validates an (empty for QEMU) `kernel_path`
+  and rebuilds an FC boot — so stop→start always failed for QEMU. Added
+  `qemu_service::restart_qemu` (reuse the existing overlay/seed/reservation,
+  recreate the TAP idempotently, re-boot via the agent, UPDATE the row) and
+  dispatch QEMU VMs to it. Also fixed `stop` leaving the row stuck in
+  `stopping`. This unblocks data-disk attachment, which applies at boot.
+  Validated: stop→start cycle (`stopped`→`running`) and a data disk created via
+  `POST /v1/vms/:id/drives` shows up in the guest (`/dev/vdc`, 2 GiB) after a
+  restart.
 
 ### Validated this round (full-stack, stock Ubuntu 24.04 host)
 - **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
@@ -97,12 +107,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is gated FC-only (the code returns 400 for QEMU with a "lands in a follow-up"
   note). Snapshot *create* works; restore needs a QEMU path (boot `-incoming`
   from the saved state).
-- **QEMU VMs can't be restarted.** `start_vm_by_id` → `restart_vm` is the
-  Firecracker path; it validates an (empty for QEMU) `kernel_path` and fails.
-  In-place QEMU restart needs its own path through `qemu_service` (reuse the
-  existing overlay, recreate the TAP, re-boot). Until then stop→start fails,
-  and data-disk attachment (which applies at boot) can't take effect without a
-  working restart.
 - **`install-complete` CD-ROM eject fails.** The installer ISO is a
   `virtio-blk-pci` device on the q35 root complex (`pcie.0`), which supports
   neither `device_del` (no hotplug) nor media `eject` (virtio-blk isn't

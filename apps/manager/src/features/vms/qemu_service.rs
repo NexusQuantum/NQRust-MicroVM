@@ -499,6 +499,143 @@ pub async fn create_and_start_qemu(
     Ok(())
 }
 
+/// Re-boot an existing QEMU VM in place (the `start` after a `stop`). Distinct
+/// from `create_and_start_qemu`: the VM row, root disk, cloud-init seed, and
+/// capacity reservation already exist, so we reuse them instead of allocating
+/// new ones, and we UPDATE the row rather than INSERT. The Firecracker
+/// `restart_vm` path can't serve QEMU — it validates an (empty for QEMU)
+/// `kernel_path` and rebuilds an FC kernel boot.
+pub async fn restart_qemu(st: &AppState, vm: &super::repo::VmRow) -> Result<()> {
+    let id = vm.id;
+    let host = crate::features::hosts::repo::HostRepository::new(st.db.clone())
+        .get(vm.host_id)
+        .await
+        .context("load host for qemu restart")?;
+    let bridge = host
+        .capabilities_json
+        .get("bridge")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("host {} has no bridge advertised", host.id))?
+        .to_string();
+
+    // Boot mode (OVMF/UEFI etc.) persisted at create time.
+    let boot_mode_json: Option<serde_json::Value> =
+        sqlx::query_scalar(r#"SELECT boot_mode FROM vm WHERE id = $1"#)
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await
+            .context("load persisted boot_mode")?
+            .flatten();
+    let boot_mode: BootMode = match boot_mode_json {
+        Some(j) => serde_json::from_value(j).context("decode persisted boot_mode")?,
+        None => bail!("qemu vm {id} has no persisted boot_mode; cannot restart"),
+    };
+
+    // Recreate the primary TAP (the agent deletes any stale same-named device
+    // first, so this is idempotent). Capacity stays reserved across stop, so we
+    // deliberately do NOT re-reserve here.
+    let test_mode = std::env::var("MANAGER_TEST_MODE").is_ok();
+    let tap_name = if test_mode {
+        "user".to_string()
+    } else {
+        let tn = format!("tap-{}", &id.to_string()[..8]);
+        create_tap(&host.addr, id, &bridge)
+            .await
+            .context("create_tap on qemu restart")?;
+        tn
+    };
+
+    // Reuse the existing root disk (overlay/volume from create time).
+    let mut disks: Vec<DiskSpec> = vec![DiskSpec {
+        drive_id: "rootfs".into(),
+        source: vm.rootfs_path.clone().into(),
+        read_only: false,
+        root_device: true,
+        format: Some(probe_disk_format(&vm.rootfs_path).await),
+        cdrom: false,
+    }];
+    // Re-attach the cloud-init seed if it is still on disk.
+    let seed = st.storage.vm_dir(id).join("storage").join("cloud-init.iso");
+    if tokio::fs::metadata(&seed).await.is_ok() {
+        disks.push(DiskSpec {
+            drive_id: "cloudinit".into(),
+            source: seed,
+            read_only: true,
+            root_device: false,
+            format: Some("raw".into()),
+            cdrom: true,
+        });
+    }
+    // Re-attach data drives recorded for this VM.
+    for d in super::repo::drives::list(&st.db, id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| !d.is_root_device)
+    {
+        let fmt = probe_disk_format(&d.path_on_host).await;
+        disks.push(DiskSpec {
+            drive_id: d.drive_id,
+            source: d.path_on_host.into(),
+            read_only: d.is_read_only,
+            root_device: false,
+            format: Some(fmt),
+            cdrom: false,
+        });
+    }
+
+    let nics = vec![NicSpec {
+        iface_id: "eth0".into(),
+        host_dev: tap_name.clone(),
+        mac: generate_mac(id),
+    }];
+
+    let enable_vnc = vm.console_kind.as_deref() == Some("vnc");
+    let body = json!({
+        "vmm_kind": "qemu",
+        "vcpu": vm.vcpu,
+        "mem_mib": vm.mem_mib,
+        "boot": boot_mode,
+        "disks": disks,
+        "nics": nics,
+        "enable_vnc": enable_vnc,
+        "enable_balloon": true,
+        "enable_rng": true,
+    });
+
+    let http = Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .context("build http client (restart_qemu)")?;
+    let resp = http
+        .post(format!("{}/agent/v1/vmm/{}/boot", host.addr, id))
+        .json(&body)
+        .send()
+        .await
+        .context("agent boot (restart) request failed")?;
+    if !resp.status().is_success() {
+        let b = resp.text().await.unwrap_or_default();
+        bail!("agent rejected qemu restart boot: {b}");
+    }
+    let handle: BootResp = resp.json().await.context("decode agent boot response")?;
+
+    // Update the existing row in place (no insert).
+    sqlx::query(
+        r#"UPDATE vm SET state = 'running', api_sock = $2, tap = $3, fc_unit = $4,
+                         vnc_listen = $5, updated_at = now() WHERE id = $1"#,
+    )
+    .bind(id)
+    .bind(&handle.api_sock)
+    .bind(&tap_name)
+    .bind(&handle.systemd_unit)
+    .bind(handle.vnc.as_deref())
+    .execute(&st.db)
+    .await
+    .context("update vm row after qemu restart")?;
+
+    Ok(())
+}
+
 /// Insert volume + volume_attachment rows for a QEMU VM whose disk was
 /// allocated through the storage registry. Best-effort — the VM is already
 /// running, so a logging failure here doesn't roll back the boot.

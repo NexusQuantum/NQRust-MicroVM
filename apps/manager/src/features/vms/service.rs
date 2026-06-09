@@ -945,6 +945,9 @@ pub async fn stop_only(
             .send()
             .await?;
         resp.error_for_status()?;
+        // Mark stopped (the QEMU destroy succeeded); otherwise the row is left
+        // in the transient "stopping" state forever.
+        super::repo::update_state(&st.db, id, "stopped").await?;
         // Drop into the same volume_attachment detach / log housekeeping
         // below so iSCSI sessions get cleaned up correctly. The audit log
         // entry at the bottom of this function still fires.
@@ -1189,7 +1192,14 @@ pub async fn start_vm_by_id_with_user(
         return Ok(()); // Already running
     }
 
-    restart_vm(st, &vm).await?;
+    // QEMU VMs can't use the Firecracker `restart_vm` path (it validates an
+    // empty kernel_path and rebuilds an FC boot). Re-boot them in place via the
+    // QEMU service, reusing the existing disk / seed / reservation.
+    if vm.vmm_kind.as_deref() == Some("qemu") {
+        crate::features::vms::qemu_service::restart_qemu(st, &vm).await?;
+    } else {
+        restart_vm(st, &vm).await?;
+    }
     let _ = audit::log_action(
         &st.db,
         user_id,
