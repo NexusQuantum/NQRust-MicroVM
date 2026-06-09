@@ -46,10 +46,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `10.0.0.x` and pings the gateway. This exercises the "production
   sudo/systemd-run/cgroup path" and "TAP bridging for QEMU" that the alpha.1
   caveats flagged as not-yet-validated.
+- **QEMU data disks were never attached (manager-side).** `create_drive`
+  provisioned a volume and recorded it, but `create_and_start_qemu` never read
+  the drives table, so data disks reached neither boot nor hot-plug. Fixed:
+  the QEMU boot now assembles data drives from the DB. Their format is read via
+  a real `qemu-img info` probe instead of guessing by extension — auto-
+  provisioned data disks are raw `.img`, which the extension heuristic
+  mislabeled qcow2, making QEMU refuse to open them.
+- **Reconciler spammed 502s reconciling QEMU drives.** `reconcile_devices`
+  drove Firecracker's per-device HTTP proxy for QEMU drives/NICs every cycle.
+  Fixed by skipping QEMU VMs there (QEMU assembles devices at boot).
+- **A full-RAM guest was OOM-killed (agent-side).** The cgroup `MemoryMax` was
+  pinned to exactly the guest's RAM with no headroom for QEMU's own footprint
+  (device models, VNC/virtio-vga framebuffer, firmware, I/O buffers). A guest
+  touching all its memory — e.g. a live-ISO installer unpacking its squashfs
+  into RAM — pushed QEMU's RSS over the cap and the kernel killed the VM. Fixed
+  by adding headroom: `MemoryMax = guest + max(512 MiB, 12.5%)`. Validated by
+  booting the Ubuntu 24.04.3 live-server installer (Subiquity reached its
+  language screen; the VM previously died at the exact guest-RAM size).
 
-### Known issues (QEMU, found in the same testing)
+### Validated this round (full-stack, stock Ubuntu 24.04 host)
+- **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
+  enters `installing`, boots the installer from the ISO via OVMF/UEFI, VNC
+  framebuffer shows the live Subiquity installer.
+
+### Known issues (QEMU, found in the same testing — not yet fixed)
+- **QEMU VMs can't be restarted.** `start_vm_by_id` → `restart_vm` is the
+  Firecracker path; it validates an (empty for QEMU) `kernel_path` and fails.
+  In-place QEMU restart needs its own path through `qemu_service` (reuse the
+  existing overlay, recreate the TAP, re-boot). Until then stop→start fails,
+  and data-disk attachment (which applies at boot) can't take effect without a
+  working restart.
+- **`install-complete` CD-ROM eject fails.** The installer ISO is a
+  `virtio-blk-pci` device on the q35 root complex (`pcie.0`), which supports
+  neither `device_del` (no hotplug) nor media `eject` (virtio-blk isn't
+  removable). CD-ROMs need to be `ide-cd`/AHCI (removable) or on a
+  hot-pluggable PCIe root-port.
+- **No QMP hot-add for data disks.** `create_drive` only persists; attaching to
+  a running QEMU VM (the agent already exposes `/vmm/:id/disk/add`) isn't wired.
 - Deleting a QEMU VM stops the process but leaves its `tap-<id>` on the bridge
   (orphan tap; the reconciler's orphan-cleanup eventually reaps it).
+- Data-disk volume directories under a storage root that overlaps the agent's
+  run dir are misdetected as orphan VMs by the reconciler (noisy cleanup of
+  non-existent scopes/socks; the disk files themselves are not deleted).
 - `guest_ip` stays null for bring-your-own images: IP reporting relies on the
   in-guest agent, which isn't present in stock cloud images.
 

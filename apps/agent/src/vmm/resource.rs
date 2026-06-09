@@ -23,12 +23,20 @@ pub fn cpu_properties(vcpu: u32) -> Vec<String> {
 
 /// Convert memory size (MiB) to systemd MemoryMax / MemorySwapMax properties.
 ///
-/// We pin MemoryMax to the requested allocation so a runaway VMM can't OOM
-/// the host. MemorySwapMax=0 ensures we never silently page guest memory to
-/// swap (which would tank performance and confuse SLAs).
+/// MemoryMax must sit *above* the guest's RAM, not at it. The VMM process also
+/// consumes host memory beyond the guest allocation — device models, the
+/// VNC/virtio-vga framebuffer, UEFI firmware, and disk I/O buffers. Pinning
+/// MemoryMax to exactly the guest size means a guest that legitimately uses all
+/// its RAM (e.g. a live-ISO installer that unpacks its squashfs into RAM) pushes
+/// the VMM's RSS over the cap and — with MemorySwapMax=0 — the kernel OOM-kills
+/// the whole VM. So add headroom of max(512 MiB, 12.5% of guest). This still
+/// bounds a runaway VMM (the host can't be OOM'd by the guest) while letting a
+/// well-behaved guest touch 100% of its declared RAM. MemorySwapMax=0 keeps us
+/// from silently paging guest memory to swap (which tanks perf and SLAs).
 pub fn memory_properties(mem_mib: u32) -> Vec<String> {
+    let headroom = std::cmp::max(512, mem_mib / 8);
     vec![
-        format!("MemoryMax={}M", mem_mib),
+        format!("MemoryMax={}M", mem_mib + headroom),
         "MemorySwapMax=0".to_string(),
     ]
 }
@@ -56,8 +64,10 @@ mod tests {
 
     #[test]
     fn memory_properties_include_max_and_swap() {
+        // 512 MiB guest + max(512, 512/8) = 512 + 512 = 1024 MiB cap (headroom
+        // for QEMU's own footprint so a full-RAM guest isn't OOM-killed).
         let p = memory_properties(512);
-        assert!(p.contains(&"MemoryMax=512M".to_string()));
+        assert!(p.contains(&"MemoryMax=1024M".to_string()));
         assert!(p.contains(&"MemorySwapMax=0".to_string()));
     }
 
@@ -65,7 +75,8 @@ mod tests {
     fn vm_properties_combines() {
         let p = vm_properties(2, 1024);
         assert!(p.iter().any(|s| s == "CPUQuota=200%"));
-        assert!(p.iter().any(|s| s == "MemoryMax=1024M"));
+        // 1024 MiB guest + max(512, 128) = 1024 + 512 = 1536 MiB cap.
+        assert!(p.iter().any(|s| s == "MemoryMax=1536M"));
     }
 
     #[test]

@@ -261,6 +261,33 @@ pub async fn create_and_start_qemu(
         }
     }
 
+    // Attach data drives recorded for this VM (POST /v1/vms/:id/drives). QEMU
+    // VMs don't go through Firecracker's per-drive proxy, so the manager
+    // assembles them here so they're present at boot/restart. The root disk is
+    // already in `disks`; skip any drive flagged as a root device to avoid a
+    // duplicate boot disk. Format is inferred from the file (qcow2/raw).
+    for d in super::repo::drives::list(&st.db, id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| !d.is_root_device)
+    {
+        // Probe the real format rather than guessing by extension:
+        // auto-provisioned data disks are raw `.img` files, which
+        // `detect_disk_format` would mislabel as qcow2 (a heuristic meant for
+        // cloud images), making QEMU fail to open them and abort the boot.
+        let fmt = probe_disk_format(&d.path_on_host).await;
+        tracing::info!(vm_id=%id, drive_id=%d.drive_id, path=%d.path_on_host, format=%fmt, "attaching data drive to qemu VM");
+        disks.push(DiskSpec {
+            drive_id: d.drive_id,
+            source: d.path_on_host.into(),
+            read_only: d.is_read_only,
+            root_device: false,
+            format: Some(fmt),
+            cdrom: false,
+        });
+    }
+
     // Build the NIC list. First NIC is the primary (the network selected by
     // network_id / host bridge). Additional NICs come from extra_network_ids
     // — each gets its own TAP + virtio-net-pci device.
@@ -1349,6 +1376,29 @@ fn detect_disk_format(path: &str) -> String {
     } else {
         "raw".into()
     }
+}
+
+/// Probe a disk image's real on-disk format via `qemu-img info` instead of
+/// guessing from the file extension. Auto-provisioned data disks are raw `.img`
+/// files that the extension heuristic ([`detect_disk_format`]) mislabels as
+/// qcow2 — passing `format=qcow2` for a raw file makes QEMU refuse to open it
+/// and aborts the boot. Falls back to the extension heuristic if the probe is
+/// unavailable (e.g. qemu-img missing or path not locally accessible).
+async fn probe_disk_format(path: &str) -> String {
+    let out = tokio::process::Command::new("qemu-img")
+        .args(["info", "--output=json", "-U", path])
+        .output()
+        .await;
+    if let Ok(o) = out {
+        if o.status.success() {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&o.stdout) {
+                if let Some(f) = v.get("format").and_then(|f| f.as_str()) {
+                    return f.to_string();
+                }
+            }
+        }
+    }
+    detect_disk_format(path)
 }
 
 /// Deterministic locally-administered MAC. First three bytes 52:54:00

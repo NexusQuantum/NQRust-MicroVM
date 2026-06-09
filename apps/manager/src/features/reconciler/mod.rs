@@ -425,6 +425,13 @@ async fn reconcile_devices(
     _inventory: &AgentInventory,
 ) -> Result<()> {
     for (vm_id, vm_row) in vm_map {
+        // Drive/NIC reconciliation drives Firecracker's per-device HTTP proxy
+        // (`/agent/v1/vms/:id/proxy/...`), which QEMU VMs don't expose — calling
+        // it for them just yields a 502 every cycle. QEMU assembles its drives
+        // and NICs from the DB at boot in `qemu_service`, so skip them here.
+        if vm_row.vmm_kind.as_deref() == Some("qemu") {
+            continue;
+        }
         let desired_drives = vms::repo::drives::list(&state.db, *vm_id).await?;
         reconcile_vm_drives(state, host, vm_row, &desired_drives).await?;
 

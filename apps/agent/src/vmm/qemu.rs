@@ -1087,7 +1087,7 @@ mod tests {
         assert!(joined.contains("--collect"));
         assert!(joined.contains("--unit=qemu-fake-uuid.service"));
         assert!(joined.contains("--property=KillMode=mixed"));
-        assert!(joined.contains("--property=MemoryMax=1024M"));
+        assert!(joined.contains("--property=MemoryMax=1536M"));
         assert!(joined.contains("--property=MemorySwapMax=0"));
         assert!(joined.contains("--property=CPUQuota=200%"));
         assert!(joined.contains("qemu-system-x86_64"));
