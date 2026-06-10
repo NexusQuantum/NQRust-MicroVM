@@ -355,15 +355,17 @@ async fn cdrom_eject(
     let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    // The device id in QEMU is the drive_id + "-dev" suffix per QemuDriver::build_args.
+    // Eject the medium from the CD-ROM drive. The installer ISO is an `ide-cd`
+    // on an AHCI controller (see QemuDriver::build_args), so QMP `eject` removes
+    // the disc and the guest boots the installed disk on its next reboot. We do
+    // NOT `device_del` the device: CD-ROMs on the q35 root complex can't be
+    // hot-unplugged, and keeping the (now empty) drive is the correct CD-eject
+    // semantic. `force` overrides any guest media lock held by the installer.
+    // The device id is the drive_id + "-dev" suffix per build_args.
     let dev_id = format!("{}-dev", req.drive_id);
-    qmp.execute("device_del", Some(json!({ "id": dev_id })))
+    qmp.execute("eject", Some(json!({ "id": dev_id, "force": true })))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    // drive_del may fail if QEMU has already collected the drive; non-fatal.
-    let _ = qmp
-        .execute("drive_del", Some(json!({ "id": req.drive_id })))
-        .await;
     Ok(Json(json!({"ok": true, "drive_id": req.drive_id})))
 }
 

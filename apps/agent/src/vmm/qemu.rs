@@ -282,14 +282,25 @@ impl QemuDriver {
             }
         }
 
-        // Disks. Each gets a virtio-blk-pci device, except `cdrom: true` which
-        // attaches as readonly virtio-blk with the disk media type forced.
+        // Disks. Regular disks attach as virtio-blk-pci. `cdrom: true` disks
+        // attach as `ide-cd` on a dedicated AHCI controller — a real removable
+        // CD-ROM whose medium can be ejected via QMP `eject` (install-complete).
+        // virtio-blk on the q35 root complex (pcie.0) supports neither
+        // device_del (no hotplug) nor media eject, so it can't model an
+        // ejectable installer CD.
         //
-        // Bootindex policy: if any disk is a CD-ROM, give it the lowest
-        // bootindex so the installer media boots before the root disk
-        // (which is blank on a fresh ISO install). Otherwise the root_device
-        // disk gets bootindex=0.
-        let any_cdrom = spec.disks.iter().any(|d| d.cdrom);
+        // Bootindex policy: CD-ROMs get the lowest indices (0,1,2…) so the
+        // installer media boots before the (blank) root disk on a fresh ISO
+        // install; the root disk sits right after them. Indices must be unique —
+        // two devices sharing a bootindex makes QEMU refuse to start (this bit
+        // multi-CD-ROM Windows installs: installer + virtio-win).
+        let num_cdrom = spec.disks.iter().filter(|d| d.cdrom).count();
+        if num_cdrom > 0 {
+            // One AHCI controller hosts every CD-ROM (ports ahci0.0..ahci0.5).
+            args.push("-device".into());
+            args.push("ich9-ahci,id=ahci0".into());
+        }
+        let mut cdrom_port = 0usize;
         for (i, disk) in spec.disks.iter().enumerate() {
             let drive_id = if disk.drive_id.is_empty() {
                 format!("drv{i}")
@@ -311,23 +322,23 @@ impl QemuDriver {
                 ro
             ));
             args.push("-device".into());
-            let bootindex = if any_cdrom {
-                if disk.cdrom {
-                    ",bootindex=0".to_string()
-                } else if disk.root_device {
-                    ",bootindex=1".to_string()
+            if disk.cdrom {
+                let port = cdrom_port;
+                cdrom_port += 1;
+                args.push(format!(
+                    "ide-cd,drive={drive_id},id={drive_id}-dev,bus=ahci0.{port},bootindex={port}"
+                ));
+            } else {
+                // Root disk boots after all CD-ROMs; data disks get no bootindex.
+                let bootindex = if disk.root_device {
+                    format!(",bootindex={num_cdrom}")
                 } else {
                     String::new()
-                }
-            } else if disk.root_device {
-                ",bootindex=0".to_string()
-            } else {
-                String::new()
-            };
-            args.push(format!(
-                "virtio-blk-pci,drive={},id={}-dev{}",
-                drive_id, drive_id, bootindex
-            ));
+                };
+                args.push(format!(
+                    "virtio-blk-pci,drive={drive_id},id={drive_id}-dev{bootindex}"
+                ));
+            }
         }
 
         // NICs — TAP-backed virtio-net by default. The TAP device is
@@ -1168,5 +1179,33 @@ mod tests {
         assert!(
             joined.contains("file=/srv/images/ubuntu.iso,if=none,format=raw,id=iso,readonly=on")
         );
+        // CD-ROMs attach as an ejectable ide-cd on an AHCI controller, NOT
+        // virtio-blk (which can't be media-ejected at install-complete).
+        assert!(joined.contains("ich9-ahci,id=ahci0"));
+        assert!(joined.contains("ide-cd,drive=iso,id=iso-dev,bus=ahci0.0,bootindex=0"));
+    }
+
+    #[test]
+    fn build_args_unique_bootindex_with_multiple_cdroms() {
+        // Two CD-ROMs (e.g. Windows installer + virtio-win) must get distinct
+        // bootindexes, else QEMU refuses to start.
+        let drv = QemuDriver::new();
+        let mut spec = linux_kernel_spec();
+        for n in ["iso1", "iso2"] {
+            spec.disks.push(DiskSpec {
+                drive_id: n.into(),
+                source: PathBuf::from(format!("/srv/images/{n}.iso")),
+                read_only: true,
+                root_device: false,
+                format: Some("raw".into()),
+                cdrom: true,
+            });
+        }
+        let args = drv
+            .build_args(&spec, std::path::Path::new("/srv/fc/xyz"), None)
+            .unwrap();
+        let joined = args.join(" ");
+        assert!(joined.contains("ide-cd,drive=iso1,id=iso1-dev,bus=ahci0.0,bootindex=0"));
+        assert!(joined.contains("ide-cd,drive=iso2,id=iso2-dev,bus=ahci0.1,bootindex=1"));
     }
 }

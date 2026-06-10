@@ -80,6 +80,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Validated: stop→start cycle (`stopped`→`running`) and a data disk created via
   `POST /v1/vms/:id/drives` shows up in the guest (`/dev/vdc`, 2 GiB) after a
   restart.
+- **`install-complete` CD-ROM eject failed (agent-side).** CD-ROMs were wired as
+  `virtio-blk-pci` on the q35 root complex (`pcie.0`), which can't `device_del`
+  (no hotplug) or media-eject — so finishing an ISO install died with a 502.
+  Now `cdrom: true` disks attach as `ide-cd` on a dedicated `ich9-ahci`
+  controller (real removable media), and the eject uses QMP `eject` (force).
+  Also fixed a latent **duplicate-bootindex** crash: multiple CD-ROMs (e.g. a
+  Windows installer + virtio-win) all got `bootindex=0`, which makes QEMU refuse
+  to start — bootindexes are now unique (CD-ROMs `0,1,…`, root after them).
+  Validated: install-complete ejects the ISO (`query-block` inserted→false,
+  state `installing`→`running`); cloud-init still configures the guest with its
+  seed now an ide-cd (no regression).
 
 ### Validated this round (full-stack, stock Ubuntu 24.04 host)
 - **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
@@ -107,11 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is gated FC-only (the code returns 400 for QEMU with a "lands in a follow-up"
   note). Snapshot *create* works; restore needs a QEMU path (boot `-incoming`
   from the saved state).
-- **`install-complete` CD-ROM eject fails.** The installer ISO is a
-  `virtio-blk-pci` device on the q35 root complex (`pcie.0`), which supports
-  neither `device_del` (no hotplug) nor media `eject` (virtio-blk isn't
-  removable). CD-ROMs need to be `ide-cd`/AHCI (removable) or on a
-  hot-pluggable PCIe root-port.
 - **No QMP hot-add for data disks.** `create_drive` only persists; attaching to
   a running QEMU VM (the agent already exposes `/vmm/:id/disk/add`) isn't wired.
 - Deleting a QEMU VM stops the process but leaves its `tap-<id>` on the bridge
