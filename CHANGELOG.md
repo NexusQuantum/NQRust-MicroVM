@@ -91,6 +91,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Validated: install-complete ejects the ISO (`query-block` inserted→false,
   state `installing`→`running`); cloud-init still configures the guest with its
   seed now an ide-cd (no regression).
+- **QEMU snapshot restore was unimplemented.** `POST /v1/snapshots/:id/instantiate`
+  was gated Firecracker-only. Two parts: (1) the agent's `snapshot()` did
+  migrate-to-file (RAM) but never captured the disk — despite a comment claiming
+  it did — so a restore had nothing consistent to boot. It now finds the root
+  disk via QMP `query-block` and copies the qcow2 overlay to `<snap>/disk.qcow2`
+  while the guest is paused. (2) `instantiate` now has a QEMU path: it clones the
+  captured disk into a new VM and reuses `create_and_start_qemu` to boot it.
+  Validated: create captures `state.qmp` + `disk.qcow2`; instantiate yields a new
+  VM that boots into the snapshot's disk state (restored guest reports the source
+  VM's hostname). This is a consistent cold restore (revert-to-snapshot); the
+  migrate-to-file RAM image is not yet replayed (live-resume is a future add).
 
 ### Validated this round (full-stack, stock Ubuntu 24.04 host)
 - **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
@@ -114,10 +125,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`/srv/fc`). The profile allows `/tmp/**`, `/var/lib/swtpm/**`, and a
   `local/usr.bin.swtpm` include. Fix: ship a local AppArmor include granting the
   run dir (keeps enforce), or store swtpm state under an already-allowed path.
-- **QEMU snapshot restore not implemented.** `POST /v1/snapshots/:id/instantiate`
-  is gated FC-only (the code returns 400 for QEMU with a "lands in a follow-up"
-  note). Snapshot *create* works; restore needs a QEMU path (boot `-incoming`
-  from the saved state).
 - **No QMP hot-add for data disks.** `create_drive` only persists; attaching to
   a running QEMU VM (the agent already exposes `/vmm/:id/disk/add`) isn't wired.
 - Deleting a QEMU VM stops the process but leaves its `tap-<id>` on the bridge

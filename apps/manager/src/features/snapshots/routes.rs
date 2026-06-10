@@ -474,12 +474,89 @@ pub async fn instantiate(
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
-    // Cross-backend restore is not yet supported: the FC instantiate path
-    // can't materialise a QEMU VM and vice versa. QEMU snapshot restore
-    // lands in a separate route in the install-flow PR. For now we only
-    // accept FC→FC instantiate via this path.
     let src_kind = vm_vmm_kind(&st.db, snapshot.vm_id).await;
     let snap_kind = snapshot_vmm_kind(&st.db, snapshot.id).await;
+
+    // QEMU snapshot restore: clone the disk captured at snapshot time into a new
+    // VM and cold-boot it from that disk state (a consistent revert-to-snapshot;
+    // the migrate-to-file RAM state is not replayed). Reuses create_and_start_qemu.
+    if snap_kind == "qemu" && src_kind == "qemu" {
+        let new_id = Uuid::new_v4();
+        let name = resolve_instantiate_name(payload.name, snapshot.name.as_deref(), snapshot.id);
+
+        // The agent captured the disk next to the snapshot's state file.
+        let snap_disk = qemu_snapshot_state_path(snapshot.vm_id, snapshot.id)
+            .parent()
+            .map(|p| p.join("disk.qcow2"))
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        if tokio::fs::metadata(&snap_disk).await.is_err() {
+            tracing::error!(snapshot_id=%snapshot.id, path=%snap_disk.display(),
+                "qemu snapshot has no captured disk (taken before the disk-capture fix?)");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        // Copy it into the new VM's storage as its root disk (the master stays
+        // intact so the snapshot can be instantiated again).
+        let dst_dir = std::path::PathBuf::from(
+            std::env::var("MANAGER_STORAGE_ROOT").unwrap_or_else(|_| "/srv/fc/vms".into()),
+        )
+        .join(new_id.to_string())
+        .join("storage");
+        if let Err(e) = tokio::fs::create_dir_all(&dst_dir).await {
+            tracing::error!(error=?e, "create storage dir for snapshot restore");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let new_disk = dst_dir.join("disk.qcow2");
+        if let Err(e) = tokio::fs::copy(&snap_disk, &new_disk).await {
+            tracing::error!(error=?e, "copy snapshot disk for restore");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+
+        // Source VM's persisted boot mode (OVMF/UEFI etc.).
+        let boot_mode_json: Option<serde_json::Value> =
+            sqlx::query_scalar(r#"SELECT boot_mode FROM vm WHERE id = $1"#)
+                .bind(snapshot.vm_id)
+                .fetch_optional(&st.db)
+                .await
+                .ok()
+                .flatten()
+                .flatten();
+        let boot_mode: Option<nexus_vmm::BootMode> =
+            boot_mode_json.and_then(|j| serde_json::from_value(j).ok());
+
+        let req = nexus_types::CreateVmReq {
+            name: name.clone(),
+            vcpu: source_vm.vcpu.max(1) as u8,
+            mem_mib: source_vm.mem_mib.max(1) as u32,
+            vmm_kind: Some(nexus_vmm::VmmKind::Qemu),
+            boot_mode,
+            guest_os: source_vm
+                .guest_os
+                .as_deref()
+                .and_then(nexus_vmm::GuestOs::parse),
+            rootfs_path: Some(new_disk.to_string_lossy().into_owned()),
+            enable_vnc: source_vm.console_kind.as_deref() == Some("vnc"),
+            ..Default::default()
+        };
+
+        crate::features::vms::qemu_service::create_and_start_qemu(
+            &st,
+            new_id,
+            req,
+            None,
+            None,
+            "snapshot-restore",
+        )
+        .await
+        .map_err(|err| {
+            tracing::error!(snapshot_id=%id, error=?err, "failed to instantiate qemu snapshot");
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        return Ok(Json(InstantiateSnapshotResp { id: new_id, name }));
+    }
+
+    // Cross-backend restore is not supported: the FC instantiate path can't
+    // materialise a QEMU VM and vice versa. Only FC→FC reaches here now.
     if snap_kind != "firecracker" || src_kind != "firecracker" {
         tracing::warn!(
             snapshot_id=%snapshot.id,

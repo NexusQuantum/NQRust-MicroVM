@@ -849,6 +849,47 @@ impl VmmDriver for QemuDriver {
             }
             sleep(Duration::from_millis(200)).await;
         }
+        // Capture the root disk alongside the RAM state. migrate-to-file only
+        // saves RAM + device state; without the disk-at-snapshot a restore would
+        // apply onto a drifted disk. The guest is still paused here, so a plain
+        // byte copy is consistent. We copy the qcow2 *overlay* (small — just the
+        // writes over the read-only base) via a raw file copy, which ignores the
+        // qcow2 write lock the live QEMU still holds (a plain read, not a
+        // lock-checked qemu-img open). Restore clones this into the new VM.
+        if let Some(snap_dir) = state_path.parent() {
+            let blocks: serde_json::Value = qmp
+                .execute::<serde_json::Value>("query-block", None)
+                .await
+                .map_err(VmmError::Other)?;
+            // `execute` already unwraps the QMP `return` field, so `blocks` is
+            // the device array itself.
+            let disk_src = blocks.as_array().and_then(|arr| {
+                arr.iter().find_map(|d| {
+                    if d.get("device").and_then(|x| x.as_str()) == Some("rootfs") {
+                        d.get("inserted")
+                            .and_then(|i| i.get("file"))
+                            .and_then(|f| f.as_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+            });
+            match disk_src {
+                Some(src) => {
+                    let dst_disk = snap_dir.join("disk.qcow2");
+                    fs::copy(&src, &dst_disk).await.map_err(|e| {
+                        VmmError::Other(anyhow!("copy root disk for snapshot: {e}"))
+                    })?;
+                }
+                None => {
+                    let _ = qmp.execute::<serde_json::Value>("cont", None).await;
+                    return Err(VmmError::Other(anyhow!(
+                        "snapshot: could not locate 'rootfs' disk via query-block"
+                    )));
+                }
+            }
+        }
         let _ = qmp
             .execute::<serde_json::Value>("cont", None)
             .await
