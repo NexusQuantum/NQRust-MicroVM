@@ -209,7 +209,12 @@ impl QemuDriver {
         // No default devices, no graphical display.
         args.push("-nodefaults".into());
         args.push("-no-user-config".into());
-        args.push("-no-reboot".into());
+        // Only installer VMs get -no-reboot (their post-install auto-reboot would
+        // otherwise loop back into the still-attached installer CD). A normal VM
+        // must reboot in place when the guest issues a reboot, not power off.
+        if spec.no_reboot {
+            args.push("-no-reboot".into());
+        }
         if !spec.enable_vnc {
             args.push("-display".into());
             args.push("none".into());
@@ -783,6 +788,12 @@ impl VmmDriver for QemuDriver {
 
     async fn destroy(&self, handle: VmmHandle) -> Result<(), VmmError> {
         let _ = self.shutdown(&handle, ShutdownMode::Hard).await;
+        // Best-effort cleanup of the primary TAP. The manager names it
+        // deterministically as tap-<vm_id[:8]> (QemuDriver doesn't own the name,
+        // so we reconstruct it). Without this the bridge accumulates orphan taps
+        // after every delete. No-op for user-mode-net VMs (no such device).
+        let tap = format!("tap-{}", &handle.vm_id.to_string()[..8]);
+        let _ = crate::core::net::delete_tap(&tap).await;
         // Best-effort cleanup of sockets and handle file.
         let vm_dir = handle.api_sock.parent().map(|p| p.to_path_buf());
         if let Some(dir) = vm_dir {
@@ -1015,6 +1026,7 @@ mod tests {
             enable_tpm: false,
             enable_balloon: false,
             enable_rng: false,
+            no_reboot: false,
             vsock_cid: None,
             vfio_devices: vec![],
             incoming_uri: None,

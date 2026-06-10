@@ -77,6 +77,8 @@ pub struct BootRequest {
     #[serde(default)]
     pub enable_rng: bool,
     #[serde(default)]
+    pub no_reboot: bool,
+    #[serde(default)]
     pub vsock_cid: Option<u32>,
     #[serde(default)]
     pub vfio_devices: Vec<String>,
@@ -109,6 +111,7 @@ async fn boot(
         enable_tpm: req.enable_tpm,
         enable_balloon: req.enable_balloon,
         enable_rng: req.enable_rng,
+        no_reboot: req.no_reboot,
         vsock_cid: req.vsock_cid,
         vfio_devices: req.vfio_devices,
         incoming_uri: req.incoming_uri,
@@ -693,6 +696,7 @@ async fn migrate_incoming(
         enable_tpm: req.enable_tpm,
         enable_balloon: req.enable_balloon,
         enable_rng: req.enable_rng,
+        no_reboot: false,
         vsock_cid: req.vsock_cid,
         vfio_devices: req.vfio_devices,
         incoming_uri: Some(format!("tcp:0.0.0.0:{}", req.listen_port)),

@@ -355,6 +355,10 @@ pub async fn create_and_start_qemu(
         "enable_tpm": auto_tpm,
         "enable_balloon": true,
         "enable_rng": true,
+        // Installer VMs get -no-reboot so the post-install auto-reboot exits
+        // (operator then ejects the ISO + starts into the installed OS). Normal
+        // VMs reboot in place.
+        "no_reboot": req.installer_iso_id.is_some(),
     });
 
     // Boot can be slow on busy hosts: qemu-img overlay over a large backing
@@ -601,6 +605,8 @@ pub async fn restart_qemu(st: &AppState, vm: &super::repo::VmRow) -> Result<()> 
         "enable_vnc": enable_vnc,
         "enable_balloon": true,
         "enable_rng": true,
+        // Restart targets a normal (already-installed) VM — reboot in place.
+        "no_reboot": false,
     });
 
     let http = Client::builder()

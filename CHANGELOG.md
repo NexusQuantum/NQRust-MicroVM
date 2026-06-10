@@ -102,6 +102,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   VM that boots into the snapshot's disk state (restored guest reports the source
   VM's hostname). This is a consistent cold restore (revert-to-snapshot); the
   migrate-to-file RAM image is not yet replayed (live-resume is a future add).
+- **A guest reboot powered the VM off (agent-side).** QEMU was always spawned
+  with `-no-reboot`, so an in-guest `reboot` exited the VMM. That flag is needed
+  only for ISO installers (their post-install auto-reboot would otherwise loop
+  into the still-attached installer CD). It's now driven by a `no_reboot` flag
+  on `VmSpec`/`BootRequest` that the manager sets only for installer VMs; normal
+  VMs reboot in place. Validated: a normal VM's QEMU survives `sudo reboot`
+  (same PID); installer VMs still get `-no-reboot`.
+- **Deleting a QEMU VM leaked its TAP.** `destroy` tore down the process but left
+  `tap-<id>` on the bridge. It now deletes the primary TAP (reconstructed as
+  `tap-<vm_id[:8]>`; no-op for user-mode-net VMs). Validated: the tap is gone
+  from `fcbr0` after delete.
 
 ### Validated this round (full-stack, stock Ubuntu 24.04 host)
 - **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
@@ -119,16 +130,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   template routes compile).
 
 ### Known issues (QEMU, found in the same testing — not yet fixed)
-- **TPM (swtpm) blocked by AppArmor on Ubuntu.** swtpm works and the agent
-  spawns it correctly, but Ubuntu's `swtpm` AppArmor profile confines its
-  state/socket paths and denies the agent's per-VM dir under `FC_RUN_DIR`
-  (`/srv/fc`). The profile allows `/tmp/**`, `/var/lib/swtpm/**`, and a
-  `local/usr.bin.swtpm` include. Fix: ship a local AppArmor include granting the
-  run dir (keeps enforce), or store swtpm state under an already-allowed path.
+- **TPM (swtpm) needs an AppArmor accommodation on Ubuntu (packaging).** TPM 2.0
+  works end-to-end (validated: guest gets `/dev/tpm0` + `tpm_version_major=2`),
+  but Ubuntu's `swtpm` AppArmor profile confines swtpm's state/socket paths and
+  denies the agent's per-VM dir under `FC_RUN_DIR` (`/srv/fc`) out of the box.
+  The validated workaround is a one-line `local/usr.bin.swtpm` include granting
+  the run dir (profile stays in enforce). The agent installer should ship this
+  snippet (or store swtpm state under an already-allowed path like
+  `/var/lib/swtpm/`).
 - **No QMP hot-add for data disks.** `create_drive` only persists; attaching to
-  a running QEMU VM (the agent already exposes `/vmm/:id/disk/add`) isn't wired.
-- Deleting a QEMU VM stops the process but leaves its `tap-<id>` on the bridge
-  (orphan tap; the reconciler's orphan-cleanup eventually reaps it).
+  a running QEMU VM (the agent already exposes `/vmm/:id/disk/add`) isn't wired —
+  data disks apply at the next boot/restart instead.
 - Data-disk volume directories under a storage root that overlaps the agent's
   run dir are misdetected as orphan VMs by the reconciler (noisy cleanup of
   non-existent scopes/socks; the disk files themselves are not deleted).

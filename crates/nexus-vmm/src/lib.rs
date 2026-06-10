@@ -241,6 +241,12 @@ pub struct VmSpec {
     /// virtio-rng device (entropy source). QEMU only.
     #[serde(default)]
     pub enable_rng: bool,
+    /// Pass `-no-reboot` so a guest-initiated reboot exits the VMM instead of
+    /// rebooting. Used for ISO installers (their post-install auto-reboot would
+    /// otherwise loop back into the still-attached installer CD). Normal VMs
+    /// leave this false so an in-guest `reboot` actually reboots. QEMU only.
+    #[serde(default)]
+    pub no_reboot: bool,
     /// virtio-vsock device with the given context id. QEMU only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vsock_cid: Option<u32>,
