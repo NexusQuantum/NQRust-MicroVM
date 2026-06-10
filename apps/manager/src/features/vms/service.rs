@@ -1783,6 +1783,37 @@ pub async fn create_drive(
         warn!(vm_id = %vm_id, drive_id = %req.drive_id, error = ?e, "failed to auto-register data drive as volume");
     }
 
+    // For a RUNNING QEMU VM, hot-add the disk live via QMP so the guest sees it
+    // without a restart. Best-effort: the drive is already persisted, so on any
+    // failure it still attaches on the next boot (restart_qemu reads the DB).
+    // Firecracker VMs use the legacy proxy path and are unaffected.
+    if vm.state == "running" && vm.vmm_kind.as_deref() == Some("qemu") {
+        let fmt = crate::features::vms::qemu_service::probe_disk_format(&host_path).await;
+        let body = serde_json::json!({
+            "vmm_kind": "qemu",
+            "drive_id": req.drive_id,
+            "source": host_path,
+            "format": fmt,
+            "read_only": req.is_read_only,
+            "cdrom": false,
+        });
+        match reqwest::Client::new()
+            .post(format!("{}/agent/v1/vmm/{}/disk/add", vm.host_addr, vm.id))
+            .json(&body)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(_) => {
+                info!(vm_id = %vm_id, drive_id = %req.drive_id, "hot-added data disk to running QEMU VM")
+            }
+            Err(e) => {
+                warn!(vm_id = %vm_id, drive_id = %req.drive_id, error = ?e,
+                      "live hot-add failed; disk will attach on next VM start")
+            }
+        }
+    }
+
     Ok(drive.into())
 }
 
@@ -1833,6 +1864,32 @@ pub async fn delete_drive(st: &AppState, vm_id: Uuid, drive_id: Uuid) -> Result<
     use crate::features::volumes::repo::VolumeRepository;
     let volume_repo = VolumeRepository::new(st.db.clone());
     let vm = super::repo::get(&st.db, vm_id).await?;
+
+    // For a RUNNING QEMU VM, hot-remove the device live (QMP) before we drop the
+    // DB row / unlink the file, so the guest releases it cleanly. Best-effort:
+    // if it fails the removal still takes effect on the next start.
+    if vm.state == "running" && vm.vmm_kind.as_deref() == Some("qemu") {
+        let body = serde_json::json!({"vmm_kind": "qemu", "drive_id": drive.drive_id});
+        match reqwest::Client::new()
+            .post(format!(
+                "{}/agent/v1/vmm/{}/disk/remove",
+                vm.host_addr, vm.id
+            ))
+            .json(&body)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(_) => {
+                info!(vm_id = %vm_id, drive_id = %drive.drive_id, "hot-removed data disk from running QEMU VM")
+            }
+            Err(e) => {
+                warn!(vm_id = %vm_id, drive_id = %drive.drive_id, error = ?e,
+                      "live hot-remove failed; removal applies on next VM start")
+            }
+        }
+    }
+
     if let Ok(volumes) = volume_repo.list_by_host(vm.host_id).await {
         for volume in volumes {
             if volume.path == drive.path_on_host {

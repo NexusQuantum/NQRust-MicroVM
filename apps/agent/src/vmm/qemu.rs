@@ -32,6 +32,9 @@ const QEMU_BIN_DEFAULT: &str = "qemu-system-x86_64";
 /// How long to wait for QEMU to produce the QMP socket after spawn.
 const QMP_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const QMP_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Number of empty PCIe root-ports pre-allocated at boot for runtime device
+/// hot-plug (disk/NIC hot-add). Each provides one hot-pluggable slot.
+pub(crate) const HOTPLUG_ROOT_PORTS: u8 = 4;
 
 #[derive(Default, Clone)]
 pub struct QemuDriver {
@@ -344,6 +347,16 @@ impl QemuDriver {
                     "virtio-blk-pci,drive={drive_id},id={drive_id}-dev{bootindex}"
                 ));
             }
+        }
+
+        // Pre-allocate empty PCIe root-ports for runtime hot-plug (disk/NIC
+        // hot-add). The q35 root complex (pcie.0) doesn't support hotplug, so a
+        // live `device_add` must target a root-port — and those can't be added
+        // after boot. Boot-time devices sit on pcie.0; these are spare slots the
+        // agent's disk_add fills on demand. `chassis` must be unique per port.
+        for n in 0..HOTPLUG_ROOT_PORTS {
+            args.push("-device".into());
+            args.push(format!("pcie-root-port,id=rphp{n},chassis={}", 20 + n));
         }
 
         // NICs — TAP-backed virtio-net by default. The TAP device is
@@ -1236,6 +1249,8 @@ mod tests {
         // virtio-blk (which can't be media-ejected at install-complete).
         assert!(joined.contains("ich9-ahci,id=ahci0"));
         assert!(joined.contains("ide-cd,drive=iso,id=iso-dev,bus=ahci0.0,bootindex=0"));
+        // Spare PCIe root-ports for runtime hot-plug.
+        assert!(joined.contains("pcie-root-port,id=rphp0"));
     }
 
     #[test]

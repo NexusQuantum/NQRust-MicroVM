@@ -1527,7 +1527,7 @@ fn detect_disk_format(path: &str) -> String {
 /// qcow2 — passing `format=qcow2` for a raw file makes QEMU refuse to open it
 /// and aborts the boot. Falls back to the extension heuristic if the probe is
 /// unavailable (e.g. qemu-img missing or path not locally accessible).
-async fn probe_disk_format(path: &str) -> String {
+pub(crate) async fn probe_disk_format(path: &str) -> String {
     let out = tokio::process::Command::new("qemu-img")
         .args(["info", "--output=json", "-U", path])
         .output()

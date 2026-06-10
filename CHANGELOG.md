@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tap-<id>` on the bridge. It now deletes the primary TAP (reconstructed as
   `tap-<vm_id[:8]>`; no-op for user-mode-net VMs). Validated: the tap is gone
   from `fcbr0` after delete.
+- **Data disks can now be hot-added/removed live (QMP).** Previously a disk
+  created on a running QEMU VM only applied on the next boot. The agent now
+  pre-allocates spare `pcie-root-port`s at boot (q35's `pcie.0` can't hotplug),
+  `disk_add` `device_add`s onto a free root-port, and the manager's
+  `create_drive`/`delete_drive` call the agent's QMP add/remove for running QEMU
+  VMs (best-effort; the drive is still persisted so it also survives a restart).
+  Validated: adding a 1 GiB disk to a running VM makes the guest's block-device
+  count go 1→2 with no restart, and deleting it takes it back to 1.
 
 ### Validated this round (full-stack, stock Ubuntu 24.04 host)
 - **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
@@ -138,9 +146,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the run dir (profile stays in enforce). The agent installer should ship this
   snippet (or store swtpm state under an already-allowed path like
   `/var/lib/swtpm/`).
-- **No QMP hot-add for data disks.** `create_drive` only persists; attaching to
-  a running QEMU VM (the agent already exposes `/vmm/:id/disk/add`) isn't wired —
-  data disks apply at the next boot/restart instead.
 - Data-disk volume directories under a storage root that overlaps the agent's
   run dir are misdetected as orphan VMs by the reconciler (noisy cleanup of
   non-existent scopes/socks; the disk files themselves are not deleted).

@@ -513,14 +513,37 @@ async fn disk_add(
     qmp.execute("blockdev-add", Some(node_args))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let dev_args = serde_json::json!({
-        "driver": "virtio-blk-pci",
-        "drive": req.drive_id,
-        "id": format!("{}-dev", req.drive_id),
-    });
-    qmp.execute("device_add", Some(dev_args))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // device_add must land on a hot-pluggable PCIe root-port — the q35 root
+    // complex (pcie.0, the default target) rejects hotplug. Try each
+    // pre-allocated root-port (see QemuDriver::build_args) until one has a free
+    // slot. On total failure, roll back the blockdev so we don't leak the node.
+    let dev_id = format!("{}-dev", req.drive_id);
+    let mut last_err = String::new();
+    let mut attached = false;
+    for n in 0..crate::vmm::qemu::HOTPLUG_ROOT_PORTS {
+        let dev_args = serde_json::json!({
+            "driver": "virtio-blk-pci",
+            "drive": req.drive_id,
+            "id": dev_id,
+            "bus": format!("rphp{n}"),
+        });
+        match qmp.execute("device_add", Some(dev_args)).await {
+            Ok(_) => {
+                attached = true;
+                break;
+            }
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    if !attached {
+        let _ = qmp
+            .execute("blockdev-del", Some(json!({ "node-name": req.drive_id })))
+            .await;
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("no free PCIe root-port for hot-add: {last_err}"),
+        ));
+    }
     Ok(Json(json!({"ok": true, "drive_id": req.drive_id})))
 }
 
