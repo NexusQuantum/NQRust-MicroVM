@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.2] - 2026-06-10
+
+**Alpha 2** — the QEMU classic-VM backend, hardened. Alpha.1 was code-complete
+but couldn't actually run a VM in production; this release fixes ~14 issues
+found by driving the full manager+agent stack on a stock Ubuntu host (agent
+non-root) and adds the missing feature paths (in-place restart, snapshot
+restore, install-complete CD-eject, live disk hot-add). Every fix below was
+validated end-to-end. Still alpha — see the alpha.1 caveats and the known
+issues below.
+
 ### Fixed
 - **QEMU production boot path was completely broken (critical).** The agent
   spawned QEMU via `systemd-run --scope`, which runs *synchronously* and only
