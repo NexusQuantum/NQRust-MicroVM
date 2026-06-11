@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Installer now provisions the QEMU host prerequisites.** The dependency phase
+  installs the QEMU classic-VM packages that alpha.2 needs but didn't auto-install:
+  `qemu-system-x86`/`qemu-kvm` (the VMM), `ovmf`/`edk2-ovmf` (UEFI firmware),
+  `genisoimage` (cloud-init seed ISO), and `swtpm`+`swtpm-tools` (TPM 2.0) — on
+  both apt and dnf. KVM setup additionally drops the swtpm AppArmor local include
+  (`/etc/apparmor.d/local/usr.bin.swtpm`) granting the run dir, so TPM-enabled
+  VMs work out of the box on Ubuntu (enforce mode preserved). Resolves the
+  swtpm-AppArmor packaging gap noted in the alpha.2 known issues.
+
 ## [0.5.0-alpha.2] - 2026-06-10
 
 **Alpha 2** — the QEMU classic-VM backend, hardened. Alpha.1 was code-complete

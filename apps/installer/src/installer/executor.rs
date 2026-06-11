@@ -317,6 +317,22 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
                 for log in logs {
                     tx.send(InstallMessage::Log(log))?;
                 }
+                // Allow swtpm (TPM 2.0 for Windows 11) to write its per-VM state
+                // under the run dir — Ubuntu's AppArmor profile blocks it
+                // otherwise. Best-effort: never fail the install over this.
+                let run_dir = config.data_dir.to_string_lossy().to_string();
+                match kvm::configure_swtpm_apparmor(&run_dir) {
+                    Ok(logs) => {
+                        for log in logs {
+                            tx.send(InstallMessage::Log(log))?;
+                        }
+                    }
+                    Err(e) => {
+                        tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                            "swtpm AppArmor setup skipped: {e}"
+                        ))))?;
+                    }
+                }
                 tx.send(InstallMessage::PhaseComplete(Phase::Kvm, Status::Success))?;
             }
             Err(e) => {

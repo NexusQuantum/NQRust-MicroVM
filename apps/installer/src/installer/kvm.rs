@@ -121,6 +121,45 @@ pub fn setup_kvm() -> Result<Vec<LogEntry>> {
     Ok(logs)
 }
 
+/// Let swtpm write the per-VM TPM state under the agent's run dir. Ubuntu ships
+/// an AppArmor profile for swtpm that confines its state/socket paths and denies
+/// the platform's run dir (e.g. `/srv/fc`), so a TPM-enabled QEMU VM (Windows 11
+/// / measured boot) fails to start with "Permission denied". We add the
+/// profile's documented local include (enforce mode is preserved — this grants
+/// one path, it does not disable the profile) and reload it. No-op where the
+/// profile isn't present (non-AppArmor distros, or swtpm without a profile).
+pub fn configure_swtpm_apparmor(run_dir: &str) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+    let profile = "/etc/apparmor.d/usr.bin.swtpm";
+    if !Path::new(profile).exists() {
+        logs.push(LogEntry::info(
+            "swtpm AppArmor profile not present — skipping (unconfined or non-AppArmor host)",
+        ));
+        return Ok(logs);
+    }
+    logs.push(LogEntry::info(
+        "Allowing swtpm to write TPM state under the run dir (AppArmor)...",
+    ));
+    let run_dir = run_dir.trim_end_matches('/');
+    let local = "/etc/apparmor.d/local/usr.bin.swtpm";
+    let content = format!(
+        "# NQRust-MicroVM: per-VM swtpm state lives under the run dir\n  {run_dir}/** rwk,"
+    );
+    let write_cmd = format!("echo '{content}' | sudo tee {local} > /dev/null");
+    let _ = run_command("sh", &["-c", &write_cmd]);
+    let output = run_sudo("apparmor_parser", &["-r", profile])?;
+    if output.status.success() {
+        logs.push(LogEntry::success(
+            "swtpm AppArmor updated — TPM state allowed under the run dir (enforce kept)",
+        ));
+    } else {
+        logs.push(LogEntry::warning(
+            "Failed to reload swtpm AppArmor profile — TPM-enabled VMs may not start",
+        ));
+    }
+    Ok(logs)
+}
+
 /// Verify KVM is working
 pub fn verify_kvm() -> Result<bool> {
     // Check /dev/kvm exists
