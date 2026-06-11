@@ -7,15 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.3] - 2026-06-11
+
+**Alpha 3** — makes alpha.2 installable turnkey. The installer (and the
+air-gapped bundle) now provision the QEMU host prerequisites that alpha.2
+required but didn't ship, so a fresh host runs QEMU VMs without manual package
+setup.
+
 ### Added
-- **Installer now provisions the QEMU host prerequisites.** The dependency phase
-  installs the QEMU classic-VM packages that alpha.2 needs but didn't auto-install:
-  `qemu-system-x86`/`qemu-kvm` (the VMM), `ovmf`/`edk2-ovmf` (UEFI firmware),
-  `genisoimage` (cloud-init seed ISO), and `swtpm`+`swtpm-tools` (TPM 2.0) — on
-  both apt and dnf. KVM setup additionally drops the swtpm AppArmor local include
-  (`/etc/apparmor.d/local/usr.bin.swtpm`) granting the run dir, so TPM-enabled
-  VMs work out of the box on Ubuntu (enforce mode preserved). Resolves the
-  swtpm-AppArmor packaging gap noted in the alpha.2 known issues.
+- **Installer now provisions the QEMU host prerequisites (classic + air-gapped).**
+  The dependency phase installs the QEMU classic-VM packages alpha.2 needed but
+  didn't auto-install: `qemu-system-x86`/`qemu-kvm` (the VMM), `ovmf`/`edk2-ovmf`
+  (UEFI firmware), `genisoimage` (cloud-init seed ISO), and `swtpm`+`swtpm-tools`
+  (TPM 2.0) — on both apt and dnf. The **air-gapped bundle** adds the same set
+  (with all transitive deps) to its offline `.deb` set. KVM setup also drops the
+  swtpm AppArmor local include (`/etc/apparmor.d/local/usr.bin.swtpm`) granting
+  the run dir, so TPM-enabled VMs work out of the box on Ubuntu (enforce mode
+  preserved). Resolves the swtpm-AppArmor packaging gap from the alpha.2 known
+  issues.
 
 ## [0.5.0-alpha.2] - 2026-06-10
 

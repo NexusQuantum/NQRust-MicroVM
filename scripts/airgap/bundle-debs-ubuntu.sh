@@ -76,6 +76,12 @@ PACKAGES=(
     "qemu-utils"      # qemu-img — clone_from_image on block backends
     "nfs-common"      # mount.nfs — required by nfs backend (manager auto-mount)
     "cifs-utils"      # mount.cifs — required by smb backend (manager auto-mount)
+    # QEMU classic-VM backend (added in v0.5.0)
+    "qemu-system-x86" # qemu-system-x86_64 — the QEMU VMM
+    "ovmf"            # OVMF / UEFI firmware (required for UEFI boot)
+    "genisoimage"     # builds the cloud-init NoCloud seed ISO
+    "swtpm"           # software TPM 2.0 (Windows 11 / measured boot)
+    "swtpm-tools"     # swtpm_setup
 )
 
 PACKAGE_LIST="${PACKAGES[*]}"
