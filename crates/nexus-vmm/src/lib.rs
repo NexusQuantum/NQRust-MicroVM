@@ -255,6 +255,9 @@ pub struct VmSpec {
     /// and IOMMU group isolation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vfio_devices: Vec<String>,
+    /// QEMU CPU model (e.g. "host", "kvm64", "x86-64-v3", "EPYC"). None → "host".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_type: Option<String>,
     /// When set, this VM boots in "incoming migration" mode: QEMU starts
     /// paused, listening on the given URI (e.g. `tcp:0.0.0.0:54321`) for an
     /// inbound `migrate` stream. Once the source completes, the guest

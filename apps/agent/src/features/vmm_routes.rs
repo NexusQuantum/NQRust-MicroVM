@@ -27,6 +27,7 @@ use crate::AppState;
 pub fn router() -> Router {
     Router::new()
         .route("/kinds", get(list_kinds))
+        .route("/pci-devices", get(host_pci_devices))
         .route("/:id/boot", post(boot))
         .route("/:id/shutdown", post(shutdown))
         .route("/:id/pause", post(pause))
@@ -39,11 +40,100 @@ pub fn router() -> Router {
         .route("/:id/console/vnc/ws", get(vnc_ws_bridge))
         .route("/:id/disk/add", post(disk_add))
         .route("/:id/disk/remove", post(disk_remove))
+        .route("/:id/disk/resize", post(disk_resize))
         .route("/:id/nic/add", post(nic_add))
         .route("/:id/nic/remove", post(nic_remove))
         .route("/:id/migrate/incoming", post(migrate_incoming))
         .route("/:id/migrate/outgoing", post(migrate_outgoing))
         .route("/:id/backup/disk", post(backup_disk))
+        .route("/:id/metrics", get(qemu_metrics))
+}
+
+/// Query params for the QEMU host-side metrics endpoint.
+#[derive(Deserialize)]
+pub struct MetricsQuery {
+    pub vmm_kind: VmmKind,
+    /// vCPU count, so CPU% is expressed relative to the VM's allocation.
+    #[serde(default)]
+    pub vcpu: u32,
+    /// Configured guest RAM (MiB), used as the memory denominator.
+    #[serde(default)]
+    pub mem_mib: u32,
+}
+
+fn read_cgroup_usage_usec(cpu_stat: &str) -> Option<u64> {
+    for line in cpu_stat.lines() {
+        if let Some(rest) = line.strip_prefix("usage_usec ") {
+            return rest.trim().parse().ok();
+        }
+    }
+    None
+}
+
+/// Host-side metrics for a QEMU VM, read from its systemd unit's cgroup
+/// (`qemu-<id>.service`). QEMU guests have no in-VM guest-agent (especially
+/// Windows), so CPU% and memory are observed from the host — exactly what
+/// Proxmox shows. CPU% is sampled over a short window and normalised to the
+/// VM's vCPU count; memory is the cgroup's current usage vs the configured RAM.
+async fn qemu_metrics(
+    Path(id): Path<Uuid>,
+    Query(q): Query<MetricsQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if q.vmm_kind != VmmKind::Qemu {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "metrics endpoint is qemu-only".into(),
+        ));
+    }
+    let base = format!("/sys/fs/cgroup/system.slice/qemu-{id}.service");
+
+    // Memory: cgroup current bytes vs configured guest RAM.
+    let mem_bytes: i64 = tokio::fs::read_to_string(format!("{base}/memory.current"))
+        .await
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            "vm cgroup not found (not running on this host?)".to_string(),
+        ))?;
+    let mem_used_kb = mem_bytes / 1024;
+    let mem_total_kb = (q.mem_mib as i64) * 1024;
+    let mem_pct = if mem_total_kb > 0 {
+        ((mem_used_kb as f64 / mem_total_kb as f64) * 100.0).min(100.0)
+    } else {
+        0.0
+    };
+
+    // CPU: sample cumulative usage_usec over a short window.
+    let read_usage = || async {
+        tokio::fs::read_to_string(format!("{base}/cpu.stat"))
+            .await
+            .ok()
+            .and_then(|s| read_cgroup_usage_usec(&s))
+    };
+    let cpu_pct = match read_usage().await {
+        Some(u1) => {
+            let interval = std::time::Duration::from_millis(700);
+            tokio::time::sleep(interval).await;
+            match read_usage().await {
+                Some(u2) => {
+                    let vcpu = q.vcpu.max(1) as f64;
+                    let interval_us = interval.as_micros() as f64;
+                    let delta = u2.saturating_sub(u1) as f64;
+                    ((delta / interval_us / vcpu) * 100.0).clamp(0.0, 100.0)
+                }
+                None => 0.0,
+            }
+        }
+        None => 0.0,
+    };
+
+    Ok(Json(json!({
+        "cpu_usage_percent": cpu_pct,
+        "memory_usage_percent": mem_pct,
+        "memory_used_kb": mem_used_kb,
+        "memory_total_kb": mem_total_kb,
+    })))
 }
 
 /// List which VMM kinds this agent has installed, with their version strings.
@@ -82,6 +172,8 @@ pub struct BootRequest {
     pub vsock_cid: Option<u32>,
     #[serde(default)]
     pub vfio_devices: Vec<String>,
+    #[serde(default)]
+    pub cpu_type: Option<String>,
     /// For target-side of live migration: spawn QEMU with `-incoming <uri>`.
     #[serde(default)]
     pub incoming_uri: Option<String>,
@@ -114,6 +206,7 @@ async fn boot(
         no_reboot: req.no_reboot,
         vsock_cid: req.vsock_cid,
         vfio_devices: req.vfio_devices,
+        cpu_type: req.cpu_type,
         incoming_uri: req.incoming_uri,
         log_path: run_dir.join(id.to_string()).join("vmm.log"),
         run_dir,
@@ -577,6 +670,136 @@ async fn disk_remove(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DiskResizeRequest {
+    pub vmm_kind: VmmKind,
+    pub drive_id: String,
+    pub source: PathBuf,
+    /// New total size in bytes (grow-only).
+    pub size_bytes: u64,
+}
+
+async fn disk_resize(
+    Extension(st): Extension<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<DiskResizeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.vmm_kind != VmmKind::Qemu {
+        return Err((StatusCode::BAD_REQUEST, "resize is qemu-only".into()));
+    }
+    // If the VM is running, grow it online via QMP (this also extends the
+    // backing file). If it isn't, resize the image file directly.
+    match qmp_handle(&st, id).await {
+        Ok(handle) => {
+            let mut qmp = crate::vmm::qmp::QmpClient::connect(&handle.api_sock)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            // Hot-added disks are referenced by their blockdev node-name (== drive_id);
+            // boot-time -drive disks by the legacy "device" id. Try node-name first,
+            // then fall back to device so both kinds resize online.
+            let by_node = qmp
+                .execute(
+                    "block_resize",
+                    Some(json!({ "node-name": req.drive_id, "size": req.size_bytes })),
+                )
+                .await;
+            if let Err(e1) = by_node {
+                qmp.execute(
+                    "block_resize",
+                    Some(json!({ "device": req.drive_id, "size": req.size_bytes })),
+                )
+                .await
+                .map_err(|e2| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("block_resize (node-name: {e1}; device: {e2})"),
+                    )
+                })?;
+            }
+        }
+        Err(_) => {
+            let out = tokio::process::Command::new("qemu-img")
+                .arg("resize")
+                .arg(req.source.display().to_string())
+                .arg(req.size_bytes.to_string())
+                .output()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("qemu-img: {e}")))?;
+            if !out.status.success() {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "qemu-img resize failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(Json(
+        json!({"ok": true, "drive_id": req.drive_id, "size_bytes": req.size_bytes}),
+    ))
+}
+
+/// List host PCI devices available for VFIO passthrough. Enumerates
+/// `/sys/bus/pci/devices` (authoritative: BDF + IDs + bound driver) and enriches
+/// each with a human-readable label + class name from `lspci` when available.
+async fn host_pci_devices() -> Json<serde_json::Value> {
+    use std::collections::HashMap;
+
+    // Friendly names: bdf -> (class_name, label "Vendor Device").
+    let mut names: HashMap<String, (String, String)> = HashMap::new();
+    if let Ok(out) = tokio::process::Command::new("lspci")
+        .args(["-Dmmnn"])
+        .output()
+        .await
+    {
+        if out.status.success() {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                let Some(bdf) = line.split_whitespace().next() else {
+                    continue;
+                };
+                // Quoted fields: [_, class, _, vendor, _, device, ...]
+                let q: Vec<&str> = line.split('"').collect();
+                let class = q.get(1).copied().unwrap_or("").to_string();
+                let vendor = q.get(3).copied().unwrap_or("");
+                let device = q.get(5).copied().unwrap_or("");
+                let label = format!("{vendor} {device}").trim().to_string();
+                names.insert(bdf.to_string(), (class, label));
+            }
+        }
+    }
+
+    let mut devices = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir("/sys/bus/pci/devices").await {
+        while let Ok(Some(e)) = entries.next_entry().await {
+            let bdf = e.file_name().to_string_lossy().to_string();
+            let p = e.path();
+            let read = |f: &str| {
+                std::fs::read_to_string(p.join(f))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default()
+            };
+            let driver = std::fs::read_link(p.join("driver"))
+                .ok()
+                .and_then(|d| d.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_default();
+            let (class_name, label) = names.get(&bdf).cloned().unwrap_or_default();
+            devices.push(json!({
+                "bdf": bdf,
+                "vendor": read("vendor"),
+                "device": read("device"),
+                "class": read("class"),
+                "class_name": class_name,
+                "label": if label.is_empty() { read("device") } else { label },
+                "driver": driver,
+            }));
+        }
+    }
+    devices.sort_by(|a, b| a["bdf"].as_str().cmp(&b["bdf"].as_str()));
+    Json(json!({ "items": devices }))
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NicAddRequest {
     pub vmm_kind: VmmKind,
     pub iface_id: String,
@@ -690,6 +913,8 @@ pub struct MigrateIncomingRequest {
     pub vsock_cid: Option<u32>,
     #[serde(default)]
     pub vfio_devices: Vec<String>,
+    #[serde(default)]
+    pub cpu_type: Option<String>,
 }
 
 /// Configure this agent's QEMU to start in "incoming" migration mode. The
@@ -722,6 +947,7 @@ async fn migrate_incoming(
         no_reboot: false,
         vsock_cid: req.vsock_cid,
         vfio_devices: req.vfio_devices,
+        cpu_type: req.cpu_type,
         incoming_uri: Some(format!("tcp:0.0.0.0:{}", req.listen_port)),
         log_path: run_dir.join(id.to_string()).join("vmm.log"),
         run_dir,

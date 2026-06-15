@@ -5,8 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Trash2, HardDrive } from "lucide-react"
-import { useVMDrives, useCreateVMDrive, useDeleteVMDrive, useVM } from "@/lib/queries"
+import { Plus, Trash2, HardDrive, Maximize2 } from "lucide-react"
+import { useVMDrives, useCreateVMDrive, useDeleteVMDrive, useResizeVMDrive, useVM, useVolumes, useAttachVolume } from "@/lib/queries"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -61,9 +62,26 @@ export function VMStorage({ vmId }: VMStorageProps) {
   }, [vm, drives, vmId])
   const createDrive = useCreateVMDrive()
   const deleteDrive = useDeleteVMDrive()
+  const resizeDrive = useResizeVMDrive()
+  const { data: allVolumes = [] } = useVolumes()
+  const attachVolume = useAttachVolume()
+  const availableVolumes = useMemo(
+    () => (allVolumes as any[]).filter((v) => !v.attached_to_vm_id),
+    [allVolumes],
+  )
+
+  // QEMU hot-plugs disks live (no restart). Firecracker needs a restart, so its
+  // add/remove stays disabled while running.
+  const isQemu = vm?.vmm_kind === "qemu"
+  const mutationsBlocked = vm?.state === "running" && !isQemu
 
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showResizeDialog, setShowResizeDialog] = useState(false)
+  const [resizeGb, setResizeGb] = useState("")
+  const [showAttachDialog, setShowAttachDialog] = useState(false)
+  const [attachVolumeId, setAttachVolumeId] = useState("")
+  const [attachDriveId, setAttachDriveId] = useState("")
   const [selectedDrive, setSelectedDrive] = useState<VmDrive | null>(null)
   const [duplicateError, setDuplicateError] = useState(false)
 
@@ -141,6 +159,42 @@ export function VMStorage({ vmId }: VMStorageProps) {
     )
   }
 
+  const handleConfirmAttach = () => {
+    if (!attachVolumeId || !attachDriveId) return
+    attachVolume.mutate(
+      { id: attachVolumeId, params: { vm_id: vmId, drive_id: attachDriveId } },
+      {
+        onSuccess: () => {
+          setShowAttachDialog(false)
+          setAttachVolumeId("")
+          setAttachDriveId("")
+        },
+      },
+    )
+  }
+
+  const handleResize = (drive: VmDrive) => {
+    setSelectedDrive(drive)
+    const curGb = drive.size_bytes ? Math.ceil(drive.size_bytes / (1024 * 1024 * 1024)) : 10
+    setResizeGb(String(curGb))
+    setShowResizeDialog(true)
+  }
+
+  const handleConfirmResize = () => {
+    if (!selectedDrive) return
+    const gb = parseInt(resizeGb, 10)
+    if (!gb || gb < 1) return
+    resizeDrive.mutate(
+      { vmId, driveId: selectedDrive.id, sizeBytes: gb * 1024 * 1024 * 1024 },
+      {
+        onSuccess: () => {
+          setShowResizeDialog(false)
+          setSelectedDrive(null)
+        },
+      }
+    )
+  }
+
   return (
     <>
       <Card>
@@ -149,10 +203,16 @@ export function VMStorage({ vmId }: VMStorageProps) {
             <HardDrive className="h-5 w-5" />
             <CardTitle>Attached Drives</CardTitle>
           </div>
-          <Button onClick={handleAdd} disabled={vm?.state === 'running'}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Drive
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => { setAttachVolumeId(""); setAttachDriveId(""); setShowAttachDialog(true) }} disabled={mutationsBlocked}>
+              <HardDrive className="mr-2 h-4 w-4" />
+              Attach Volume
+            </Button>
+            <Button onClick={handleAdd} disabled={mutationsBlocked}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Drive
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -216,8 +276,18 @@ export function VMStorage({ vmId }: VMStorageProps) {
                           <Button
                             variant="ghost"
                             size="icon"
+                            title="Resize disk (grow)"
+                            onClick={() => handleResize(drive)}
+                            disabled={mutationsBlocked}
+                          >
+                            <Maximize2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Detach disk"
                             onClick={() => handleDelete(drive)}
-                            disabled={drive.is_root_device || vm?.state === 'running'}
+                            disabled={drive.is_root_device || mutationsBlocked}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -240,7 +310,11 @@ export function VMStorage({ vmId }: VMStorageProps) {
             <DialogDescription>
               Create a new drive for this VM. A volume will be automatically provisioned.
               <br />
-              <strong>Note:</strong> The VM must be restarted for this change to take effect (hot-plug is not supported).
+              {isQemu ? (
+                <span><strong>Note:</strong> the disk is hot-plugged into the running VM.</span>
+              ) : (
+                <span><strong>Note:</strong> the VM must be restarted for this change to take effect.</span>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -318,11 +392,88 @@ export function VMStorage({ vmId }: VMStorageProps) {
         open={showDeleteDialog}
         onOpenChange={setShowDeleteDialog}
         onConfirm={handleConfirmDelete}
-        title="Delete Drive"
-        description={`Are you sure you want to delete drive "${selectedDrive?.drive_id}"? This action cannot be undone. The VM must be restarted for this change to take effect.`}
-        confirmText="Delete"
+        title="Detach Drive"
+        description={`Detach drive "${selectedDrive?.drive_id}"?${isQemu ? " It will be removed from the running VM." : " The VM must be restarted for this to take effect."}`}
+        confirmText="Detach"
         isLoading={deleteDrive.isPending}
       />
+
+      {/* Attach Existing Volume Dialog */}
+      <Dialog open={showAttachDialog} onOpenChange={setShowAttachDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Attach Existing Volume</DialogTitle>
+            <DialogDescription>
+              Attach an existing unattached volume to this VM as a data disk.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Volume</Label>
+              <Select value={attachVolumeId} onValueChange={setAttachVolumeId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={availableVolumes.length ? "Select a volume" : "No unattached volumes"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableVolumes.map((v: any) => (
+                    <SelectItem key={v.id} value={v.id}>
+                      {v.name} ({formatDriveSize(v.size_bytes)})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="attach_drive_id">Drive ID</Label>
+              <Input
+                id="attach_drive_id"
+                placeholder="e.g., vdb"
+                value={attachDriveId}
+                onChange={(e) => setAttachDriveId(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAttachDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmAttach} disabled={!attachVolumeId || !attachDriveId || attachVolume.isPending}>
+              {attachVolume.isPending ? "Attaching..." : "Attach"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Resize Dialog */}
+      <Dialog open={showResizeDialog} onOpenChange={setShowResizeDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Resize Drive</DialogTitle>
+            <DialogDescription>
+              Grow drive &quot;{selectedDrive?.drive_id}&quot;. Disks can only be grown, not shrunk.
+              {isQemu ? " The new size applies live." : " A restart may be required."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-4">
+            <Label htmlFor="resize_gb">New size (GB)</Label>
+            <Input
+              id="resize_gb"
+              type="number"
+              min={1}
+              value={resizeGb}
+              onChange={(e) => setResizeGb(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowResizeDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmResize} disabled={!resizeGb || parseInt(resizeGb, 10) < 1 || resizeDrive.isPending}>
+              {resizeDrive.isPending ? "Resizing..." : "Resize"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

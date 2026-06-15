@@ -84,6 +84,9 @@ pub struct Vm {
     /// VNC listener (e.g. "unix:/srv/fc/<id>/vnc.sock") if the VM has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vnc_listen: Option<String>,
+    /// QEMU CPU model (e.g. "host", "kvm64"). None for Firecracker / unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_type: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -187,6 +190,26 @@ pub struct CreateVmReq {
     /// for Linux (cloud-init) and Windows (cloudbase-init + OpenSSH).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ssh_authorized_keys: Vec<String>,
+    /// Extra blank data disks to attach at creation (QEMU). The root disk is
+    /// provisioned separately; each entry here becomes an additional virtio
+    /// data disk, provisioned on the chosen storage backend and hot-added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_disks: Vec<CreateVmDisk>,
+    /// Host PCI devices to pass through (QEMU VFIO). Each entry is a PCI BDF
+    /// like `0000:01:00.0`. Requires IOMMU + vfio-pci binding on the host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vfio_devices: Vec<String>,
+    /// QEMU CPU model (e.g. "host", "kvm64", "x86-64-v3", "EPYC"). `None`
+    /// defaults to "host" (all host features; needed for nested virt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_type: Option<String>,
+}
+
+/// A blank data disk requested at VM creation time.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateVmDisk {
+    /// Disk size in MiB.
+    pub size_mb: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -233,6 +256,9 @@ impl TemplateSpec {
             firmware_path: None,
             nvram_template_path: None,
             ssh_authorized_keys: vec![],
+            data_disks: vec![],
+            vfio_devices: vec![],
+            cpu_type: None,
         }
     }
 }

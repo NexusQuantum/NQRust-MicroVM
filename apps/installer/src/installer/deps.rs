@@ -87,6 +87,16 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "genisoimage",     // builds the cloud-init NoCloud seed ISO
             "swtpm",           // software TPM 2.0 (Windows 11 / measured boot)
             "swtpm-tools",     // swtpm_setup
+            // V2V import (VMware/Hyper-V/… → here) + cold P2V. On Debian/Ubuntu
+            // virt-v2v is its own package (libguestfs-tools has the other virt-*
+            // tools); install both.
+            "virt-v2v",
+            "libguestfs-tools",
+            // Agentless P2V/B2V: the manager SSHes into a physical host and
+            // streams its disk. sshpass enables password auth (key auth needs
+            // no extra package); openssh-client provides the ssh binary.
+            "sshpass",
+            "openssh-client",
         ],
         PackageManager::Dnf | PackageManager::Yum => vec![
             "curl",
@@ -109,6 +119,9 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "genisoimage", // cloud-init NoCloud seed ISO
             "swtpm",       // software TPM 2.0 (Windows 11)
             "swtpm-tools",
+            "virt-v2v", // V2V import (VMware/Hyper-V/etc → here) + cold P2V; pulls libguestfs
+            "sshpass",  // agentless P2V/B2V: password-auth SSH disk streaming
+            "openssh-clients", // ssh binary for P2V disk streaming
         ],
     }
 }

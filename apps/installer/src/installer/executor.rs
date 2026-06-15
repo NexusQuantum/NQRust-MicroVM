@@ -333,6 +333,20 @@ pub fn run_installation(config: InstallConfig, tx: Sender<InstallMessage>) -> Re
                         ))))?;
                     }
                 }
+                // Make the host kernel readable so virt-v2v (libguestfs) works
+                // for the non-root manager — needed for V2V/P2V disk imports.
+                match kvm::configure_libguestfs_kernel_readable() {
+                    Ok(logs) => {
+                        for log in logs {
+                            tx.send(InstallMessage::Log(log))?;
+                        }
+                    }
+                    Err(e) => {
+                        tx.send(InstallMessage::Log(LogEntry::warning(format!(
+                            "libguestfs kernel-readable fix skipped: {e}"
+                        ))))?;
+                    }
+                }
                 tx.send(InstallMessage::PhaseComplete(Phase::Kvm, Status::Success))?;
             }
             Err(e) => {

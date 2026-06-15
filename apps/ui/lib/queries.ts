@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
-import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams, CreatePortForwardReq, StorageBackend } from "@/lib/types"
+import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams, CreatePortForwardReq, StorageBackend, ImportP2vRequest } from "@/lib/types"
 import { useNotificationStore } from "@/lib/stores/notification-store"
 import { toast } from "sonner"
 
@@ -663,6 +663,16 @@ export function useImportVmdk() {
   });
 }
 
+export function useImportP2v() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: ImportP2vRequest) => facadeApi.importP2v(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
+    },
+  });
+}
+
 // Drive Management Queries and Mutations
 export function useVMDrives(vmId: string) {
   return useQuery({
@@ -712,6 +722,19 @@ export function useDeleteVMDrive() {
   return useMutation({
     mutationFn: ({ vmId, driveId }: { vmId: string; driveId: string }) =>
       facadeApi.deleteVMDrive(vmId, driveId),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
+  });
+}
+
+export function useResizeVMDrive() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ vmId, driveId, sizeBytes }: { vmId: string; driveId: string; sizeBytes: number }) =>
+      facadeApi.resizeVMDrive(vmId, driveId, sizeBytes),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
@@ -993,6 +1016,15 @@ export function useHosts() {
     queryKey: queryKeys.hosts,
     queryFn: () => facadeApi.getHosts(),
     staleTime: 30 * 1000,
+  });
+}
+
+export function useHostPciDevices(hostId: string | undefined) {
+  return useQuery({
+    queryKey: ["hosts", hostId, "pci-devices"] as const,
+    queryFn: () => facadeApi.getHostPciDevices(hostId as string),
+    enabled: !!hostId,
+    staleTime: 60 * 1000,
   });
 }
 

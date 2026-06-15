@@ -1,82 +1,44 @@
 use anyhow::{Context, Result};
-use axum::extract::Multipart;
+use axum::extract::multipart::Field;
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-/// Handle file upload and return (path, sha256, size)
-pub async fn handle_file_upload(
-    mut multipart: Multipart,
+/// Stream a single multipart `file` field straight to disk while hashing it in
+/// one pass. Unlike buffering the whole part in memory (`field.bytes()`), this
+/// handles multi-GB ISOs (Windows installers, virtio-win, cloud images) without
+/// blowing up RAM. Returns (path, sha256-hex, size-bytes).
+pub async fn write_field_to_disk(
+    mut field: Field<'_>,
     upload_dir: PathBuf,
     kind: &str,
 ) -> Result<(PathBuf, String, i64)> {
-    // Create upload directory if it doesn't exist
+    use sha2::{Digest, Sha256};
+
     tokio::fs::create_dir_all(&upload_dir)
         .await
         .context("Failed to create upload directory")?;
 
-    let mut file_path: Option<PathBuf> = None;
-    let mut _original_filename: Option<String> = None;
+    let original_filename = field.file_name().map(|s| s.to_string());
+    let filename = match &original_filename {
+        Some(fname) => sanitize_filename(fname),
+        None => format!("{}-{}.img", kind, uuid::Uuid::new_v4()),
+    };
+    let path = upload_dir.join(&filename);
 
-    // Process multipart form data
-    while let Some(field) = multipart.next_field().await? {
-        let name = field.name().unwrap_or("").to_string();
-
-        if name == "file" {
-            // Get original filename
-            _original_filename = field.file_name().map(|s| s.to_string());
-
-            // Generate safe filename
-            let filename = match &_original_filename {
-                Some(fname) => sanitize_filename(fname),
-                None => format!("{}-{}.img", kind, uuid::Uuid::new_v4()),
-            };
-
-            let path = upload_dir.join(&filename);
-
-            // Write file to disk
-            let data = field.bytes().await?;
-            let mut file = File::create(&path).await?;
-            file.write_all(&data).await?;
-            file.flush().await?;
-
-            tracing::info!("Uploaded file: {:?} ({} bytes)", path, data.len());
-            file_path = Some(path);
-            break;
-        }
-    }
-
-    let path = file_path.context("No file uploaded")?;
-
-    // Calculate SHA256
-    let sha256 = calculate_sha256(&path).await?;
-
-    // Get file size
-    let metadata = tokio::fs::metadata(&path).await?;
-    let size = metadata.len() as i64;
-
-    Ok((path, sha256, size))
-}
-
-/// Calculate SHA256 hash of a file
-async fn calculate_sha256(path: &PathBuf) -> Result<String> {
-    use sha2::{Digest, Sha256};
-    use tokio::io::AsyncReadExt;
-
-    let mut file = File::open(path).await?;
+    let mut file = File::create(&path).await?;
     let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 8192];
-
-    loop {
-        let n = file.read(&mut buffer).await?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buffer[..n]);
+    let mut size: i64 = 0;
+    while let Some(chunk) = field.chunk().await? {
+        file.write_all(&chunk).await?;
+        hasher.update(&chunk);
+        size += chunk.len() as i64;
     }
+    file.flush().await?;
 
-    let hash = hasher.finalize();
-    Ok(format!("{:x}", hash))
+    let sha256 = format!("{:x}", hasher.finalize());
+    tracing::info!("Uploaded file: {:?} ({} bytes)", path, size);
+    Ok((path, sha256, size))
 }
 
 /// Sanitize filename to prevent path traversal

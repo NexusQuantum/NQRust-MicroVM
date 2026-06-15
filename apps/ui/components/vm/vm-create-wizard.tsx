@@ -59,9 +59,11 @@ type VMCreationForm = z.infer<typeof vmCreationSchema>
 interface VMCreateWizardProps {
   onComplete?: () => void
   onCancel?: () => void
+  /** When true, hide the microVM/VM type toggle (the parent already chose microVM). */
+  hideTypeToggle?: boolean
 }
 
-export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
+export function VMCreateWizard({ onComplete, onCancel, hideTypeToggle }: VMCreateWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const createVM = useCreateVM()
   const { data: networks } = useNetworks()
@@ -445,43 +447,45 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
           <CardContent className="space-y-4">
             {currentStep === 0 && (
               <>
-                <div className="space-y-2">
-                  <Label>
-                    VM Type <span className="text-destructive">*</span>
-                  </Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setVmType("microvm")}
-                      className={`rounded-lg border-2 p-4 text-left transition-colors ${
-                        vmType === "microvm"
-                          ? "border-primary bg-primary/5"
-                          : "border-muted hover:border-primary/50"
-                      }`}
-                    >
-                      <div className="font-semibold">microVM</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Firecracker. Sub-125ms cold start. Linux kernel + rootfs.
-                        For serverless / container-per-VM / ephemeral workloads.
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setVmType("vm")}
-                      className={`rounded-lg border-2 p-4 text-left transition-colors ${
-                        vmType === "vm"
-                          ? "border-primary bg-primary/5"
-                          : "border-muted hover:border-primary/50"
-                      }`}
-                    >
-                      <div className="font-semibold">VM</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        QEMU. UEFI / OVMF, virtio + classic devices, ISO install,
-                        VNC console. For Windows + classic Linux + bring-your-own-ISO.
-                      </div>
-                    </button>
+                {!hideTypeToggle && (
+                  <div className="space-y-2">
+                    <Label>
+                      VM Type <span className="text-destructive">*</span>
+                    </Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setVmType("microvm")}
+                        className={`rounded-lg border-2 p-4 text-left transition-colors ${
+                          vmType === "microvm"
+                            ? "border-primary bg-primary/5"
+                            : "border-muted hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="font-semibold">microVM</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Firecracker. Sub-125ms cold start. Linux kernel + rootfs.
+                          For serverless / container-per-VM / ephemeral workloads.
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVmType("vm")}
+                        className={`rounded-lg border-2 p-4 text-left transition-colors ${
+                          vmType === "vm"
+                            ? "border-primary bg-primary/5"
+                            : "border-muted hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="font-semibold">VM</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          QEMU. UEFI / OVMF, virtio + classic devices, ISO install,
+                          VNC console. For Windows + classic Linux + bring-your-own-ISO.
+                        </div>
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="name">
                     Name <span className="text-destructive">*</span>

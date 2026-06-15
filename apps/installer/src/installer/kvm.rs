@@ -160,6 +160,37 @@ pub fn configure_swtpm_apparmor(run_dir: &str) -> Result<Vec<LogEntry>> {
     Ok(logs)
 }
 
+/// libguestfs (virt-v2v's engine) builds its appliance with `supermin`, which
+/// must read the host kernel at `/boot/vmlinuz-*`. On Debian/Ubuntu those are
+/// mode 0600 (root-only), so the non-root manager's V2V import fails with
+/// "supermin exited with error status 1". Make the installed kernels
+/// world-readable so virt-v2v works for the manager service. Best-effort; a
+/// no-op where /boot/vmlinuz-* isn't present (e.g. some distros / containers).
+pub fn configure_libguestfs_kernel_readable() -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+    // chmod every installed kernel image; a glob via sh keeps it simple and
+    // covers future kernels present at install time.
+    let out = run_command("sh", &["-c", "ls /boot/vmlinuz-* 2>/dev/null | wc -l"]);
+    let count = out
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if count == "0" || count.is_empty() {
+        logs.push(LogEntry::info(
+            "no /boot/vmlinuz-* present — skipping libguestfs kernel-readable fix",
+        ));
+        return Ok(logs);
+    }
+    logs.push(LogEntry::info(
+        "Making host kernel readable so virt-v2v (libguestfs) works for the non-root manager...",
+    ));
+    let _ = run_command("sh", &["-c", "sudo chmod 0644 /boot/vmlinuz-* 2>/dev/null"]);
+    logs.push(LogEntry::success(
+        "Kernel made readable for libguestfs/virt-v2v (V2V import)",
+    ));
+    Ok(logs)
+}
+
 /// Verify KVM is working
 pub fn verify_kvm() -> Result<bool> {
     // Check /dev/kvm exists

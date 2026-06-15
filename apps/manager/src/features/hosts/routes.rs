@@ -268,6 +268,32 @@ pub async fn get(
     }))
 }
 
+/// List host PCI devices (for VFIO passthrough selection). Proxies the agent.
+#[utoipa::path(
+    get,
+    path = "/v1/hosts/{id}/pci-devices",
+    params(HostPathParams),
+    responses((status = 200, description = "PCI devices")),
+    tag = "Hosts"
+)]
+pub async fn pci_devices(
+    Extension(st): Extension<AppState>,
+    Path(HostPathParams { id }): Path<HostPathParams>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let host = st.hosts.get(id).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let url = format!("{}/agent/v1/vmm/pci-devices", host.addr);
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let json = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok(Json(json))
+}
+
 #[utoipa::path(
     delete,
     path = "/v1/hosts/{id}",

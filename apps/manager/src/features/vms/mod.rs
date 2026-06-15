@@ -40,6 +40,7 @@ pub fn router() -> Router {
                 .patch(routes::update_drive)
                 .delete(routes::delete_drive),
         )
+        .route("/:id/drives/:drive_id/resize", post(routes::resize_drive))
         .route("/:id/nics", get(routes::list_nics).post(routes::create_nic))
         .route(
             "/:id/nics/:nic_id",

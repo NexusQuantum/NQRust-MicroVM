@@ -32,6 +32,7 @@ import type {
   Image,
   CreateImageReq,
   CreateImageResp,
+  ImportP2vRequest,
   GetImageResp,
   ListTemplatesResp,
   Template,
@@ -105,6 +106,7 @@ import type {
   CreateBackupTargetRequest,
   Backup,
   BackupSchedule,
+  PciDevice,
 } from "@/lib/types"
 
 /**
@@ -217,6 +219,23 @@ export class FacadeApi {
       source_path: sourcePath,
       name,
       run_virt_v2v: runVirtV2v,
+    });
+  }
+
+  /**
+   * Agentless P2V / B2V: stream a physical machine's disk over SSH and
+   * register it as a bootable image (virt-v2v adapts drivers to virtio).
+   */
+  async importP2v(req: ImportP2vRequest): Promise<CreateImageResp> {
+    return apiClient.post<CreateImageResp>(`/images/import/p2v`, {
+      ssh_host: req.sshHost,
+      ssh_port: req.sshPort,
+      ssh_user: req.sshUser,
+      ssh_password: req.sshPassword,
+      ssh_key_path: req.sshKeyPath,
+      source_disk: req.sourceDisk,
+      name: req.name,
+      run_virt_v2v: req.runVirtV2v,
     });
   }
 
@@ -507,6 +526,12 @@ export class FacadeApi {
     await apiClient.delete<OkResponse>(`/vms/${vmId}/drives/${driveId}`);
   }
 
+  async resizeVMDrive(vmId: string, driveId: string, sizeBytes: number): Promise<void> {
+    await apiClient.post<OkResponse>(`/vms/${vmId}/drives/${driveId}/resize`, {
+      size_bytes: sizeBytes,
+    });
+  }
+
   /**
    * Network Interface Management - Database-backed persistent NICs
    */
@@ -706,6 +731,11 @@ export class FacadeApi {
   async getHosts(): Promise<Host[]> {
     const res = await apiClient.get<ListHostsResponse>("/hosts");
     return res.items;
+  }
+
+  async getHostPciDevices(id: string): Promise<PciDevice[]> {
+    const res = await apiClient.get<{ items: PciDevice[] }>(`/hosts/${id}/pci-devices`);
+    return res.items ?? [];
   }
 
   async getHost(id: string): Promise<Host> {

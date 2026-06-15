@@ -13,7 +13,7 @@ import { VncConsole } from "@/components/vm/vnc-console"
 import { VmActions } from "@/components/vm/vm-actions"
 import { XTermWrapper } from "@/components/shared/xterm-wrapper"
 import { MetricsChart } from "@/components/shared/metrics-chart"
-import { Play, Square, Trash2, ArrowLeft, Zap, Pause, Settings, HardDrive, Network, Terminal, Camera, BarChart3, Eye, Monitor, CheckCircle2 } from "lucide-react"
+import { Play, Square, Trash2, ArrowLeft, Zap, Pause, Settings, HardDrive, Network, Terminal, Camera, BarChart3, Eye, Monitor, Disc } from "lucide-react"
 import Link from "next/link"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { useState, useMemo } from "react"
@@ -60,7 +60,9 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
 
   // Valid tab values
   const validTabs = ['overview', 'config', 'storage', 'network', 'terminal', 'snapshots', 'metrics', 'console']
-  const defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview'
+  let defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview'
+  // Terminal doesn't exist for QEMU VMs — avoid landing on an empty panel.
+  if (defaultTab === 'terminal' && isQemu) defaultTab = 'overview'
 
   const handleAction = (action: 'start' | 'stop' | 'pause' | 'resume' | 'ctrl_alt_del') => {
     vmStatePatch.mutate({ id, action })
@@ -87,16 +89,21 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
       { value: "config", label: "Config", icon: <Settings size={16} /> },
       { value: "storage", label: "Storage", icon: <HardDrive size={16} /> },
       { value: "network", label: "Network", icon: <Network size={16} /> },
-      { value: "terminal", label: "Terminal", icon: <Terminal size={16} /> },
       { value: "snapshots", label: "Snapshots", icon: <Camera size={16} /> },
       { value: "metrics", label: "Metrics", icon: <BarChart3 size={16} /> },
     ]
-    // Insert a graphical Console tab right after Terminal for VNC-capable VMs.
+    // The Terminal is a guest-agent serial shell — Firecracker-Linux only.
+    // QEMU VMs (incl. Windows) use the graphical VNC Console instead.
+    if (!isQemu) {
+      base.splice(4, 0, { value: "terminal", label: "Terminal", icon: <Terminal size={16} /> })
+    }
+    // Graphical Console tab for VNC-capable (QEMU) VMs.
     if (hasVnc) {
-      base.splice(5, 0, { value: "console", label: "Console", icon: <Monitor size={16} /> })
+      const at = base.findIndex((t) => t.value === "snapshots")
+      base.splice(at, 0, { value: "console", label: "Console", icon: <Monitor size={16} /> })
     }
     return base
-  }, [hasVnc])
+  }, [hasVnc, isQemu])
 
   // Define contents untuk setiap tab
   const tabContents: TabContentItem[] = useMemo(() => {
@@ -119,10 +126,10 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
         value: "network",
         content: <VMNetwork vmId={vm.id} />,
       },
-      {
+      ...(!isQemu ? [{
         value: "terminal",
         content: <XTermWrapper vmId={vm.id} />,
-      },
+      }] : []),
       ...(hasVnc ? [{
         value: "console",
         content: <VncConsole vmId={vm.id} />,
@@ -136,7 +143,7 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
         content: <MetricsChart resourceId={vm.id} />,
       },
     ]
-  }, [vm, hasVnc])
+  }, [vm, hasVnc, isQemu])
 
   if (isLoading) {
     return (
@@ -197,15 +204,16 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {canModifyResource(user, vm.created_by_user_id) && (
             <>
-              {vm.state === 'installing' && (
+              {vm.vmm_kind === 'qemu' && vm.state === 'running' && (
                 <Button
-                  variant="default"
+                  variant="outline"
                   size="sm"
                   onClick={() => installComplete.mutate(vm.id)}
                   disabled={installComplete.isPending}
+                  title="Eject the installer ISO (optional — the VM boots from its disk once the OS is installed)"
                 >
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  {installComplete.isPending ? 'Finishing…' : 'Install Complete'}
+                  <Disc className="mr-2 h-4 w-4" />
+                  {installComplete.isPending ? 'Ejecting…' : 'Eject ISO'}
                 </Button>
               )}
               {vm.state === 'stopped' && (

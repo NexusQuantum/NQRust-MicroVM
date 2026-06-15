@@ -82,6 +82,10 @@ PACKAGES=(
     "genisoimage"     # builds the cloud-init NoCloud seed ISO
     "swtpm"           # software TPM 2.0 (Windows 11 / measured boot)
     "swtpm-tools"     # swtpm_setup
+    "virt-v2v"         # V2V import (VMware/Hyper-V/…) + cold P2V (separate pkg on Ubuntu)
+    "libguestfs-tools" # guestfish/virt-customize/etc (P2V, image edits)
+    "sshpass"          # agentless P2V/B2V: password-auth SSH disk streaming
+    "openssh-client"   # ssh binary for P2V disk streaming
 )
 
 PACKAGE_LIST="${PACKAGES[*]}"

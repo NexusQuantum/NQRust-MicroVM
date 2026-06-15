@@ -322,6 +322,7 @@ pub async fn create_and_start(
             guest_os: None,
             console_kind: None,
             vnc_listen: None,
+            cpu_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -625,6 +626,7 @@ pub async fn create_from_snapshot(
             guest_os: None,
             console_kind: None,
             vnc_listen: None,
+            cpu_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -3208,6 +3210,7 @@ mod tests {
             guest_os: None,
             console_kind: None,
             vnc_listen: None,
+            cpu_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -3292,6 +3295,7 @@ mod tests {
             guest_os: None,
             console_kind: None,
             vnc_listen: None,
+            cpu_type: None,
             created_at: now,
             updated_at: now,
         };
@@ -3375,6 +3379,7 @@ mod tests {
             guest_os: None,
             console_kind: None,
             vnc_listen: None,
+            cpu_type: None,
             created_at: now,
             updated_at: now,
         }

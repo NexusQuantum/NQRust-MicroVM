@@ -127,11 +127,15 @@ pub async fn vnc_websocket(
     if vmm_kind != "qemu" {
         return (StatusCode::BAD_REQUEST, "VNC console is qemu-only").into_response();
     }
-    ws.on_upgrade(move |socket| async move {
-        if let Err(e) = proxy_to_agent_vnc(vm.host_addr, id, socket).await {
-            tracing::error!("VNC proxy error: {:?}", e);
-        }
-    })
+    // noVNC requests the "binary" subprotocol; per the WebSocket spec the
+    // browser aborts the handshake unless the server echoes a subprotocol it
+    // offered. Select "binary" so the upgrade completes.
+    ws.protocols(["binary"])
+        .on_upgrade(move |socket| async move {
+            if let Err(e) = proxy_to_agent_vnc(vm.host_addr, id, socket).await {
+                tracing::error!("VNC proxy error: {:?}", e);
+            }
+        })
 }
 
 async fn proxy_to_agent_vnc(
@@ -1041,17 +1045,19 @@ pub async fn install_complete(
             }),
         )
     })?;
-    // Only QEMU VMs in 'installing' state are valid targets.
+    // Optional "eject installer ISO" action — QEMU-only. Works on any running
+    // QEMU VM (the medium is removable); it is no longer tied to an 'installing'
+    // state, which Proxmox-style VMs never enter.
     let vmm_kind: String = sqlx::query_scalar(r#"SELECT vmm_kind FROM vm WHERE id = $1"#)
         .bind(id)
         .fetch_one(&st.db)
         .await
         .unwrap_or_else(|_| "firecracker".into());
-    if vmm_kind != "qemu" || vm.state != "installing" {
+    if vmm_kind != "qemu" {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                error: "VM is not in installing state".into(),
+                error: "eject is qemu-only".into(),
                 fault_message: Some(format!("vmm_kind={vmm_kind} state={}", vm.state)),
             }),
         ));
@@ -1426,6 +1432,87 @@ pub async fn create_drive(
         })
 }
 
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct ResizeDriveReq {
+    /// New total size in bytes (grow-only).
+    pub size_bytes: u64,
+}
+
+/// Grow a data disk. Online (QMP block_resize) for running VMs, otherwise the
+/// image file is resized directly via qemu-img on the agent.
+#[utoipa::path(
+    post,
+    path = "/v1/vms/{id}/drives/{drive_id}/resize",
+    params(("id" = uuid::Uuid, Path, description = "VM ID"),
+           ("drive_id" = uuid::Uuid, Path, description = "Drive record ID")),
+    request_body = ResizeDriveReq,
+    responses((status = 200, description = "Disk resized", body = OkResponse)),
+    tag = "VM devices"
+)]
+pub async fn resize_drive(
+    Extension(st): Extension<AppState>,
+    Path((id, drive_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<ResizeDriveReq>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let err = |code: StatusCode, msg: &str| {
+        (
+            code,
+            Json(ErrorResponse {
+                error: msg.to_string(),
+                fault_message: None,
+            }),
+        )
+    };
+    let vm = super::repo::get(&st.db, id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "VM not found"))?;
+    let drive = super::service::list_drives(&st, id)
+        .await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "list drives failed"))?
+        .into_iter()
+        .find(|d| d.id == drive_id)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "drive not found"))?;
+
+    let body = serde_json::json!({
+        "vmm_kind": "qemu",
+        "drive_id": drive.drive_id,
+        "source": drive.path_on_host,
+        "size_bytes": req.size_bytes,
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{}/agent/v1/vmm/{}/disk/resize", vm.host_addr, id))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: "agent resize failed".into(),
+                    fault_message: Some(e.to_string()),
+                }),
+            )
+        })?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: "agent resize returned non-2xx".into(),
+                fault_message: Some(format!("{status}: {text}")),
+            }),
+        ));
+    }
+    // Best-effort: reflect the new size in the drive row.
+    let _ = sqlx::query("UPDATE vm_drive SET size_bytes = $2, updated_at = now() WHERE id = $1")
+        .bind(drive_id)
+        .bind(req.size_bytes as i64)
+        .execute(&st.db)
+        .await;
+    Ok(Json(OkResponse::default()))
+}
+
 #[utoipa::path(
     get,
     path = "/v1/vms/{id}/drives/{drive_id}",
@@ -1711,6 +1798,7 @@ impl From<super::repo::VmRow> for Vm {
                 .console_kind
                 .unwrap_or_else(|| "unix_serial".to_string()),
             vnc_listen: row.vnc_listen,
+            cpu_type: row.cpu_type,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -1795,6 +1883,7 @@ mod tests {
             guest_os: None,
             console_kind: None,
             vnc_listen: None,
+            cpu_type: None,
             created_at: now,
             updated_at: now,
         };

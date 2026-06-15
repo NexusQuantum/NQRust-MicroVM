@@ -3,11 +3,12 @@
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { VMCreateWizard } from "@/components/vm/vm-create-wizard"
+import { QemuCreateWizard } from "@/components/vm/qemu-create-wizard"
 import { useTemplates, useInstantiateTemplate } from "@/lib/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Server, Cpu, HardDrive, Zap } from "lucide-react"
+import { Server, Cpu, HardDrive, Zap, MonitorPlay } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,9 @@ export default function CreateVMPage() {
   const router = useRouter()
   const { data: templates, isLoading: templatesLoading } = useTemplates()
   const instantiateMutation = useInstantiateTemplate()
+
+  // Which create flow: null = chooser, "vm" = Proxmox-style QEMU, "microvm" = Firecracker stepper.
+  const [flow, setFlow] = useState<null | "vm" | "microvm">(null)
 
   // Quick Create Dialog state
   const [quickCreateOpen, setQuickCreateOpen] = useState(false)
@@ -119,7 +123,54 @@ export default function CreateVMPage() {
         </Button>
       </div>
 
-      <VMCreateWizard onComplete={handleComplete} onCancel={handleCancel} />
+      {flow === null && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setFlow("vm")}
+            className="flex items-start gap-4 rounded-xl border-2 border-border p-6 text-left transition-all hover:border-primary/60 hover:bg-primary/5"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <MonitorPlay className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold">Virtual Machine</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Full OS — Windows or Linux. Install from an ISO or boot a disk image, with a graphical console.
+                The classic way to run a server or desktop.
+              </p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFlow("microvm")}
+            className="flex items-start gap-4 rounded-xl border-2 border-border p-6 text-left transition-all hover:border-primary/60 hover:bg-primary/5"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <Zap className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold">microVM</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Ultra-fast (&lt;125ms) lightweight Linux from a kernel + rootfs. For serverless, functions, and
+                ephemeral workloads.
+              </p>
+            </div>
+          </button>
+        </div>
+      )}
+
+      {flow === "vm" && (
+        <QemuCreateWizard
+          onComplete={handleComplete}
+          onCancel={handleCancel}
+          onBack={() => setFlow(null)}
+        />
+      )}
+
+      {flow === "microvm" && (
+        <VMCreateWizard hideTypeToggle onComplete={handleComplete} onCancel={handleCancel} />
+      )}
 
       {/* Quick Create Dialog */}
       <Dialog open={quickCreateOpen} onOpenChange={handleDialogClose}>

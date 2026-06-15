@@ -43,6 +43,8 @@ export interface Vm {
   // Pluggable VMM fields (0.5.0). Default to firecracker/linux_kernel/unix_serial.
   vmm_kind?: VmmKind;
   guest_os?: GuestOs;
+  /** QEMU CPU model (e.g. "host", "kvm64"). */
+  cpu_type?: string;
   /** "unix_serial" | "pty" | "vnc" — when "vnc", show the noVNC console. */
   console_kind?: string;
   vnc_listen?: string;
@@ -122,6 +124,23 @@ export interface CreateVmReq {
   nvram_template_path?: string;
   /** SSH public keys injected via cloud-init / cloudbase-init on first boot. */
   ssh_authorized_keys?: string[];
+  /** Extra blank data disks to attach at creation (QEMU). */
+  data_disks?: { size_mb: number }[];
+  /** Host PCI BDFs to pass through (QEMU VFIO), e.g. "0000:01:00.0". */
+  vfio_devices?: string[];
+  /** QEMU CPU model, e.g. "host", "kvm64", "x86-64-v3". */
+  cpu_type?: string;
+}
+
+/** A host PCI device available for VFIO passthrough. */
+export interface PciDevice {
+  bdf: string;
+  vendor?: string;
+  device?: string;
+  class?: string;
+  class_name?: string;
+  label?: string;
+  driver?: string;
 }
 
 export interface TemplateSpec {
@@ -255,6 +274,18 @@ export interface CreateImageReq {
 
 export interface CreateImageResp {
   id: string;
+}
+
+/** Agentless P2V/B2V: stream a physical machine's disk over SSH and register it. */
+export interface ImportP2vRequest {
+  sshHost: string;
+  sshPort?: number;
+  sshUser: string;
+  sshPassword?: string;
+  sshKeyPath?: string;
+  sourceDisk: string;
+  name: string;
+  runVirtV2v?: boolean;
 }
 
 export interface ImageFilter {

@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.4] - 2026-06-15
+
+**Alpha 4** — turns the QEMU/UEFI backend into a Proxmox-style VM platform:
+full device management at create- and day-2, CPU model selection, host-side
+metrics, and two import paths for bringing existing machines in (VMware V2V and
+agentless baremetal P2V/B2V). Firecracker microVMs are unchanged.
+
+### Added
+- **Full QEMU device management (create + day-2).** The Proxmox-style create
+  wizard and the VM detail page now drive real devices, not just cosmetics:
+  - **Multiple NICs** at create and live attach/detach of network interfaces.
+  - **Multiple data disks** at create, plus day-2 **add / detach / resize**
+    (live via QMP `blockdev-add`/`device_add`/`block_resize`).
+  - **Attach existing volumes** to a running QEMU VM.
+  - **PCI passthrough (VFIO)** — host PCI devices are enumerated (`lspci`) and
+    selectable from a dropdown in the wizard.
+- **CPU model selection.** New nullable `cpu_type` column on `vm`; the wizard
+  exposes a CPU model picker (e.g. `host`, `kvm64`, `x86-64-v3`, `EPYC`) and
+  `host` passthrough for nested virtualization. Emitted as QEMU `-cpu`.
+- **Host-side QEMU VM metrics.** CPU/memory for QEMU VMs are sampled from the
+  per-VM cgroup (`/sys/fs/cgroup/system.slice/qemu-<id>.service`) and persisted
+  to `metrics.vm_metrics`, so QEMU VMs report metrics like microVMs do.
+- **V2V import — bring VMware (and other hypervisor) guests in.**
+  `POST /v1/images/import/vmdk` converts a VMDK/qcow2/raw disk to a bootable
+  UEFI image, optionally running `virt-v2v -i disk` to adapt guest drivers
+  (vmxnet3/pvscsi → virtio). New "Import from VMware" registry dialog.
+- **P2V / B2V import — bring physical/baremetal machines in (agentless).**
+  `POST /v1/images/import/p2v` opens an SSH session to a reachable physical
+  host, streams the chosen block device (`dd`, no agent on the source), and
+  runs the same virt-v2v pipeline to register a bootable image. Password or
+  SSH-key auth. New "Import from Physical (P2V)" registry dialog.
+- **Installer provisions the import toolchain (classic + air-gapped).**
+  Adds `virt-v2v` + `libguestfs-tools` (V2V/P2V conversion) and
+  `sshpass` + `openssh-client(s)` (agentless P2V) to the dependency phase and
+  the air-gapped deb bundle, and makes the host kernel readable so libguestfs
+  (supermin) works for the non-root manager.
+
+### Fixed
+- **virt-v2v output naming.** `virt-v2v -o local` writes the converted disk as
+  `<name>-sda` (plus a libvirt `<name>.xml`), not `<name>.qcow2`; the import
+  handlers now rename it correctly so registration succeeds instead of 500ing
+  after a successful conversion.
+
 ## [0.5.0-alpha.3] - 2026-06-11
 
 **Alpha 3** — makes alpha.2 installable turnkey. The installer (and the

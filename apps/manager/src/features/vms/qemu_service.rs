@@ -355,10 +355,15 @@ pub async fn create_and_start_qemu(
         "enable_tpm": auto_tpm,
         "enable_balloon": true,
         "enable_rng": true,
-        // Installer VMs get -no-reboot so the post-install auto-reboot exits
-        // (operator then ejects the ISO + starts into the installed OS). Normal
-        // VMs reboot in place.
-        "no_reboot": req.installer_iso_id.is_some(),
+        // Proxmox-style: never use -no-reboot. The guest reboots in place, so a
+        // multi-reboot installer (Windows) runs to completion on its own. The
+        // disk boots before the ISO (see agent bootindex policy), so once the OS
+        // is installed, reboots land on it automatically.
+        "no_reboot": false,
+        // Host PCI devices to pass through (VFIO). Empty for the common case.
+        "vfio_devices": req.vfio_devices,
+        // QEMU CPU model (e.g. "host", "kvm64", "x86-64-v3"). None → agent default "host".
+        "cpu_type": req.cpu_type,
     });
 
     // Boot can be slow on busy hosts: qemu-img overlay over a large backing
@@ -432,15 +437,12 @@ pub async fn create_and_start_qemu(
     let handle: BootResp = resp.json().await.context("decode agent boot response")?;
 
     // Persist VM row. Use vmm_kind = 'qemu', store boot_mode as JSON.
-    // VMs created with an installer ISO enter the 'installing' state so the
-    // UI can distinguish "still going through Windows Setup" from
-    // "post-install running"; the user (or future shutdown detector) calls
-    // /v1/vms/:id/install-complete to detach the ISO and transition.
-    let initial_state = if req.installer_iso_id.is_some() {
-        "installing"
-    } else {
-        "running"
-    };
+    // Proxmox-style: a VM with an installer ISO is just a normal 'running' VM
+    // with a CD attached — it boots the installer, runs Setup (through its own
+    // reboots), then boots the installed disk. Ejecting the ISO afterwards is
+    // an optional action (POST /v1/vms/:id/install-complete), not a required
+    // state transition.
+    let initial_state = "running";
     let row = super::repo::VmRow {
         id,
         name: req.name.clone(),
@@ -468,6 +470,7 @@ pub async fn create_and_start_qemu(
         guest_os: Some(guest_os_resolved.as_str().to_string()),
         console_kind: Some(if enable_vnc { "vnc" } else { "unix_serial" }.to_string()),
         vnc_listen: handle.vnc.clone(),
+        cpu_type: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -486,6 +489,7 @@ pub async fn create_and_start_qemu(
             vnc_listen: handle.vnc.as_deref(),
             firmware_path: req.firmware_path.as_deref(),
             nvram_template_path: req.nvram_template_path.as_deref(),
+            cpu_type: req.cpu_type.as_deref(),
         },
     )
     .await
@@ -497,6 +501,26 @@ pub async fn create_and_start_qemu(
     if let Some(handle) = disk_volume_handle {
         if let Err(e) = persist_volume_attachment(st, id, &handle, &disk_path).await {
             tracing::warn!(vm_id=%id, error=?e, "failed to persist volume_attachment for QEMU VM (delete may need manual cleanup)");
+        }
+    }
+
+    // Extra blank data disks requested at create time. Reuse the day-2
+    // create_drive path (provision on backend + hot-add to the now-running
+    // VM). Best-effort: a failure on one disk doesn't fail the VM create.
+    for (i, d) in req.data_disks.iter().enumerate() {
+        let drive_id = format!("data{}", i + 1);
+        let drive_req = nexus_types::CreateDriveReq {
+            drive_id: drive_id.clone(),
+            path_on_host: None,
+            is_root_device: false,
+            is_read_only: false,
+            cache_type: None,
+            io_engine: None,
+            rate_limiter: None,
+            size_bytes: Some(d.size_mb as u64 * 1024 * 1024),
+        };
+        if let Err(e) = super::service::create_drive(st, id, drive_req).await {
+            tracing::warn!(vm_id=%id, %drive_id, error=?e, "failed to provision extra data disk at create");
         }
     }
 
@@ -607,6 +631,8 @@ pub async fn restart_qemu(st: &AppState, vm: &super::repo::VmRow) -> Result<()> 
         "enable_rng": true,
         // Restart targets a normal (already-installed) VM — reboot in place.
         "no_reboot": false,
+        // Preserve the CPU model chosen at create.
+        "cpu_type": vm.cpu_type,
     });
 
     let http = Client::builder()
@@ -1088,6 +1114,7 @@ struct VmmColumns<'a> {
     vnc_listen: Option<&'a str>,
     firmware_path: Option<&'a str>,
     nvram_template_path: Option<&'a str>,
+    cpu_type: Option<&'a str>,
 }
 
 #[cfg(not(test))]
@@ -1102,7 +1129,8 @@ async fn update_vmm_columns(db: &sqlx::PgPool, c: VmmColumns<'_>) -> Result<()> 
                 console_kind = $4,
                 vnc_listen = $5,
                 firmware_path = $6,
-                nvram_path = $7
+                nvram_path = $7,
+                cpu_type = $8
             WHERE id = $1"#,
     )
     .bind(c.id)
@@ -1112,6 +1140,7 @@ async fn update_vmm_columns(db: &sqlx::PgPool, c: VmmColumns<'_>) -> Result<()> 
     .bind(c.vnc_listen)
     .bind(c.firmware_path)
     .bind(c.nvram_template_path)
+    .bind(c.cpu_type)
     .execute(db)
     .await?;
     Ok(())
@@ -1660,6 +1689,9 @@ mod tests {
             firmware_path: None,
             nvram_template_path: None,
             ssh_authorized_keys: vec![],
+            data_disks: vec![],
+            vfio_devices: vec![],
+            cpu_type: None,
         }
     }
 }

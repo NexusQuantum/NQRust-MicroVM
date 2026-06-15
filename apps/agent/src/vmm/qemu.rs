@@ -201,9 +201,11 @@ impl QemuDriver {
         args.push("-machine".into());
         args.push("q35,accel=kvm,smm=off".into());
 
-        // CPU and SMP topology.
+        // CPU model + SMP topology. Default "host" (all host features, needed
+        // for nested virt); operators can pick a fixed model (e.g. kvm64,
+        // x86-64-v3, EPYC) for cross-host live-migration compatibility.
         args.push("-cpu".into());
-        args.push("host".into());
+        args.push(spec.cpu_type.clone().unwrap_or_else(|| "host".into()));
         args.push("-smp".into());
         args.push(format!("cpus={}", spec.vcpu));
         args.push("-m".into());
@@ -297,11 +299,14 @@ impl QemuDriver {
         // device_del (no hotplug) nor media eject, so it can't model an
         // ejectable installer CD.
         //
-        // Bootindex policy: CD-ROMs get the lowest indices (0,1,2…) so the
-        // installer media boots before the (blank) root disk on a fresh ISO
-        // install; the root disk sits right after them. Indices must be unique —
-        // two devices sharing a bootindex makes QEMU refuse to start (this bit
-        // multi-CD-ROM Windows installs: installer + virtio-win).
+        // Bootindex policy (Proxmox-style): the ROOT DISK boots first
+        // (bootindex 0); CD-ROMs come after (1,2,3…). On a fresh ISO install the
+        // blank disk has no bootloader, so UEFI falls through to the installer
+        // CD; once the OS is installed the disk boots first and the (still
+        // attached) ISO is simply ignored. This lets a multi-reboot installer
+        // (e.g. Windows) run to completion on its own — no `-no-reboot` and no
+        // manual "install complete" step. Indices must be unique — two devices
+        // sharing a bootindex makes QEMU refuse to start.
         let num_cdrom = spec.disks.iter().filter(|d| d.cdrom).count();
         if num_cdrom > 0 {
             // One AHCI controller hosts every CD-ROM (ports ahci0.0..ahci0.5).
@@ -333,13 +338,15 @@ impl QemuDriver {
             if disk.cdrom {
                 let port = cdrom_port;
                 cdrom_port += 1;
+                // CD-ROMs boot AFTER the root disk (which is bootindex 0).
+                let bootindex = port + 1;
                 args.push(format!(
-                    "ide-cd,drive={drive_id},id={drive_id}-dev,bus=ahci0.{port},bootindex={port}"
+                    "ide-cd,drive={drive_id},id={drive_id}-dev,bus=ahci0.{port},bootindex={bootindex}"
                 ));
             } else {
-                // Root disk boots after all CD-ROMs; data disks get no bootindex.
+                // Root disk boots first; data disks get no bootindex.
                 let bootindex = if disk.root_device {
-                    format!(",bootindex={num_cdrom}")
+                    ",bootindex=0".to_string()
                 } else {
                     String::new()
                 };
@@ -357,6 +364,14 @@ impl QemuDriver {
         for n in 0..HOTPLUG_ROOT_PORTS {
             args.push("-device".into());
             args.push(format!("pcie-root-port,id=rphp{n},chassis={}", 20 + n));
+        }
+
+        // VFIO PCI passthrough. Each entry is a host BDF (e.g. 0000:01:00.0)
+        // already bound to vfio-pci on the host. Requires IOMMU; on q35 the
+        // device attaches to the root complex.
+        for (i, bdf) in spec.vfio_devices.iter().enumerate() {
+            args.push("-device".into());
+            args.push(format!("vfio-pci,host={bdf},id=vfio{i}"));
         }
 
         // NICs — TAP-backed virtio-net by default. The TAP device is
@@ -1042,6 +1057,7 @@ mod tests {
             no_reboot: false,
             vsock_cid: None,
             vfio_devices: vec![],
+            cpu_type: None,
             incoming_uri: None,
             log_path: PathBuf::from("/tmp/qemu.log"),
             run_dir: PathBuf::from("/srv/fc"),
