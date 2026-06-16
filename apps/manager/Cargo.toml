@@ -1,6 +1,6 @@
 [package]
 name = "manager"
-version = "0.4.1"
+version = "0.5.0-alpha.4"
 edition = "2021"
 
 
@@ -26,6 +26,7 @@ bollard = "0.17"
 metrics = { workspace = true }
 nexus-storage = { path = "../../crates/nexus-storage" }
 nexus-types = { path = "../../crates/nexus-types" }
+nexus-vmm = { path = "../../crates/nexus-vmm" }
 utoipa = { workspace = true, features = ["chrono", "uuid"] }
 utoipa-axum = "0.1"
 utoipa-swagger-ui = { version = "7", features = ["axum"] }

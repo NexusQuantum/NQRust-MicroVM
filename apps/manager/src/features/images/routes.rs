@@ -299,6 +299,393 @@ pub async fn dockerhub_preload(
     ))
 }
 
+/// Import a VMware VMDK (or any qemu-img-readable disk) as a registered
+/// image, optionally running virt-v2v to adapt the guest drivers from
+/// VMware's vmxnet3/pvscsi to virtio. Pure server-side operation: the
+/// VMDK must already live somewhere the manager can read.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct ImportVmdkRequest {
+    /// Filesystem path of the source VMDK / qcow2 / raw disk. Must be
+    /// readable by the manager process.
+    pub source_path: String,
+    /// Name for the resulting image. Defaults to the source filename.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// If true, run `virt-v2v -i disk` to convert the guest's drivers from
+    /// VMware paravirt to virtio. Recommended when importing Windows or
+    /// older Linux guests. Pure-format conversion (qemu-img convert) is
+    /// used when false — faster, but the guest may not boot if it was
+    /// using vmxnet3 / pvscsi inside.
+    #[serde(default = "default_true")]
+    pub run_virt_v2v: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/images/import/vmdk",
+    request_body = ImportVmdkRequest,
+    responses(
+        (status = 200, description = "VMDK imported", body = CreateImageResp),
+        (status = 400, description = "Source not readable"),
+        (status = 500, description = "virt-v2v / qemu-img conversion failed"),
+    ),
+    tag = "Images"
+)]
+pub async fn import_vmdk(
+    Extension(st): Extension<AppState>,
+    Json(req): Json<ImportVmdkRequest>,
+) -> Result<Json<CreateImageResp>, StatusCode> {
+    let source = std::path::Path::new(&req.source_path);
+    if tokio::fs::metadata(source).await.is_err() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let name = req
+        .name
+        .clone()
+        .or_else(|| {
+            source
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "imported".to_string());
+    let dest_dir = st.images.root().join("imported");
+    if let Err(e) = tokio::fs::create_dir_all(&dest_dir).await {
+        tracing::error!(?e, "create import dest dir");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let dest = dest_dir.join(format!("{name}.qcow2"));
+
+    if req.run_virt_v2v {
+        // virt-v2v -i disk <source> -o local -of qcow2 -os <dest_dir> -on <name>
+        let out = tokio::process::Command::new("virt-v2v")
+            .args([
+                "-i",
+                "disk",
+                source.to_str().unwrap_or(""),
+                "-o",
+                "local",
+                "-of",
+                "qcow2",
+                "-os",
+            ])
+            .arg(&dest_dir)
+            .arg("-on")
+            .arg(&name)
+            .output()
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "virt-v2v spawn (is libguestfs-tools installed?)");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !out.status.success() {
+            tracing::error!(stderr=%String::from_utf8_lossy(&out.stderr), "virt-v2v failed");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        // virt-v2v `-o local` writes the converted disk as "<name>-sda" (qcow2)
+        // plus a libvirt "<name>.xml" — NOT "<name>.qcow2". Rename the disk to
+        // the path the rest of this handler expects, and drop the XML.
+        let v2v_disk = dest_dir.join(format!("{name}-sda"));
+        if let Err(e) = tokio::fs::rename(&v2v_disk, &dest).await {
+            tracing::error!(?e, src=%v2v_disk.display(), dst=%dest.display(),
+                "virt-v2v output rename failed (expected <name>-sda)");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let _ = tokio::fs::remove_file(dest_dir.join(format!("{name}.xml"))).await;
+    } else {
+        // Plain qemu-img convert. Faster, but no driver adaptation.
+        let out = tokio::process::Command::new("qemu-img")
+            .arg("convert")
+            .arg("-O")
+            .arg("qcow2")
+            .arg(source)
+            .arg(&dest)
+            .output()
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "qemu-img spawn");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !out.status.success() {
+            tracing::error!(stderr=%String::from_utf8_lossy(&out.stderr), "qemu-img convert failed");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    let meta = tokio::fs::metadata(&dest)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sha = sha256_file(&dest).await.unwrap_or_default();
+    let image_req = nexus_types::CreateImageReq {
+        kind: "rootfs".to_string(),
+        name,
+        host_path: dest.display().to_string(),
+        sha256: sha,
+        size: meta.len() as i64,
+        project: Some("imported".to_string()),
+    };
+    let image = st.images.insert(&image_req).await.map_err(map_repo_error)?;
+    // Tag as uefi_disk — modern VMware exports are typically UEFI; operator
+    // can adjust via image PATCH if needed.
+    let _ = sqlx::query(
+        r#"UPDATE image
+            SET image_kind = 'uefi_disk',
+                guest_os_hint = 'linux',
+                disk_format = 'qcow2',
+                nvram_template_path = '/usr/share/edk2/x64/OVMF_VARS.4m.fd'
+            WHERE id = $1"#,
+    )
+    .bind(image.id)
+    .execute(&st.db)
+    .await;
+    Ok(Json(CreateImageResp { id: image.id }))
+}
+
+/// Agentless P2V / B2V (baremetal-to-VM): the manager opens an SSH session to a
+/// reachable physical machine, streams the chosen block device off it, writes a
+/// local qcow2, and (optionally) runs virt-v2v to adapt the guest's drivers to
+/// virtio. No agent is installed on the source. For a consistent image the
+/// source should be quiesced or live-USB-booted — imaging a live root disk is
+/// crash-consistent only (like a hard reset), which most Linux/Windows guests
+/// recover from but is not transactional.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct ImportP2vRequest {
+    /// SSH host (IP or DNS) of the physical machine to image.
+    pub ssh_host: String,
+    /// SSH port. Defaults to 22.
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
+    /// SSH username. Must be root, or a user with passwordless sudo, so it can
+    /// read the raw block device.
+    pub ssh_user: String,
+    /// SSH password. Provide this or `ssh_key_path` (one is required).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_password: Option<String>,
+    /// Path to an SSH private key readable by the manager. Alternative to
+    /// `ssh_password`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_key_path: Option<String>,
+    /// Source block device on the remote host, e.g. `/dev/sda` or
+    /// `/dev/nvme0n1`. Image the whole disk (not a partition) so the result is
+    /// bootable.
+    pub source_disk: String,
+    /// Name for the resulting image.
+    pub name: String,
+    /// Run `virt-v2v -i disk` to adapt the guest's drivers to virtio
+    /// (recommended — physical machines use vendor/AHCI/NVMe drivers a VM lacks).
+    #[serde(default = "default_true")]
+    pub run_virt_v2v: bool,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+/// Single-quote a value for safe interpolation into a remote shell command.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/images/import/p2v",
+    request_body = ImportP2vRequest,
+    responses(
+        (status = 200, description = "Physical disk imported", body = CreateImageResp),
+        (status = 400, description = "Missing credentials"),
+        (status = 500, description = "SSH stream / virt-v2v / qemu-img failed"),
+    ),
+    tag = "Images"
+)]
+pub async fn import_p2v(
+    Extension(st): Extension<AppState>,
+    Json(req): Json<ImportP2vRequest>,
+) -> Result<Json<CreateImageResp>, StatusCode> {
+    if req.ssh_password.is_none() && req.ssh_key_path.is_none() {
+        tracing::error!("p2v: ssh_password or ssh_key_path is required");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let name = req.name.clone();
+    let dest_dir = st.images.root().join("imported");
+    if let Err(e) = tokio::fs::create_dir_all(&dest_dir).await {
+        tracing::error!(?e, "create import dest dir");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    // Raw disk streamed off the physical host, before any conversion. `dd` is
+    // universally present on the source (no qemu-img dependency on baremetal).
+    let staged = dest_dir.join(format!("{name}-p2v-src.raw"));
+    let dest = dest_dir.join(format!("{name}.qcow2"));
+
+    // Build the ssh invocation. sshpass wraps ssh for password auth; key auth
+    // uses `ssh -i` directly.
+    let mut cmd;
+    let mut args: Vec<String> = Vec::new();
+    if let Some(pw) = req.ssh_password.as_deref() {
+        cmd = tokio::process::Command::new("sshpass");
+        args.push("-p".into());
+        args.push(pw.into());
+        args.push("ssh".into());
+    } else {
+        cmd = tokio::process::Command::new("ssh");
+    }
+    args.extend([
+        "-o".into(),
+        "StrictHostKeyChecking=no".into(),
+        "-o".into(),
+        "UserKnownHostsFile=/dev/null".into(),
+        "-o".into(),
+        "ConnectTimeout=20".into(),
+        "-p".into(),
+        req.ssh_port.to_string(),
+    ]);
+    if let Some(key) = req.ssh_key_path.as_deref() {
+        args.push("-i".into());
+        args.push(key.into());
+    }
+    args.push(format!("{}@{}", req.ssh_user, req.ssh_host));
+    // Remote: stream the raw block device to stdout. Non-root users need
+    // passwordless sudo to read the device.
+    let sudo = if req.ssh_user == "root" {
+        ""
+    } else {
+        "sudo -n "
+    };
+    args.push(format!(
+        "{sudo}dd if={} bs=4M status=none",
+        sh_quote(&req.source_disk)
+    ));
+
+    // Redirect the SSH stdout straight into the staging file.
+    let file = match std::fs::File::create(&staged) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!(?e, "p2v: create staging file");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    let spawn = cmd
+        .args(&args)
+        .stdout(std::process::Stdio::from(file))
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+    let child = match spawn {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(?e, "p2v: ssh/sshpass spawn (is sshpass installed?)");
+            let _ = tokio::fs::remove_file(&staged).await;
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    let out = match child.wait_with_output().await {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::error!(?e, "p2v: ssh stream wait");
+            let _ = tokio::fs::remove_file(&staged).await;
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    if !out.status.success() {
+        tracing::error!(stderr=%String::from_utf8_lossy(&out.stderr), "p2v: ssh disk stream failed");
+        let _ = tokio::fs::remove_file(&staged).await;
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // Convert the staged raw image to the registered qcow2, adapting drivers
+    // with virt-v2v when requested. virt-v2v reads a whole-disk raw image via
+    // `-i disk` and inspects its partitions directly.
+    if req.run_virt_v2v {
+        let v2v = tokio::process::Command::new("virt-v2v")
+            .args(["-i", "disk"])
+            .arg(&staged)
+            .args(["-o", "local", "-of", "qcow2", "-os"])
+            .arg(&dest_dir)
+            .arg("-on")
+            .arg(&name)
+            .output()
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "p2v: virt-v2v spawn");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !v2v.status.success() {
+            tracing::error!(stderr=%String::from_utf8_lossy(&v2v.stderr), "p2v: virt-v2v failed");
+            let _ = tokio::fs::remove_file(&staged).await;
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        // virt-v2v `-o local` writes "<name>-sda" + "<name>.xml" (see import_vmdk).
+        let v2v_disk = dest_dir.join(format!("{name}-sda"));
+        if let Err(e) = tokio::fs::rename(&v2v_disk, &dest).await {
+            tracing::error!(?e, src=%v2v_disk.display(), "p2v: virt-v2v output rename failed");
+            let _ = tokio::fs::remove_file(&staged).await;
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let _ = tokio::fs::remove_file(dest_dir.join(format!("{name}.xml"))).await;
+    } else {
+        let conv = tokio::process::Command::new("qemu-img")
+            .args(["convert", "-f", "raw", "-O", "qcow2"])
+            .arg(&staged)
+            .arg(&dest)
+            .output()
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "p2v: qemu-img spawn");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !conv.status.success() {
+            tracing::error!(stderr=%String::from_utf8_lossy(&conv.stderr), "p2v: qemu-img convert failed");
+            let _ = tokio::fs::remove_file(&staged).await;
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    // The raw intermediate is large; drop it now that the qcow2 exists.
+    let _ = tokio::fs::remove_file(&staged).await;
+
+    let meta = tokio::fs::metadata(&dest)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sha = sha256_file(&dest).await.unwrap_or_default();
+    let image_req = nexus_types::CreateImageReq {
+        kind: "rootfs".to_string(),
+        name,
+        host_path: dest.display().to_string(),
+        sha256: sha,
+        size: meta.len() as i64,
+        project: Some("imported".to_string()),
+    };
+    let image = st.images.insert(&image_req).await.map_err(map_repo_error)?;
+    let _ = sqlx::query(
+        r#"UPDATE image
+            SET image_kind = 'uefi_disk',
+                guest_os_hint = 'linux',
+                disk_format = 'qcow2',
+                nvram_template_path = '/usr/share/edk2/x64/OVMF_VARS.4m.fd'
+            WHERE id = $1"#,
+    )
+    .bind(image.id)
+    .execute(&st.db)
+    .await;
+    Ok(Json(CreateImageResp { id: image.id }))
+}
+
+async fn sha256_file(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+    let mut f = tokio::fs::File::open(path).await.ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 65536];
+    loop {
+        let n = f.read(&mut buf).await.ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(hex::encode(hasher.finalize()))
+}
+
 #[utoipa::path(
     post,
     path = "/v1/images/upload",
@@ -317,8 +704,18 @@ pub async fn upload_image(
     let mut kind: Option<String> = None;
     let mut name: Option<String> = None;
     let mut project: Option<String> = None;
+    // 0.5.0+ VMM-aware fields.
+    let mut image_kind: Option<String> = None;
+    let mut nvram_template_path: Option<String> = None;
 
-    // Extract metadata fields first
+    // Multipart fields are processed in arrival order. `kind` must precede the
+    // `file` part (so we know where to write); the file is streamed straight to
+    // disk in the same pass — we must NOT break and re-iterate, or the file
+    // part gets skipped ("No file uploaded").
+    let mut file_path: Option<std::path::PathBuf> = None;
+    let mut sha256: Option<String> = None;
+    let mut size: Option<i64> = None;
+
     while let Some(field) = multipart
         .next_field()
         .await
@@ -336,28 +733,38 @@ pub async fn upload_image(
             "project" => {
                 project = Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
             }
+            "image_kind" => {
+                image_kind = Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
+            "nvram_template_path" => {
+                nvram_template_path =
+                    Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
             "file" => {
-                // We'll handle file in the next pass
-                break;
+                let k = kind.clone().ok_or(StatusCode::BAD_REQUEST)?;
+                let upload_dir = match k.as_str() {
+                    "docker" => st.images.root().join("docker"),
+                    "kernel" | "rootfs" => st.images.root().to_path_buf(),
+                    _ => return Err(StatusCode::BAD_REQUEST),
+                };
+                let (p, s, sz) = super::upload::write_field_to_disk(field, upload_dir, &k)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("File upload failed: {}", e);
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
+                file_path = Some(p);
+                sha256 = Some(s);
+                size = Some(sz);
             }
             _ => {}
         }
     }
 
     let kind = kind.ok_or(StatusCode::BAD_REQUEST)?;
-    let upload_dir = match kind.as_str() {
-        "docker" => st.images.root().join("docker"),
-        "kernel" | "rootfs" => st.images.root().to_path_buf(),
-        _ => return Err(StatusCode::BAD_REQUEST),
-    };
-
-    // Handle file upload
-    let (file_path, sha256, size) = super::upload::handle_file_upload(multipart, upload_dir, &kind)
-        .await
-        .map_err(|e| {
-            tracing::error!("File upload failed: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let file_path = file_path.ok_or(StatusCode::BAD_REQUEST)?;
+    let sha256 = sha256.unwrap_or_default();
+    let size = size.unwrap_or(0);
 
     // If Docker image, load it to get the actual image name
     let default_name = || {
@@ -389,6 +796,35 @@ pub async fn upload_image(
     };
 
     let image = st.images.insert(&image_req).await.map_err(map_repo_error)?;
+
+    // Persist the VMM-aware fields if the client supplied them. Defaults
+    // ('linux_kernel' for the strict enum) are already set by the migration.
+    if image_kind.is_some() || nvram_template_path.is_some() {
+        let effective_kind = image_kind.as_deref().unwrap_or("linux_kernel");
+        // Validate against the strict enum so the CHECK constraint won't
+        // bounce us at INSERT time.
+        let allowed = matches!(
+            effective_kind,
+            "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso"
+        );
+        if !allowed {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        if let Err(e) = sqlx::query(
+            r#"UPDATE image
+                SET image_kind = $2,
+                    nvram_template_path = COALESCE($3, nvram_template_path)
+                WHERE id = $1"#,
+        )
+        .bind(image.id)
+        .bind(effective_kind)
+        .bind(nvram_template_path.as_deref())
+        .execute(&st.db)
+        .await
+        {
+            tracing::warn!(image_id=%image.id, error=?e, "failed to set image_kind / nvram_template_path");
+        }
+    }
 
     Ok(Json(CreateImageResp { id: image.id }))
 }

@@ -105,20 +105,21 @@ struct GuestMetrics {
     process_count: Option<u32>,
 }
 
+/// Host-side metrics returned by the agent for a QEMU VM (read from its cgroup).
+#[derive(Deserialize)]
+struct QemuHostMetrics {
+    cpu_usage_percent: f64,
+    memory_usage_percent: f64,
+    memory_used_kb: i64,
+    memory_total_kb: i64,
+}
+
 async fn collect_vm_metrics(
     state: &AppState,
     sem: std::sync::Arc<Semaphore>,
 ) -> anyhow::Result<()> {
     let vms = crate::features::vms::repo::list(&state.db).await?;
     let running: Vec<_> = vms.into_iter().filter(|vm| vm.state == "running").collect();
-
-    let skipped = running.iter().filter(|vm| vm.guest_ip.is_none()).count();
-    if skipped > 0 {
-        warn!(
-            skipped,
-            "running VMs without guest_ip — guest agent may not have reported IP yet"
-        );
-    }
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
@@ -127,15 +128,60 @@ async fn collect_vm_metrics(
     let mut handles = Vec::with_capacity(running.len());
 
     for vm in running {
-        let guest_ip = match vm.guest_ip.clone() {
-            Some(ip) => ip,
-            None => continue, // skip VMs without guest IP (logged above)
-        };
-
         let pool = state.db.clone();
         let client = client.clone();
         let sem = sem.clone();
 
+        // QEMU VMs have no in-guest agent (Windows especially). Collect
+        // host-observed CPU/memory from the agent (which reads the VM's
+        // cgroup) and persist to the same metrics table.
+        if vm.vmm_kind.as_deref() == Some("qemu") {
+            let host_addr = vm.host_addr.trim_end_matches('/').to_string();
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await;
+                let url = format!(
+                    "{host_addr}/agent/v1/vmm/{}/metrics?vmm_kind=qemu&vcpu={}&mem_mib={}",
+                    vm.id, vm.vcpu, vm.mem_mib
+                );
+                match client.get(&url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<QemuHostMetrics>().await {
+                            Ok(m) => {
+                                if let Err(e) = repo::insert_vm_metric(
+                                    &pool,
+                                    vm.id,
+                                    Some(m.cpu_usage_percent),
+                                    Some(m.memory_usage_percent),
+                                    Some(m.memory_used_kb),
+                                    Some(m.memory_total_kb),
+                                    None,
+                                )
+                                .await
+                                {
+                                    warn!(vm_id = %vm.id, error = ?e, "failed to insert qemu vm metric");
+                                }
+                            }
+                            Err(e) => {
+                                debug!(vm_id = %vm.id, error = ?e, "failed to parse qemu host metrics");
+                            }
+                        }
+                    }
+                    Ok(resp) => {
+                        debug!(vm_id = %vm.id, status = %resp.status(), "agent qemu metrics error");
+                    }
+                    Err(e) => {
+                        debug!(vm_id = %vm.id, error = ?e, "failed to reach agent for qemu metrics");
+                    }
+                }
+            }));
+            continue;
+        }
+
+        // Firecracker VMs: poll the in-guest agent at :9000.
+        let guest_ip = match vm.guest_ip.clone() {
+            Some(ip) => ip,
+            None => continue, // guest agent hasn't reported an IP yet
+        };
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await;
             let url = format!("http://{}:9000/metrics", guest_ip);

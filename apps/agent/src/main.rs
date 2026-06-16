@@ -1,5 +1,6 @@
 mod core;
 mod features;
+mod vmm;
 
 use serde_json::json;
 use tracing::{info, warn};
@@ -10,6 +11,7 @@ pub struct AppState {
     pub bridge: String,
     pub storage_registry: features::storage::registry::HostBackendRegistry,
     pub nfs_config: Option<features::storage::nfs::NfsHostConfig>,
+    pub vmm_registry: vmm::VmmRegistry,
 }
 
 #[tokio::main]
@@ -99,11 +101,22 @@ async fn main() -> anyhow::Result<()> {
             ),
         );
     }
+    // Probe installed VMM backends (Firecracker, QEMU). The registry is
+    // shared via AppState and used by per-VM routes to dispatch on vmm_kind.
+    let vmm_registry = vmm::VmmRegistry::probe_installed().await;
+    let installed_kinds: Vec<String> = vmm_registry
+        .installed_kinds()
+        .iter()
+        .map(|k| k.as_str().to_string())
+        .collect();
+    info!(?installed_kinds, "vmm registry probed");
+
     let state = AppState {
         run_dir: std::env::var("FC_RUN_DIR").unwrap_or_else(|_| "/srv/fc".into()),
         bridge: std::env::var("FC_BRIDGE").unwrap_or_else(|_| "fcbr0".into()),
         storage_registry,
         nfs_config,
+        vmm_registry,
     };
 
     let heartbeat_state = state.clone();
@@ -148,6 +161,12 @@ async fn register_and_heartbeat(
             .iter()
             .map(|k| k.as_db_str().to_string())
             .collect();
+        let vmm_kinds_installed: Vec<String> = state
+            .vmm_registry
+            .installed_kinds()
+            .iter()
+            .map(|k| k.as_str().to_string())
+            .collect();
         match client
             .post(format!("{manager_base}/v1/hosts/register"))
             .json(&RegisterHostRequest {
@@ -155,6 +174,7 @@ async fn register_and_heartbeat(
                 addr: addr.clone(),
                 capabilities,
                 supported_backend_kinds: Some(supported_backend_kinds),
+                vmm_kinds_installed: Some(vmm_kinds_installed),
             })
             .send()
             .await
@@ -198,11 +218,18 @@ async fn heartbeat_loop(
             .iter()
             .map(|k| k.as_db_str().to_string())
             .collect();
+        let vmm_kinds_installed: Vec<String> = state
+            .vmm_registry
+            .installed_kinds()
+            .iter()
+            .map(|k| k.as_str().to_string())
+            .collect();
         match client
             .post(format!("{manager_base}/v1/hosts/{host_id}/heartbeat"))
             .json(&HostHeartbeatRequest {
                 capabilities: Some(capabilities),
                 supported_backend_kinds: Some(supported_backend_kinds),
+                vmm_kinds_installed: Some(vmm_kinds_installed),
             })
             .send()
             .await

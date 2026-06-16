@@ -54,6 +54,16 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "disk_format": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Disk image format (\"raw\", \"qcow2\", \"vmdk\", ...). Used by QEMU."
+                    },
+                    "guest_os_hint": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Optional hint at which guest OS this image targets (\"linux\", \"windows\", \"bsd\")."
+                    },
                     "host_path": {
                       "type": "string"
                     },
@@ -61,11 +71,22 @@
                       "type": "string",
                       "format": "uuid"
                     },
+                    "image_kind": {
+                      "type": "string",
+                      "description": "(ImageKind)",
+                      "nullable": true
+                    },
                     "kind": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Free-form legacy kind (\"docker\", \"kernel\", etc.). Preserved for\nbackwards compatibility. Use [`image_kind`](Self::image_kind) for\nVMM-aware routing."
                     },
                     "name": {
                       "type": "string"
+                    },
+                    "nvram_template_path": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "For uefi_disk images: path to the OVMF_VARS template that the agent\nshould copy on boot to give the VM a writable EFI nvram."
                     },
                     "project": {
                       "type": "string",
@@ -207,6 +228,16 @@
                     "type": "string",
                     "format": "date-time"
                   },
+                  "disk_format": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Disk image format (\"raw\", \"qcow2\", \"vmdk\", ...). Used by QEMU."
+                  },
+                  "guest_os_hint": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Optional hint at which guest OS this image targets (\"linux\", \"windows\", \"bsd\")."
+                  },
                   "host_path": {
                     "type": "string"
                   },
@@ -214,11 +245,22 @@
                     "type": "string",
                     "format": "uuid"
                   },
+                  "image_kind": {
+                    "type": "string",
+                    "description": "(ImageKind)",
+                    "nullable": true
+                  },
                   "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Free-form legacy kind (\"docker\", \"kernel\", etc.). Preserved for\nbackwards compatibility. Use [`image_kind`](Self::image_kind) for\nVMM-aware routing."
                   },
                   "name": {
                     "type": "string"
+                  },
+                  "nvram_template_path": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "For uefi_disk images: path to the OVMF_VARS template that the agent\nshould copy on boot to give the VM a writable EFI nvram."
                   },
                   "project": {
                     "type": "string",

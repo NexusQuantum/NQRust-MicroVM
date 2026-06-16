@@ -6,6 +6,7 @@ members = [
 "crates/nexus-backup",
 "crates/nexus-storage",
 "crates/nexus-types",
+"crates/nexus-vmm",
 "crates/nqvm-cli",
 ]
 resolver = "2"

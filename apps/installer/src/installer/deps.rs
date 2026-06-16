@@ -81,6 +81,22 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "qemu-utils", // qemu-img — clone_from_image on block backends
             "nfs-common", // mount.nfs — nfs backend (manager auto-mount)
             "cifs-utils", // mount.cifs — smb backend (manager auto-mount)
+            // QEMU classic-VM backend (added in v0.5.0):
+            "qemu-system-x86", // qemu-system-x86_64 — the QEMU VMM
+            "ovmf",            // OVMF / UEFI firmware (OVMF_CODE/VARS) for UEFI boot
+            "genisoimage",     // builds the cloud-init NoCloud seed ISO
+            "swtpm",           // software TPM 2.0 (Windows 11 / measured boot)
+            "swtpm-tools",     // swtpm_setup
+            // V2V import (VMware/Hyper-V/… → here) + cold P2V. On Debian/Ubuntu
+            // virt-v2v is its own package (libguestfs-tools has the other virt-*
+            // tools); install both.
+            "virt-v2v",
+            "libguestfs-tools",
+            // Agentless P2V/B2V: the manager SSHes into a physical host and
+            // streams its disk. sshpass enables password auth (key auth needs
+            // no extra package); openssh-client provides the ssh binary.
+            "sshpass",
+            "openssh-client",
         ],
         PackageManager::Dnf | PackageManager::Yum => vec![
             "curl",
@@ -97,6 +113,15 @@ pub fn get_required_packages(pm: PackageManager) -> Vec<&'static str> {
             "qemu-img",
             "nfs-utils",
             "cifs-utils",
+            // QEMU classic-VM backend (added in v0.5.0):
+            "qemu-kvm",    // QEMU VMM (provides qemu-system-x86_64)
+            "edk2-ovmf",   // OVMF / UEFI firmware
+            "genisoimage", // cloud-init NoCloud seed ISO
+            "swtpm",       // software TPM 2.0 (Windows 11)
+            "swtpm-tools",
+            "virt-v2v", // V2V import (VMware/Hyper-V/etc → here) + cold P2V; pulls libguestfs
+            "sshpass",  // agentless P2V/B2V: password-auth SSH disk streaming
+            "openssh-clients", // ssh binary for P2V disk streaming
         ],
     }
 }

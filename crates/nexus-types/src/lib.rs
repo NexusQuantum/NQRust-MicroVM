@@ -1,6 +1,35 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+// Re-export VMM types so manager + UI share a single source of truth.
+// New code should reference these via `nexus_types::{VmmKind, GuestOs, ...}`.
+pub use nexus_vmm::{
+    BootMode, ConsoleEndpoint, DiskSpec, FeatureSupport, GuestOs, ImageKind, NicSpec, ShutdownMode,
+    SnapshotKind, VmSpec, VmmHandle, VmmKind,
+};
+
+/// Public request shape for creating a VM with explicit backend selection.
+/// Defaults: backend auto-selected from boot mode (LinuxKernel → Firecracker,
+/// Pvh/Uefi → QEMU). Manager rejects conflicting (vmm_kind, boot_mode) pairs
+/// with a 400.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct VmBackendRequest {
+    /// Optional explicit backend. If omitted, the manager auto-selects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmm_kind: Option<VmmKind>,
+    /// Boot mode. Defaults at the manager are backwards-compatible: omitting
+    /// it preserves the existing FC kernel+rootfs flow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_mode: Option<BootMode>,
+    /// Guest OS hint. Affects feature gating. Defaults to `linux_kernel`
+    /// for backwards compatibility with existing FC-only callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_os: Option<GuestOs>,
+    /// Enable VNC console (QEMU only; ignored on Firecracker).
+    #[serde(default)]
+    pub enable_vnc: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct OkResponse {
     pub ok: bool,
@@ -40,8 +69,36 @@ pub struct Vm {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_user_id: Option<uuid::Uuid>,
+    // ---- Pluggable VMM fields (0.5.0). Default for legacy/FC rows. ----
+    /// Backend running this VM: "firecracker" or "qemu". Drives which day-2
+    /// actions the UI surfaces (VNC console, migrate, install-complete).
+    #[serde(default = "default_vmm_kind")]
+    pub vmm_kind: String,
+    /// Guest OS class: "linux_kernel" / "linux_disk" / "windows" / "other".
+    #[serde(default = "default_guest_os")]
+    pub guest_os: String,
+    /// Console transport: "unix_serial" / "pty" / "vnc". When "vnc" the UI
+    /// shows the in-browser noVNC console.
+    #[serde(default = "default_console_kind")]
+    pub console_kind: String,
+    /// VNC listener (e.g. "unix:/srv/fc/<id>/vnc.sock") if the VM has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_listen: Option<String>,
+    /// QEMU CPU model (e.g. "host", "kvm64"). None for Firecracker / unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_type: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn default_vmm_kind() -> String {
+    "firecracker".to_string()
+}
+fn default_guest_os() -> String {
+    "linux_kernel".to_string()
+}
+fn default_console_kind() -> String {
+    "unix_serial".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -62,7 +119,7 @@ pub struct UpdateVmReq {
     pub tags: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct CreateVmReq {
     pub name: String,
     pub vcpu: u8,
@@ -87,12 +144,72 @@ pub struct CreateVmReq {
     pub rootfs_size_mb: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_id: Option<uuid::Uuid>,
+    /// Additional networks to attach (QEMU multi-NIC). Each entry gets a
+    /// dedicated TAP + virtio-net-pci device in the guest. The first NIC
+    /// remains `network_id`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_network_ids: Vec<uuid::Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub port_forwards: Vec<CreatePortForwardReq>,
     /// Storage backend to use for rootfs/data-disk allocation. If None, the
     /// registry's default backend is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_id: Option<uuid::Uuid>,
+    // ---- Pluggable VMM fields (added in 0.5.0). All optional for back-compat. ----
+    /// Backend to run this VM on. Omitting it (or "firecracker") preserves
+    /// the existing kernel+rootfs flow. Pass "qemu" to opt into UEFI / disk
+    /// images / ISO installers / Windows guests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmm_kind: Option<VmmKind>,
+    /// Boot mode. When omitted, derived from the other fields:
+    /// kernel_path/kernel_image_id → LinuxKernel; disk_image_id → Uefi.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_mode: Option<BootMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_os: Option<GuestOs>,
+    /// QEMU only — exposes a VNC console UDS for graphical install / Windows.
+    #[serde(default)]
+    pub enable_vnc: bool,
+    /// Disk-based boot (QEMU). UUID of an image whose `image_kind` is
+    /// `linux_disk` or `uefi_disk`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_image_id: Option<uuid::Uuid>,
+    /// Optional installer ISO to attach as a CD-ROM (QEMU). Image must have
+    /// `image_kind = installer_iso`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installer_iso_id: Option<uuid::Uuid>,
+    /// Optional override of the UEFI firmware path. Defaults to the
+    /// distro-installed OVMF_CODE.fd. Operators can pin a specific build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firmware_path: Option<String>,
+    /// Optional override of the OVMF VARS template path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nvram_template_path: Option<String>,
+    /// SSH authorized_keys entries to inject into the guest via cloud-init.
+    /// Each string is one full key line (`ssh-ed25519 AAA... comment`). Works
+    /// for Linux (cloud-init) and Windows (cloudbase-init + OpenSSH).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssh_authorized_keys: Vec<String>,
+    /// Extra blank data disks to attach at creation (QEMU). The root disk is
+    /// provisioned separately; each entry here becomes an additional virtio
+    /// data disk, provisioned on the chosen storage backend and hot-added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_disks: Vec<CreateVmDisk>,
+    /// Host PCI devices to pass through (QEMU VFIO). Each entry is a PCI BDF
+    /// like `0000:01:00.0`. Requires IOMMU + vfio-pci binding on the host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vfio_devices: Vec<String>,
+    /// QEMU CPU model (e.g. "host", "kvm64", "x86-64-v3", "EPYC"). `None`
+    /// defaults to "host" (all host features; needed for nested virt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_type: Option<String>,
+}
+
+/// A blank data disk requested at VM creation time.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateVmDisk {
+    /// Disk size in MiB.
+    pub size_mb: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -127,8 +244,21 @@ impl TemplateSpec {
             tags: vec![],
             rootfs_size_mb: self.rootfs_size_mb,
             network_id: None,
+            extra_network_ids: vec![],
             port_forwards: vec![],
             backend_id: None,
+            vmm_kind: None,
+            boot_mode: None,
+            guest_os: None,
+            enable_vnc: false,
+            disk_image_id: None,
+            installer_iso_id: None,
+            firmware_path: None,
+            nvram_template_path: None,
+            ssh_authorized_keys: vec![],
+            data_disks: vec![],
+            vfio_devices: vec![],
+            cpu_type: None,
         }
     }
 }
@@ -485,6 +615,9 @@ pub struct InstantiateSnapshotResp {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Image {
     pub id: uuid::Uuid,
+    /// Free-form legacy kind ("docker", "kernel", etc.). Preserved for
+    /// backwards compatibility. Use [`image_kind`](Self::image_kind) for
+    /// VMM-aware routing.
     pub kind: String,
     pub name: String,
     pub host_path: String,
@@ -492,6 +625,20 @@ pub struct Image {
     pub size: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    /// Strict VMM-discriminator: linux_kernel, linux_disk, uefi_disk,
+    /// installer_iso. New in 0.5.0. Defaults to `linux_kernel` for legacy rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_kind: Option<ImageKind>,
+    /// For uefi_disk images: path to the OVMF_VARS template that the agent
+    /// should copy on boot to give the VM a writable EFI nvram.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nvram_template_path: Option<String>,
+    /// Optional hint at which guest OS this image targets ("linux", "windows", "bsd").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_os_hint: Option<String>,
+    /// Disk image format ("raw", "qcow2", "vmdk", ...). Used by QEMU.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_format: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -589,6 +736,10 @@ pub struct RegisterHostRequest {
     pub capabilities: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supported_backend_kinds: Option<Vec<String>>,
+    /// VMM binaries detected on the agent host. e.g. `["firecracker", "qemu"]`.
+    /// Manager refuses to schedule a VM whose `vmm_kind` is not in this set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmm_kinds_installed: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
@@ -602,6 +753,8 @@ pub struct HostHeartbeatRequest {
     pub capabilities: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supported_backend_kinds: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmm_kinds_installed: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]

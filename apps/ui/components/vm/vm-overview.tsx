@@ -21,6 +21,7 @@ interface VMOverviewProps {
 export function VMOverview({ vm }: VMOverviewProps) {
   const dateFormat = useDateFormat()
   const updateVM = useUpdateVM()
+  const isQemu = vm.vmm_kind === "qemu"
   const [isEditingName, setIsEditingName] = useState(false)
   const [editName, setEditName] = useState(vm.name)
 
@@ -108,6 +109,9 @@ export function VMOverview({ vm }: VMOverviewProps) {
           </CardHeader>
           <CardContent>
             <code className="text-lg font-medium">{vm.guest_ip || "N/A"}</code>
+            {!vm.guest_ip && isQemu && (
+              <p className="text-xs text-muted-foreground mt-1">No guest agent — IP not reported</p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -169,13 +173,15 @@ export function VMOverview({ vm }: VMOverviewProps) {
               </dd>
             </div>
             <div className="col-span-2">
-              <dt className="text-sm font-medium text-muted-foreground">Rootfs Path</dt>
+              <dt className="text-sm font-medium text-muted-foreground">{isQemu ? "Disk" : "Rootfs Path"}</dt>
               <dd className="mt-1 text-sm font-mono break-all">{vm.rootfs_path}</dd>
             </div>
-            <div className="col-span-2">
-              <dt className="text-sm font-medium text-muted-foreground">Kernel Path</dt>
-              <dd className="mt-1 text-sm font-mono break-all">{vm.kernel_path}</dd>
-            </div>
+            {!isQemu && (
+              <div className="col-span-2">
+                <dt className="text-sm font-medium text-muted-foreground">Kernel Path</dt>
+                <dd className="mt-1 text-sm font-mono break-all">{vm.kernel_path}</dd>
+              </div>
+            )}
             <div>
               <dt className="text-sm font-medium text-muted-foreground">Network TAP</dt>
               <dd className="mt-1 text-sm font-mono">{vm.tap || "N/A"}</dd>

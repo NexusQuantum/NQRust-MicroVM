@@ -4,7 +4,7 @@ info:
   description: ''
   license:
     name: ''
-  version: 0.1.0
+  version: 0.5.0
 paths:
   /v1/auth/login:
     post:
@@ -2234,6 +2234,46 @@ components:
             Storage backend to use for rootfs/data-disk allocation. If None, the
             registry's default backend is used.
           nullable: true
+        boot_mode:
+          allOf:
+          - $ref: '#/components/schemas/BootMode'
+          nullable: true
+        disk_image_id:
+          type: string
+          format: uuid
+          description: |-
+            Disk-based boot (QEMU). UUID of an image whose `image_kind` is
+            `linux_disk` or `uefi_disk`.
+          nullable: true
+        enable_vnc:
+          type: boolean
+          description: QEMU only — exposes a VNC console UDS for graphical install / Windows.
+        extra_network_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |-
+            Additional networks to attach (QEMU multi-NIC). Each entry gets a
+            dedicated TAP + virtio-net-pci device in the guest. The first NIC
+            remains `network_id`.
+        firmware_path:
+          type: string
+          description: |-
+            Optional override of the UEFI firmware path. Defaults to the
+            distro-installed OVMF_CODE.fd. Operators can pin a specific build.
+          nullable: true
+        guest_os:
+          allOf:
+          - $ref: '#/components/schemas/GuestOs'
+          nullable: true
+        installer_iso_id:
+          type: string
+          format: uuid
+          description: |-
+            Optional installer ISO to attach as a CD-ROM (QEMU). Image must have
+            `image_kind = installer_iso`.
+          nullable: true
         kernel_image_id:
           type: string
           format: uuid
@@ -2250,6 +2290,10 @@ components:
         network_id:
           type: string
           format: uuid
+          nullable: true
+        nvram_template_path:
+          type: string
+          description: Optional override of the OVMF VARS template path.
           nullable: true
         password:
           type: string
@@ -2274,6 +2318,14 @@ components:
           type: string
           format: uuid
           nullable: true
+        ssh_authorized_keys:
+          type: array
+          items:
+            type: string
+          description: |-
+            SSH authorized_keys entries to inject into the guest via cloud-init.
+            Each string is one full key line (`ssh-ed25519 AAA... comment`). Works
+            for Linux (cloud-init) and Windows (cloudbase-init + OpenSSH).
         tags:
           type: array
           items:
@@ -2285,6 +2337,10 @@ components:
           type: integer
           format: int32
           minimum: 0
+        vmm_kind:
+          allOf:
+          - $ref: '#/components/schemas/VmmKind'
+          nullable: true
     CreateVmResponse:
       type: object
       required:
@@ -2488,6 +2544,11 @@ components:
           items:
             type: string
           nullable: true
+        vmm_kinds_installed:
+          type: array
+          items:
+            type: string
+          nullable: true
     Image:
       type: object
       required:
@@ -2503,15 +2564,37 @@ components:
         created_at:
           type: string
           format: date-time
+        disk_format:
+          type: string
+          description: Disk image format ("raw", "qcow2", "vmdk", ...). Used by QEMU.
+          nullable: true
+        guest_os_hint:
+          type: string
+          description: Optional hint at which guest OS this image targets ("linux", "windows", "bsd").
+          nullable: true
         host_path:
           type: string
         id:
           type: string
           format: uuid
+        image_kind:
+          allOf:
+          - $ref: '#/components/schemas/ImageKind'
+          nullable: true
         kind:
           type: string
+          description: |-
+            Free-form legacy kind ("docker", "kernel", etc.). Preserved for
+            backwards compatibility. Use [`image_kind`](Self::image_kind) for
+            VMM-aware routing.
         name:
           type: string
+        nvram_template_path:
+          type: string
+          description: |-
+            For uefi_disk images: path to the OVMF_VARS template that the agent
+            should copy on boot to give the VM a writable EFI nvram.
+          nullable: true
         project:
           type: string
           nullable: true
@@ -2749,6 +2832,14 @@ components:
           type: array
           items:
             type: string
+          nullable: true
+        vmm_kinds_installed:
+          type: array
+          items:
+            type: string
+          description: |-
+            VMM binaries detected on the agent host. e.g. `["firecracker", "qemu"]`.
+            Manager refuses to schedule a VM whose `vmm_kind` is not in this set.
           nullable: true
     RegisterHostResponse:
       type: object

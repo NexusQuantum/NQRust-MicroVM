@@ -59,9 +59,11 @@ type VMCreationForm = z.infer<typeof vmCreationSchema>
 interface VMCreateWizardProps {
   onComplete?: () => void
   onCancel?: () => void
+  /** When true, hide the microVM/VM type toggle (the parent already chose microVM). */
+  hideTypeToggle?: boolean
 }
 
-export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
+export function VMCreateWizard({ onComplete, onCancel, hideTypeToggle }: VMCreateWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const createVM = useCreateVM()
   const { data: networks } = useNetworks()
@@ -71,6 +73,16 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
 
   // Storage backend selection
   const [backendId, setBackendId] = useState<string | undefined>(undefined)
+
+  // VM type — microvm = Firecracker (existing flow), vm = QEMU (UEFI/disk image)
+  // Defaults to microvm so existing users see no behavioural change.
+  const [vmType, setVmType] = useState<"microvm" | "vm">("microvm")
+  const [diskImageId, setDiskImageId] = useState<string | undefined>(undefined)
+  const [installerIsoId, setInstallerIsoId] = useState<string | undefined>(undefined)
+  const [enableVnc, setEnableVnc] = useState<boolean>(false)
+  const [sshKeys, setSshKeys] = useState<string>("")
+  const [diskImageOptions, setDiskImageOptions] = useState<{ id: string; name: string; image_kind: string }[]>([])
+  const [isoOptions, setIsoOptions] = useState<{ id: string; name: string }[]>([])
 
   // Port forwarding rules
   const [portForwards, setPortForwards] = useState<CreatePortForwardReq[]>([])
@@ -184,6 +196,18 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         console.log('Rootfs options:', rootfs)
         setRootfsOptions(rootfs)
 
+        // Disk images for VM mode (image_kind in {linux_disk, uefi_disk})
+        const diskImages = (allImagesData.items || [])
+          .filter((i: any) => i.image_kind === 'linux_disk' || i.image_kind === 'uefi_disk')
+          .map((i: any) => ({ id: i.id, name: i.name, image_kind: i.image_kind }))
+        setDiskImageOptions(diskImages)
+
+        // Installer ISOs (image_kind = installer_iso)
+        const isos = (allImagesData.items || [])
+          .filter((i: any) => i.image_kind === 'installer_iso')
+          .map((i: any) => ({ id: i.id, name: i.name }))
+        setIsoOptions(isos)
+
         // Auto-select first available images for convenience (only on mount)
         if (kernels.length > 0) {
           setValue('kernelPath', kernels[0].path, { shouldValidate: false })
@@ -239,19 +263,23 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
         trackDirtyPages: stepSchemaFields.trackDirtyPages,
       }),
       // Step 3: Boot Source
-      z.object({
-        kernelPath: stepSchemaFields.kernelPath,
-        rootfsPath: stepSchemaFields.rootfsPath,
-        initrdPath: stepSchemaFields.initrdPath,
-        bootArgs: stepSchemaFields.bootArgs,
-      }),
+      // VM-mode validation lives in the per-step nextStep guard below
+      // because vmType is React state, not a form field.
+      vmType === "vm"
+        ? z.any()
+        : z.object({
+            kernelPath: stepSchemaFields.kernelPath,
+            rootfsPath: stepSchemaFields.rootfsPath,
+            initrdPath: stepSchemaFields.initrdPath,
+            bootArgs: stepSchemaFields.bootArgs,
+          }),
       // Step 4: Network (all optional)
       z.object({
         networkId: stepSchemaFields.networkId,
       }),
       z.any(), // Review step
     ],
-    []
+    [vmType]
   )
 
   const canProceed = stepSchemas[currentStep]?.safeParse(formData).success ?? true
@@ -268,7 +296,17 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
     } else if (currentStep === 2) {
       fieldsToValidate.push('vcpu', 'memory', 'smtEnabled', 'trackDirtyPages')
     } else if (currentStep === 3) {
-      fieldsToValidate.push('kernelPath', 'rootfsPath', 'initrdPath', 'bootArgs')
+      if (vmType === "vm") {
+        // VM mode requires either disk_image_id (existing UEFI/disk image)
+        // or installer_iso_id (blank install). Validate inline since these
+        // live in React state, not the form.
+        if (!diskImageId && !installerIsoId) {
+          console.error('VM mode needs a disk image or installer ISO')
+          return
+        }
+      } else {
+        fieldsToValidate.push('kernelPath', 'rootfsPath', 'initrdPath', 'bootArgs')
+      }
     } else if (currentStep === 4) {
       fieldsToValidate.push('networkId')
     }
@@ -332,19 +370,42 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
     console.log('All validations passed. Creating VM...')
 
     try {
-      const vmReq: CreateVmReq = {
-        name: data.name,
-        vcpu: data.vcpu,
-        mem_mib: data.memory,
-        kernel_path: data.kernelPath,
-        rootfs_path: data.rootfsPath,
-        username: data.username,
-        password: data.password,
-        rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
-        network_id: data.networkId || undefined,
-        port_forwards: portForwards.length > 0 ? portForwards : undefined,
-        ...(backendId ? { backend_id: backendId } : {}),
-      }
+      const vmReq: CreateVmReq = vmType === "vm"
+        ? {
+            // VM (QEMU) mode — UEFI disk image, optionally with installer ISO,
+            // optionally with VNC console.
+            name: data.name,
+            vcpu: data.vcpu,
+            mem_mib: data.memory,
+            vmm_kind: "qemu",
+            guest_os: "linux_disk",
+            disk_image_id: diskImageId,
+            installer_iso_id: installerIsoId,
+            enable_vnc: enableVnc,
+            ssh_authorized_keys: sshKeys
+              .split("\n")
+              .map((k) => k.trim())
+              .filter((k) => k.length > 0),
+            rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
+            network_id: data.networkId || undefined,
+            port_forwards: portForwards.length > 0 ? portForwards : undefined,
+            ...(backendId ? { backend_id: backendId } : {}),
+            tags: [],
+          }
+        : {
+            // microVM (Firecracker) mode — kernel + rootfs (existing flow).
+            name: data.name,
+            vcpu: data.vcpu,
+            mem_mib: data.memory,
+            kernel_path: data.kernelPath,
+            rootfs_path: data.rootfsPath,
+            username: data.username,
+            password: data.password,
+            rootfs_size_mb: data.rootfsSizeMb && !isNaN(data.rootfsSizeMb) ? data.rootfsSizeMb : undefined,
+            network_id: data.networkId || undefined,
+            port_forwards: portForwards.length > 0 ? portForwards : undefined,
+            ...(backendId ? { backend_id: backendId } : {}),
+          }
 
       console.log('Submitting VM creation request:', vmReq)
       await createVM.mutateAsync(vmReq)
@@ -386,6 +447,45 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
           <CardContent className="space-y-4">
             {currentStep === 0 && (
               <>
+                {!hideTypeToggle && (
+                  <div className="space-y-2">
+                    <Label>
+                      VM Type <span className="text-destructive">*</span>
+                    </Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setVmType("microvm")}
+                        className={`rounded-lg border-2 p-4 text-left transition-colors ${
+                          vmType === "microvm"
+                            ? "border-primary bg-primary/5"
+                            : "border-muted hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="font-semibold">microVM</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Firecracker. Sub-125ms cold start. Linux kernel + rootfs.
+                          For serverless / container-per-VM / ephemeral workloads.
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVmType("vm")}
+                        className={`rounded-lg border-2 p-4 text-left transition-colors ${
+                          vmType === "vm"
+                            ? "border-primary bg-primary/5"
+                            : "border-muted hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="font-semibold">VM</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          QEMU. UEFI / OVMF, virtio + classic devices, ISO install,
+                          VNC console. For Windows + classic Linux + bring-your-own-ISO.
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="name">
                     Name <span className="text-destructive">*</span>
@@ -521,7 +621,121 @@ export function VMCreateWizard({ onComplete, onCancel }: VMCreateWizardProps) {
             </>
           )}
 
-          {currentStep === 3 && (
+          {currentStep === 3 && vmType === "vm" && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="disk-image">
+                  Disk Image <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={diskImageId}
+                  onValueChange={(v) => setDiskImageId(v)}
+                >
+                  <SelectTrigger id="disk-image">
+                    <SelectValue placeholder={
+                      diskImageOptions.length > 0
+                        ? "Select a UEFI / Linux disk image"
+                        : "No disk images available — upload one with image_kind = uefi_disk or linux_disk"
+                    } />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {diskImageOptions.length > 0 ? (
+                      diskImageOptions.map((img) => (
+                        <SelectItem key={img.id} value={img.id}>
+                          {img.name} ({img.image_kind})
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        No disk images. Upload an Ubuntu/Debian/Fedora cloud image
+                        and tag it as uefi_disk.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  For UEFI cloud images (Ubuntu 24.04, Debian 12, Fedora cloud).
+                  The platform creates a per-VM qcow2 thin overlay on top so the
+                  base stays untouched.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="installer-iso">Installer ISO (Optional)</Label>
+                <Select
+                  value={installerIsoId ?? "__none__"}
+                  onValueChange={(v) => setInstallerIsoId(v === "__none__" ? undefined : v)}
+                >
+                  <SelectTrigger id="installer-iso">
+                    <SelectValue placeholder="None — boot the disk image directly" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {isoOptions.map((iso) => (
+                      <SelectItem key={iso.id} value={iso.id}>
+                        {iso.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Attach an installer ISO as a CD-ROM. Use this for ISO install
+                  flows (Windows Server / Debian netinst / Linux distro installer).
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="rootfs-size">Disk Size (MB, Optional)</Label>
+                <Input
+                  id="rootfs-size"
+                  type="number"
+                  placeholder="Leave empty to use image default size"
+                  {...register("rootfsSizeMb", { valueAsNumber: true })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Required when allocating a blank disk on a storage backend.
+                  Optional when using an existing disk image.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="enable-vnc"
+                    checked={enableVnc}
+                    onChange={(e) => setEnableVnc(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  <Label htmlFor="enable-vnc" className="cursor-pointer">
+                    Enable VNC console
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Required for interactive Windows / graphical Linux installers.
+                  Headless Linux can use the serial console without VNC.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ssh-keys">SSH Authorized Keys (Optional)</Label>
+                <Textarea
+                  id="ssh-keys"
+                  value={sshKeys}
+                  onChange={(e) => setSshKeys(e.target.value)}
+                  placeholder={"ssh-ed25519 AAAA... user@host\nssh-rsa AAAA... another@host"}
+                  rows={3}
+                />
+                <p className="text-xs text-muted-foreground">
+                  One key per line. Injected via cloud-init (Linux) or
+                  cloudbase-init (Windows) on first boot.
+                </p>
+              </div>
+              <BackendSelector
+                id="vm-backend-qemu"
+                value={backendId}
+                onChange={setBackendId}
+              />
+            </>
+          )}
+
+          {currentStep === 3 && vmType !== "vm" && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="kernel">

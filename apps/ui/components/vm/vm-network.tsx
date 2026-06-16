@@ -69,6 +69,10 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
   const updateNic = useUpdateVMNic()
   const deleteNic = useDeleteVMNic()
 
+  // QEMU hot-plugs NICs live; Firecracker needs a restart.
+  const isQemu = vm?.vmm_kind === "qemu"
+  const mutationsBlocked = vm?.state === "running" && !isQemu
+
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [selectedNic, setSelectedNic] = useState<VmNic | null>(null)
@@ -213,7 +217,7 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
             <Network className="h-5 w-5" />
             <CardTitle>Network Interfaces</CardTitle>
           </div>
-          <Button onClick={handleAdd} disabled={vm?.state === 'running'}>
+          <Button onClick={handleAdd} disabled={mutationsBlocked}>
             <Plus className="mr-2 h-4 w-4" />
             Add NIC
           </Button>
@@ -278,13 +282,13 @@ export function VMNetwork({ vmId }: VMNetworkProps) {
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className="inline-flex">
-                                  <Button variant="ghost" size="icon" onClick={() => handleDelete(nic)} disabled={vm?.state === 'running'}>
+                                  <Button variant="ghost" size="icon" onClick={() => handleDelete(nic)} disabled={mutationsBlocked}>
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
                                 </span>
                               </TooltipTrigger>
                               <TooltipContent>
-                                {vm?.state === 'running'
+                                {mutationsBlocked
                                   ? "Stop the VM to remove network interfaces"
                                   : "Delete network interface"}
                               </TooltipContent>

@@ -121,6 +121,76 @@ pub fn setup_kvm() -> Result<Vec<LogEntry>> {
     Ok(logs)
 }
 
+/// Let swtpm write the per-VM TPM state under the agent's run dir. Ubuntu ships
+/// an AppArmor profile for swtpm that confines its state/socket paths and denies
+/// the platform's run dir (e.g. `/srv/fc`), so a TPM-enabled QEMU VM (Windows 11
+/// / measured boot) fails to start with "Permission denied". We add the
+/// profile's documented local include (enforce mode is preserved — this grants
+/// one path, it does not disable the profile) and reload it. No-op where the
+/// profile isn't present (non-AppArmor distros, or swtpm without a profile).
+pub fn configure_swtpm_apparmor(run_dir: &str) -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+    let profile = "/etc/apparmor.d/usr.bin.swtpm";
+    if !Path::new(profile).exists() {
+        logs.push(LogEntry::info(
+            "swtpm AppArmor profile not present — skipping (unconfined or non-AppArmor host)",
+        ));
+        return Ok(logs);
+    }
+    logs.push(LogEntry::info(
+        "Allowing swtpm to write TPM state under the run dir (AppArmor)...",
+    ));
+    let run_dir = run_dir.trim_end_matches('/');
+    let local = "/etc/apparmor.d/local/usr.bin.swtpm";
+    let content = format!(
+        "# NQRust-MicroVM: per-VM swtpm state lives under the run dir\n  {run_dir}/** rwk,"
+    );
+    let write_cmd = format!("echo '{content}' | sudo tee {local} > /dev/null");
+    let _ = run_command("sh", &["-c", &write_cmd]);
+    let output = run_sudo("apparmor_parser", &["-r", profile])?;
+    if output.status.success() {
+        logs.push(LogEntry::success(
+            "swtpm AppArmor updated — TPM state allowed under the run dir (enforce kept)",
+        ));
+    } else {
+        logs.push(LogEntry::warning(
+            "Failed to reload swtpm AppArmor profile — TPM-enabled VMs may not start",
+        ));
+    }
+    Ok(logs)
+}
+
+/// libguestfs (virt-v2v's engine) builds its appliance with `supermin`, which
+/// must read the host kernel at `/boot/vmlinuz-*`. On Debian/Ubuntu those are
+/// mode 0600 (root-only), so the non-root manager's V2V import fails with
+/// "supermin exited with error status 1". Make the installed kernels
+/// world-readable so virt-v2v works for the manager service. Best-effort; a
+/// no-op where /boot/vmlinuz-* isn't present (e.g. some distros / containers).
+pub fn configure_libguestfs_kernel_readable() -> Result<Vec<LogEntry>> {
+    let mut logs = Vec::new();
+    // chmod every installed kernel image; a glob via sh keeps it simple and
+    // covers future kernels present at install time.
+    let out = run_command("sh", &["-c", "ls /boot/vmlinuz-* 2>/dev/null | wc -l"]);
+    let count = out
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if count == "0" || count.is_empty() {
+        logs.push(LogEntry::info(
+            "no /boot/vmlinuz-* present — skipping libguestfs kernel-readable fix",
+        ));
+        return Ok(logs);
+    }
+    logs.push(LogEntry::info(
+        "Making host kernel readable so virt-v2v (libguestfs) works for the non-root manager...",
+    ));
+    let _ = run_command("sh", &["-c", "sudo chmod 0644 /boot/vmlinuz-* 2>/dev/null"]);
+    logs.push(LogEntry::success(
+        "Kernel made readable for libguestfs/virt-v2v (V2V import)",
+    ));
+    Ok(logs)
+}
+
 /// Verify KVM is working
 pub fn verify_kvm() -> Result<bool> {
     // Check /dev/kvm exists

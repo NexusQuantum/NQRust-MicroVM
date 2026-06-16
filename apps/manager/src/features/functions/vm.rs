@@ -87,8 +87,22 @@ pub async fn create_function_vm(
         tags: vec!["type:function".to_string()],
         rootfs_size_mb: None,
         network_id: None,
+        extra_network_ids: vec![],
         port_forwards: vec![],
         backend_id: None,
+        // Functions are always Firecracker-backed Linux microVMs.
+        vmm_kind: None,
+        boot_mode: None,
+        guest_os: None,
+        enable_vnc: false,
+        disk_image_id: None,
+        installer_iso_id: None,
+        firmware_path: None,
+        nvram_template_path: None,
+        ssh_authorized_keys: vec![],
+        data_disks: vec![],
+        vfio_devices: vec![],
+        cpu_type: None,
     };
 
     // Create and start VM

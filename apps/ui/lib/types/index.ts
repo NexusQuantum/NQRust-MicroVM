@@ -40,6 +40,14 @@ export interface Vm {
   guest_ip: string;
   tags: string[];
   created_by_user_id?: string;
+  // Pluggable VMM fields (0.5.0). Default to firecracker/linux_kernel/unix_serial.
+  vmm_kind?: VmmKind;
+  guest_os?: GuestOs;
+  /** QEMU CPU model (e.g. "host", "kvm64"). */
+  cpu_type?: string;
+  /** "unix_serial" | "pty" | "vnc" — when "vnc", show the noVNC console. */
+  console_kind?: string;
+  vnc_listen?: string;
   created_at: string;
   updated_at: string;
   // Runtime metrics (populated separately, not from REST list)
@@ -60,6 +68,30 @@ export interface GetVmResponse {
   item: Vm;
 }
 
+/** VMM backends. "firecracker" = microVM tier; "qemu" = full VM tier. */
+export type VmmKind = "firecracker" | "qemu";
+
+/** Guest OS hint — drives feature gating in the manager. */
+export type GuestOs = "linux_kernel" | "linux_disk" | "windows" | "other";
+
+/** Discriminator for how the manager interprets an image. */
+export type ImageKind =
+  | "linux_kernel"
+  | "linux_disk"
+  | "uefi_disk"
+  | "installer_iso";
+
+/** How the VM boots. Tag matches the Rust enum variant name in snake_case. */
+export type BootMode =
+  | {
+      mode: "linux_kernel";
+      kernel: string;
+      initrd?: string | null;
+      cmdline?: string;
+    }
+  | { mode: "pvh"; kernel: string; cmdline?: string }
+  | { mode: "uefi"; firmware: string; nvram_template?: string | null };
+
 export interface CreateVmReq {
   name: string;
   vcpu: number;
@@ -75,6 +107,40 @@ export interface CreateVmReq {
   network_id?: string;
   port_forwards?: CreatePortForwardReq[];
   backend_id?: string;
+  /** Tags for the VM (informational filters, RBAC scoping, etc). */
+  tags?: string[];
+  // ---- Pluggable VMM fields (0.5.0). Optional for back-compat. ----
+  /** Backend to run on. "firecracker" or "qemu". Omit for auto-select. */
+  vmm_kind?: VmmKind;
+  /** Boot mode override. Omit to derive from the other fields. */
+  boot_mode?: BootMode;
+  guest_os?: GuestOs;
+  enable_vnc?: boolean;
+  /** QEMU only — UEFI/PVH disk image to boot from. */
+  disk_image_id?: string;
+  /** QEMU only — attach this ISO as a CD-ROM during boot. */
+  installer_iso_id?: string;
+  firmware_path?: string;
+  nvram_template_path?: string;
+  /** SSH public keys injected via cloud-init / cloudbase-init on first boot. */
+  ssh_authorized_keys?: string[];
+  /** Extra blank data disks to attach at creation (QEMU). */
+  data_disks?: { size_mb: number }[];
+  /** Host PCI BDFs to pass through (QEMU VFIO), e.g. "0000:01:00.0". */
+  vfio_devices?: string[];
+  /** QEMU CPU model, e.g. "host", "kvm64", "x86-64-v3". */
+  cpu_type?: string;
+}
+
+/** A host PCI device available for VFIO passthrough. */
+export interface PciDevice {
+  bdf: string;
+  vendor?: string;
+  device?: string;
+  class?: string;
+  class_name?: string;
+  label?: string;
+  driver?: string;
 }
 
 export interface TemplateSpec {
@@ -179,12 +245,20 @@ export interface InstantiateSnapshotResp {
 
 export interface Image {
   id: string;
+  /** Free-form legacy kind ("kernel", "docker", ...). Preserved for backwards
+   *  compatibility. Use [`image_kind`] for VMM-aware routing. */
   kind: string;
   name: string;
   host_path: string;
   sha256: string;
   size: number;
   project?: string;
+  /** Strict VMM discriminator. New in 0.5.0. */
+  image_kind?: ImageKind;
+  /** For uefi_disk images: OVMF_VARS template path the agent copies on boot. */
+  nvram_template_path?: string;
+  guest_os_hint?: string;
+  disk_format?: string;
   created_at: string;
   updated_at: string;
 }
@@ -200,6 +274,18 @@ export interface CreateImageReq {
 
 export interface CreateImageResp {
   id: string;
+}
+
+/** Agentless P2V/B2V: stream a physical machine's disk over SSH and register it. */
+export interface ImportP2vRequest {
+  sshHost: string;
+  sshPort?: number;
+  sshUser: string;
+  sshPassword?: string;
+  sshKeyPath?: string;
+  sourceDisk: string;
+  name: string;
+  runVirtV2v?: boolean;
 }
 
 export interface ImageFilter {

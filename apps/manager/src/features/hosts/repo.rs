@@ -210,6 +210,85 @@ impl HostRepository {
             .await?;
         Ok(())
     }
+
+    /// Replace the set of VMM kinds advertised by an agent on this host.
+    pub async fn update_vmm_kinds_installed(
+        &self,
+        host_id: Uuid,
+        kinds: Vec<String>,
+    ) -> sqlx::Result<()> {
+        sqlx::query(r#"UPDATE host SET vmm_kinds_installed = $1 WHERE id = $2"#)
+            .bind(&kinds)
+            .bind(host_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Return the VMM kinds currently installed on a host. Empty if the host
+    /// has never registered or the column is empty (default '{firecracker}').
+    pub async fn vmm_kinds_installed(&self, host_id: Uuid) -> sqlx::Result<Vec<String>> {
+        let kinds: Vec<String> =
+            sqlx::query_scalar(r#"SELECT vmm_kinds_installed FROM host WHERE id = $1"#)
+                .bind(host_id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(kinds)
+    }
+
+    /// Reserve vcpu+mem capacity on a host atomically. Returns Ok(true) when
+    /// the reservation fit; Ok(false) when it would over-commit (callers
+    /// should pick a different host or refuse).
+    ///
+    /// Capacity totals are read from the legacy `total_cpus` / `total_memory_mb`
+    /// columns (populated by the agent's `update_metrics` heartbeat) with
+    /// `total_vcpu` / `total_mem_mib` as overrides. If both pairs are NULL
+    /// (host never heartbeated) we let the reservation through — agents
+    /// without capacity reporting must be trusted.
+    pub async fn try_reserve(&self, host_id: Uuid, vcpu: i32, mem_mib: i64) -> sqlx::Result<bool> {
+        let updated: Option<(i64,)> = sqlx::query_as(
+            r#"UPDATE host
+                SET reserved_vcpu = reserved_vcpu + $2,
+                    reserved_mem_mib = reserved_mem_mib + $3
+                WHERE id = $1
+                  AND (
+                       (total_vcpu IS NULL AND total_cpus IS NULL)
+                    OR (COALESCE(total_vcpu, total_cpus, 2147483647) >= reserved_vcpu + $2)
+                  )
+                  AND (
+                       (total_mem_mib IS NULL AND total_memory_mb IS NULL)
+                    OR (COALESCE(total_mem_mib, total_memory_mb, 9223372036854775807) >= reserved_mem_mib + $3)
+                  )
+                RETURNING reserved_mem_mib"#,
+        )
+        .bind(host_id)
+        .bind(vcpu)
+        .bind(mem_mib)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(updated.is_some())
+    }
+
+    /// Release a previously-reserved capacity (when a VM is deleted).
+    pub async fn release_reservation(
+        &self,
+        host_id: Uuid,
+        vcpu: i32,
+        mem_mib: i64,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            r#"UPDATE host
+                SET reserved_vcpu = GREATEST(0, reserved_vcpu - $2),
+                    reserved_mem_mib = GREATEST(0, reserved_mem_mib - $3)
+                WHERE id = $1"#,
+        )
+        .bind(host_id)
+        .bind(vcpu)
+        .bind(mem_mib)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

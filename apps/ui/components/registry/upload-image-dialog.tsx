@@ -13,9 +13,16 @@ interface UploadImageDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultKind?: "docker" | "kernel" | "rootfs"
+  /** Optional initial value for the 0.5.0 strict `image_kind` selector. */
+  defaultImageKind?: "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso"
 }
 
-export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }: UploadImageDialogProps) {
+export function UploadImageDialog({
+  open,
+  onOpenChange,
+  defaultKind = "docker",
+  defaultImageKind,
+}: UploadImageDialogProps) {
   const uploadImage = useUploadImage()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -23,6 +30,32 @@ export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }
   const [kind, setKind] = useState<"docker" | "kernel" | "rootfs">(defaultKind)
   const [name, setName] = useState("")
   const [project, setProject] = useState("")
+  // VMM-aware discriminator (0.5.0+). Drives manager-side image_kind. The
+  // legacy `kind` column above is preserved for backwards compat.
+  const [imageKind, setImageKind] = useState<
+    "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso"
+  >(defaultImageKind ?? "linux_kernel")
+  const [nvramTemplatePath, setNvramTemplatePath] = useState<string>(
+    "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
+  )
+
+  // Apply parent-supplied default whenever the dialog opens so the
+  // "Upload UEFI Disk Image" button on the registry page lands users in
+  // the right mode without further clicks.
+  useEffect(() => {
+    if (open && defaultImageKind) {
+      setImageKind(defaultImageKind)
+    }
+  }, [open, defaultImageKind])
+
+  // Auto-suggest image_kind from the legacy kind selector so users don't
+  // have to set both. They can still override. Skipped when the dialog
+  // was opened with an explicit defaultImageKind from the parent.
+  useEffect(() => {
+    if (defaultImageKind) return
+    if (kind === "kernel") setImageKind("linux_kernel")
+    else if (kind === "rootfs") setImageKind("linux_disk")
+  }, [kind, defaultImageKind])
 
   const resetForm = useCallback(() => {
     setSelectedFile(null)
@@ -67,6 +100,9 @@ export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }
         kind,
         name: name.trim() || undefined,
         project: project.trim() || undefined,
+        image_kind: imageKind,
+        nvram_template_path:
+          imageKind === "uefi_disk" ? nvramTemplatePath : undefined,
       },
       {
         onSuccess: () => {
@@ -108,6 +144,51 @@ export function UploadImageDialog({ open, onOpenChange, defaultKind = "docker" }
               </SelectContent>
             </Select>
           </div>
+
+          {kind !== "docker" && (
+            <div className="space-y-2">
+              <Label htmlFor="image-kind-strict">VMM Routing (image_kind)</Label>
+              <Select value={imageKind} onValueChange={(v) => setImageKind(v as any)}>
+                <SelectTrigger id="image-kind-strict">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="linux_kernel">
+                    linux_kernel — Firecracker kernel + rootfs (existing flow)
+                  </SelectItem>
+                  <SelectItem value="linux_disk">
+                    linux_disk — bootable Linux disk image (PVH)
+                  </SelectItem>
+                  <SelectItem value="uefi_disk">
+                    uefi_disk — Ubuntu / Debian / Fedora cloud image (UEFI)
+                  </SelectItem>
+                  <SelectItem value="installer_iso">
+                    installer_iso — Windows / Debian netinst / Linux installer
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Routes the image to the right VMM backend. linux_kernel goes
+                to Firecracker; everything else to QEMU.
+              </p>
+            </div>
+          )}
+
+          {imageKind === "uefi_disk" && (
+            <div className="space-y-2">
+              <Label htmlFor="nvram-template">OVMF NVRAM template path</Label>
+              <Input
+                id="nvram-template"
+                value={nvramTemplatePath}
+                onChange={(e) => setNvramTemplatePath(e.target.value)}
+                placeholder="/usr/share/edk2/x64/OVMF_VARS.4m.fd"
+              />
+              <p className="text-xs text-muted-foreground">
+                Path on the agent host. The platform copies this once per
+                VM so each gets its own writable EFI variables.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>File</Label>

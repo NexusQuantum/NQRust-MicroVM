@@ -79,6 +79,7 @@ pub async fn register(
         addr,
         capabilities,
         supported_backend_kinds,
+        vmm_kinds_installed,
     } = req;
 
     let row = st
@@ -95,6 +96,15 @@ pub async fn register(
             error!(
                 ?err,
                 "failed to update host supported_backend_kinds on register"
+            );
+        }
+    }
+
+    if let Some(kinds) = vmm_kinds_installed {
+        if let Err(err) = st.hosts.update_vmm_kinds_installed(row.id, kinds).await {
+            error!(
+                ?err,
+                "failed to update host vmm_kinds_installed on register"
             );
         }
     }
@@ -151,6 +161,15 @@ pub async fn heartbeat(
             error!(
                 ?err,
                 "failed to update host supported_backend_kinds on heartbeat"
+            );
+        }
+    }
+
+    if let Some(kinds) = req.vmm_kinds_installed {
+        if let Err(err) = st.hosts.update_vmm_kinds_installed(id, kinds).await {
+            error!(
+                ?err,
+                "failed to update host vmm_kinds_installed on heartbeat"
             );
         }
     }
@@ -247,6 +266,32 @@ pub async fn get(
     Ok(Json(HostDetailResponse {
         item: host_row_to_list_item(host, status, vm_count),
     }))
+}
+
+/// List host PCI devices (for VFIO passthrough selection). Proxies the agent.
+#[utoipa::path(
+    get,
+    path = "/v1/hosts/{id}/pci-devices",
+    params(HostPathParams),
+    responses((status = 200, description = "PCI devices")),
+    tag = "Hosts"
+)]
+pub async fn pci_devices(
+    Extension(st): Extension<AppState>,
+    Path(HostPathParams { id }): Path<HostPathParams>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let host = st.hosts.get(id).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let url = format!("{}/agent/v1/vmm/pci-devices", host.addr);
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let json = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok(Json(json))
 }
 
 #[utoipa::path(
@@ -462,6 +507,7 @@ mod tests {
             addr: "http://127.0.0.1:9090".into(),
             capabilities: json!({"cpus": 4}),
             supported_backend_kinds: None,
+            vmm_kinds_installed: None,
         };
 
         let Json(response) = super::register(Extension(state), Json(req)).await.unwrap();
@@ -514,6 +560,7 @@ mod tests {
             addr: "http://127.0.0.1:9191".into(),
             capabilities: json!({}),
             supported_backend_kinds: None,
+            vmm_kinds_installed: None,
         };
 
         let Json(register_resp) = super::register(Extension(state.clone()), Json(req))
@@ -536,6 +583,7 @@ mod tests {
             Json(HostHeartbeatRequest {
                 capabilities: Some(json!({"memory": 8192})),
                 supported_backend_kinds: None,
+                vmm_kinds_installed: None,
             }),
         )
         .await

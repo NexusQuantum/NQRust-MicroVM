@@ -40,6 +40,83 @@ async fn reconcile_once(state: &AppState) -> Result<()> {
             }
         }
     }
+
+    // Auto-HA: when MANAGER_HA_AUTO_RESCHEDULE=1, look for hosts that have
+    // missed heartbeats long enough to be considered dead and reschedule
+    // their QEMU VMs onto healthy peers with shared-storage volumes.
+    // Disabled by default — operators opt in.
+    if std::env::var("MANAGER_HA_AUTO_RESCHEDULE").is_ok() {
+        if let Err(err) = auto_reschedule_dead_hosts(state).await {
+            warn!(error = ?err, "auto-reschedule pass failed");
+        }
+    }
+    Ok(())
+}
+
+/// Auto-HA: detect dead hosts (last_seen_at older than threshold) and try
+/// to reschedule each of their QEMU VMs onto a healthy peer. Best-effort;
+/// failures are logged. Local-overlay VMs are skipped (qemu_service::
+/// reschedule refuses them).
+async fn auto_reschedule_dead_hosts(state: &AppState) -> Result<()> {
+    // Pool every host so we can compare last_seen_at; list_healthy filters
+    // dead ones out by design. The 90s threshold matches the FC reconciler's
+    // posture of "two missed 30s heartbeats = dead enough to rebuild".
+    let all_hosts = state.hosts.list_all().await?;
+    let now = chrono::Utc::now();
+    let dead: Vec<HostRow> = all_hosts
+        .into_iter()
+        .filter(|h| {
+            (now - h.last_seen_at).num_seconds() > 90 // dead for >90s
+        })
+        .collect();
+    if dead.is_empty() {
+        return Ok(());
+    }
+    let healthy = state.hosts.list_healthy().await?;
+    if healthy.is_empty() {
+        warn!(
+            dead_host_count = dead.len(),
+            "no healthy hosts available for auto-reschedule"
+        );
+        return Ok(());
+    }
+    for dead_host in dead {
+        let vms = vms::repo::list_by_host(&state.db, dead_host.id).await?;
+        for vm in vms {
+            // Pick a candidate target: any healthy host except the dead one.
+            // Real scheduling would consider capacity, locality, anti-
+            // affinity — this is the minimum viable.
+            let Some(target) = healthy.iter().find(|h| h.id != dead_host.id) else {
+                continue;
+            };
+            // Only qemu VMs go through reschedule today (FC restart is
+            // handled by the existing in-place restart path above).
+            let vmm_kind: String = sqlx::query_scalar(r#"SELECT vmm_kind FROM vm WHERE id = $1"#)
+                .bind(vm.id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or_else(|_| "firecracker".into());
+            if vmm_kind != "qemu" {
+                continue;
+            }
+            info!(
+                vm_id = %vm.id,
+                from_host = %dead_host.id,
+                to_host = %target.id,
+                "auto-rescheduling QEMU VM off dead host"
+            );
+            match vms::qemu_service::reschedule(state, vm.id, target.id).await {
+                Ok(()) => {
+                    metrics::counter!("manager_reconciler_auto_reschedule_success", 1);
+                    info!(vm_id = %vm.id, "auto-reschedule succeeded");
+                }
+                Err(err) => {
+                    metrics::counter!("manager_reconciler_auto_reschedule_failure", 1);
+                    error!(vm_id = %vm.id, error = ?err, "auto-reschedule failed");
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -348,6 +425,13 @@ async fn reconcile_devices(
     _inventory: &AgentInventory,
 ) -> Result<()> {
     for (vm_id, vm_row) in vm_map {
+        // Drive/NIC reconciliation drives Firecracker's per-device HTTP proxy
+        // (`/agent/v1/vms/:id/proxy/...`), which QEMU VMs don't expose — calling
+        // it for them just yields a 502 every cycle. QEMU assembles its drives
+        // and NICs from the DB at boot in `qemu_service`, so skip them here.
+        if vm_row.vmm_kind.as_deref() == Some("qemu") {
+            continue;
+        }
         let desired_drives = vms::repo::drives::list(&state.db, *vm_id).await?;
         reconcile_vm_drives(state, host, vm_row, &desired_drives).await?;
 
@@ -595,6 +679,17 @@ pub fn diff_host(vms: &[vms::repo::VmRow], inventory: &AgentInventory) -> HostPl
 
     let mut restart = Vec::new();
     for vm in vms {
+        // The in-place restart path (`restart_vm`) is Firecracker-specific: it
+        // rebuilds the FC kernel+rootfs boot and validates a kernel/rootfs path
+        // that QEMU VMs don't have. QEMU also runs as a systemd *service* with a
+        // QMP socket that the agent inventory (fc-*.scope + vms/<id>/sock) never
+        // enumerates, so a healthy QEMU VM always looks "absent" here. Without
+        // this guard the reconciler flags every running QEMU VM for restart,
+        // fails, and marks it "stopped" while QEMU keeps running. QEMU recovery
+        // is handled separately by qemu_service (dead-host reschedule).
+        if vm.vmm_kind.as_deref() == Some("qemu") {
+            continue;
+        }
         if vm.state == "running" {
             if let Some(presence) = status.get(&vm.id) {
                 if !presence.has_scope || !presence.has_socket {
@@ -649,6 +744,11 @@ mod tests {
             created_by_user_id: None,
             guest_ip: None,
             tags: vec![],
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
+            cpu_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

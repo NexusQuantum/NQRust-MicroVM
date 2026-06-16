@@ -86,6 +86,25 @@ pub async fn create_and_start(
         return create_from_snapshot(st, id, name, template_id, snapshot, None).await;
     }
 
+    // ---- Pluggable VMM dispatcher (0.5.0) ----
+    // If the caller asked for QEMU explicitly, or the boot mode auto-selects to
+    // QEMU (UEFI/PVH), branch to the QEMU service. Anything else (default,
+    // or explicit Firecracker) continues through the legacy FC code path below.
+    let kind_explicit = req.vmm_kind;
+    let kind_auto = req.boot_mode.as_ref().map(::nexus_vmm::auto_select);
+    let chosen_kind = kind_explicit.or(kind_auto);
+    if matches!(chosen_kind, Some(::nexus_vmm::VmmKind::Qemu)) {
+        return crate::features::vms::qemu_service::create_and_start_qemu(
+            st,
+            id,
+            req,
+            template_id,
+            user_id,
+            audit_username,
+        )
+        .await;
+    }
+
     let host = st
         .hosts
         .first_healthy()
@@ -299,6 +318,11 @@ pub async fn create_and_start(
             guest_ip: None, // Will be set when guest agent reports
             tags,
             created_by_user_id: None, // TODO: Set from authenticated user context
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
+            cpu_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -598,6 +622,11 @@ pub async fn create_from_snapshot(
             guest_ip: None,               // Will be set when guest agent reports
             tags: source_vm.tags.clone(), // Preserve tags from source VM
             created_by_user_id: source_vm.created_by_user_id, // Preserve ownership from source VM
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
+            cpu_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
@@ -899,6 +928,35 @@ pub async fn stop_only(
         tracing::warn!(vm_id=%id, error=?e, "failed to cleanup port forwards");
     }
 
+    // Dispatch by vmm_kind. Firecracker uses the legacy /agent/v1/vms/:id/stop
+    // path that knows about FC's screen + scope teardown. QEMU goes through
+    // the trait route /agent/v1/vmm/:id/destroy which handles QMP shutdown +
+    // scope teardown + per-VM dir cleanup.
+    let vmm_kind: String = sqlx::query_scalar(r#"SELECT vmm_kind FROM vm WHERE id = $1"#)
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or_else(|_| "firecracker".to_string());
+
+    if vmm_kind == "qemu" {
+        let resp = reqwest::Client::new()
+            .post(format!(
+                "{}/agent/v1/vmm/{}/destroy?vmm_kind=qemu",
+                vm.host_addr, vm.id
+            ))
+            .send()
+            .await?;
+        resp.error_for_status()?;
+        // Mark stopped (the QEMU destroy succeeded); otherwise the row is left
+        // in the transient "stopping" state forever.
+        super::repo::update_state(&st.db, id, "stopped").await?;
+        // Drop into the same volume_attachment detach / log housekeeping
+        // below so iSCSI sessions get cleaned up correctly. The audit log
+        // entry at the bottom of this function still fires.
+        let _ = (user_id, username);
+        return Ok(());
+    }
+
     let response = reqwest::Client::new()
         .post(format!("{}/agent/v1/vms/{}/stop", vm.host_addr, vm.id))
         .json(&serde_json::json!({
@@ -1043,6 +1101,16 @@ pub async fn stop_and_delete_with_user(
     user_id: Option<Uuid>,
     username: &str,
 ) -> Result<()> {
+    // Capture host + reservation before we delete the row, so we can release
+    // capacity afterwards even on the failure path.
+    let pre_delete: Option<(Uuid, i32, i32)> =
+        sqlx::query_as(r#"SELECT host_id, vcpu, mem_mib FROM vm WHERE id = $1"#)
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await
+            .ok()
+            .flatten();
+
     if let Err(err) = stop_only(st, id, None, "system").await {
         tracing::warn!(vm_id = %id, error = ?err, "failed to stop vm before deletion");
     }
@@ -1080,6 +1148,20 @@ pub async fn stop_and_delete_with_user(
 
     // Delete from database (this cascades to vm_drive and vm_network_interface)
     super::repo::delete_row(&st.db, id).await?;
+
+    // Release the host's vcpu/mem reservation so subsequent VMs can land on
+    // this host. Best-effort — the row is gone either way, so a release
+    // failure shouldn't surface to the caller.
+    if let Some((host_id, vcpu, mem_mib)) = pre_delete {
+        let host_repo = crate::features::hosts::repo::HostRepository::new(st.db.clone());
+        if let Err(e) = host_repo
+            .release_reservation(host_id, vcpu, mem_mib as i64)
+            .await
+        {
+            tracing::warn!(vm_id=%id, error=?e, "failed to release host capacity reservation");
+        }
+    }
+
     let _ = audit::log_action(
         &st.db,
         user_id,
@@ -1112,7 +1194,14 @@ pub async fn start_vm_by_id_with_user(
         return Ok(()); // Already running
     }
 
-    restart_vm(st, &vm).await?;
+    // QEMU VMs can't use the Firecracker `restart_vm` path (it validates an
+    // empty kernel_path and rebuilds an FC boot). Re-boot them in place via the
+    // QEMU service, reusing the existing disk / seed / reservation.
+    if vm.vmm_kind.as_deref() == Some("qemu") {
+        crate::features::vms::qemu_service::restart_qemu(st, &vm).await?;
+    } else {
+        restart_vm(st, &vm).await?;
+    }
     let _ = audit::log_action(
         &st.db,
         user_id,
@@ -1698,6 +1787,37 @@ pub async fn create_drive(
         warn!(vm_id = %vm_id, drive_id = %req.drive_id, error = ?e, "failed to auto-register data drive as volume");
     }
 
+    // For a RUNNING QEMU VM, hot-add the disk live via QMP so the guest sees it
+    // without a restart. Best-effort: the drive is already persisted, so on any
+    // failure it still attaches on the next boot (restart_qemu reads the DB).
+    // Firecracker VMs use the legacy proxy path and are unaffected.
+    if vm.state == "running" && vm.vmm_kind.as_deref() == Some("qemu") {
+        let fmt = crate::features::vms::qemu_service::probe_disk_format(&host_path).await;
+        let body = serde_json::json!({
+            "vmm_kind": "qemu",
+            "drive_id": req.drive_id,
+            "source": host_path,
+            "format": fmt,
+            "read_only": req.is_read_only,
+            "cdrom": false,
+        });
+        match reqwest::Client::new()
+            .post(format!("{}/agent/v1/vmm/{}/disk/add", vm.host_addr, vm.id))
+            .json(&body)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(_) => {
+                info!(vm_id = %vm_id, drive_id = %req.drive_id, "hot-added data disk to running QEMU VM")
+            }
+            Err(e) => {
+                warn!(vm_id = %vm_id, drive_id = %req.drive_id, error = ?e,
+                      "live hot-add failed; disk will attach on next VM start")
+            }
+        }
+    }
+
     Ok(drive.into())
 }
 
@@ -1748,6 +1868,32 @@ pub async fn delete_drive(st: &AppState, vm_id: Uuid, drive_id: Uuid) -> Result<
     use crate::features::volumes::repo::VolumeRepository;
     let volume_repo = VolumeRepository::new(st.db.clone());
     let vm = super::repo::get(&st.db, vm_id).await?;
+
+    // For a RUNNING QEMU VM, hot-remove the device live (QMP) before we drop the
+    // DB row / unlink the file, so the guest releases it cleanly. Best-effort:
+    // if it fails the removal still takes effect on the next start.
+    if vm.state == "running" && vm.vmm_kind.as_deref() == Some("qemu") {
+        let body = serde_json::json!({"vmm_kind": "qemu", "drive_id": drive.drive_id});
+        match reqwest::Client::new()
+            .post(format!(
+                "{}/agent/v1/vmm/{}/disk/remove",
+                vm.host_addr, vm.id
+            ))
+            .json(&body)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(_) => {
+                info!(vm_id = %vm_id, drive_id = %drive.drive_id, "hot-removed data disk from running QEMU VM")
+            }
+            Err(e) => {
+                warn!(vm_id = %vm_id, drive_id = %drive.drive_id, error = ?e,
+                      "live hot-remove failed; removal applies on next VM start")
+            }
+        }
+    }
+
     if let Ok(volumes) = volume_repo.list_by_host(vm.host_id).await {
         for volume in volumes {
             if volume.path == drive.path_on_host {
@@ -2919,16 +3065,7 @@ mod tests {
                 mem_mib: 512,
                 kernel_image_id: Some(kernel.id),
                 rootfs_image_id: Some(rootfs.id),
-                kernel_path: None,
-                rootfs_path: None,
-                source_snapshot_id: None,
-                username: None,
-                password: None,
-                tags: vec![],
-                rootfs_size_mb: None,
-                network_id: None,
-                port_forwards: vec![],
-                backend_id: None,
+                ..Default::default()
             },
             None,
             None,
@@ -2993,18 +3130,9 @@ mod tests {
                 name: "vm".into(),
                 vcpu: 1,
                 mem_mib: 512,
-                kernel_image_id: None,
-                rootfs_image_id: None,
                 kernel_path: Some("/srv/images/vmlinux".into()),
                 rootfs_path: Some("/srv/images/rootfs".into()),
-                source_snapshot_id: None,
-                username: None,
-                password: None,
-                tags: vec![],
-                rootfs_size_mb: None,
-                network_id: None,
-                port_forwards: vec![],
-                backend_id: None,
+                ..Default::default()
             },
             None,
             None,
@@ -3080,6 +3208,11 @@ mod tests {
             kernel_path: "/etc/passwd".into(),
             rootfs_path: "/srv/images/rootfs".into(),
             source_snapshot_id: None,
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
+            cpu_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -3160,6 +3293,11 @@ mod tests {
             kernel_path: kernel_path.clone(),
             rootfs_path: rootfs_path.clone(),
             source_snapshot_id: None,
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
+            cpu_type: None,
             created_at: now,
             updated_at: now,
         };
@@ -3239,6 +3377,11 @@ mod tests {
             guest_ip: None,
             tags: vec![],
             created_by_user_id: None,
+            vmm_kind: None,
+            guest_os: None,
+            console_kind: None,
+            vnc_listen: None,
+            cpu_type: None,
             created_at: now,
             updated_at: now,
         }

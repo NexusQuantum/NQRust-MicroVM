@@ -5,6 +5,7 @@ use axum::{
 
 pub mod guest_agent;
 pub mod port_forwards;
+pub mod qemu_service; // QEMU-backed create/start path (0.5.0)
 pub mod repo; // db
 pub mod routes; // handlers
 pub mod service; // orchestration
@@ -23,6 +24,10 @@ pub fn router() -> Router {
         .route("/:id/stop", post(routes::stop))
         .route("/:id/pause", post(routes::pause))
         .route("/:id/resume", post(routes::resume))
+        .route("/:id/install-complete", post(routes::install_complete))
+        .route("/:id/migrate", post(routes::migrate))
+        .route("/:id/reschedule", post(routes::reschedule))
+        .route("/:id/backup", post(routes::backup_vm))
         .route("/:id/flush-metrics", post(routes::flush_metrics))
         .route("/:id/ctrl-alt-del", post(routes::ctrl_alt_del))
         .route(
@@ -35,6 +40,7 @@ pub fn router() -> Router {
                 .patch(routes::update_drive)
                 .delete(routes::delete_drive),
         )
+        .route("/:id/drives/:drive_id/resize", post(routes::resize_drive))
         .route("/:id/nics", get(routes::list_nics).post(routes::create_nic))
         .route(
             "/:id/nics/:nic_id",
@@ -45,6 +51,7 @@ pub fn router() -> Router {
         .route("/:id/shell", get(routes::get_shell_credentials))
         .route("/:id/shell/ws", get(routes::shell_websocket))
         .route("/:id/metrics/ws", get(routes::metrics_websocket))
+        .route("/:id/console/vnc/ws", get(routes::vnc_websocket))
         .route("/:id/guest-ip", post(routes::update_guest_ip))
         .route(
             "/:id/machine-config",

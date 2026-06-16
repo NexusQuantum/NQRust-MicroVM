@@ -152,6 +152,45 @@
             "nullable": true,
             "description": "Storage backend to use for rootfs/data-disk allocation. If None, the\nregistry's default backend is used."
           },
+          "boot_mode": {
+            "type": "string",
+            "description": "(BootMode)",
+            "nullable": true
+          },
+          "disk_image_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Disk-based boot (QEMU). UUID of an image whose `image_kind` is\n`linux_disk` or `uefi_disk`."
+          },
+          "enable_vnc": {
+            "type": "boolean",
+            "description": "QEMU only — exposes a VNC console UDS for graphical install / Windows."
+          },
+          "extra_network_ids": {
+            "type": "array",
+            "description": "Additional networks to attach (QEMU multi-NIC). Each entry gets a\ndedicated TAP + virtio-net-pci device in the guest. The first NIC\nremains `network_id`.",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "firmware_path": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional override of the UEFI firmware path. Defaults to the\ndistro-installed OVMF_CODE.fd. Operators can pin a specific build."
+          },
+          "guest_os": {
+            "type": "string",
+            "description": "(GuestOs)",
+            "nullable": true
+          },
+          "installer_iso_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Optional installer ISO to attach as a CD-ROM (QEMU). Image must have\n`image_kind = installer_iso`."
+          },
           "kernel_image_id": {
             "type": "string",
             "format": "uuid",
@@ -173,6 +212,11 @@
             "type": "string",
             "format": "uuid",
             "nullable": true
+          },
+          "nvram_template_path": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional override of the OVMF VARS template path."
           },
           "password": {
             "type": "string",
@@ -205,6 +249,13 @@
             "format": "uuid",
             "nullable": true
           },
+          "ssh_authorized_keys": {
+            "type": "array",
+            "description": "SSH authorized_keys entries to inject into the guest via cloud-init.\nEach string is one full key line (`ssh-ed25519 AAA... comment`). Works\nfor Linux (cloud-init) and Windows (cloudbase-init + OpenSSH).",
+            "items": {
+              "type": "string"
+            }
+          },
           "tags": {
             "type": "array",
             "items": {
@@ -219,6 +270,11 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "vmm_kind": {
+            "type": "string",
+            "description": "(VmmKind)",
+            "nullable": true
           }
         },
         "required": [

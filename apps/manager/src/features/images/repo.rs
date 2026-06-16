@@ -63,7 +63,7 @@ impl ImageRepository {
     pub async fn list(&self, filter: &ImageFilter) -> Result<Vec<Image>, ImageRepoError> {
         let rows = sqlx::query_as::<_, ImageRow>(
             r#"
-            SELECT id, kind, name, host_path, sha256, size, project, created_at, updated_at
+            SELECT id, kind, name, host_path, sha256, size, project, image_kind, nvram_template_path, guest_os_hint, disk_format, created_at, updated_at
             FROM image
             WHERE ($1::text IS NULL OR kind = $1)
               AND ($2::text IS NULL OR project = $2)
@@ -83,7 +83,7 @@ impl ImageRepository {
     pub async fn get(&self, id: Uuid) -> Result<Image, ImageRepoError> {
         let row = sqlx::query_as::<_, ImageRow>(
             r#"
-            SELECT id, kind, name, host_path, sha256, size, project, created_at, updated_at
+            SELECT id, kind, name, host_path, sha256, size, project, image_kind, nvram_template_path, guest_os_hint, disk_format, created_at, updated_at
             FROM image
             WHERE id = $1
             "#,
@@ -121,6 +121,14 @@ struct ImageRow {
     sha256: String,
     size: i64,
     project: Option<String>,
+    #[sqlx(default)]
+    image_kind: Option<String>,
+    #[sqlx(default)]
+    nvram_template_path: Option<String>,
+    #[sqlx(default)]
+    guest_os_hint: Option<String>,
+    #[sqlx(default)]
+    disk_format: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -135,6 +143,13 @@ impl From<ImageRow> for Image {
             sha256: row.sha256,
             size: row.size,
             project: row.project,
+            image_kind: row
+                .image_kind
+                .as_deref()
+                .and_then(nexus_vmm::ImageKind::parse),
+            nvram_template_path: row.nvram_template_path,
+            guest_os_hint: row.guest_os_hint,
+            disk_format: row.disk_format,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }

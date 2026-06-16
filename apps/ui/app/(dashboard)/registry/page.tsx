@@ -7,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ImageRegistry } from "@/components/registry/image-registry"
 import { DockerHubBrowser } from "@/components/registry/dockerhub-browser"
 import { UploadImageDialog } from "@/components/registry/upload-image-dialog"
+import { ImportVmdkDialog } from "@/components/registry/import-vmdk-dialog"
+import { ImportP2vDialog } from "@/components/registry/import-p2v-dialog"
 import { useRegistryImages } from "@/lib/queries"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, Box, Container as ContainerIcon, Upload, RefreshCw } from "lucide-react"
@@ -83,7 +85,12 @@ export default function RegistryPage() {
     refetch()
   }
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
+  const [importVmdkOpen, setImportVmdkOpen] = useState(false)
+  const [importP2vOpen, setImportP2vOpen] = useState(false)
   const [uploadKind, setUploadKind] = useState<"docker" | "kernel" | "rootfs">("docker")
+  const [uploadImageKind, setUploadImageKind] = useState<
+    "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso" | undefined
+  >(undefined)
 
   // Split images by type
   // Note: Internal system images (container-runtime, node-runtime, python-runtime, etc.)
@@ -91,8 +98,12 @@ export default function RegistryPage() {
   const vmImages = useMemo(() => images.filter((img) => img.kind !== "docker"), [images])
   const dockerImages = useMemo(() => images.filter((img) => img.kind === "docker"), [images])
 
-  const openUploadDialog = (kind: "docker" | "kernel" | "rootfs") => {
+  const openUploadDialog = (
+    kind: "docker" | "kernel" | "rootfs",
+    imageKind?: "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso",
+  ) => {
     setUploadKind(kind)
+    setUploadImageKind(imageKind)
     setUploadDialogOpen(true)
   }
 
@@ -193,7 +204,23 @@ export default function RegistryPage() {
                 </Button>
                 <Button onClick={() => openUploadDialog("rootfs")} size="sm" variant="outline">
                   <Upload className="mr-2 h-4 w-4" />
-                  Upload Rootfs
+                  Upload Rootfs (FC)
+                </Button>
+                <Button onClick={() => openUploadDialog("rootfs", "uefi_disk")} size="sm" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload UEFI Disk Image
+                </Button>
+                <Button onClick={() => openUploadDialog("rootfs", "installer_iso")} size="sm" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload Installer ISO
+                </Button>
+                <Button onClick={() => setImportVmdkOpen(true)} size="sm" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Import from VMware
+                </Button>
+                <Button onClick={() => setImportP2vOpen(true)} size="sm" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Import from Physical (P2V)
                 </Button>
               </div>
             </CardHeader>
@@ -241,7 +268,11 @@ export default function RegistryPage() {
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
         defaultKind={uploadKind}
+        defaultImageKind={uploadImageKind}
       />
+
+      <ImportVmdkDialog open={importVmdkOpen} onOpenChange={setImportVmdkOpen} />
+      <ImportP2vDialog open={importP2vOpen} onOpenChange={setImportP2vOpen} />
     </div>
   )
 }

@@ -7,6 +7,8 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // noVNC ships as raw browser ESM under core/ — Next must transpile it.
+  transpilePackages: ["@novnc/novnc"],
 }
 
 export default nextConfig

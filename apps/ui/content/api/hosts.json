@@ -49,6 +49,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "vmm_kinds_installed": {
+            "type": "array",
+            "nullable": true,
+            "description": "VMM binaries detected on the agent host. e.g. `[\"firecracker\", \"qemu\"]`.\nManager refuses to schedule a VM whose `vmm_kind` is not in this set.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -190,6 +198,13 @@
             "nullable": true
           },
           "supported_backend_kinds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "vmm_kinds_installed": {
             "type": "array",
             "nullable": true,
             "items": {

@@ -49,6 +49,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # The bundle's build scripts (bundle-debs-ubuntu.sh package list, etc.)
+          # MUST match the released code, not whatever is on the default branch.
+          # The Release workflow runs on a tag push, so workflow_run.head_branch
+          # is the tag name; for manual runs, check out the requested version tag
+          # (an empty ref falls back to the default branch, e.g. dispatch 'latest').
+          ref: ${{ github.event.workflow_run.head_branch || (github.event.inputs.release_version != 'latest' && github.event.inputs.release_version) || '' }}
 
       - name: Determine release version
         id: version

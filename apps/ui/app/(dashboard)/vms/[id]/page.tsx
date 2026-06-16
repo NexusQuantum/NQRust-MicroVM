@@ -1,6 +1,6 @@
 "use client"
 
-import { useVM, useVmStatePatch, useDeleteVM, useVolumes, useDeleteVolume } from "@/lib/queries"
+import { useVM, useVmStatePatch, useDeleteVM, useVolumes, useDeleteVolume, useInstallComplete } from "@/lib/queries"
 import { ReusableTabs, TabItem, TabContentItem } from "@/components/dashboard/tabs-new"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -9,9 +9,11 @@ import { VMConfig } from "@/components/vm/vm-config"
 import { VMStorage } from "@/components/vm/vm-storage"
 import { VMNetwork } from "@/components/vm/vm-network"
 import { VMSnapshots } from "@/components/vm/vm-snapshots"
+import { VncConsole } from "@/components/vm/vnc-console"
+import { VmActions } from "@/components/vm/vm-actions"
 import { XTermWrapper } from "@/components/shared/xterm-wrapper"
 import { MetricsChart } from "@/components/shared/metrics-chart"
-import { Play, Square, Trash2, ArrowLeft, Zap, Pause, Settings, HardDrive, Network, Terminal, Camera, BarChart3, Eye } from "lucide-react"
+import { Play, Square, Trash2, ArrowLeft, Zap, Pause, Settings, HardDrive, Network, Terminal, Camera, BarChart3, Eye, Monitor, Disc } from "lucide-react"
 import Link from "next/link"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { useState, useMemo } from "react"
@@ -29,6 +31,8 @@ const getStatusColor = (state: string) => {
       return "bg-gray-500/10 text-gray-700 border-gray-200"
     case "paused":
       return "bg-yellow-500/10 text-yellow-700 border-yellow-200"
+    case "installing":
+      return "bg-orange-500/10 text-orange-700 border-orange-200"
     default:
       return "bg-blue-500/10 text-blue-700 border-blue-200"
   }
@@ -41,6 +45,7 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
   const { data: vm, isLoading, error } = useVM(id, 3000)
   const vmStatePatch = useVmStatePatch()
   const deleteVM = useDeleteVM()
+  const installComplete = useInstallComplete()
   const { data: allVolumes = [] } = useVolumes()
   const deleteVolumeMutation = useDeleteVolume()
   const [deleteDialog, setDeleteDialog] = useState(false)
@@ -49,9 +54,15 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
 
   const attachedVolumes = allVolumes.filter(v => v.attached_to_vm_id === id)
 
+  // QEMU VMs with a VNC console get an extra graphical Console tab.
+  const isQemu = vm?.vmm_kind === 'qemu'
+  const hasVnc = vm?.console_kind === 'vnc'
+
   // Valid tab values
-  const validTabs = ['overview', 'config', 'storage', 'network', 'terminal', 'snapshots', 'metrics']
-  const defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview'
+  const validTabs = ['overview', 'config', 'storage', 'network', 'terminal', 'snapshots', 'metrics', 'console']
+  let defaultTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview'
+  // Terminal doesn't exist for QEMU VMs — avoid landing on an empty panel.
+  if (defaultTab === 'terminal' && isQemu) defaultTab = 'overview'
 
   const handleAction = (action: 'start' | 'stop' | 'pause' | 'resume' | 'ctrl_alt_del') => {
     vmStatePatch.mutate({ id, action })
@@ -72,15 +83,27 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
   }
 
   // Define tabs dengan icon
-  const tabs: TabItem[] = useMemo(() => [
-    { value: "overview", label: "Overview", icon: <Eye size={16} /> },
-    { value: "config", label: "Config", icon: <Settings size={16} /> },
-    { value: "storage", label: "Storage", icon: <HardDrive size={16} /> },
-    { value: "network", label: "Network", icon: <Network size={16} /> },
-    { value: "terminal", label: "Terminal", icon: <Terminal size={16} /> },
-    { value: "snapshots", label: "Snapshots", icon: <Camera size={16} /> },
-    { value: "metrics", label: "Metrics", icon: <BarChart3 size={16} /> },
-  ], [])
+  const tabs: TabItem[] = useMemo(() => {
+    const base: TabItem[] = [
+      { value: "overview", label: "Overview", icon: <Eye size={16} /> },
+      { value: "config", label: "Config", icon: <Settings size={16} /> },
+      { value: "storage", label: "Storage", icon: <HardDrive size={16} /> },
+      { value: "network", label: "Network", icon: <Network size={16} /> },
+      { value: "snapshots", label: "Snapshots", icon: <Camera size={16} /> },
+      { value: "metrics", label: "Metrics", icon: <BarChart3 size={16} /> },
+    ]
+    // The Terminal is a guest-agent serial shell — Firecracker-Linux only.
+    // QEMU VMs (incl. Windows) use the graphical VNC Console instead.
+    if (!isQemu) {
+      base.splice(4, 0, { value: "terminal", label: "Terminal", icon: <Terminal size={16} /> })
+    }
+    // Graphical Console tab for VNC-capable (QEMU) VMs.
+    if (hasVnc) {
+      const at = base.findIndex((t) => t.value === "snapshots")
+      base.splice(at, 0, { value: "console", label: "Console", icon: <Monitor size={16} /> })
+    }
+    return base
+  }, [hasVnc, isQemu])
 
   // Define contents untuk setiap tab
   const tabContents: TabContentItem[] = useMemo(() => {
@@ -103,10 +126,14 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
         value: "network",
         content: <VMNetwork vmId={vm.id} />,
       },
-      {
+      ...(!isQemu ? [{
         value: "terminal",
         content: <XTermWrapper vmId={vm.id} />,
-      },
+      }] : []),
+      ...(hasVnc ? [{
+        value: "console",
+        content: <VncConsole vmId={vm.id} />,
+      }] : []),
       {
         value: "snapshots",
         content: <VMSnapshots vmId={vm.id} />,
@@ -116,7 +143,7 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
         content: <MetricsChart resourceId={vm.id} />,
       },
     ]
-  }, [vm])
+  }, [vm, hasVnc, isQemu])
 
   if (isLoading) {
     return (
@@ -174,16 +201,28 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {canModifyResource(user, vm.created_by_user_id) && (
             <>
+              {vm.vmm_kind === 'qemu' && vm.state === 'running' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => installComplete.mutate(vm.id)}
+                  disabled={installComplete.isPending}
+                  title="Eject the installer ISO (optional — the VM boots from its disk once the OS is installed)"
+                >
+                  <Disc className="mr-2 h-4 w-4" />
+                  {installComplete.isPending ? 'Ejecting…' : 'Eject ISO'}
+                </Button>
+              )}
               {vm.state === 'stopped' && (
                 <Button variant="outline" size="sm" onClick={() => handleAction('start')}>
                   <Play className="mr-2 h-4 w-4" />
                   Start
                 </Button>
               )}
-              {vm.state === 'running' && (
+              {(vm.state === 'running' || vm.state === 'installing') && (
                 <>
                   <Button variant="outline" size="sm" onClick={() => handleAction('pause')}>
                     <Pause className="mr-2 h-4 w-4" />
@@ -205,6 +244,8 @@ export default function VMDetailPage({ params }: { params: Promise<{ id: string 
                   Resume
                 </Button>
               )}
+              {/* QEMU day-2 ops: migrate / reschedule / backup */}
+              {isQemu && <VmActions vm={vm} />}
             </>
           )}
           {canDeleteResource(user, vm.created_by_user_id) && (

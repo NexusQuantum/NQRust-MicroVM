@@ -11,6 +11,108 @@ use uuid::Uuid;
 
 use super::repo::{NewSnapshotRow, SnapshotRepository};
 
+/// Build the on-disk path where QEMU snapshot state is written. Lives under
+/// the VM's storage dir so cleanup follows the same path FC snapshots use.
+fn qemu_snapshot_state_path(vm_id: Uuid, snapshot_id: Uuid) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!(
+        "/srv/fc/vms/{vm_id}/snapshots/{snapshot_id}/state.qmp"
+    ))
+}
+
+/// Create a QEMU snapshot via the pluggable VMM route. Mirrors the FC
+/// flow's audit log and DB shape so the snapshots index UI works uniformly.
+async fn create_qemu_snapshot(
+    st: &AppState,
+    vm: &crate::features::vms::repo::VmRow,
+    payload: Option<CreateSnapshotRequest>,
+) -> Result<Json<CreateSnapshotResponse>, StatusCode> {
+    let snapshot_id = Uuid::new_v4();
+    let snapshot_name = resolve_snapshot_name(
+        payload.as_ref().and_then(|p| p.name.as_deref()),
+        snapshot_id,
+    );
+
+    // Ensure the snapshot dir exists. Manager runs co-located with the
+    // agent in dev; in prod the agent will create the dir before writing.
+    let state_path = qemu_snapshot_state_path(vm.id, snapshot_id);
+    if let Some(parent) = state_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/agent/v1/vmm/{}/snapshot", vm.host_addr, vm.id))
+        .json(&json!({
+            "vmm_kind": "qemu",
+            "state_path": state_path,
+            "kind": "full",
+        }))
+        .send()
+        .await
+        .map_err(|err| {
+            tracing::error!(vm_id=%vm.id, error=?err, "agent qemu snapshot request failed");
+            StatusCode::BAD_GATEWAY
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        tracing::error!(vm_id=%vm.id, status=%status, body=%text, "agent rejected qemu snapshot");
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    let meta: nexus_vmm::SnapshotMeta = resp.json().await.map_err(|err| {
+        tracing::error!(vm_id=%vm.id, error=?err, "decode agent snapshot meta");
+        StatusCode::BAD_GATEWAY
+    })?;
+
+    let new_row = NewSnapshotRow {
+        id: snapshot_id,
+        vm_id: vm.id,
+        snapshot_path: state_path.display().to_string(),
+        mem_path: String::new(),
+        size_bytes: meta.state_size_bytes as i64,
+        state: "ready".to_string(),
+        snapshot_type: "Full".to_string(),
+        parent_id: None,
+        track_dirty_pages: false,
+        name: Some(snapshot_name.clone()),
+    };
+    let row = st.snapshots.insert(&new_row).await.map_err(|err| {
+        tracing::error!(vm_id=%vm.id, error=?err, "insert qemu snapshot row");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Update snapshot.vmm_kind so the gate in instantiate can verify it.
+    let _ = sqlx::query(r#"UPDATE snapshot SET vmm_kind = 'qemu' WHERE id = $1"#)
+        .bind(snapshot_id)
+        .execute(&st.db)
+        .await;
+
+    Ok(Json(CreateSnapshotResponse {
+        id: row.id,
+        name: Some(snapshot_name),
+    }))
+}
+
+/// Look up the source VM's vmm_kind. Default to 'firecracker' on any error
+/// so legacy code paths (pre-0.5.0 VMs) keep working.
+async fn vm_vmm_kind(db: &sqlx::PgPool, vm_id: Uuid) -> String {
+    sqlx::query_scalar::<_, String>(r#"SELECT vmm_kind FROM vm WHERE id = $1"#)
+        .bind(vm_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or_else(|_| "firecracker".to_string())
+}
+
+/// Look up a snapshot row's vmm_kind. Default to 'firecracker' for legacy
+/// rows that pre-date the 0040 migration's backfill.
+async fn snapshot_vmm_kind(db: &sqlx::PgPool, snapshot_id: Uuid) -> String {
+    sqlx::query_scalar::<_, String>(r#"SELECT vmm_kind FROM snapshot WHERE id = $1"#)
+        .bind(snapshot_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or_else(|_| "firecracker".to_string())
+}
+
 /// Group of derived agent URLs used during snapshot creation.
 ///
 /// Pure-logic helper extracted from `create` so the URL construction can be
@@ -147,6 +249,13 @@ pub async fn create(
     let vm = crate::features::vms::repo::get(&st.db, vm_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // Snapshots are per-backend. QEMU goes through the pluggable VMM route
+    // which speaks QMP; Firecracker keeps using the legacy REST path below.
+    let vmm_kind = vm_vmm_kind(&st.db, vm.id).await;
+    if vmm_kind == "qemu" {
+        return create_qemu_snapshot(&st, &vm, payload).await;
+    }
 
     let snapshot_id = Uuid::new_v4();
     let snapshot_name = resolve_snapshot_name(
@@ -364,6 +473,99 @@ pub async fn instantiate(
     let source_vm = crate::features::vms::repo::get(&st.db, snapshot.vm_id)
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    let src_kind = vm_vmm_kind(&st.db, snapshot.vm_id).await;
+    let snap_kind = snapshot_vmm_kind(&st.db, snapshot.id).await;
+
+    // QEMU snapshot restore: clone the disk captured at snapshot time into a new
+    // VM and cold-boot it from that disk state (a consistent revert-to-snapshot;
+    // the migrate-to-file RAM state is not replayed). Reuses create_and_start_qemu.
+    if snap_kind == "qemu" && src_kind == "qemu" {
+        let new_id = Uuid::new_v4();
+        let name = resolve_instantiate_name(payload.name, snapshot.name.as_deref(), snapshot.id);
+
+        // The agent captured the disk next to the snapshot's state file.
+        let snap_disk = qemu_snapshot_state_path(snapshot.vm_id, snapshot.id)
+            .parent()
+            .map(|p| p.join("disk.qcow2"))
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        if tokio::fs::metadata(&snap_disk).await.is_err() {
+            tracing::error!(snapshot_id=%snapshot.id, path=%snap_disk.display(),
+                "qemu snapshot has no captured disk (taken before the disk-capture fix?)");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        // Copy it into the new VM's storage as its root disk (the master stays
+        // intact so the snapshot can be instantiated again).
+        let dst_dir = std::path::PathBuf::from(
+            std::env::var("MANAGER_STORAGE_ROOT").unwrap_or_else(|_| "/srv/fc/vms".into()),
+        )
+        .join(new_id.to_string())
+        .join("storage");
+        if let Err(e) = tokio::fs::create_dir_all(&dst_dir).await {
+            tracing::error!(error=?e, "create storage dir for snapshot restore");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let new_disk = dst_dir.join("disk.qcow2");
+        if let Err(e) = tokio::fs::copy(&snap_disk, &new_disk).await {
+            tracing::error!(error=?e, "copy snapshot disk for restore");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+
+        // Source VM's persisted boot mode (OVMF/UEFI etc.).
+        let boot_mode_json: Option<serde_json::Value> =
+            sqlx::query_scalar(r#"SELECT boot_mode FROM vm WHERE id = $1"#)
+                .bind(snapshot.vm_id)
+                .fetch_optional(&st.db)
+                .await
+                .ok()
+                .flatten()
+                .flatten();
+        let boot_mode: Option<nexus_vmm::BootMode> =
+            boot_mode_json.and_then(|j| serde_json::from_value(j).ok());
+
+        let req = nexus_types::CreateVmReq {
+            name: name.clone(),
+            vcpu: source_vm.vcpu.max(1) as u8,
+            mem_mib: source_vm.mem_mib.max(1) as u32,
+            vmm_kind: Some(nexus_vmm::VmmKind::Qemu),
+            boot_mode,
+            guest_os: source_vm
+                .guest_os
+                .as_deref()
+                .and_then(nexus_vmm::GuestOs::parse),
+            rootfs_path: Some(new_disk.to_string_lossy().into_owned()),
+            enable_vnc: source_vm.console_kind.as_deref() == Some("vnc"),
+            ..Default::default()
+        };
+
+        crate::features::vms::qemu_service::create_and_start_qemu(
+            &st,
+            new_id,
+            req,
+            None,
+            None,
+            "snapshot-restore",
+        )
+        .await
+        .map_err(|err| {
+            tracing::error!(snapshot_id=%id, error=?err, "failed to instantiate qemu snapshot");
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        return Ok(Json(InstantiateSnapshotResp { id: new_id, name }));
+    }
+
+    // Cross-backend restore is not supported: the FC instantiate path can't
+    // materialise a QEMU VM and vice versa. Only FC→FC reaches here now.
+    if snap_kind != "firecracker" || src_kind != "firecracker" {
+        tracing::warn!(
+            snapshot_id=%snapshot.id,
+            snapshot_vmm_kind=%snap_kind,
+            source_vmm_kind=%src_kind,
+            "snapshot instantiate (this route) is FC-only; QEMU instantiate lands in a follow-up",
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let vm_id = Uuid::new_v4();
     let name = resolve_instantiate_name(payload.name, snapshot.name.as_deref(), snapshot.id);

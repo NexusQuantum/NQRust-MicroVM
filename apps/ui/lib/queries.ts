@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { facadeApi } from "./api"
-import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams, CreatePortForwardReq, StorageBackend } from "@/lib/types"
+import type { CreateVmReq, CreateFunction, UpdateFunction, InvokeFunction, TestFunction, Image, UpdateTemplateReq, AuditLogQueryParams, MetricsQueryParams, CreatePortForwardReq, StorageBackend, ImportP2vRequest } from "@/lib/types"
 import { useNotificationStore } from "@/lib/stores/notification-store"
 import { toast } from "sonner"
 
@@ -436,8 +436,25 @@ export function useDownloadDockerImage() {
 export function useUploadImage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (params: { file: File; kind: "docker" | "kernel" | "rootfs"; name?: string; project?: string }) =>
-      facadeApi.uploadImage(params.file, params.kind, params.name, params.project),
+    mutationFn: (params: {
+      file: File;
+      kind: "docker" | "kernel" | "rootfs";
+      name?: string;
+      project?: string;
+      /** Strict VMM-aware discriminator (0.5.0+). When set, the manager
+       *  writes this into image.image_kind for QEMU routing. */
+      image_kind?: "linux_kernel" | "linux_disk" | "uefi_disk" | "installer_iso";
+      /** For uefi_disk only: OVMF_VARS template the agent copies per-VM. */
+      nvram_template_path?: string;
+    }) =>
+      facadeApi.uploadImage(
+        params.file,
+        params.kind,
+        params.name,
+        params.project,
+        params.image_kind,
+        params.nvram_template_path,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
     },
@@ -591,6 +608,71 @@ export function useDeleteVM() {
   });
 }
 
+// ---- Pluggable VMM day-2 ops (0.5.0) ----
+
+export function useInstallComplete() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => facadeApi.installComplete(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    },
+  });
+}
+
+export function useMigrateVM() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, targetHostId, targetPort }: { id: string; targetHostId: string; targetPort?: number }) =>
+      facadeApi.migrateVM(id, targetHostId, targetPort),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    },
+  });
+}
+
+export function useRescheduleVM() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, targetHostId }: { id: string; targetHostId: string }) =>
+      facadeApi.rescheduleVM(id, targetHostId),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vms });
+    },
+  });
+}
+
+export function useBackupVM() {
+  return useMutation({
+    mutationFn: ({ id, ...opts }: { id: string; targetId?: string; destinationPath?: string; format?: string; compress?: boolean }) =>
+      facadeApi.backupVM(id, opts),
+  });
+}
+
+export function useImportVmdk() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sourcePath, name, runVirtV2v }: { sourcePath: string; name?: string; runVirtV2v?: boolean }) =>
+      facadeApi.importVmdk(sourcePath, name, runVirtV2v),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
+    },
+  });
+}
+
+export function useImportP2v() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: ImportP2vRequest) => facadeApi.importP2v(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.registryImages });
+    },
+  });
+}
+
 // Drive Management Queries and Mutations
 export function useVMDrives(vmId: string) {
   return useQuery({
@@ -640,6 +722,19 @@ export function useDeleteVMDrive() {
   return useMutation({
     mutationFn: ({ vmId, driveId }: { vmId: string; driveId: string }) =>
       facadeApi.deleteVMDrive(vmId, driveId),
+    onSuccess: (_, { vmId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
+    }
+  });
+}
+
+export function useResizeVMDrive() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ vmId, driveId, sizeBytes }: { vmId: string; driveId: string; sizeBytes: number }) =>
+      facadeApi.resizeVMDrive(vmId, driveId, sizeBytes),
     onSuccess: (_, { vmId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.vmDrives(vmId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.vm(vmId) });
@@ -921,6 +1016,15 @@ export function useHosts() {
     queryKey: queryKeys.hosts,
     queryFn: () => facadeApi.getHosts(),
     staleTime: 30 * 1000,
+  });
+}
+
+export function useHostPciDevices(hostId: string | undefined) {
+  return useQuery({
+    queryKey: ["hosts", hostId, "pci-devices"] as const,
+    queryFn: () => facadeApi.getHostPciDevices(hostId as string),
+    enabled: !!hostId,
+    staleTime: 60 * 1000,
   });
 }
 

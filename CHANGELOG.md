@@ -7,6 +7,277 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.4] - 2026-06-15
+
+**Alpha 4** — turns the QEMU/UEFI backend into a Proxmox-style VM platform:
+full device management at create- and day-2, CPU model selection, host-side
+metrics, and two import paths for bringing existing machines in (VMware V2V and
+agentless baremetal P2V/B2V). Firecracker microVMs are unchanged.
+
+### Added
+- **Full QEMU device management (create + day-2).** The Proxmox-style create
+  wizard and the VM detail page now drive real devices, not just cosmetics:
+  - **Multiple NICs** at create and live attach/detach of network interfaces.
+  - **Multiple data disks** at create, plus day-2 **add / detach / resize**
+    (live via QMP `blockdev-add`/`device_add`/`block_resize`).
+  - **Attach existing volumes** to a running QEMU VM.
+  - **PCI passthrough (VFIO)** — host PCI devices are enumerated (`lspci`) and
+    selectable from a dropdown in the wizard.
+- **CPU model selection.** New nullable `cpu_type` column on `vm`; the wizard
+  exposes a CPU model picker (e.g. `host`, `kvm64`, `x86-64-v3`, `EPYC`) and
+  `host` passthrough for nested virtualization. Emitted as QEMU `-cpu`.
+- **Host-side QEMU VM metrics.** CPU/memory for QEMU VMs are sampled from the
+  per-VM cgroup (`/sys/fs/cgroup/system.slice/qemu-<id>.service`) and persisted
+  to `metrics.vm_metrics`, so QEMU VMs report metrics like microVMs do.
+- **V2V import — bring VMware (and other hypervisor) guests in.**
+  `POST /v1/images/import/vmdk` converts a VMDK/qcow2/raw disk to a bootable
+  UEFI image, optionally running `virt-v2v -i disk` to adapt guest drivers
+  (vmxnet3/pvscsi → virtio). New "Import from VMware" registry dialog.
+- **P2V / B2V import — bring physical/baremetal machines in (agentless).**
+  `POST /v1/images/import/p2v` opens an SSH session to a reachable physical
+  host, streams the chosen block device (`dd`, no agent on the source), and
+  runs the same virt-v2v pipeline to register a bootable image. Password or
+  SSH-key auth. New "Import from Physical (P2V)" registry dialog.
+- **Installer provisions the import toolchain (classic + air-gapped).**
+  Adds `virt-v2v` + `libguestfs-tools` (V2V/P2V conversion) and
+  `sshpass` + `openssh-client(s)` (agentless P2V) to the dependency phase and
+  the air-gapped deb bundle, and makes the host kernel readable so libguestfs
+  (supermin) works for the non-root manager.
+
+### Fixed
+- **virt-v2v output naming.** `virt-v2v -o local` writes the converted disk as
+  `<name>-sda` (plus a libvirt `<name>.xml`), not `<name>.qcow2`; the import
+  handlers now rename it correctly so registration succeeds instead of 500ing
+  after a successful conversion.
+
+## [0.5.0-alpha.3] - 2026-06-11
+
+**Alpha 3** — makes alpha.2 installable turnkey. The installer (and the
+air-gapped bundle) now provision the QEMU host prerequisites that alpha.2
+required but didn't ship, so a fresh host runs QEMU VMs without manual package
+setup.
+
+### Added
+- **Installer now provisions the QEMU host prerequisites (classic + air-gapped).**
+  The dependency phase installs the QEMU classic-VM packages alpha.2 needed but
+  didn't auto-install: `qemu-system-x86`/`qemu-kvm` (the VMM), `ovmf`/`edk2-ovmf`
+  (UEFI firmware), `genisoimage` (cloud-init seed ISO), and `swtpm`+`swtpm-tools`
+  (TPM 2.0) — on both apt and dnf. The **air-gapped bundle** adds the same set
+  (with all transitive deps) to its offline `.deb` set. KVM setup also drops the
+  swtpm AppArmor local include (`/etc/apparmor.d/local/usr.bin.swtpm`) granting
+  the run dir, so TPM-enabled VMs work out of the box on Ubuntu (enforce mode
+  preserved). Resolves the swtpm-AppArmor packaging gap from the alpha.2 known
+  issues.
+
+## [0.5.0-alpha.2] - 2026-06-10
+
+**Alpha 2** — the QEMU classic-VM backend, hardened. Alpha.1 was code-complete
+but couldn't actually run a VM in production; this release fixes ~14 issues
+found by driving the full manager+agent stack on a stock Ubuntu host (agent
+non-root) and adds the missing feature paths (in-place restart, snapshot
+restore, install-complete CD-eject, live disk hot-add). Every fix below was
+validated end-to-end. Still alpha — see the alpha.1 caveats and the known
+issues below.
+
+### Fixed
+- **QEMU production boot path was completely broken (critical).** The agent
+  spawned QEMU via `systemd-run --scope`, which runs *synchronously* and only
+  returns once the wrapped process exits — so `boot()` blocked for the VM's
+  entire lifetime and never reached the QMP handshake, the socket-perms relax,
+  or handle persistence. Every production-mode (non-`AGENT_NO_SUDO`) QEMU boot
+  hung until the manager's timeout and was then torn down. Fixed by spawning
+  QEMU as a transient **service** (`systemd-run --collect`, no `--scope`),
+  which backgrounds it under systemd (PID 1) — also letting VMs survive agent
+  restarts, which `rebind` depends on. (`qemu-<id>.scope` → `.service`.)
+- **QEMU lifecycle ops orphaned VMs (critical).** QEMU's root-written pidfile
+  is mode 0600, unreadable by the non-root agent, so `read_pid` returned
+  `None`, `rebind` couldn't confirm liveness, and pause / resume / shutdown /
+  destroy all failed with "no live vmm" — `destroy` silently no-opped and left
+  the VM and its cgroup running. Fixed by self-healing `read_pid`: relax the
+  pidfile via `sudo -n chmod` and retry (mirrors the socket-perms relax).
+- **Reconciler marked every running QEMU VM `stopped` (critical, manager-side).**
+  `diff_host` decides liveness from the agent inventory, which is
+  Firecracker-specific (`fc-*.scope` units + `vms/<id>/sock` paths). A QEMU VM
+  runs as `qemu-<id>.service` with its QMP socket elsewhere, so it always looked
+  "absent" → the reconciler flagged it for the FC-only in-place `restart_vm`,
+  which fails on the empty `kernel_path` and flips the VM to `stopped` (while
+  QEMU keeps running) ~seconds after boot. Fixed by excluding QEMU VMs from the
+  FC restart path in `diff_host` (QEMU recovery goes through `qemu_service`
+  reschedule, per the existing design).
+- **QEMU VMs never got network (manager-side).** The cloud-init network-config
+  hardcoded `eth0`, but modern cloud images use predictable names (`enp0s3`,
+  `ens3`, …) so the stanza never matched — the NIC stayed down and the guest
+  never DHCP'd. Fixed by matching `name: "e*"` (covers `en*` + legacy `eth*`).
+- All four found and fixed via real end-to-end testing on a **stock Ubuntu
+  24.04** host with the agent running **non-root** (the true production
+  posture). Agent-path: QEMU UEFI boot of an Ubuntu cloud image → cloud-init
+  NoCloud seed → DHCP + serial login → pause/resume/destroy with no orphan,
+  cgroup limits enforced. Full-stack: manager + Postgres + registered agent →
+  `POST /v1/vms` → qcow2 thin overlay over the base image + cloud-init ISO +
+  **real TAP on `fcbr0`** + agent boot → VM stays `running` → guest DHCPs to
+  `10.0.0.x` and pings the gateway. This exercises the "production
+  sudo/systemd-run/cgroup path" and "TAP bridging for QEMU" that the alpha.1
+  caveats flagged as not-yet-validated.
+- **QEMU data disks were never attached (manager-side).** `create_drive`
+  provisioned a volume and recorded it, but `create_and_start_qemu` never read
+  the drives table, so data disks reached neither boot nor hot-plug. Fixed:
+  the QEMU boot now assembles data drives from the DB. Their format is read via
+  a real `qemu-img info` probe instead of guessing by extension — auto-
+  provisioned data disks are raw `.img`, which the extension heuristic
+  mislabeled qcow2, making QEMU refuse to open them.
+- **Reconciler spammed 502s reconciling QEMU drives.** `reconcile_devices`
+  drove Firecracker's per-device HTTP proxy for QEMU drives/NICs every cycle.
+  Fixed by skipping QEMU VMs there (QEMU assembles devices at boot).
+- **A full-RAM guest was OOM-killed (agent-side).** The cgroup `MemoryMax` was
+  pinned to exactly the guest's RAM with no headroom for QEMU's own footprint
+  (device models, VNC/virtio-vga framebuffer, firmware, I/O buffers). A guest
+  touching all its memory — e.g. a live-ISO installer unpacking its squashfs
+  into RAM — pushed QEMU's RSS over the cap and the kernel killed the VM. Fixed
+  by adding headroom: `MemoryMax = guest + max(512 MiB, 12.5%)`. Validated by
+  booting the Ubuntu 24.04.3 live-server installer (Subiquity reached its
+  language screen; the VM previously died at the exact guest-RAM size).
+- **QEMU live backup failed (agent-side).** `backup_disk` QMP-`stop`s the guest
+  then runs `qemu-img convert`, but `stop` only pauses vCPUs — QEMU keeps the
+  qcow2's write lock held, so the convert died with "Failed to get shared write
+  lock". Fixed with `qemu-img convert -U` (the preceding `stop` quiesces the
+  guest, so the unlocked read is crash-consistent). Validated: a 1.9 GiB qcow2
+  backup of a running VM.
+- **QEMU VMs couldn't be restarted (manager-side).** `start_vm_by_id` → the
+  Firecracker `restart_vm`, which validates an (empty for QEMU) `kernel_path`
+  and rebuilds an FC boot — so stop→start always failed for QEMU. Added
+  `qemu_service::restart_qemu` (reuse the existing overlay/seed/reservation,
+  recreate the TAP idempotently, re-boot via the agent, UPDATE the row) and
+  dispatch QEMU VMs to it. Also fixed `stop` leaving the row stuck in
+  `stopping`. This unblocks data-disk attachment, which applies at boot.
+  Validated: stop→start cycle (`stopped`→`running`) and a data disk created via
+  `POST /v1/vms/:id/drives` shows up in the guest (`/dev/vdc`, 2 GiB) after a
+  restart.
+- **`install-complete` CD-ROM eject failed (agent-side).** CD-ROMs were wired as
+  `virtio-blk-pci` on the q35 root complex (`pcie.0`), which can't `device_del`
+  (no hotplug) or media-eject — so finishing an ISO install died with a 502.
+  Now `cdrom: true` disks attach as `ide-cd` on a dedicated `ich9-ahci`
+  controller (real removable media), and the eject uses QMP `eject` (force).
+  Also fixed a latent **duplicate-bootindex** crash: multiple CD-ROMs (e.g. a
+  Windows installer + virtio-win) all got `bootindex=0`, which makes QEMU refuse
+  to start — bootindexes are now unique (CD-ROMs `0,1,…`, root after them).
+  Validated: install-complete ejects the ISO (`query-block` inserted→false,
+  state `installing`→`running`); cloud-init still configures the guest with its
+  seed now an ide-cd (no regression).
+- **QEMU snapshot restore was unimplemented.** `POST /v1/snapshots/:id/instantiate`
+  was gated Firecracker-only. Two parts: (1) the agent's `snapshot()` did
+  migrate-to-file (RAM) but never captured the disk — despite a comment claiming
+  it did — so a restore had nothing consistent to boot. It now finds the root
+  disk via QMP `query-block` and copies the qcow2 overlay to `<snap>/disk.qcow2`
+  while the guest is paused. (2) `instantiate` now has a QEMU path: it clones the
+  captured disk into a new VM and reuses `create_and_start_qemu` to boot it.
+  Validated: create captures `state.qmp` + `disk.qcow2`; instantiate yields a new
+  VM that boots into the snapshot's disk state (restored guest reports the source
+  VM's hostname). This is a consistent cold restore (revert-to-snapshot); the
+  migrate-to-file RAM image is not yet replayed (live-resume is a future add).
+- **A guest reboot powered the VM off (agent-side).** QEMU was always spawned
+  with `-no-reboot`, so an in-guest `reboot` exited the VMM. That flag is needed
+  only for ISO installers (their post-install auto-reboot would otherwise loop
+  into the still-attached installer CD). It's now driven by a `no_reboot` flag
+  on `VmSpec`/`BootRequest` that the manager sets only for installer VMs; normal
+  VMs reboot in place. Validated: a normal VM's QEMU survives `sudo reboot`
+  (same PID); installer VMs still get `-no-reboot`.
+- **Deleting a QEMU VM leaked its TAP.** `destroy` tore down the process but left
+  `tap-<id>` on the bridge. It now deletes the primary TAP (reconstructed as
+  `tap-<vm_id[:8]>`; no-op for user-mode-net VMs). Validated: the tap is gone
+  from `fcbr0` after delete.
+- **Data disks can now be hot-added/removed live (QMP).** Previously a disk
+  created on a running QEMU VM only applied on the next boot. The agent now
+  pre-allocates spare `pcie-root-port`s at boot (q35's `pcie.0` can't hotplug),
+  `disk_add` `device_add`s onto a free root-port, and the manager's
+  `create_drive`/`delete_drive` call the agent's QMP add/remove for running QEMU
+  VMs (best-effort; the drive is still persisted so it also survives a restart).
+  Validated: adding a 1 GiB disk to a running VM makes the guest's block-device
+  count go 1→2 with no restart, and deleting it takes it back to 1.
+
+### Validated this round (full-stack, stock Ubuntu 24.04 host)
+- **ISO install:** `POST /v1/vms` with `installer_iso_id` + blank disk → VM
+  enters `installing`, boots the installer from the ISO via OVMF/UEFI, VNC
+  framebuffer shows the live Subiquity installer.
+- **Device extras:** virtio-rng (`/dev/hwrng`, active source `virtio_rng.0`),
+  virtio-vsock (`/dev/vsock` + modules, guest-cid wired), virtio-balloon (guest
+  lspci) all confirmed inside the guest.
+- **Multi-NIC:** a 2-NIC VM shows two virtio-net interfaces in the guest
+  (`enp0s3`+`enp0s4`), both up.
+- **Snapshots (create):** `POST /v1/vms/:id/snapshots` → QMP migrate-to-file
+  writes a full ~600 MiB VM+RAM state; listed via the API.
+- **Backup:** `POST /v1/vms/:id/backup` → consistent qcow2 of a running VM.
+- **UI:** `apps/ui` builds clean against the manager (all VM/storage/volume/
+  template routes compile).
+
+### Known issues (QEMU, found in the same testing — not yet fixed)
+- **TPM (swtpm) needs an AppArmor accommodation on Ubuntu (packaging).** TPM 2.0
+  works end-to-end (validated: guest gets `/dev/tpm0` + `tpm_version_major=2`),
+  but Ubuntu's `swtpm` AppArmor profile confines swtpm's state/socket paths and
+  denies the agent's per-VM dir under `FC_RUN_DIR` (`/srv/fc`) out of the box.
+  The validated workaround is a one-line `local/usr.bin.swtpm` include granting
+  the run dir (profile stays in enforce). The agent installer should ship this
+  snippet (or store swtpm state under an already-allowed path like
+  `/var/lib/swtpm/`).
+- Data-disk volume directories under a storage root that overlaps the agent's
+  run dir are misdetected as orphan VMs by the reconciler (noisy cleanup of
+  non-existent scopes/socks; the disk files themselves are not deleted).
+- `guest_ip` stays null for bring-your-own images: IP reporting relies on the
+  in-guest agent, which isn't present in stock cloud images.
+
+## [0.5.0-alpha.1] - 2026-06-08
+
+**Alpha** — first pluggable-VMM release. Adds **QEMU** as a second VMM
+backend alongside Firecracker, turning NQRust-MicroVM into a platform
+that runs both fast microVMs (Firecracker) and full classic VMs (QEMU:
+UEFI Linux, Windows, bring-your-own-ISO). Download and test; **not yet
+production-ready** — see caveats below.
+
+### Added
+- **Pluggable VMM backend abstraction** (`crates/nexus-vmm`): a
+  `VmmDriver` trait + `VmmKind` / `GuestOs` / `BootMode` / `ImageKind`
+  enums + a per-backend `FeatureSupport` matrix. Firecracker is a
+  thin trait-adapter over the existing path (unchanged behaviour);
+  QEMU is a new driver.
+- **QEMU q35 + KVM driver**: UEFI/OVMF boot, virtio-blk / virtio-net,
+  serial UDS console, optional VNC, QMP lifecycle, snapshot via QMP
+  migrate, swtpm (TPM 2.0 for Windows 11), virtio-balloon / -rng /
+  -vsock, VFIO PCI passthrough.
+- **VM-mode in the UI**: create wizard now offers microVM (Firecracker)
+  vs VM (QEMU) with disk-image / installer-ISO / VNC / SSH-key inputs.
+- **Image registry**: `image_kind` discriminator (linux_kernel /
+  linux_disk / uefi_disk / installer_iso), UEFI NVRAM template path,
+  dedicated upload buttons, and **virt-v2v VMware VMDK import**.
+- **ISO install lifecycle**: `installing` VM state + browser noVNC
+  console + one-click "Install Complete" (QMP CD-ROM eject).
+- **Day-2 ops for QEMU VMs** (UI + API): live migration (full
+  target-side orchestration), HA reschedule, VM backup (chunked
+  nexus-backup for volume-backed VMs, qemu-img for overlays),
+  cloud-init / cloudbase-init credential + SSH-key seeding.
+- **Resource orchestration**: per-VM `systemd-run` cgroup limits
+  (MemoryMax / CPUQuota / MemorySwapMax=0) + per-host atomic vcpu/mem
+  reservation so Firecracker and QEMU don't over-commit a shared host.
+- **Storage backend pairing**: QEMU disks route through the 0.4.x
+  storage registry (local_file / iSCSI / NFS / SPDK / TrueNAS).
+- DB migration `0040_vmm_backends.sql` — additive / forward-only.
+
+### Alpha caveats (read before deploying)
+- **Validated end-to-end on this build:** QEMU UEFI Linux cloud-image
+  VM create → pause → resume → delete (dev mode). Everything else is
+  code-complete + unit-tested but **not yet exercised against real
+  infrastructure**: Windows install, real iSCSI/NFS/SPDK, the
+  production sudo/systemd-run/cgroup path, TAP bridging for QEMU,
+  cross-host live migration, auto-HA, and virt-v2v.
+- **Dev escape hatches must stay OFF in any real deployment:**
+  `AGENT_NO_SUDO`, `AGENT_USER_MODE_NET`, `MANAGER_TEST_MODE`,
+  `LICENSE_DEV_MODE`. They bypass cgroup isolation, real networking,
+  and licensing respectively.
+- **Optional host packages** for full functionality: `swtpm` (Windows
+  11 TPM), `virtio-win` ISO (Windows drivers), `genisoimage`/`xorriso`
+  (cloud-init seed), `libguestfs-tools` (virt-v2v). The platform
+  degrades with warnings when absent.
+- No security review of the new routes yet; treat as untrusted-input
+  surface until reviewed.
+
 ## [0.4.1] - 2026-05-14
 
 Patch release rolling up post-v0.4.0 fixes surfaced while shipping
