@@ -1252,7 +1252,8 @@ async fn resolve_qemu_disk(
             .await
             .with_context(|| format!("image {image_id} lookup"))?;
         let format = detect_disk_format(&img.host_path);
-        let overlay_path = create_qcow2_overlay(st, vm_id, &img.host_path, &format).await?;
+        let overlay_path =
+            create_qcow2_overlay(st, vm_id, &img.host_path, &format, rootfs_size_mb).await?;
         Ok((overlay_path, "qcow2".into(), None))
     } else if let Some(p) = rootfs_path {
         // Path 3: legacy explicit path
@@ -1311,6 +1312,7 @@ async fn create_qcow2_overlay(
     vm_id: Uuid,
     source_path: &str,
     source_format: &str,
+    rootfs_size_mb: Option<u32>,
 ) -> Result<String> {
     st.storage
         .ensure_vm_dirs(vm_id)
@@ -1342,7 +1344,59 @@ async fn create_qcow2_overlay(
             String::from_utf8_lossy(&out.stderr)
         );
     }
+
+    // Honor a user-requested rootfs size. A fresh overlay inherits the backing
+    // image's virtual size, so without this the requested size is silently
+    // ignored. Only grow — never shrink below the source (qcow2 overlays can't
+    // safely shrink a populated backing image).
+    if let Some(mb) = rootfs_size_mb {
+        let requested_bytes = mb as u64 * 1024 * 1024;
+        let current_virtual = qcow2_virtual_size_bytes(&target.display().to_string())
+            .await
+            .unwrap_or(0);
+        if requested_bytes > current_virtual {
+            let out = tokio::process::Command::new("qemu-img")
+                .args(["resize", &target.display().to_string(), &format!("{mb}M")])
+                .output()
+                .await
+                .context("spawn qemu-img resize")?;
+            if !out.status.success() {
+                bail!(
+                    "qemu-img resize overlay to {mb}M failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        } else {
+            tracing::warn!(
+                vm_id = %vm_id,
+                requested_mb = mb,
+                current_bytes = current_virtual,
+                "requested rootfs size is not larger than the source image; keeping source size"
+            );
+        }
+    }
     Ok(target.display().to_string())
+}
+
+/// Return the virtual (declared) size of a qcow2/raw disk in bytes via
+/// `qemu-img info --output=json`.
+async fn qcow2_virtual_size_bytes(path: &str) -> Result<u64> {
+    let out = tokio::process::Command::new("qemu-img")
+        .args(["info", "--output=json", path])
+        .output()
+        .await
+        .context("spawn qemu-img info")?;
+    if !out.status.success() {
+        bail!(
+            "qemu-img info failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).context("parse qemu-img info json")?;
+    v.get("virtual-size")
+        .and_then(|s| s.as_u64())
+        .context("qemu-img info missing virtual-size")
 }
 
 /// Build a NoCloud cloud-init seed ISO with a user-data block that sets

@@ -545,6 +545,28 @@ pub const BASE_IMAGES: &[(&str, &str, bool)] = &[
     ),
 ];
 
+/// A release tag that is known to host the base-image assets. Pre-release
+/// (alpha/beta) tags do not always attach kernel/rootfs images, so when the
+/// target release is missing an image we fall back to this stable tag rather
+/// than leaving `/srv/images` empty (which breaks microVM creation).
+const IMAGE_FALLBACK_TAG: &str = "v0.4.2";
+
+/// Download a single asset to `dst_path`, trying `primary_url` first and
+/// falling back to `fallback_url` on failure. Returns Ok(true) on success.
+fn fetch_with_fallback(primary_url: &str, fallback_url: &str, dst_path: &str) -> Result<bool> {
+    let output = run_command("curl", &["-fsSL", "-o", dst_path, primary_url])?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if fallback_url != primary_url {
+        let output = run_command("curl", &["-fsSL", "-o", dst_path, fallback_url])?;
+        if output.status.success() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Download base images (kernels, rootfs, runtimes)
 pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec<LogEntry>> {
     let mut logs = Vec::new();
@@ -555,6 +577,16 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
     } else {
         format!("https://github.com/{}/releases/download/v{}", repo, version)
     };
+    let fallback_url = format!(
+        "https://github.com/{}/releases/download/{}",
+        repo, IMAGE_FALLBACK_TAG
+    );
+
+    // Track essential images (kernel + at least one rootfs). If none arrive,
+    // microVM creation is impossible, so we fail the install loudly instead of
+    // reporting success with an empty registry.
+    let mut kernel_ok = false;
+    let mut rootfs_ok = false;
 
     // Image directory - use /srv/images because functions/containers have hardcoded /srv/images paths
     // Do NOT use data_dir/images here - manager code expects /srv/images
@@ -592,6 +624,11 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
         }
 
         let dst_path = format!("{}/{}", image_dir_str, filename);
+        let is_kernel = filename.ends_with(".bin");
+        let is_rootfs = matches!(
+            *filename,
+            "alpine-3.18-minimal.ext4" | "busybox-1.35.ext4" | "ubuntu-24.04-minimal.ext4"
+        );
 
         // Skip if already exists
         if Path::new(&dst_path).exists() {
@@ -599,72 +636,99 @@ pub fn download_base_images(config: &InstallConfig, version: &str) -> Result<Vec
                 "{} already exists, skipping",
                 filename
             )));
+            if is_kernel {
+                kernel_ok = true;
+            }
+            if is_rootfs {
+                rootfs_ok = true;
+            }
             continue;
         }
 
         logs.push(LogEntry::info(format!("Downloading {}...", description)));
 
         // For compressed images, download .gz and decompress
-        if *is_compressed {
+        let downloaded = if *is_compressed {
             let gz_filename = format!("{}.gz", filename);
             let gz_path = format!("{}/{}", image_dir_str, gz_filename);
             let url = format!("{}/{}", base_url, gz_filename);
+            let fallback = format!("{}/{}", fallback_url, gz_filename);
 
             logs.push(LogEntry::info(format!(
                 "Downloading compressed {} (~500MB)...",
                 gz_filename
             )));
 
-            let output = run_command("curl", &["-fsSL", "-o", &gz_path, &url])?;
-
-            if output.status.success() {
+            if fetch_with_fallback(&url, &fallback, &gz_path)? {
                 logs.push(LogEntry::info(format!(
                     "Decompressing {} (this may take a minute)...",
                     gz_filename
                 )));
-
-                // Decompress using gunzip
                 let output = run_command("gunzip", &["-f", &gz_path])?;
-
                 if output.status.success() {
                     logs.push(LogEntry::success(format!(
                         "{} downloaded and decompressed",
                         description
                     )));
+                    true
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     logs.push(LogEntry::warning(format!(
                         "Failed to decompress {}: {}",
                         gz_filename, stderr
                     )));
+                    false
                 }
             } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
                 logs.push(LogEntry::warning(format!(
-                    "Failed to download {}: {}",
-                    gz_filename, stderr
+                    "Failed to download {} (primary and fallback)",
+                    gz_filename
                 )));
+                false
             }
         } else {
             // Regular uncompressed download
             let url = format!("{}/{}", base_url, filename);
-            let output = run_command("curl", &["-fsSL", "-o", &dst_path, &url])?;
-
-            if output.status.success() {
+            let fallback = format!("{}/{}", fallback_url, filename);
+            if fetch_with_fallback(&url, &fallback, &dst_path)? {
                 logs.push(LogEntry::success(format!("{} downloaded", description)));
+                true
             } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
                 logs.push(LogEntry::warning(format!(
-                    "Failed to download {}: {}",
-                    filename, stderr
+                    "Failed to download {} (primary and fallback)",
+                    filename
                 )));
-                // Don't fail - images are optional, user can add them later
+                false
             }
+        };
+
+        if downloaded && is_kernel {
+            kernel_ok = true;
+        }
+        if downloaded && is_rootfs {
+            rootfs_ok = true;
         }
     }
 
     // Set permissions
     let _ = run_sudo("chmod", &["-R", "755", &image_dir_str]);
+
+    // A kernel + at least one rootfs are required for microVM creation. If they
+    // are missing, fail the install with an actionable message rather than
+    // reporting success with an empty image registry.
+    if !kernel_ok || !rootfs_ok {
+        let missing = match (kernel_ok, rootfs_ok) {
+            (false, false) => "kernel and rootfs",
+            (false, true) => "kernel",
+            (true, false) => "rootfs",
+            (true, true) => unreachable!(),
+        };
+        return Err(anyhow::anyhow!(
+            "Base image download failed: missing {missing}. microVM creation requires at least \
+             a kernel and one rootfs image in /srv/images. Check network access to GitHub \
+             releases, or upload images manually via the Registry once installed."
+        ));
+    }
 
     logs.push(LogEntry::success("Base images download complete"));
 
