@@ -342,6 +342,12 @@ pub async fn create_and_start_qemu(
     // - enable_balloon: saves host memory; cooperative pressure.
     // - enable_rng: every modern guest benefits from virtio-rng.
     let auto_tpm = matches!(guest_os_resolved, GuestOs::Windows);
+    // Secure Boot defaults ON for Windows (so Windows 11 Setup passes its
+    // Secure-Boot check without the BypassSecureBootCheck registry hack), and
+    // OFF otherwise — overridable via the request's `enable_secure_boot`.
+    let secure_boot = req
+        .enable_secure_boot
+        .unwrap_or(matches!(guest_os_resolved, GuestOs::Windows));
 
     // Call the agent's pluggable-vmm boot route.
     let body = json!({
@@ -353,6 +359,7 @@ pub async fn create_and_start_qemu(
         "nics": nics,
         "enable_vnc": enable_vnc,
         "enable_tpm": auto_tpm,
+        "enable_secure_boot": secure_boot,
         "enable_balloon": true,
         "enable_rng": true,
         // Proxmox-style: never use -no-reboot. The guest reboots in place, so a
@@ -1742,6 +1749,7 @@ mod tests {
             installer_iso_id: None,
             firmware_path: None,
             nvram_template_path: None,
+            enable_secure_boot: None,
             ssh_authorized_keys: vec![],
             data_disks: vec![],
             vfio_devices: vec![],

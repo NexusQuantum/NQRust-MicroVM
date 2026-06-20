@@ -116,6 +116,8 @@ export interface CreateVmReq {
   boot_mode?: BootMode;
   guest_os?: GuestOs;
   enable_vnc?: boolean;
+  /** QEMU only — enable UEFI Secure Boot. Defaults ON for Windows. */
+  enable_secure_boot?: boolean;
   /** QEMU only — UEFI/PVH disk image to boot from. */
   disk_image_id?: string;
   /** QEMU only — attach this ISO as a CD-ROM during boot. */

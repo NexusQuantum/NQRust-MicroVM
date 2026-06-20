@@ -235,6 +235,12 @@ pub struct VmSpec {
     /// Required for Windows 11. Other Windows versions + Linux ignore it.
     #[serde(default)]
     pub enable_tpm: bool,
+    /// If true, boot with UEFI Secure Boot: the agent selects the secboot OVMF
+    /// firmware + pre-enrolled (`.ms`) NVRAM template, enables SMM and the
+    /// pflash secure global. Required for a clean Windows 11 install (otherwise
+    /// Setup needs the `BypassSecureBootCheck` registry workaround).
+    #[serde(default)]
+    pub enable_secure_boot: bool,
     /// virtio-balloon device (memory pressure cooperation). QEMU only.
     #[serde(default)]
     pub enable_balloon: bool,

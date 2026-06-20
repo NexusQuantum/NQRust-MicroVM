@@ -185,6 +185,11 @@ pub struct CreateVmReq {
     /// Optional override of the OVMF VARS template path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nvram_template_path: Option<String>,
+    /// Enable UEFI Secure Boot (QEMU VMs). When unset, the manager defaults it
+    /// ON for Windows guests (so Windows 11 installs without the
+    /// `BypassSecureBootCheck` registry workaround) and OFF otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_secure_boot: Option<bool>,
     /// SSH authorized_keys entries to inject into the guest via cloud-init.
     /// Each string is one full key line (`ssh-ed25519 AAA... comment`). Works
     /// for Linux (cloud-init) and Windows (cloudbase-init + OpenSSH).
@@ -255,6 +260,7 @@ impl TemplateSpec {
             installer_iso_id: None,
             firmware_path: None,
             nvram_template_path: None,
+            enable_secure_boot: None,
             ssh_authorized_keys: vec![],
             data_disks: vec![],
             vfio_devices: vec![],

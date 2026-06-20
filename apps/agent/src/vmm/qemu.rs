@@ -198,8 +198,16 @@ impl QemuDriver {
         let mut args: Vec<String> = Vec::new();
 
         // Machine model: q35 + KVM is the modern default. UEFI requires q35.
+        // Secure Boot additionally needs SMM (so the guest can't tamper with the
+        // protected pflash) plus the `cfi.pflash01 secure=on` global below.
         args.push("-machine".into());
-        args.push("q35,accel=kvm,smm=off".into());
+        if spec.enable_secure_boot {
+            args.push("q35,accel=kvm,smm=on".into());
+            args.push("-global".into());
+            args.push("driver=cfi.pflash01,property=secure,value=on".into());
+        } else {
+            args.push("q35,accel=kvm,smm=off".into());
+        }
 
         // CPU model + SMP topology. Default "host" (all host features, needed
         // for nested virt); operators can pick a fixed model (e.g. kvm64,
@@ -278,8 +286,14 @@ impl QemuDriver {
                 // Resolve the OVMF code firmware. The caller's path may be a
                 // distro default that doesn't match this host (e.g. the
                 // manager defaults to Arch paths but the agent is on Ubuntu).
-                // Fall back to probing well-known per-distro locations.
-                let fw = resolve_ovmf_code(firmware);
+                // Fall back to probing well-known per-distro locations. Secure
+                // Boot needs the secboot CODE variant (the matching `.ms`/
+                // secboot NVRAM is selected in prepare_nvram).
+                let fw = if spec.enable_secure_boot {
+                    resolve_ovmf_code_secboot(firmware)
+                } else {
+                    resolve_ovmf_code(firmware)
+                };
                 args.push("-drive".into());
                 args.push(format!(
                     "if=pflash,format=raw,readonly=on,file={}",
@@ -576,19 +590,73 @@ impl QemuDriver {
     }
 
     /// Copy the OVMF_VARS template to a per-VM runtime nvram file so each
-    /// VM has its own writable EFI variables.
-    async fn prepare_nvram(&self, template: &Path, dst: &Path) -> Result<()> {
+    /// VM has its own writable EFI variables. With `secure_boot`, the
+    /// pre-enrolled (`.ms`) Microsoft-keys VARS template is used so the guest
+    /// reports Secure Boot as enabled (required by Windows 11 Setup).
+    async fn prepare_nvram(&self, template: &Path, dst: &Path, secure_boot: bool) -> Result<()> {
         if fs::metadata(dst).await.is_ok() {
             return Ok(());
         }
         // Resolve the VARS template to a path that actually exists on this
         // host (the caller's default may be for a different distro).
-        let src = resolve_ovmf_vars(template);
+        let src = if secure_boot {
+            resolve_ovmf_vars_secboot(template)
+        } else {
+            resolve_ovmf_vars(template)
+        };
         fs::copy(&src, dst)
             .await
             .with_context(|| format!("copy ovmf vars {} -> {}", src.display(), dst.display()))?;
         Ok(())
     }
+}
+
+/// Probe well-known **Secure Boot** OVMF_CODE locations (secboot-capable
+/// firmware built with SECURE_BOOT_ENABLE). Falls back to the regular code if
+/// no secboot variant is found so the VM still boots (without enforcement).
+fn resolve_ovmf_code_secboot(requested: &Path) -> PathBuf {
+    let req_secboot = requested
+        .to_str()
+        .map(|s| s.contains(".ms.") || s.contains("secboot"))
+        .unwrap_or(false);
+    if requested.exists() && req_secboot {
+        return requested.to_path_buf();
+    }
+    const CANDIDATES: &[&str] = &[
+        "/usr/share/OVMF/OVMF_CODE_4M.ms.fd", // Debian/Ubuntu (MS-paired)
+        "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd", // Debian/Ubuntu (secboot)
+        "/usr/share/edk2/x64/OVMF_CODE.secboot.4m.fd", // Arch
+        "/usr/share/edk2/x64/OVMF_CODE.secboot.fd", // Arch (legacy)
+        "/usr/share/edk2-ovmf/x64/OVMF_CODE.secboot.fd", // Fedora/RHEL
+    ];
+    CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+        .unwrap_or_else(|| resolve_ovmf_code(requested))
+}
+
+/// Probe well-known **Secure Boot** OVMF_VARS templates with Microsoft keys
+/// pre-enrolled (`.ms` variant). Falls back to the regular vars if none found.
+fn resolve_ovmf_vars_secboot(requested: &Path) -> PathBuf {
+    let req_ms = requested
+        .to_str()
+        .map(|s| s.contains(".ms."))
+        .unwrap_or(false);
+    if requested.exists() && req_ms {
+        return requested.to_path_buf();
+    }
+    const CANDIDATES: &[&str] = &[
+        "/usr/share/OVMF/OVMF_VARS_4M.ms.fd", // Debian/Ubuntu pre-enrolled MS keys
+        "/usr/share/OVMF/OVMF_VARS.ms.fd",    // Debian/Ubuntu (legacy)
+        "/usr/share/edk2/x64/OVMF_VARS.4m.fd", // Arch (keys enrolled at build)
+        "/usr/share/edk2-ovmf/x64/OVMF_VARS.secboot.fd", // Fedora/RHEL
+    ];
+    CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+        .unwrap_or_else(|| resolve_ovmf_vars(requested))
 }
 
 /// Probe well-known OVMF_CODE locations across distros. Returns the caller's
@@ -664,7 +732,7 @@ impl VmmDriver for QemuDriver {
         } = &spec.boot
         {
             let dst = self.nvram_file(&vm_dir);
-            self.prepare_nvram(template, &dst)
+            self.prepare_nvram(template, &dst, spec.enable_secure_boot)
                 .await
                 .map_err(VmmError::Other)?;
             Some(dst)
@@ -1052,6 +1120,7 @@ mod tests {
             }],
             enable_vnc: false,
             enable_tpm: false,
+            enable_secure_boot: false,
             enable_balloon: false,
             enable_rng: false,
             no_reboot: false,
@@ -1264,7 +1333,8 @@ mod tests {
         // CD-ROMs attach as an ejectable ide-cd on an AHCI controller, NOT
         // virtio-blk (which can't be media-ejected at install-complete).
         assert!(joined.contains("ich9-ahci,id=ahci0"));
-        assert!(joined.contains("ide-cd,drive=iso,id=iso-dev,bus=ahci0.0,bootindex=0"));
+        // CD-ROMs boot AFTER the root disk, so the first CD is bootindex 1.
+        assert!(joined.contains("ide-cd,drive=iso,id=iso-dev,bus=ahci0.0,bootindex=1"));
         // Spare PCIe root-ports for runtime hot-plug.
         assert!(joined.contains("pcie-root-port,id=rphp0"));
     }
@@ -1289,7 +1359,7 @@ mod tests {
             .build_args(&spec, std::path::Path::new("/srv/fc/xyz"), None)
             .unwrap();
         let joined = args.join(" ");
-        assert!(joined.contains("ide-cd,drive=iso1,id=iso1-dev,bus=ahci0.0,bootindex=0"));
-        assert!(joined.contains("ide-cd,drive=iso2,id=iso2-dev,bus=ahci0.1,bootindex=1"));
+        assert!(joined.contains("ide-cd,drive=iso1,id=iso1-dev,bus=ahci0.0,bootindex=1"));
+        assert!(joined.contains("ide-cd,drive=iso2,id=iso2-dev,bus=ahci0.1,bootindex=2"));
     }
 }

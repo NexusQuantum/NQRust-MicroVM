@@ -46,6 +46,33 @@ pub async fn allocate_rootfs(
             .clone_from_image(source_image, opts)
             .await
             .with_context(|| format!("clone_from_image failed on backend {backend_id}"))?;
+
+        // clone_from_image extends the rootfs FILE to `target_size_bytes`, but
+        // the ext4 FILESYSTEM inside still has the source image's geometry —
+        // so without this the guest only sees the original size even though
+        // the user asked for a larger rootfs. Grow the filesystem to fill the
+        // extended file. For LocalFile the locator IS the on-disk path, so
+        // resize2fs runs against it directly on the agent host. Only needed
+        // when an actual grow happened and the image is ext4.
+        let source_size = tokio::fs::metadata(source_image)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if target_size_bytes > source_size
+            && image_is_ext4_rootfs(source_image).await.unwrap_or(false)
+        {
+            let attached = AttachedPath::File(std::path::PathBuf::from(&h.locator));
+            if let Err(e) = crate::features::storage::agent_rpc::agent_resize2fs(
+                host_addr,
+                h.backend_kind,
+                &attached,
+            )
+            .await
+            {
+                tracing::warn!("resize2fs on cloned rootfs failed (non-fatal): {e:#}");
+            }
+        }
+
         return Ok(AllocOutcome {
             volume_handle: h,
             attached_for_caller: None,
