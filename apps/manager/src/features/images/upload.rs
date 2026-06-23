@@ -41,6 +41,32 @@ pub async fn write_field_to_disk(
     Ok((path, sha256, size))
 }
 
+/// Move a staged upload into its final directory once the destination is known.
+///
+/// Uploads are streamed to a staging directory first so that multipart field
+/// ordering does not matter (browsers send the `file` part before the `kind`
+/// text field). A rename is used when source and destination share a
+/// filesystem; otherwise we fall back to copy + remove.
+pub async fn move_into_dir(staged: &std::path::Path, dest_dir: PathBuf) -> Result<PathBuf> {
+    tokio::fs::create_dir_all(&dest_dir)
+        .await
+        .context("Failed to create destination directory")?;
+    let filename = staged
+        .file_name()
+        .map(|n| n.to_owned())
+        .context("staged upload has no filename")?;
+    let dest = dest_dir.join(filename);
+
+    if tokio::fs::rename(staged, &dest).await.is_err() {
+        // Cross-filesystem move: copy then remove the staged file.
+        tokio::fs::copy(staged, &dest)
+            .await
+            .context("Failed to copy staged upload to destination")?;
+        let _ = tokio::fs::remove_file(staged).await;
+    }
+    Ok(dest)
+}
+
 /// Sanitize filename to prevent path traversal
 fn sanitize_filename(filename: &str) -> String {
     filename

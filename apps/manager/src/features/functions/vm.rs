@@ -99,6 +99,7 @@ pub async fn create_function_vm(
         installer_iso_id: None,
         firmware_path: None,
         nvram_template_path: None,
+        enable_secure_boot: None,
         ssh_authorized_keys: vec![],
         data_disks: vec![],
         vfio_devices: vec![],

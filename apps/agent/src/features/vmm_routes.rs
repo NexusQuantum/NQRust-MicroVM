@@ -163,6 +163,8 @@ pub struct BootRequest {
     #[serde(default)]
     pub enable_tpm: bool,
     #[serde(default)]
+    pub enable_secure_boot: bool,
+    #[serde(default)]
     pub enable_balloon: bool,
     #[serde(default)]
     pub enable_rng: bool,
@@ -201,6 +203,7 @@ async fn boot(
         nics: req.nics,
         enable_vnc: req.enable_vnc,
         enable_tpm: req.enable_tpm,
+        enable_secure_boot: req.enable_secure_boot,
         enable_balloon: req.enable_balloon,
         enable_rng: req.enable_rng,
         no_reboot: req.no_reboot,
@@ -906,6 +909,8 @@ pub struct MigrateIncomingRequest {
     #[serde(default)]
     pub enable_tpm: bool,
     #[serde(default)]
+    pub enable_secure_boot: bool,
+    #[serde(default)]
     pub enable_balloon: bool,
     #[serde(default)]
     pub enable_rng: bool,
@@ -942,6 +947,7 @@ async fn migrate_incoming(
         nics: req.nics,
         enable_vnc: req.enable_vnc,
         enable_tpm: req.enable_tpm,
+        enable_secure_boot: req.enable_secure_boot,
         enable_balloon: req.enable_balloon,
         enable_rng: req.enable_rng,
         no_reboot: false,

@@ -67,6 +67,7 @@ export function QemuCreateWizard({ onComplete, onCancel, onBack }: QemuCreateWiz
 
   // System tab
   const [enableVnc, setEnableVnc] = useState(true)
+  const [secureBoot, setSecureBoot] = useState(false)
 
   // Disks tab
   const [diskSizeGb, setDiskSizeGb] = useState<number>(40)
@@ -118,6 +119,12 @@ export function QemuCreateWizard({ onComplete, onCancel, onBack }: QemuCreateWiz
   useEffect(() => {
     setEnableVnc(guestKind !== "linux" || source === "iso")
   }, [guestKind, source])
+
+  // Secure Boot defaults ON for Windows (Windows 11 Setup requires it), OFF
+  // otherwise. The user can still toggle it in the System tab.
+  useEffect(() => {
+    setSecureBoot(guestKind === "windows")
+  }, [guestKind])
 
   // Load images from registry
   useEffect(() => {
@@ -197,6 +204,7 @@ export function QemuCreateWizard({ onComplete, onCancel, onBack }: QemuCreateWiz
       vmm_kind: "qemu",
       guest_os: GUEST_OS_API[guestKind],
       enable_vnc: enableVnc,
+      enable_secure_boot: secureBoot,
       disk_image_id: source === "image" ? diskImageId : undefined,
       installer_iso_id: source === "iso" ? installerIsoId : undefined,
       rootfs_size_mb: source === "iso" || diskSizeGb ? diskSizeGb * 1024 : undefined,
@@ -433,6 +441,24 @@ export function QemuCreateWizard({ onComplete, onCancel, onBack }: QemuCreateWiz
                   <p className="mt-1 text-xs text-muted-foreground">
                     Required for graphical installers (Windows, desktop Linux). Headless servers can use the serial
                     console instead.
+                  </p>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 rounded-lg border border-border p-4 cursor-pointer">
+                <Checkbox
+                  checked={secureBoot}
+                  onCheckedChange={(c) => setSecureBoot(c as boolean)}
+                  className="mt-0.5"
+                />
+                <div>
+                  <div className="flex items-center gap-2 font-medium">
+                    <ShieldCheck className="h-4 w-4" /> Secure Boot
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Enforces UEFI Secure Boot with pre-enrolled Microsoft keys. Required for a clean Windows 11
+                    install (otherwise Setup needs the BypassSecureBootCheck registry workaround). Default ON for
+                    Windows.
                   </p>
                 </div>
               </label>
@@ -800,6 +826,8 @@ export function QemuCreateWizard({ onComplete, onCancel, onBack }: QemuCreateWiz
                   <dd>{source === "image" ? "From image" : `${diskSizeGb} GB (new)`}</dd>
                   <dt className="text-muted-foreground">Console</dt>
                   <dd>{enableVnc ? "Graphical (VNC)" : "Serial"}</dd>
+                  <dt className="text-muted-foreground">Secure Boot</dt>
+                  <dd>{secureBoot ? "Enabled" : "Disabled"}</dd>
                   <dt className="text-muted-foreground">Network</dt>
                   <dd>{networks?.find((n) => n.id === networkId)?.name || "Default"}</dd>
                 </dl>

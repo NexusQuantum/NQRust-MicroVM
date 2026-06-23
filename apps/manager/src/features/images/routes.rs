@@ -708,10 +708,11 @@ pub async fn upload_image(
     let mut image_kind: Option<String> = None;
     let mut nvram_template_path: Option<String> = None;
 
-    // Multipart fields are processed in arrival order. `kind` must precede the
-    // `file` part (so we know where to write); the file is streamed straight to
-    // disk in the same pass — we must NOT break and re-iterate, or the file
-    // part gets skipped ("No file uploaded").
+    // Multipart fields are processed in arrival order, but the handler is
+    // order-independent: the `file` part is streamed to a staging directory in
+    // this same pass (we must NOT break and re-iterate, or the file part gets
+    // skipped), and the final destination is resolved from `kind` after the
+    // loop. `file_path` below holds the staged path until then.
     let mut file_path: Option<std::path::PathBuf> = None;
     let mut sha256: Option<String> = None;
     let mut size: Option<i64> = None;
@@ -741,13 +742,12 @@ pub async fn upload_image(
                     Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
             }
             "file" => {
-                let k = kind.clone().ok_or(StatusCode::BAD_REQUEST)?;
-                let upload_dir = match k.as_str() {
-                    "docker" => st.images.root().join("docker"),
-                    "kernel" | "rootfs" => st.images.root().to_path_buf(),
-                    _ => return Err(StatusCode::BAD_REQUEST),
-                };
-                let (p, s, sz) = super::upload::write_field_to_disk(field, upload_dir, &k)
+                // Stream the file to a staging dir without requiring `kind` to
+                // have arrived yet — browsers send the `file` part before the
+                // `kind` text field, so resolving the destination here would
+                // wrongly 400. The final directory is resolved after the loop.
+                let staging = st.images.root().join(".staging");
+                let (p, s, sz) = super::upload::write_field_to_disk(field, staging, "upload")
                     .await
                     .map_err(|e| {
                         tracing::error!("File upload failed: {}", e);
@@ -762,7 +762,24 @@ pub async fn upload_image(
     }
 
     let kind = kind.ok_or(StatusCode::BAD_REQUEST)?;
-    let file_path = file_path.ok_or(StatusCode::BAD_REQUEST)?;
+    let staged_path = file_path.ok_or(StatusCode::BAD_REQUEST)?;
+    // Resolve the destination now that every text field has been parsed, then
+    // move the staged file into place. This makes the handler independent of
+    // multipart field ordering.
+    let upload_dir = match kind.as_str() {
+        "docker" => st.images.root().join("docker"),
+        "kernel" | "rootfs" => st.images.root().to_path_buf(),
+        _ => {
+            let _ = tokio::fs::remove_file(&staged_path).await;
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+    let file_path = super::upload::move_into_dir(&staged_path, upload_dir)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to finalize uploaded file: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     let sha256 = sha256.unwrap_or_default();
     let size = size.unwrap_or(0);
 
