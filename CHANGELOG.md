@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.6] - 2026-06-20
+
+**Alpha 6** — a bug-fix release for the two issues that remained after alpha.5
+testing: microVM rootfs sizing now actually applies inside the guest, and QEMU
+VMs gain a real Secure Boot option so Windows 11 installs without the
+`BypassSecureBootCheck` registry workaround.
+
+### Added
+- **Secure Boot option for QEMU VMs.** New `enable_secure_boot` flag threaded
+  end-to-end (`CreateVmReq` → `VmSpec` → agent), surfaced as a **Secure Boot**
+  toggle in the create wizard's System tab — default **ON for Windows**, OFF for
+  Linux. When enabled the agent boots `q35` with `smm=on` and the
+  `cfi.pflash01,property=secure,value=on` global, selects the secboot OVMF code
+  firmware (`OVMF_CODE_4M.ms.fd`) and the pre-enrolled Microsoft-keys NVRAM
+  template (`OVMF_VARS_4M.ms.fd`). The guest firmware then reports
+  `Secure Boot State: Enabled`, so Windows 11 Setup passes its Secure-Boot check
+  with no registry hack.
+
+### Fixed
+- **microVM rootfs size had no effect inside the guest.** The storage fast path
+  (`clone_from_image` on the LocalFile backend) extended the rootfs *file* to the
+  requested size but never grew the ext4 *filesystem*, so the guest kept seeing
+  the source image's size (e.g. 100 MB in a 300 MB file). `rootfs_allocator` now
+  runs `resize2fs` after the fast-path clone whenever the file was actually grown
+  and the image is ext4 — matching the slow path — so the guest sees the full
+  requested size. (Completes the rootfs-resize work begun in alpha.5, which only
+  covered the QEMU disk-image overlay path.)
+- **Stale agent unit tests** that asserted the old CD `bootindex=0` updated to the
+  current disk-first policy (root disk boots first, CD-ROMs after → bootindex 1+).
+
+## [0.5.0-alpha.5] - 2026-06-19
+
+**Alpha 5** — a bug-fix release for the three defects found testing alpha.4:
+image/ISO uploads, internet-mode image seeding, and microVM rootfs sizing. With
+these, VM creation works end-to-end (Linux and Windows 11) across all install
+modes.
+
+### Fixed
+- **Image upload always returned HTTP 400** (kernel, rootfs, UEFI disk, and
+  installer **ISO**). The upload handler streamed multipart fields in order and
+  required the `kind` field *before* the `file` part, but browsers send `file`
+  first, so `kind` was always unset when the file arrived → instant 400. The
+  handler now streams the file to a staging directory and resolves the
+  destination after all fields are parsed, making it field-order independent.
+  This affected every UI image upload, not just ISO.
+- **Internet (online) installs shipped no kernel/rootfs images**, so microVMs
+  couldn't be created ("no Kernel image and no Rootfs image available"). Pre-release
+  tags don't attach base images, so the online installer's downloads 404'd and it
+  still reported success with an empty `/srv/images`. The installer now falls back
+  to a known-good release tag for the base images and **fails loudly** if a kernel
+  + rootfs are still missing, instead of completing with an empty registry.
+- **QEMU VM rootfs size was ignored** when creating from a disk image.
+  `create_qcow2_overlay()` never applied `rootfs_size_mb` — the overlay inherited
+  the backing image's virtual size. It now runs `qemu-img resize` (grow-only) when
+  the requested size exceeds the source. (The Firecracker microVM path is completed
+  in alpha.6.)
+
 ## [0.5.0-alpha.4] - 2026-06-15
 
 **Alpha 4** — turns the QEMU/UEFI backend into a Proxmox-style VM platform:
