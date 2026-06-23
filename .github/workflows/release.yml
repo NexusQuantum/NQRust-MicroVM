@@ -211,14 +211,19 @@ jobs:
   build-images:
     name: Build Base Images
     needs: [ci-gate, build-binaries]
-    # Skip image-build by default. Kernel + rootfs artifacts only change
-    # rarely; the install bootstrap + auto-update path pull them from the
-    # last release that did carry them (currently v0.2.3). Set the
-    # `BUILD_IMAGES` repo variable to `true` (Settings → Variables) on
-    # releases that genuinely change the kernel build, an Alpine version
-    # bump, etc. — then this job runs the full debootstrap/mkfs.ext4
-    # toolchain, which requires passwordless sudo on the runner.
-    if: ${{ vars.BUILD_IMAGES == 'true' }}
+    # Build images on every stable tag (vX.Y.Z) so the GitHub release
+    # carries the kernel + rootfs assets the general installer downloads
+    # via scripts/install/install.sh → nqr-installer → download_base_images.
+    # Skip on prereleases (alpha/beta/rc) since those are short-lived and
+    # operators are expected to install from a prior stable release. The
+    # `BUILD_IMAGES=true` repo variable forces a build for those tags
+    # when the kernel / rootfs / runtime sources actually changed.
+    #
+    # The earlier "skip by default" rule (commit history) assumed the
+    # installer would fall back to a previous release's assets — it
+    # never did, so v0.4.0 / v0.4.1 shipped without base images and the
+    # general installer silently produced an empty /srv/images.
+    if: ${{ vars.BUILD_IMAGES == 'true' || !contains(github.ref_name, '-') }}
     runs-on: self-hosted
     # This job builds VM images (kernels, rootfs, runtimes)
     # Requires: KVM access, ~10GB disk space, internet for downloads
@@ -331,7 +336,7 @@ jobs:
           echo 'nameserver 8.8.8.8' | sudo tee /mnt/alpine/etc/resolv.conf > /dev/null
 
           # Set root password (password: root)
-          sudo chroot /mnt/alpine sh -c 'echo "root:root" | chpasswd'
+          sudo chroot /mnt/alpine /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; echo "root:root" | chpasswd'
 
           # Create inittab for OpenRC (matches working dev image exactly)
           printf '%s\n' \
@@ -358,7 +363,7 @@ jobs:
             | sudo tee /mnt/alpine/etc/network/interfaces > /dev/null
 
           # Enable networking service in default runlevel
-          sudo chroot /mnt/alpine rc-update add networking default 2>/dev/null || \
+          sudo chroot /mnt/alpine /sbin/rc-update add networking default 2>/dev/null || \
             sudo ln -sf /etc/init.d/networking /mnt/alpine/etc/runlevels/default/networking
 
           # Create udhcpc default script
@@ -437,7 +442,7 @@ jobs:
           echo 'nameserver 8.8.8.8' | sudo tee /mnt/busybox/etc/resolv.conf > /dev/null
 
           # Set root password (password: root)
-          sudo chroot /mnt/busybox sh -c 'echo "root:root" | chpasswd'
+          sudo chroot /mnt/busybox /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; echo "root:root" | chpasswd'
 
           # Create inittab for OpenRC (matches working dev image exactly)
           printf '%s\n' \
@@ -464,7 +469,7 @@ jobs:
             | sudo tee /mnt/busybox/etc/network/interfaces > /dev/null
 
           # Enable networking service in default runlevel
-          sudo chroot /mnt/busybox rc-update add networking default 2>/dev/null || \
+          sudo chroot /mnt/busybox /sbin/rc-update add networking default 2>/dev/null || \
             sudo ln -sf /etc/init.d/networking /mnt/busybox/etc/runlevels/default/networking
 
           # Create udhcpc default script (matches working image)
@@ -526,10 +531,10 @@ jobs:
           sudo tar -xJf /tmp/ubuntu-rootfs.tar.xz -C /mnt/ubuntu
 
           # Set root password
-          sudo chroot /mnt/ubuntu sh -c 'echo "root:root" | chpasswd'
+          sudo chroot /mnt/ubuntu /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; echo "root:root" | chpasswd'
 
           # Enable serial console
-          sudo chroot /mnt/ubuntu systemctl enable serial-getty@ttyS0.service || true
+          sudo chroot /mnt/ubuntu /usr/bin/systemctl enable serial-getty@ttyS0.service || true
 
           # Set default TERM for serial console
           sudo mkdir -p /mnt/ubuntu/etc/profile.d
@@ -601,7 +606,11 @@ jobs:
           cat > rootfs/tmp/setup.sh << 'SETUP_SCRIPT'
           #!/bin/sh
           set -e
-          
+
+          # chroot inherits the caller's PATH, which on some host distros (Arch)
+          # omits /sbin and /usr/sbin where apk and most rootfs tooling live.
+          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
           # Update package index
           apk update
           

@@ -1,0 +1,901 @@
+{{- $logo := resources.Get "images/logos/logo.png" -}}
+{{- $logoNav := $logo.Resize "120x webp q90" -}}
+{{- $logoFooter := $logo.Resize "104x webp q90" -}}
+{{- $logoMark := $logo.Resize "56x webp q90" -}}
+{{- $isID := eq site.Language.Lang "id" -}}
+{{- $enURL := "/" -}}
+{{- $idURL := "/id/" -}}
+<!doctype html>
+<html lang="{{ site.LanguageCode }}" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ site.Title }} — {{ i18n "site-title-suffix" }}</title>
+  <meta name="description" content="{{ i18n "site-meta-desc" }}" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/css/landing.css" />
+</head>
+<body>
+
+<!-- ============================================================
+     Icon sprite — Lucide-style 24x24 line icons
+     ============================================================ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="ic-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/>
+      <line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>
+    </symbol>
+    <symbol id="ic-container" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z"/>
+      <path d="M10 21.9V14L2.1 9.1"/><path d="m10 14 11.9-6.9"/><path d="M14 19.8v-8.1"/><path d="M18 17.5V9.4"/>
+    </symbol>
+    <symbol id="ic-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+    </symbol>
+    <symbol id="ic-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>
+    </symbol>
+    <symbol id="ic-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+    </symbol>
+    <symbol id="ic-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>
+    </symbol>
+    <symbol id="ic-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/>
+      <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>
+    </symbol>
+    <symbol id="ic-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+    </symbol>
+    <symbol id="ic-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </symbol>
+    <symbol id="ic-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </symbol>
+    <symbol id="ic-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/>
+      <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>
+    </symbol>
+    <symbol id="ic-filecode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14.5 22H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l5 5v3"/><polyline points="14 2 14 8 20 8"/>
+      <path d="m9 18 3-3-3-3"/><path d="m5 12-3 3 3 3"/>
+    </symbol>
+    <symbol id="ic-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14"/><path d="M12 5v14"/>
+    </symbol>
+    <symbol id="ic-arrowright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+    </symbol>
+    <symbol id="ic-arrowupright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 7h10v10"/><path d="M7 17 17 7"/>
+    </symbol>
+    <symbol id="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12"/>
+    </symbol>
+    <symbol id="ic-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+    </symbol>
+    <symbol id="ic-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>
+      <path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>
+    </symbol>
+    <symbol id="ic-harddrive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="22" x2="2" y1="12" y2="12"/>
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+      <line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>
+    </symbol>
+    <symbol id="ic-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+      <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
+    </symbol>
+    <symbol id="ic-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </symbol>
+    <symbol id="ic-layout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
+    </symbol>
+    <symbol id="ic-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="6 3 20 12 6 21 6 3"/>
+    </symbol>
+    <symbol id="ic-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- ============================================================
+     NAV
+     ============================================================ -->
+<nav class="nav" id="site-nav">
+  <div class="wrap nav-inner">
+    <a href="#top" class="nav-brand">
+      <img src="{{ $logoNav.RelPermalink }}" alt="NQRust" />
+      <div class="pipe"></div>
+      <div class="product">MicroVM <span class="sub">{{ i18n "nav-product-sub" }}</span></div>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="#features">{{ i18n "nav-platform" }}</a>
+      <a class="nav-link" href="#showcase">{{ i18n "nav-product" }}</a>
+      <a class="nav-link" href="#architecture">{{ i18n "nav-architecture" }}</a>
+      <a class="nav-link" href="#pricing">{{ i18n "nav-pricing" }}</a>
+      <a class="nav-link" href="#faq">{{ i18n "nav-faq" }}</a>
+      <a class="nav-link" href="/docs/">{{ i18n "nav-docs" }}</a>
+    </div>
+    <div class="nav-cta">
+      <div class="lang-toggle" role="group" aria-label="Language">
+        <a href="{{ $enURL }}" class="{{ if not $isID }}active{{ end }}" aria-current="{{ if not $isID }}page{{ end }}">{{ i18n "lang-en-label" }}</a>
+        <a href="{{ $idURL }}" class="{{ if $isID }}active{{ end }}" aria-current="{{ if $isID }}page{{ end }}">{{ i18n "lang-id-label" }}</a>
+      </div>
+      <a class="btn dark sm" href="#contact">{{ i18n "nav-contact-sales" }} <svg class="i-16"><use href="#ic-arrowright"/></svg></a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============================================================
+     HERO
+     ============================================================ -->
+<section class="hero" id="top">
+  <div class="wrap hero-inner">
+    <div>
+      <div class="hero-tag">
+        <span class="badge">v0.4.2</span>
+        <span>{{ i18n "hero-badge-tag" }}</span>
+        <svg class="i-12"><use href="#ic-arrowupright"/></svg>
+      </div>
+      <h1>{{ i18n "hero-h1-pre" }}<br/>{{ i18n "hero-h1-post" | safeHTML }}</h1>
+      <p class="hero-sub">{{ i18n "hero-sub" }}</p>
+      <div class="hero-cta">
+        <a href="https://demo.microvm.nexusquantum.id" class="btn primary lg">{{ i18n "hero-cta-primary" }} <svg class="i-16"><use href="#ic-arrowright"/></svg></a>
+        <a href="https://microvm.nexusquantum.id/docs/introduction" class="btn outline lg">{{ i18n "hero-cta-outline" }}</a>
+      </div>
+      <div class="hero-meta">
+        <div class="item">
+          <svg class="i-18"><use href="#ic-shield"/></svg>
+          <div>
+            <div class="k">{{ i18n "hero-meta-1-k" }}</div>
+            <div class="v">{{ i18n "hero-meta-1-v" }}</div>
+          </div>
+        </div>
+        <div class="item">
+          <svg class="i-18"><use href="#ic-layers"/></svg>
+          <div>
+            <div class="k">{{ i18n "hero-meta-2-k" }}</div>
+            <div class="v">{{ i18n "hero-meta-2-v" }}</div>
+          </div>
+        </div>
+        <div class="item">
+          <svg class="i-18"><use href="#ic-shield"/></svg>
+          <div>
+            <div class="k">{{ i18n "hero-meta-3-k" }}</div>
+            <div class="v">{{ i18n "hero-meta-3-v" }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-visual">
+      <div class="mock">
+        <div class="mini-dash">
+          <div class="mini-sidebar">
+            <div class="mini-brand">NQ</div>
+            <div class="mini-sb-ic"><svg class="i-16"><use href="#ic-layout"/></svg></div>
+            <div class="mini-sb-ic active"><svg class="i-16"><use href="#ic-server"/></svg></div>
+            <div class="mini-sb-ic"><svg class="i-16"><use href="#ic-container"/></svg></div>
+            <div class="mini-sb-ic"><svg class="i-16"><use href="#ic-filecode"/></svg></div>
+            <div class="mini-sb-ic"><svg class="i-16"><use href="#ic-database"/></svg></div>
+            <div class="mini-sb-ic"><svg class="i-16"><use href="#ic-network"/></svg></div>
+            <div class="mini-sb-ic"><svg class="i-16"><use href="#ic-settings"/></svg></div>
+          </div>
+          <div class="mini-content">
+            <div class="mini-head">
+              <div>
+                <div class="title">{{ i18n "hero-mini-title" }}</div>
+                <div class="sub">{{ i18n "hero-mini-sub" }}</div>
+              </div>
+              <div class="actions">
+                <div class="placeholder"></div>
+                <div class="primary"><svg class="i-12"><use href="#ic-plus"/></svg> {{ i18n "hero-mini-create" }}</div>
+              </div>
+            </div>
+            <div class="mini-stats">
+              <div class="t" style="--bg:rgba(37,99,235,0.10);--fg:#1d4ed8"><div class="r"><span class="l">{{ i18n "hero-mini-tile-vms" }}</span><span class="i"><svg class="i-10"><use href="#ic-server"/></svg></span></div><div class="v">42</div></div>
+              <div class="t" style="--bg:rgba(202,138,4,0.12);--fg:#a16207"><div class="r"><span class="l">{{ i18n "hero-mini-tile-fns" }}</span><span class="i"><svg class="i-10"><use href="#ic-zap"/></svg></span></div><div class="v">18</div></div>
+              <div class="t" style="--bg:rgba(147,51,234,0.10);--fg:#7e22ce"><div class="r"><span class="l">{{ i18n "hero-mini-tile-cts" }}</span><span class="i"><svg class="i-10"><use href="#ic-container"/></svg></span></div><div class="v">27</div></div>
+              <div class="t" style="--bg:rgba(22,163,74,0.10);--fg:#15803d"><div class="r"><span class="l">{{ i18n "hero-mini-tile-hosts" }}</span><span class="i"><svg class="i-10"><use href="#ic-cpu"/></svg></span></div><div class="v">3</div></div>
+            </div>
+            <div class="mini-list">
+              <div class="row"><span class="dot run"></span><span class="nm">web-prod-01</span><span class="m">4 vCPU</span><span class="m">8 GB</span><span class="m">10.0.0.12</span></div>
+              <div class="row"><span class="dot run"></span><span class="nm">pg-cluster-01</span><span class="m">8 vCPU</span><span class="m">16 GB</span><span class="m">10.0.0.21</span></div>
+              <div class="row"><span class="dot run"></span><span class="nm">analytics-worker</span><span class="m">2 vCPU</span><span class="m">4 GB</span><span class="m">10.0.0.34</span></div>
+              <div class="row"><span class="dot amber"></span><span class="nm">staging-redis</span><span class="m">2 vCPU</span><span class="m">4 GB</span><span class="m">10.0.0.45</span></div>
+              <div class="row last"><span class="dot run"></span><span class="nm">build-runner-03</span><span class="m">8 vCPU</span><span class="m">12 GB</span><span class="m">10.0.0.51</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="float float-top">
+        <div class="float-row">
+          <div class="float-ic green"><svg class="i-18"><use href="#ic-server"/></svg></div>
+          <div>
+            <div class="k">{{ i18n "hero-float-cluster" }}</div>
+            <div class="v"><span class="g">●</span> {{ i18n "hero-float-cluster-v" }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="float float-bot">
+        <div class="float-row top">
+          <svg class="i-14" style="color:var(--nq-orange)"><use href="#ic-camera"/></svg>
+          <div class="kicker">{{ i18n "hero-float-snap" }}</div>
+        </div>
+        <div class="float-body">
+          {{ i18n "hero-float-snap-body" | safeHTML }}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     TAGLINE STRIP
+     ============================================================ -->
+<div class="tagline-strip">
+  <div class="wrap inner">
+    <blockquote>
+      {{ i18n "tag-quote" }}<span class="attr">{{ i18n "tag-attr" }}</span>
+    </blockquote>
+    <div class="meta">
+      <span>{{ i18n "tag-meta-1" | safeHTML }}</span>
+      <span>{{ i18n "tag-meta-2" }}</span>
+      <span>{{ i18n "tag-meta-3" }}</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     FEATURES (Bento)
+     ============================================================ -->
+<section id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">{{ i18n "feat-eyebrow" }}</div>
+      <h2 class="section-title">{{ i18n "feat-title-pre" }} <em>{{ i18n "feat-title-em" }}</em></h2>
+      <p class="section-lede">{{ i18n "feat-sub" }}</p>
+    </div>
+
+    <div class="bento">
+      <div class="card c-3">
+        <div class="icon-tile icon-vm"><svg class="i-20"><use href="#ic-server"/></svg></div>
+        <h3>{{ i18n "feat-vm-h" }}</h3>
+        <p>{{ i18n "feat-vm-p" }}</p>
+        <div class="minirows">
+          <div class="minirow"><span class="dot"></span><span class="nm">web-prod-01</span><span class="meta">4 vCPU · 8 GB</span></div>
+          <div class="minirow"><span class="dot"></span><span class="nm">pg-cluster-01</span><span class="meta">8 vCPU · 16 GB</span></div>
+          <div class="minirow"><span class="dot amber"></span><span class="nm">staging-redis</span><span class="meta">2 vCPU · 4 GB</span></div>
+        </div>
+      </div>
+
+      <div class="card c-3">
+        <div class="icon-tile icon-ct"><svg class="i-20"><use href="#ic-container"/></svg></div>
+        <h3>{{ i18n "feat-ct-h" }}</h3>
+        <p>{{ i18n "feat-ct-p" }}</p>
+        <div class="snippet">
+          <div class="dim">{{ i18n "feat-ct-cmd-comment" }}</div>
+          <div><span class="p">$</span> nqr ct run nginx:1.25 --port 80</div>
+          <div class="ok">{{ i18n "feat-ct-cmd-ok" }}</div>
+        </div>
+      </div>
+
+      <div class="card c-2">
+        <div class="icon-tile icon-fn"><svg class="i-20"><use href="#ic-zap"/></svg></div>
+        <h3>{{ i18n "feat-fn-h" }}</h3>
+        <p>{{ i18n "feat-fn-p" }}</p>
+      </div>
+
+      <div class="card c-4">
+        <div class="icon-tile icon-or"><svg class="i-20"><use href="#ic-terminal"/></svg></div>
+        <h3>{{ i18n "feat-term-h" }}</h3>
+        <p>{{ i18n "feat-term-p" }}</p>
+        <div class="term">
+          <div><span class="p">root@web-prod-01:~#</span> <span class="ln">systemctl status nginx</span></div>
+          <div class="dim">{{ i18n "feat-term-l1" }}</div>
+          <div class="dim">{{ i18n "feat-term-l2" }}</div>
+          <div>{{ i18n "feat-term-l3" | safeHTML }}</div>
+        </div>
+      </div>
+
+      <div class="card c-2">
+        <div class="icon-tile icon-vm"><svg class="i-20"><use href="#ic-camera"/></svg></div>
+        <h3>{{ i18n "feat-snap-h" }}</h3>
+        <p>{{ i18n "feat-snap-p" }}</p>
+      </div>
+
+      <div class="card c-2">
+        <div class="icon-tile icon-ct"><svg class="i-20"><use href="#ic-box"/></svg></div>
+        <h3>{{ i18n "feat-reg-h" }}</h3>
+        <p>{{ i18n "feat-reg-p" }}</p>
+      </div>
+
+      <div class="card c-2">
+        <div class="icon-tile icon-nt"><svg class="i-20"><use href="#ic-network"/></svg></div>
+        <h3>{{ i18n "feat-net-h" }}</h3>
+        <p>{{ i18n "feat-net-p" }}</p>
+        <div class="net-list">
+          <div class="net-row"><span class="n">NAT</span><span class="d">{{ i18n "feat-net-nat" }}</span></div>
+          <div class="net-row"><span class="n">Bridged</span><span class="d">{{ i18n "feat-net-bridged" }}</span></div>
+          <div class="net-row"><span class="n">VXLAN</span><span class="d">{{ i18n "feat-net-vxlan" }}</span></div>
+        </div>
+      </div>
+
+      <div class="card c-4">
+        <div class="icon-tile icon-ht"><svg class="i-20"><use href="#ic-activity"/></svg></div>
+        <h3>{{ i18n "feat-metrics-h" }}</h3>
+        <p>{{ i18n "feat-metrics-p" }}</p>
+        <div class="chart">
+          <svg viewBox="0 0 600 78" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="gradMetric" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stop-color="var(--nq-orange)" stop-opacity="0.30"/>
+                <stop offset="100%" stop-color="var(--nq-orange)" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <path d="M 0 60.46 L 26.09 53.97 L 52.17 57.21 L 78.26 50.27 L 104.35 41.6 L 130.43 51.13 L 156.52 41.6 L 182.61 36.4 L 208.7 43.33 L 234.78 33.8 L 260.87 26 L 286.96 32.93 L 313.04 22.53 L 339.13 25.13 L 365.22 16.93 L 391.3 8.27 L 417.39 26 L 443.48 15.6 L 469.57 21.67 L 495.65 17.33 L 521.74 10.4 L 547.83 15.6 L 573.91 8.67 L 600 13 L 600 78 L 0 78 Z" fill="url(#gradMetric)"/>
+            <path d="M 0 60.46 L 26.09 53.97 L 52.17 57.21 L 78.26 50.27 L 104.35 41.6 L 130.43 51.13 L 156.52 41.6 L 182.61 36.4 L 208.7 43.33 L 234.78 33.8 L 260.87 26 L 286.96 32.93 L 313.04 22.53 L 339.13 25.13 L 365.22 16.93 L 391.3 8.27 L 417.39 26 L 443.48 15.6 L 469.57 21.67 L 495.65 17.33 L 521.74 10.4 L 547.83 15.6 L 573.91 8.67 L 600 13" fill="none" stroke="var(--nq-orange)" stroke-width="1.5"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card c-3">
+        <div class="icon-tile icon-or"><svg class="i-20"><use href="#ic-users"/></svg></div>
+        <h3>{{ i18n "feat-rbac-h" }}</h3>
+        <p>{{ i18n "feat-rbac-p" }}</p>
+      </div>
+
+      <div class="card c-3">
+        <div class="icon-tile icon-ht"><svg class="i-20"><use href="#ic-harddrive"/></svg></div>
+        <h3>{{ i18n "feat-storage-h" }}</h3>
+        <p>{{ i18n "feat-storage-p" }}</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SHOWCASE
+     ============================================================ -->
+<section id="showcase">
+  <div class="wrap">
+    <div class="showcase">
+      <div class="head">
+        <div class="eyebrow" style="justify-content:center;display:inline-flex">{{ i18n "show-eyebrow" }}</div>
+        <h2 style="margin-top:14px">{{ i18n "show-title" }}</h2>
+        <p>{{ i18n "show-sub" }}</p>
+      </div>
+
+      <div class="app-mock">
+        <div class="traffic">
+          <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+          <div class="url">nqrust.internal/vms</div>
+        </div>
+        <div class="full-dash">
+          <aside class="fd-sidebar">
+            <div class="fd-brand">
+              <img src="{{ $logoMark.RelPermalink }}" alt="" />
+              <div class="fd-brand-text">
+                <span class="t">NQRust</span>
+                <span class="s">MicroVM</span>
+              </div>
+            </div>
+            <div class="fd-section">{{ i18n "show-side-main" }}</div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-layout"/></svg><span>{{ i18n "show-side-dash" }}</span></div>
+            <div class="fd-item active"><svg class="i-14"><use href="#ic-server"/></svg><span>{{ i18n "show-side-vms" }}</span><span class="badge">42</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-container"/></svg><span>{{ i18n "show-side-cts" }}</span><span class="badge">27</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-filecode"/></svg><span>{{ i18n "show-side-fns" }}</span><span class="badge">18</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-box"/></svg><span>{{ i18n "show-side-reg" }}</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-camera"/></svg><span>{{ i18n "show-side-snap" }}</span></div>
+            <div class="fd-section divider">{{ i18n "show-side-host" }}</div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-cpu"/></svg><span>{{ i18n "show-side-hosts" }}</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-network"/></svg><span>{{ i18n "show-side-net" }}</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-harddrive"/></svg><span>{{ i18n "show-side-storage" }}</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-users"/></svg><span>{{ i18n "show-side-users" }}</span></div>
+            <div class="fd-item"><svg class="i-14"><use href="#ic-settings"/></svg><span>{{ i18n "show-side-settings" }}</span></div>
+          </aside>
+          <div class="fd-main">
+            <div class="fd-topbar">
+              <div class="fd-search">
+                <span class="ph">{{ i18n "show-search-ph" }}</span>
+                <span class="kbd">⌘K</span>
+              </div>
+              <div class="fd-top-right">
+                <div class="square"></div>
+                <div class="avatar">AB</div>
+              </div>
+            </div>
+            <div class="fd-body">
+              <div class="fd-hero">
+                <div class="fd-hero-glow"></div>
+                <div class="fd-hero-text">
+                  <h3>{{ i18n "show-fd-hero-h" }}</h3>
+                  <p>{{ i18n "show-fd-hero-p" }}</p>
+                  <div class="fd-hero-cta">
+                    <div class="btn-pill primary"><svg class="i-12"><use href="#ic-plus"/></svg> {{ i18n "show-fd-cta-primary" }}</div>
+                    <div class="btn-pill ghost">{{ i18n "show-fd-cta-secondary" }}</div>
+                  </div>
+                </div>
+                <svg viewBox="0 0 200 130" class="fd-flow">
+                  <defs>
+                    <marker id="ar" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                      <path d="M0,0 L6,3 L0,6 Z" fill="#92400e"/>
+                    </marker>
+                  </defs>
+                  <path d="M 40 65 H 90" stroke="#92400e" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+                  <path d="M 130 65 H 170" stroke="#92400e" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+                  <path d="M 110 45 V 22" stroke="#92400e" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+                  <path d="M 110 85 V 108" stroke="#92400e" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+                  <g><rect x="8" y="50" width="34" height="30" rx="5" fill="#fef3c7" stroke="#92400e" stroke-width="1.2"/><text x="25" y="69" text-anchor="middle" font-family="Montserrat" font-size="8" font-weight="700" fill="#92400e">API</text></g>
+                  <g><rect x="90" y="48" width="42" height="34" rx="5" fill="#fef3c7" stroke="#92400e" stroke-width="1.4"/><text x="111" y="63" text-anchor="middle" font-family="Montserrat" font-size="7.5" font-weight="700" fill="#92400e">Manager</text><text x="111" y="74" text-anchor="middle" font-family="Montserrat" font-size="6.5" fill="#92400e">Rust · Axum</text></g>
+                  <g><rect x="170" y="50" width="26" height="30" rx="5" fill="#fef3c7" stroke="#92400e" stroke-width="1.2"/><text x="183" y="69" text-anchor="middle" font-family="Montserrat" font-size="8" font-weight="700" fill="#92400e">DB</text></g>
+                  <g><rect x="86" y="2" width="50" height="22" rx="5" fill="#fff" stroke="#92400e" stroke-width="1.2"/><text x="111" y="16" text-anchor="middle" font-family="Montserrat" font-size="8" font-weight="700" fill="#92400e">Web UI</text></g>
+                  <g><rect x="86" y="108" width="50" height="20" rx="5" fill="#fff" stroke="#92400e" stroke-width="1.2"/><text x="111" y="121" text-anchor="middle" font-family="Montserrat" font-size="8" font-weight="700" fill="#92400e">Agent</text></g>
+                </svg>
+              </div>
+
+              <div class="fd-stats">
+                <div class="stat" style="--bg:rgba(37,99,235,0.10);--fg:#1d4ed8"><div class="r"><span class="l">{{ i18n "show-fd-stat-vms" }}</span><span class="i"><svg class="i-12"><use href="#ic-server"/></svg></span></div><div class="v">42</div><div class="s">{{ i18n "show-fd-stat-vms-sub" }}</div></div>
+                <div class="stat" style="--bg:rgba(22,163,74,0.10);--fg:#15803d"><div class="r"><span class="l">{{ i18n "show-fd-stat-running" }}</span><span class="i"><svg class="i-12"><use href="#ic-activity"/></svg></span></div><div class="v">38</div><div class="s">{{ i18n "show-fd-stat-running-sub" }}</div></div>
+                <div class="stat" style="--bg:rgba(202,138,4,0.12);--fg:#a16207"><div class="r"><span class="l">{{ i18n "show-fd-stat-cpu" }}</span><span class="i"><svg class="i-12"><use href="#ic-cpu"/></svg></span></div><div class="v">184</div><div class="s">{{ i18n "show-fd-stat-cpu-sub" }}</div></div>
+                <div class="stat" style="--bg:rgba(147,51,234,0.10);--fg:#7e22ce"><div class="r"><span class="l">{{ i18n "show-fd-stat-storage" }}</span><span class="i"><svg class="i-12"><use href="#ic-harddrive"/></svg></span></div><div class="v">2.4 TB</div><div class="s">{{ i18n "show-fd-stat-storage-sub" }}</div></div>
+              </div>
+
+              <div class="fd-table">
+                <div class="fd-th">
+                  <div>{{ i18n "show-fd-th-name" }}</div><div>{{ i18n "show-fd-th-status" }}</div><div>{{ i18n "show-fd-th-cpu" }}</div><div>{{ i18n "show-fd-th-mem" }}</div><div>{{ i18n "show-fd-th-ip" }}</div><div></div>
+                </div>
+                <div class="fd-tr">
+                  <div class="cell"><span class="nm">web-prod-01</span><span class="tag">{{ i18n "show-fd-tag-prefix" }} production</span></div>
+                  <div><span class="pill run">{{ i18n "show-fd-status-running" }}</span></div>
+                  <div class="mono">4 vCPU</div><div class="mono">8 GB</div><div class="mono">10.0.0.12</div>
+                  <div class="actions"><span class="act"><svg class="i-11"><use href="#ic-pause"/></svg></span><span class="act"><svg class="i-11"><use href="#ic-terminal"/></svg></span></div>
+                </div>
+                <div class="fd-tr">
+                  <div class="cell"><span class="nm">pg-cluster-01</span><span class="tag">{{ i18n "show-fd-tag-prefix" }} database</span></div>
+                  <div><span class="pill run">{{ i18n "show-fd-status-running" }}</span></div>
+                  <div class="mono">8 vCPU</div><div class="mono">16 GB</div><div class="mono">10.0.0.21</div>
+                  <div class="actions"><span class="act"><svg class="i-11"><use href="#ic-pause"/></svg></span><span class="act"><svg class="i-11"><use href="#ic-terminal"/></svg></span></div>
+                </div>
+                <div class="fd-tr">
+                  <div class="cell"><span class="nm">analytics-worker</span><span class="tag">{{ i18n "show-fd-tag-prefix" }} jobs</span></div>
+                  <div><span class="pill run">{{ i18n "show-fd-status-running" }}</span></div>
+                  <div class="mono">2 vCPU</div><div class="mono">4 GB</div><div class="mono">10.0.0.34</div>
+                  <div class="actions"><span class="act"><svg class="i-11"><use href="#ic-pause"/></svg></span><span class="act"><svg class="i-11"><use href="#ic-terminal"/></svg></span></div>
+                </div>
+                <div class="fd-tr">
+                  <div class="cell"><span class="nm">staging-redis</span><span class="tag">{{ i18n "show-fd-tag-prefix" }} cache</span></div>
+                  <div><span class="pill paused">{{ i18n "show-fd-status-paused" }}</span></div>
+                  <div class="mono">2 vCPU</div><div class="mono">4 GB</div><div class="mono">10.0.0.45</div>
+                  <div class="actions"><span class="act"><svg class="i-11"><use href="#ic-play"/></svg></span><span class="act"><svg class="i-11"><use href="#ic-terminal"/></svg></span></div>
+                </div>
+                <div class="fd-tr">
+                  <div class="cell"><span class="nm">build-runner-03</span><span class="tag">{{ i18n "show-fd-tag-prefix" }} ci</span></div>
+                  <div><span class="pill run">{{ i18n "show-fd-status-running" }}</span></div>
+                  <div class="mono">8 vCPU</div><div class="mono">12 GB</div><div class="mono">10.0.0.51</div>
+                  <div class="actions"><span class="act"><svg class="i-11"><use href="#ic-pause"/></svg></span><span class="act"><svg class="i-11"><use href="#ic-terminal"/></svg></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     ARCHITECTURE
+     ============================================================ -->
+<section id="architecture">
+  <div class="wrap">
+    <div class="arch">
+      <div class="inner">
+        <div style="max-width:720px">
+          <div class="eyebrow">{{ i18n "arch-eyebrow" }}</div>
+          <h2 class="section-title" style="margin-top:14px">{{ i18n "arch-title-pre" }} <em>{{ i18n "arch-title-em" }}</em></h2>
+          <p class="section-lede">{{ i18n "arch-sub" }}</p>
+        </div>
+
+        <div class="arch-grid">
+          <div class="arch-comps">
+            <div class="arch-comp"><div class="ic"><svg class="i-22"><use href="#ic-layout"/></svg></div><div><div class="nm">{{ i18n "arch-comp-ui-n" }}</div><div class="ds">{{ i18n "arch-comp-ui-d" }}</div></div><div class="port">:3000</div></div>
+            <div class="arch-comp"><div class="ic"><svg class="i-22"><use href="#ic-server"/></svg></div><div><div class="nm">{{ i18n "arch-comp-mgr-n" }}</div><div class="ds">{{ i18n "arch-comp-mgr-d" }}</div></div><div class="port">:18080</div></div>
+            <div class="arch-comp"><div class="ic"><svg class="i-22"><use href="#ic-cpu"/></svg></div><div><div class="nm">{{ i18n "arch-comp-host-n" }}</div><div class="ds">{{ i18n "arch-comp-host-d" }}</div></div><div class="port">:9090</div></div>
+            <div class="arch-comp"><div class="ic"><svg class="i-22"><use href="#ic-activity"/></svg></div><div><div class="nm">{{ i18n "arch-comp-guest-n" }}</div><div class="ds">{{ i18n "arch-comp-guest-d" }}</div></div><div class="port">:9000</div></div>
+          </div>
+
+          <div class="diagram">
+            <svg viewBox="0 0 400 400">
+              <defs>
+                <linearGradient id="nodeG" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stop-color="rgba(255,255,255,0.10)"/>
+                  <stop offset="100%" stop-color="rgba(255,255,255,0.03)"/>
+                </linearGradient>
+                <linearGradient id="orangeG" x1="0" x2="1" y1="0" y2="1">
+                  <stop offset="0%" stop-color="#ff7d3a"/>
+                  <stop offset="100%" stop-color="#b83800"/>
+                </linearGradient>
+                <marker id="arr2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#ff7d3a"/>
+                </marker>
+              </defs>
+              <g stroke="#ff7d3a" stroke-width="1" fill="none" stroke-dasharray="3 3" opacity="0.7">
+                <path d="M 200 40 V 80" marker-end="url(#arr2)"/>
+                <path d="M 200 130 V 170" marker-end="url(#arr2)"/>
+                <path d="M 245 195 H 320" marker-end="url(#arr2)"/>
+                <path d="M 200 220 V 260" marker-end="url(#arr2)"/>
+                <path d="M 175 305 L 130 345" marker-end="url(#arr2)"/>
+                <path d="M 200 315 V 345" marker-end="url(#arr2)"/>
+                <path d="M 225 305 L 270 345" marker-end="url(#arr2)"/>
+              </g>
+              <g>
+                <rect x="160" y="14" width="80" height="26" rx="6" fill="url(#nodeG)" stroke="rgba(255,255,255,0.18)"/>
+                <text x="200" y="30" text-anchor="middle" font-family="Montserrat" font-size="10" font-weight="600" fill="rgba(255,255,255,0.85)">Browser</text>
+              </g>
+              <g>
+                <rect x="148" y="82" width="104" height="48" rx="8" fill="rgba(255,80,1,0.10)" stroke="rgba(255,125,58,0.45)"/>
+                <text x="200" y="103" text-anchor="middle" font-family="Montserrat" font-size="11" font-weight="700" fill="#ff7d3a">Web UI</text>
+                <text x="200" y="118" text-anchor="middle" font-family="Montserrat" font-size="8.5" fill="rgba(255,255,255,0.55)">Next.js 15</text>
+              </g>
+              <g>
+                <rect x="140" y="172" width="120" height="50" rx="8" fill="url(#orangeG)" stroke="#ff7d3a"/>
+                <text x="200" y="194" text-anchor="middle" font-family="Montserrat" font-size="13" font-weight="700" fill="#fff">Manager API</text>
+                <text x="200" y="210" text-anchor="middle" font-family="Montserrat" font-size="9" fill="rgba(255,255,255,0.85)">Rust · Axum</text>
+              </g>
+              <g>
+                <rect x="316" y="180" width="76" height="34" rx="8" fill="url(#nodeG)" stroke="rgba(255,255,255,0.18)"/>
+                <text x="354" y="195" text-anchor="middle" font-family="Montserrat" font-size="9" font-weight="700" fill="rgba(255,255,255,0.85)">PostgreSQL</text>
+                <text x="354" y="207" text-anchor="middle" font-family="Montserrat" font-size="8" fill="rgba(255,255,255,0.45)">state</text>
+              </g>
+              <g>
+                <rect x="40" y="260" width="320" height="120" rx="12" fill="none" stroke="rgba(255,255,255,0.10)" stroke-dasharray="4 3"/>
+                <text x="58" y="276" font-family="Montserrat" font-size="9" font-weight="700" fill="rgba(255,255,255,0.4)" letter-spacing="2">KVM HOST</text>
+                <rect x="155" y="278" width="90" height="36" rx="7" fill="rgba(255,125,58,0.18)" stroke="#ff7d3a"/>
+                <text x="200" y="295" text-anchor="middle" font-family="Montserrat" font-size="10" font-weight="700" fill="#ff7d3a">Host Agent</text>
+                <text x="200" y="307" text-anchor="middle" font-family="Montserrat" font-size="7.5" fill="rgba(255,255,255,0.55)">Rust</text>
+                <g>
+                  <rect x="58" y="345" width="50" height="26" rx="5" fill="url(#nodeG)" stroke="rgba(255,255,255,0.22)"/>
+                  <text x="83" y="357" text-anchor="middle" font-family="Montserrat" font-size="7.5" font-weight="700" fill="rgba(255,255,255,0.85)">microVM</text>
+                  <text x="83" y="366" text-anchor="middle" font-family="Montserrat" font-size="6.5" fill="rgba(255,255,255,0.5)">web-prod-01</text>
+                </g>
+                <g>
+                  <rect x="153" y="345" width="50" height="26" rx="5" fill="url(#nodeG)" stroke="rgba(255,255,255,0.22)"/>
+                  <text x="178" y="357" text-anchor="middle" font-family="Montserrat" font-size="7.5" font-weight="700" fill="rgba(255,255,255,0.85)">microVM</text>
+                  <text x="178" y="366" text-anchor="middle" font-family="Montserrat" font-size="6.5" fill="rgba(255,255,255,0.5)">pg-cluster-01</text>
+                </g>
+                <g>
+                  <rect x="248" y="345" width="50" height="26" rx="5" fill="url(#nodeG)" stroke="rgba(255,255,255,0.22)"/>
+                  <text x="273" y="357" text-anchor="middle" font-family="Montserrat" font-size="7.5" font-weight="700" fill="rgba(255,255,255,0.85)">microVM</text>
+                  <text x="273" y="366" text-anchor="middle" font-family="Montserrat" font-size="6.5" fill="rgba(255,255,255,0.5)">analytics</text>
+                </g>
+              </g>
+              <text x="208" y="73" font-size="7.5" font-family="JetBrains Mono" fill="rgba(255,255,255,0.45)">HTTPS</text>
+              <text x="208" y="163" font-size="7.5" font-family="JetBrains Mono" fill="rgba(255,255,255,0.45)">REST · WS</text>
+              <text x="270" y="190" font-size="7.5" font-family="JetBrains Mono" fill="rgba(255,255,255,0.45)">SQL</text>
+              <text x="206" y="253" font-size="7.5" font-family="JetBrains Mono" fill="rgba(255,255,255,0.45)">REST</text>
+              <text x="200" y="336" font-size="7.5" font-family="JetBrains Mono" text-anchor="middle" fill="rgba(255,255,255,0.45)">Unix sockets</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     STORAGE
+     ============================================================ -->
+<section id="storage" class="tight">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">{{ i18n "stor-eyebrow" }}</div>
+      <h2 class="section-title">{{ i18n "stor-title-pre" }} <em>{{ i18n "stor-title-em" }}</em> {{ i18n "stor-title-post" }}</h2>
+      <p class="section-lede">{{ i18n "stor-sub" }}</p>
+    </div>
+
+    <div class="storage-grid">
+      <div class="storage-card"><span class="label">local_file</span><h4>{{ i18n "stor-card-local-h" }}</h4><p>{{ i18n "stor-card-local-p" }}</p></div>
+      <div class="storage-card"><span class="label">nfs</span><h4>{{ i18n "stor-card-nfs-h" }}</h4><p>{{ i18n "stor-card-nfs-p" }}</p></div>
+      <div class="storage-card"><span class="label">smb</span><h4>{{ i18n "stor-card-smb-h" }}</h4><p>{{ i18n "stor-card-smb-p" }}</p></div>
+      <div class="storage-card"><span class="label">iscsi_lvm</span><h4>{{ i18n "stor-card-iscsilvm-h" }}</h4><p>{{ i18n "stor-card-iscsilvm-p" }}</p></div>
+      <div class="storage-card"><span class="label">truenas_iscsi</span><h4>{{ i18n "stor-card-truenas-h" }}</h4><p>{{ i18n "stor-card-truenas-p" }}</p></div>
+      <div class="storage-card"><span class="label">spdk_lvol</span><h4>{{ i18n "stor-card-spdk-h" }}</h4><p>{{ i18n "stor-card-spdk-p" }}</p></div>
+      <div class="storage-card"><span class="label">iscsi</span><h4>{{ i18n "stor-card-iscsi-h" }}</h4><p>{{ i18n "stor-card-iscsi-p" }}</p></div>
+      <div class="storage-card"><span class="label">+</span><h4>{{ i18n "stor-card-more-h" }}</h4><p>{{ i18n "stor-card-more-p" }}</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     USE CASES
+     ============================================================ -->
+<section id="usecases">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">{{ i18n "uc-eyebrow" }}</div>
+      <h2 class="section-title">{{ i18n "uc-title-pre" }} <em>{{ i18n "uc-title-em" }}</em></h2>
+      <p class="section-lede">{{ i18n "uc-sub" }}</p>
+    </div>
+
+    <div class="usecases">
+      <div class="usecase">
+        <div class="num">01</div>
+        <h3>{{ i18n "uc-1-h" }}</h3>
+        <p>{{ i18n "uc-1-p" }}</p>
+        <ul>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-1-i1" }}</span></li>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-1-i2" }}</span></li>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-1-i3" }}</span></li>
+        </ul>
+      </div>
+      <div class="usecase">
+        <div class="num">02</div>
+        <h3>{{ i18n "uc-2-h" }}</h3>
+        <p>{{ i18n "uc-2-p" }}</p>
+        <ul>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-2-i1" }}</span></li>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-2-i2" }}</span></li>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-2-i3" }}</span></li>
+        </ul>
+      </div>
+      <div class="usecase">
+        <div class="num">03</div>
+        <h3>{{ i18n "uc-3-h" }}</h3>
+        <p>{{ i18n "uc-3-p" }}</p>
+        <ul>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-3-i1" }}</span></li>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-3-i2" }}</span></li>
+          <li><svg class="i-14"><use href="#ic-check"/></svg><span>{{ i18n "uc-3-i3" }}</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     PRICING
+     ============================================================ -->
+<section id="pricing">
+  <div class="wrap">
+    <div class="pricing-hero">
+      <div class="pricing-hero-bg"></div>
+      <div class="pricing-hero-inner">
+        <div>
+          <div class="eyebrow" style="color:var(--nq-orange-300)">{{ i18n "price-eyebrow" }}</div>
+          <h2 class="section-title" style="color:#fff;margin-top:14px">{{ i18n "price-title-pre" }}<br/><em>{{ i18n "price-title-em" }}</em></h2>
+          <p style="margin-top:18px;font-size:17px;color:rgba(255,255,255,0.65);max-width:52ch;line-height:1.55">{{ i18n "price-sub" }}</p>
+          <ul class="pricing-bullets">
+            <li><svg class="i-18"><use href="#ic-check"/></svg><span>{{ i18n "price-b1" }}</span></li>
+            <li><svg class="i-18"><use href="#ic-check"/></svg><span>{{ i18n "price-b2" }}</span></li>
+            <li><svg class="i-18"><use href="#ic-check"/></svg><span>{{ i18n "price-b3" }}</span></li>
+            <li><svg class="i-18"><use href="#ic-check"/></svg><span>{{ i18n "price-b4" }}</span></li>
+          </ul>
+          <div class="pricing-cta">
+            <a href="#contact" class="btn primary lg"><svg class="i-16"><use href="#ic-mail"/></svg> {{ i18n "price-cta" }}</a>
+          </div>
+          <div class="pricing-foot">
+            <span class="chip-light dot">{{ i18n "price-foot-chip" }}</span>
+            <span style="color:rgba(255,255,255,0.4)">·</span>
+            <span style="color:rgba(255,255,255,0.5)">{{ i18n "price-foot-note" }}</span>
+          </div>
+        </div>
+
+        <div class="pricing-card">
+          <div class="pricing-card-top">
+            <span class="pricing-card-tag">{{ i18n "price-card-tag" }}</span>
+            <div class="pricing-card-name">NQRust-MicroVM</div>
+            <div class="pricing-card-price">
+              <span class="pricing-card-amount">{{ i18n "price-card-amount" }}</span>
+              <span class="pricing-card-sub">{{ i18n "price-card-amount-sub" }}</span>
+            </div>
+          </div>
+          <div class="pricing-card-divider"></div>
+          <div class="pricing-card-includes">
+            <div class="pricing-card-includes-label">{{ i18n "price-card-includes" }}</div>
+            <ul>
+              <li><svg class="i-15"><use href="#ic-check"/></svg><span>{{ i18n "price-card-i1" }}</span></li>
+              <li><svg class="i-15"><use href="#ic-check"/></svg><span>{{ i18n "price-card-i2" }}</span></li>
+              <li><svg class="i-15"><use href="#ic-check"/></svg><span>{{ i18n "price-card-i3" }}</span></li>
+              <li><svg class="i-15"><use href="#ic-check"/></svg><span>{{ i18n "price-card-i4" }}</span></li>
+              <li><svg class="i-15"><use href="#ic-check"/></svg><span>{{ i18n "price-card-i5" }}</span></li>
+              <li><svg class="i-15"><use href="#ic-check"/></svg><span>{{ i18n "price-card-i6" }}</span></li>
+            </ul>
+          </div>
+          <a href="#contact" class="btn dark" style="width:100%">{{ i18n "price-card-cta" }} <svg class="i-16"><use href="#ic-arrowright"/></svg></a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     FAQ
+     ============================================================ -->
+<section id="faq" class="tight">
+  <div class="wrap" style="max-width:900px">
+    <div class="section-head" style="text-align:center;margin:0 auto 48px">
+      <div class="eyebrow" style="justify-content:center">{{ i18n "faq-eyebrow" }}</div>
+      <h2 class="section-title" style="margin-top:14px">{{ i18n "faq-title" }}</h2>
+    </div>
+
+    <div class="faq-list">
+      <div class="faq-item open">
+        <button type="button">
+          <span>{{ i18n "faq-q1" }}</span>
+          <span class="ic"><svg class="i-14"><use href="#ic-plus"/></svg></span>
+        </button>
+        <div class="body"><div><p>{{ i18n "faq-a1" }}</p></div></div>
+      </div>
+      <div class="faq-item">
+        <button type="button">
+          <span>{{ i18n "faq-q2" }}</span>
+          <span class="ic"><svg class="i-14"><use href="#ic-plus"/></svg></span>
+        </button>
+        <div class="body"><div><p>{{ i18n "faq-a2" }}</p></div></div>
+      </div>
+      <div class="faq-item">
+        <button type="button">
+          <span>{{ i18n "faq-q3" }}</span>
+          <span class="ic"><svg class="i-14"><use href="#ic-plus"/></svg></span>
+        </button>
+        <div class="body"><div><p>{{ i18n "faq-a3" }}</p></div></div>
+      </div>
+      <div class="faq-item">
+        <button type="button">
+          <span>{{ i18n "faq-q4" }}</span>
+          <span class="ic"><svg class="i-14"><use href="#ic-plus"/></svg></span>
+        </button>
+        <div class="body"><div><p>{{ i18n "faq-a4" }}</p></div></div>
+      </div>
+      <div class="faq-item">
+        <button type="button">
+          <span>{{ i18n "faq-q5" }}</span>
+          <span class="ic"><svg class="i-14"><use href="#ic-plus"/></svg></span>
+        </button>
+        <div class="body"><div><p>{{ i18n "faq-a5" }}</p></div></div>
+      </div>
+      <div class="faq-item">
+        <button type="button">
+          <span>{{ i18n "faq-q6" }}</span>
+          <span class="ic"><svg class="i-14"><use href="#ic-plus"/></svg></span>
+        </button>
+        <div class="body"><div><p>{{ i18n "faq-a6" }}</p></div></div>
+      </div>
+      <div class="faq-item">
+        <button type="button">
+          <span>{{ i18n "faq-q7" }}</span>
+          <span class="ic"><svg class="i-14"><use href="#ic-plus"/></svg></span>
+        </button>
+        <div class="body"><div><p>{{ i18n "faq-a7" }}</p></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     CTA
+     ============================================================ -->
+<section id="contact" class="tight">
+  <div class="wrap">
+    <div class="cta">
+      <h2>{{ i18n "cta-h" }}</h2>
+      <p>{{ i18n "cta-p" }}</p>
+      <div class="actions">
+        <a href="mailto:sales@nexusquantum.dev?subject=NQRust-MicroVM%20inquiry" class="btn primary lg"><svg class="i-16"><use href="#ic-mail"/></svg> {{ i18n "cta-btn" }}</a>
+      </div>
+      <div style="margin-top:32px;font-size:13px;color:rgba(255,255,255,0.55)">
+        {{ i18n "cta-under" }} <a href="#contact" style="color:var(--nq-orange-300);text-decoration:underline;text-underline-offset:3px">{{ i18n "cta-under-link" }}</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     FOOTER
+     ============================================================ -->
+<footer>
+  <div class="wrap">
+    <div class="top">
+      <div class="col brand-col">
+        <img src="{{ $logoFooter.RelPermalink }}" alt="NQRust" />
+        <p>{{ i18n "foot-brand-desc" }}</p>
+        <div style="display:flex;gap:10px;margin-top:16px">
+          <a href="mailto:hello@nexusquantum.dev" class="social-ic">
+            <svg class="i-16"><use href="#ic-mail"/></svg>
+          </a>
+        </div>
+      </div>
+      <div class="col">
+        <h5>{{ i18n "foot-h-product" }}</h5>
+        <ul>
+          <li><a href="#features">{{ i18n "foot-product-platform" }}</a></li>
+          <li><a href="#showcase">{{ i18n "foot-product-dash" }}</a></li>
+          <li><a href="#architecture">{{ i18n "foot-product-arch" }}</a></li>
+          <li><a href="#storage">{{ i18n "foot-product-storage" }}</a></li>
+          <li><a href="#pricing">{{ i18n "foot-product-pricing" }}</a></li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>{{ i18n "foot-h-family" }}</h5>
+        <ul>
+          <li><a href="#">NQRust-MicroVM</a></li>
+          <li><a href="#">NQRust-Identity</a></li>
+          <li><a href="#">NQRust-Portal</a></li>
+          <li><a href="#">NQRust-FleetManager</a></li>
+          <li><a href="#">NQRust-Analytics</a></li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>{{ i18n "foot-h-company" }}</h5>
+        <ul>
+          <li><a href="#contact">{{ i18n "foot-company-contact" }}</a></li>
+          <li><a href="/docs/">{{ i18n "foot-company-docs" }}</a></li>
+          <li><a href="#">{{ i18n "foot-company-security" }}</a></li>
+          <li><a href="#">{{ i18n "foot-company-license" }}</a></li>
+          <li><a href="#">{{ i18n "foot-company-status" }}</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="bottom">
+      <span>{{ i18n "foot-copyright" }}</span>
+      <div class="meta">
+        <span>{{ i18n "foot-meta-license" }}</span>
+        <span>·</span>
+        <span>{{ i18n "foot-meta-built" }}</span>
+        <span>·</span>
+        <span style="display:inline-flex;align-items:center;gap:6px">
+          <span style="width:6px;height:6px;border-radius:999px;background:#22c55e"></span>
+          {{ i18n "foot-meta-status" }}
+        </span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Nav scroll effect
+  (function () {
+    var nav = document.getElementById('site-nav');
+    function onScroll() {
+      if (window.scrollY > 8) nav.classList.add('scrolled');
+      else nav.classList.remove('scrolled');
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+
+  // FAQ accordion
+  (function () {
+    var items = document.querySelectorAll('.faq-item');
+    items.forEach(function (it) {
+      var btn = it.querySelector('button');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var wasOpen = it.classList.contains('open');
+        items.forEach(function (other) { other.classList.remove('open'); });
+        if (!wasOpen) it.classList.add('open');
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,512 @@
+# Landing page strings — Bahasa Indonesia
+
+# ---------- meta ----------
+[site-title-suffix]
+other = "Platform cloud self-hosted, dibangun di atas Rust"
+
+[site-meta-desc]
+other = "Platform orkestrasi microVM Firecracker modern"
+
+# ---------- nav ----------
+[nav-platform]
+other = "Platform"
+[nav-product]
+other = "Produk"
+[nav-architecture]
+other = "Arsitektur"
+[nav-pricing]
+other = "Harga"
+[nav-faq]
+other = "FAQ"
+[nav-docs]
+other = "Dokumentasi"
+[nav-contact-sales]
+other = "Hubungi sales"
+[nav-product-sub]
+other = "/ Cloud Platform"
+
+# ---------- hero ----------
+[hero-badge-tag]
+other = "Platform berbasis Firecracker"
+
+[hero-h1-pre]
+other = "Cloud self-hosted"
+[hero-h1-em]
+other = "infrastruktur"
+[hero-h1-post]
+other = "yang layak untuk <em>infrastruktur</em> Anda."
+
+[hero-sub]
+other = "NQRust-MicroVM adalah platform berbasis Rust untuk menjalankan microVM Firecracker, container Docker terisolasi, dan serverless function — di hardware Anda sendiri, lewat satu dashboard operator."
+
+[hero-cta-primary]
+other = "Demo"
+[hero-cta-outline]
+other = "Lihat dokumentasi"
+
+[hero-meta-1-k]
+other = "Isolasi hardware"
+[hero-meta-1-v]
+other = "Setiap workload berjalan di microVM KVM-nya sendiri."
+[hero-meta-2-k]
+other = "Satu permukaan operator"
+[hero-meta-2-v]
+other = "VM, container, function, registry, storage."
+[hero-meta-3-k]
+other = "Tetap di hardware Anda"
+[hero-meta-3-v]
+other = "Tanpa tenant. Tanpa panggilan keluar. Tanpa vendor lock-in."
+
+[hero-mini-title]
+other = "Virtual Machine"
+[hero-mini-sub]
+other = "42 berjalan · 3 pause"
+[hero-mini-create]
+other = "Buat VM"
+[hero-mini-tile-vms]
+other = "Total VM"
+[hero-mini-tile-fns]
+other = "Function"
+[hero-mini-tile-cts]
+other = "Container"
+[hero-mini-tile-hosts]
+other = "Host"
+
+[hero-float-cluster]
+other = "Status cluster"
+[hero-float-cluster-v]
+other = "42 VM sehat"
+[hero-float-snap]
+other = "Snapshot selesai"
+[hero-float-snap-body]
+other = '<code class="inline-code">web-prod-04</code> di-restore ke <b>v2.3.1</b>'
+
+# ---------- tagline strip ----------
+[tag-quote]
+other = "Nexus Quantum Technologies menghadirkan platform cloud terintegrasi vertikal berbasis Rust, dibangun untuk era Agentic AI."
+[tag-attr]
+other = " — Nexus Quantum Rust"
+[tag-meta-1]
+other = "<b>Rust 1.85+</b> · <b>Next.js 15</b>"
+[tag-meta-2]
+other = "Self-hosted"
+[tag-meta-3]
+other = "Lisensi komersial"
+
+# ---------- features (bento) ----------
+[feat-eyebrow]
+other = "Kemampuan Platform"
+[feat-title-pre]
+other = "Satu konsol operator."
+[feat-title-em]
+other = "Setiap workload."
+[feat-sub]
+other = "VM, container, dan serverless function — dikelola dari satu dashboard Next.js, ditopang tiga layanan Rust ringan. Dibangun untuk platform engineer yang lebih suka memiliki stack-nya daripada menyewa."
+
+[feat-vm-h]
+other = "MicroVM Firecracker"
+[feat-vm-p]
+other = "VM Linux terisolasi dengan kernel, rootfs, batas CPU dan memori sendiri. Template dan snapshot lengkap bikin re-deployment cuma satu klik."
+
+[feat-ct-h]
+other = "Docker — di dalam VM"
+[feat-ct-p]
+other = "Jalankan workload Docker apa pun dengan kompatibilitas API penuh, dengan kernel Firecracker di bawah setiap container. Container escape secara struktural tidak mungkin terjadi."
+[feat-ct-cmd-comment]
+other = "# pull dan run, terisolasi di tingkat hardware"
+[feat-ct-cmd-ok]
+other = "✓ vm-c8a2f0 booted · container nginx-prod attached"
+
+[feat-fn-h]
+other = "Serverless function"
+[feat-fn-p]
+other = "Node.js, Python, Ruby. Monaco editor, log eksekusi live, playground interaktif."
+
+[feat-term-h]
+other = "Web terminal — tanpa SSH client"
+[feat-term-p]
+other = "Shell xterm.js penuh melalui WebSocket. Masuk ke VM mana pun langsung dari browser."
+[feat-term-l1]
+other = "● nginx.service — A high performance web server"
+[feat-term-l2]
+other = "   Loaded: loaded (/lib/systemd/system/nginx.service; enabled)"
+[feat-term-l3]
+other = "   Active: <span class=\"ok\">active (running)</span> since Thu 2026-05-22 09:14:02 UTC"
+
+[feat-snap-h]
+other = "Snapshot & template"
+[feat-snap-p]
+other = "Snapshot penuh dan diferensial dengan restore instan. Simpan VM apa pun sebagai template yang siap re-deploy."
+
+[feat-reg-h]
+other = "Image registry"
+[feat-reg-p]
+other = "Kernel, rootfs, dan image Docker — import dari URL, path lokal, atau DockerHub."
+
+[feat-net-h]
+other = "Networking fleksibel"
+[feat-net-p]
+other = "NAT, isolated, bridged, dan tunnel overlay VXLAN. Port-forward dalam dua klik."
+[feat-net-nat]
+other = "Default — internet lewat host"
+[feat-net-bridged]
+other = "VM tampil di LAN Anda"
+[feat-net-vxlan]
+other = "Overlay multi-host"
+
+[feat-metrics-h]
+other = "Metrik live, langsung dari guest"
+[feat-metrics-p]
+other = "Guest agent kecil yang auto-deploy di setiap VM melaporkan CPU, memori, jaringan, dan disk lewat WebSocket. Pantau fleet Anda bernafas secara real-time."
+
+[feat-rbac-h]
+other = "Kontrol akses berbasis peran"
+[feat-rbac-p]
+other = "Peran Admin, User, Viewer dengan kepemilikan per-resource dan preferensi per-user. Bagi-bagi akses dashboard tanpa membagi akses root."
+
+[feat-storage-h]
+other = "Storage pluggable"
+[feat-storage-p]
+other = "Campur local file, NFS, SMB, iSCSI+LVM, TrueNAS REST, dan SPDK vhost-user. Tambah atau hapus backend dari UI tanpa restart manager."
+
+# ---------- showcase ----------
+[show-eyebrow]
+other = "Dashboard Operator"
+[show-title]
+other = "Satu dashboard untuk seluruh fleet Anda."
+[show-sub]
+other = "Setiap operasi di API ada di UI. VM, container, function, registry, networking, backend storage, host, user — semua di sini, semua real-time."
+
+[show-side-main]
+other = "UTAMA"
+[show-side-host]
+other = "HOST"
+[show-side-dash]
+other = "Dashboard"
+[show-side-vms]
+other = "Virtual Machine"
+[show-side-cts]
+other = "Container"
+[show-side-fns]
+other = "Function"
+[show-side-reg]
+other = "Image Registry"
+[show-side-snap]
+other = "Snapshot"
+[show-side-hosts]
+other = "Host"
+[show-side-net]
+other = "Networking"
+[show-side-storage]
+other = "Storage"
+[show-side-users]
+other = "User"
+[show-side-settings]
+other = "Pengaturan"
+
+[show-search-ph]
+other = "Cari VM, function, image…"
+
+[show-fd-hero-h]
+other = "Virtual Machine"
+[show-fd-hero-p]
+other = "Provision, monitor, dan snapshot microVM Firecracker di seluruh host Anda."
+[show-fd-cta-primary]
+other = "Buat VM"
+[show-fd-cta-secondary]
+other = "Buat cepat"
+
+[show-fd-stat-vms]
+other = "Total VM"
+[show-fd-stat-vms-sub]
+other = "↑ 6 minggu ini"
+[show-fd-stat-running]
+other = "Berjalan"
+[show-fd-stat-running-sub]
+other = "Uptime 90,5%"
+[show-fd-stat-cpu]
+other = "vCPU teralokasi"
+[show-fd-stat-cpu-sub]
+other = "dari 256 tersedia"
+[show-fd-stat-storage]
+other = "Storage terpakai"
+[show-fd-stat-storage-sub]
+other = "di 3 backend"
+
+[show-fd-th-name]
+other = "Nama"
+[show-fd-th-status]
+other = "Status"
+[show-fd-th-cpu]
+other = "CPU"
+[show-fd-th-mem]
+other = "Memori"
+[show-fd-th-ip]
+other = "IP"
+[show-fd-status-running]
+other = "Running"
+[show-fd-status-paused]
+other = "Paused"
+[show-fd-tag-prefix]
+other = "tag:"
+
+# ---------- architecture ----------
+[arch-eyebrow]
+other = "Arsitektur"
+[arch-title-pre]
+other = "Empat komponen ringan."
+[arch-title-em]
+other = "Tidak ada lagi."
+[arch-sub]
+other = "Tiga layanan Rust dan satu frontend Next.js mengoordinasikan semuanya. Tanpa control plane Kubernetes. Tanpa scheduler eksternal. Tanpa sidecar misterius."
+
+[arch-comp-ui-n]
+other = "Web UI"
+[arch-comp-ui-d]
+other = "Dashboard Next.js 15 / React 19 — terminal, metrik, manajemen lengkap"
+[arch-comp-mgr-n]
+other = "Manager"
+[arch-comp-mgr-d]
+other = "API Rust pusat — siklus hidup VM, registry, networking, RBAC"
+[arch-comp-host-n]
+other = "Host Agent"
+[arch-comp-host-d]
+other = "Berjalan di setiap host KVM, menggerakkan Firecracker lewat Unix socket"
+[arch-comp-guest-n]
+other = "Guest Agent"
+[arch-comp-guest-d]
+other = "Binary statis kecil yang auto-deploy di setiap VM, melaporkan metrik + IP"
+
+# ---------- storage ----------
+[stor-eyebrow]
+other = "Storage Pluggable"
+[stor-title-pre]
+other = "Bawa"
+[stor-title-em]
+other = "backend apa pun."
+[stor-title-post]
+other = "Tukar saat live."
+[stor-sub]
+other = "Campur local file, NFS auto-mount, SMB/CIFS, iSCSI+LVM vendor-agnostic, TrueNAS, atau SPDK vhost-user. Tambah atau hapus backend dari UI — tanpa restart manager."
+
+[stor-card-local-h]
+other = "Local file"
+[stor-card-local-p]
+other = "File di bawah /srv/fc/vms/. Tanpa dependensi — untuk single-host dan development."
+[stor-card-nfs-h]
+other = "NFS"
+[stor-card-nfs-p]
+other = "Manager mendelegasikan mount.nfs ke agent. Satu file per VM di dalam share."
+[stor-card-smb-h]
+other = "SMB / CIFS"
+[stor-card-smb-p]
+other = "Mount file server Windows atau share NAS apa pun lewat agent."
+[stor-card-iscsilvm-h]
+other = "iSCSI + LVM"
+[stor-card-iscsilvm-p]
+other = "Satu LUN per target → LVM VG → lvcreate per VM. Vendor-agnostic."
+[stor-card-truenas-h]
+other = "TrueNAS"
+[stor-card-truenas-p]
+other = "REST membuat zvol + extent + target per VM. Snapshot ZFS, thin provisioning."
+[stor-card-spdk-h]
+other = "SPDK vhost-user"
+[stor-card-spdk-p]
+other = "NVMe direct, throughput tinggi untuk single-host. Pondasi clustering masa depan."
+[stor-card-iscsi-h]
+other = "iSCSI (passthrough)"
+[stor-card-iscsi-p]
+other = "LUN siap pakai, satu VM per LUN. Passthrough legacy."
+[stor-card-more-h]
+other = "Lainnya dalam roadmap"
+[stor-card-more-p]
+other = "Ceph RBD dan block backed S3 berikutnya. Beri tahu kami apa yang Anda butuhkan."
+
+# ---------- use cases ----------
+[uc-eyebrow]
+other = "Dibangun Untuk"
+[uc-title-pre]
+other = "Ketika container"
+[uc-title-em]
+other = "belum cukup terisolasi."
+[uc-sub]
+other = "Tiga tipe tim secara konsisten memilih microVM ketimbang container biasa — biasanya karena model workload mereka butuh batas kernel."
+
+[uc-1-h]
+other = "Eksekusi kode yang tidak dipercaya"
+[uc-1-p]
+other = "Jalankan kode customer, build yang di-sandbox, atau program hasil LLM di dalam VM yang tidak bisa menjangkau host."
+[uc-1-i1]
+other = "VM per pekerjaan, restore-snapshot dalam hitungan detik"
+[uc-1-i2]
+other = "Kebijakan jaringan per workload"
+[uc-1-i3]
+other = "Batas resource yang benar-benar mengikat"
+
+[uc-2-h]
+other = "Workload AI Agentic"
+[uc-2-p]
+other = "Beri agent LLM sebuah mesin Linux sungguhan — shell, filesystem, jaringan — tanpa memberi mereka akses ke host Anda."
+[uc-2-i1]
+other = "Spawn environment sekali pakai"
+[uc-2-i2]
+other = "API Docker penuh untuk tool use"
+[uc-2-i3]
+other = "Terminal di browser untuk human-in-the-loop"
+
+[uc-3-h]
+other = "Platform multi-tenant on-prem"
+[uc-3-p]
+other = "Beri tim internal VM self-service dengan isolasi ketat, RBAC, dan storage pluggable yang nyambung ke SAN Anda yang sudah ada."
+[uc-3-i1]
+other = "Peran Admin / User / Viewer"
+[uc-3-i2]
+other = "Kepemilikan per resource"
+[uc-3-i3]
+other = "Bawa iSCSI / TrueNAS Anda sendiri"
+
+# ---------- pricing ----------
+[price-eyebrow]
+other = "Harga"
+[price-title-pre]
+other = "Lisensi komersial,"
+[price-title-em]
+other = "disesuaikan untuk fleet Anda."
+[price-sub]
+other = "NQRust-MicroVM adalah produk komersial. Harga tergantung jumlah host, backend storage yang didukung, dan kebutuhan support — beri tahu kami soal fleet Anda dan kami kirim penawaran yang disesuaikan."
+
+[price-b1]
+other = "Self-hosted di hardware KVM Anda — tidak ada data yang keluar dari jaringan Anda"
+[price-b2]
+other = "Setiap kapabilitas platform — VM, container, function, registry"
+[price-b3]
+other = "Semua backend storage, clustering multi-host, RBAC"
+[price-b4]
+other = "Onboarding, named support, install airgapped sesuai permintaan"
+
+[price-cta]
+other = "Minta penawaran"
+[price-foot-chip]
+other = "Penawaran dikembalikan dalam 48 jam"
+[price-foot-note]
+other = "NDA + evaluasi teknis tersedia sesuai permintaan"
+
+[price-card-tag]
+other = "Lisensi komersial"
+[price-card-amount]
+other = "Hubungi kami"
+[price-card-amount-sub]
+other = "Lisensi tahunan per-host · tier volume tersedia"
+[price-card-includes]
+other = "Yang termasuk"
+[price-card-i1]
+other = "VM, container, dan function tak terbatas per host"
+[price-card-i2]
+other = "Setiap backend storage, termasuk iSCSI + LVM dan TrueNAS"
+[price-card-i3]
+other = "Clustering VXLAN multi-host & port forwarding"
+[price-card-i4]
+other = "SSO via SAML / OIDC, RBAC, audit log"
+[price-card-i5]
+other = "Onboarding terpandu dan bantuan migrasi"
+[price-card-i6]
+other = "Production support dengan SLA waktu respons"
+[price-card-cta]
+other = "Hubungi sales"
+
+# ---------- FAQ ----------
+[faq-eyebrow]
+other = "FAQ"
+[faq-title]
+other = "Pertanyaan, terjawab."
+
+[faq-q1]
+other = "Apa bedanya dengan menjalankan Docker biasa?"
+[faq-a1]
+other = "Docker berbagi kernel antar container. NQRust-MicroVM menjalankan setiap workload (entah VM atau container Docker) di dalam microVM Firecracker tersendiri dengan kernel, CPU, dan batas memori sendiri. Serangan tipe container-escape secara struktural tidak mungkin, dan efek noisy-neighbor sebagian besar hilang."
+
+[faq-q2]
+other = "Apakah kami perlu paham Rust untuk mengoperasikannya?"
+[faq-a2]
+other = "Tidak. Manager, Agent, dan Guest Agent ditulis dalam Rust karena memungkinkan kami mengirim binary kecil, cepat, dan terhubung statis — tapi operator berinteraksi lewat dashboard Next.js dan REST API. Anda bisa menjalankan seluruh platform tanpa menyentuh source code."
+
+[faq-q3]
+other = "Hardware apa yang dibutuhkan?"
+[faq-a3]
+other = "Setiap mesin Linux x86_64 dengan KVM (Intel VT-x atau AMD-V), minimal 4 GB RAM, 20 GB disk kosong. Ubuntu 22.04 / 24.04 LTS dan Debian 11 adalah distro yang didukung saat ini. Cluster multi-host menambahkan agent ke manager bersama."
+
+[faq-q4]
+other = "Bagaimana proses install-nya?"
+[faq-a4]
+other = "Kami mengirim satu installer TUI berbasis Rust (nqr-installer) yang memandu pengecekan KVM, networking, PostgreSQL, dan service systemd. Tersedia alur online satu perintah dan alur fully-airgapped untuk situs tanpa akses internet keluar."
+
+[faq-q5]
+other = "Bisakah kami pakai iSCSI / TrueNAS / SAN yang sudah ada?"
+[faq-a5]
+other = "Bisa. Lapisan storage bersifat pluggable — tambahkan backend dari UI tanpa restart manager. Local file, NFS, SMB, iSCSI+LVM, dan TrueNAS REST terlihat secara default; SPDK vhost-user dan passthrough iSCSI generik berada di balik disclosure lanjutan."
+
+[faq-q6]
+other = "Bagaimana dengan uptime, SLA, dan support?"
+[faq-a6]
+other = "Tier support dan SLA ditentukan saat onboarding berdasarkan ukuran fleet dan kekritisan workload. Setiap lisensi komersial mencakup channel Slack khusus dan SLA waktu respons — kami senang membagikan runbook internal dan contoh postmortem insiden bila diminta."
+
+[faq-q7]
+other = "Apakah Anda mendukung install airgapped?"
+[faq-a7]
+other = "Ya — installer TUI Rust dilengkapi mode offline yang mengambil satu binary transferable dan menyediakan semuanya (KVM, networking, PostgreSQL, systemd) tanpa akses internet keluar. Cocok untuk lingkungan teregulasi dan situs tanpa egress."
+
+# ---------- CTA ----------
+[cta-h]
+other = "Siap hosting cloud Anda sendiri?"
+[cta-p]
+other = "Beri tahu kami tentang fleet Anda — jumlah host, workload, backend storage. Kami akan kembali dengan penawaran dan instalasi terpandu dalam 48 jam."
+[cta-btn]
+other = "Minta penawaran"
+[cta-under]
+other = "Sudah menjalankan NQRust di internal?"
+[cta-under-link]
+other = "Hubungi kami soal lisensi komersial →"
+
+# ---------- footer ----------
+[foot-brand-desc]
+other = "Platform cloud self-hosted berbasis Rust dari Nexus Quantum Technologies."
+[foot-h-product]
+other = "Produk"
+[foot-h-family]
+other = "Keluarga"
+[foot-h-company]
+other = "Perusahaan"
+[foot-product-platform]
+other = "Platform"
+[foot-product-dash]
+other = "Dashboard operator"
+[foot-product-arch]
+other = "Arsitektur"
+[foot-product-storage]
+other = "Storage"
+[foot-product-pricing]
+other = "Harga"
+[foot-company-contact]
+other = "Hubungi sales"
+[foot-company-docs]
+other = "Dokumentasi"
+[foot-company-security]
+other = "Keamanan & kepatuhan"
+[foot-company-license]
+other = "Ketentuan lisensi"
+[foot-company-status]
+other = "Status page"
+[foot-copyright]
+other = "© 2026 Nexus Quantum Technologies. Hak cipta dilindungi."
+[foot-meta-license]
+other = "Lisensi komersial"
+[foot-meta-built]
+other = "Built with Rust & caffeine"
+[foot-meta-status]
+other = "Semua sistem beroperasi"
+
+# ---------- language toggle ----------
+[lang-en-label]
+other = "EN"
+[lang-id-label]
+other = "ID"
