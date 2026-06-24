@@ -1,0 +1,109 @@
+name: Deploy Demo to Vercel
+
+# Re-deploys apps/ui to https://nqr-microvm-demo.vercel.app with
+# NEXT_PUBLIC_DEMO_MODE=true so the public mocked demo stays in sync with
+# every tagged release.
+#
+# Triggers:
+#   - any pushed semver tag (vX.Y.Z) — release-time refresh
+#   - manual run via the Actions UI                — ad-hoc refresh
+#
+# Required repository secret:
+#   VERCEL_TOKEN — a token created in https://vercel.com/account/tokens scoped
+#                  to the kleopasevans-projects team.
+#
+# The Vercel org + project IDs aren't secret (they're already in
+# apps/ui/.vercel/project.json on the linked dev machine and shown in the
+# Vercel dashboard URL), so we keep them inline for clarity.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deployment target'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+
+permissions:
+  contents: read
+
+env:
+  VERCEL_ORG_ID: team_alFtlU7eg7MXyxZQq2Wj0B7z
+  VERCEL_PROJECT_ID: prj_k7rhdRvqYOhZBQrnKuyXHhnmZamO
+  TARGET: ${{ github.event.inputs.target || 'production' }}
+
+jobs:
+  deploy:
+    name: Deploy apps/ui (demo)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: apps/ui/pnpm-lock.yaml
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel environment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ "$TARGET" = "production" ]; then
+            vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+          else
+            vercel pull --yes --environment=preview --token=$VERCEL_TOKEN
+          fi
+
+      - name: Build with Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ "$TARGET" = "production" ]; then
+            vercel build --prod --token=$VERCEL_TOKEN
+          else
+            vercel build --token=$VERCEL_TOKEN
+          fi
+
+      - name: Deploy prebuilt artifact
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ "$TARGET" = "production" ]; then
+            URL=$(vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN)
+          else
+            URL=$(vercel deploy --prebuilt --token=$VERCEL_TOKEN)
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Deployed to: $URL"
+
+      - name: Summary
+        run: |
+          echo "## ✅ Demo deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Target: \`$TARGET\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Stable alias: https://nqr-microvm-demo.vercel.app" >> "$GITHUB_STEP_SUMMARY"

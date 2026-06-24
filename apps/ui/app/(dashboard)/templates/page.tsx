@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect } from "react"
+export const dynamic = "force-dynamic"
+
+import { Suspense, useEffect } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -94,6 +96,14 @@ const TemplateFlowDiagram = () => (
 )
 
 export default function TemplatesPage() {
+  return (
+    <Suspense fallback={null}>
+      <TemplatesPageInner />
+    </Suspense>
+  )
+}
+
+function TemplatesPageInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const { data: templates = [], isLoading, error } = useTemplates()

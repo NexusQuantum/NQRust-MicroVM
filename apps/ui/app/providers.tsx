@@ -10,6 +10,15 @@ import { AuthProvider, useAuthStore, getAuthToken } from "@/lib/auth/store"
 import { authApi, setAuthTokenGetter } from "@/lib/api/auth"
 import { ThemeProvider } from "@/components/theme-provider"
 import { ThemeSyncProvider } from "@/components/theme-sync-provider"
+import { DemoBootstrap } from "@/components/demo/demo-bootstrap"
+import { DEMO_MODE } from "@/lib/demo/flag"
+import { installDemoMode } from "@/lib/demo/install"
+
+// Install demo-mode interceptors at module-eval time so they're active before
+// any React effect fires (notably AuthInitializer's getCurrentUser call).
+if (DEMO_MODE && typeof window !== "undefined") {
+  installDemoMode()
+}
 
 function AuthInitializer({ children }: { children: React.ReactNode }) {
   const { token, user, setUser, clearAuth } = useAuthStore()
@@ -22,6 +31,7 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
   // Validate token and fetch user on mount if token exists
   // Only validate if we have token but no user data
   useEffect(() => {
+    if (DEMO_MODE) return
     if (token && !user) {
       authApi.getCurrentUser()
         .then((fetchedUser) => {
@@ -83,13 +93,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <AuthProvider>
           <AuthInitializer>
             <ThemeSyncProvider>
-              <LicenseGuard>
-                <EulaGuard>
-                  <AuthGuard>
-                    {children}
-                  </AuthGuard>
-                </EulaGuard>
-              </LicenseGuard>
+              {DEMO_MODE ? (
+                <AuthGuard>
+                  <DemoBootstrap>{children}</DemoBootstrap>
+                </AuthGuard>
+              ) : (
+                <LicenseGuard>
+                  <EulaGuard>
+                    <AuthGuard>
+                      <DemoBootstrap>{children}</DemoBootstrap>
+                    </AuthGuard>
+                  </EulaGuard>
+                </LicenseGuard>
+              )}
             </ThemeSyncProvider>
           </AuthInitializer>
           <ReactQueryDevtools initialIsOpen={false} />

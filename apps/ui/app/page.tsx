@@ -13,9 +13,10 @@ import { authApi } from "@/lib/api/auth"
 import { ssoApi, type SsoProvider } from "@/lib/api/sso"
 import { useAuthStore } from "@/lib/auth/store"
 import { parseFacadeError } from "@/lib/api"
-import { Eye, EyeOff, LogIn } from "lucide-react"
+import { Eye, EyeOff, LogIn, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { apiClient } from "@/lib/api/http"
+import { DEMO_MODE } from "@/lib/demo/flag"
 
 export default function LandingPage() {
   const router = useRouter()
@@ -150,6 +151,28 @@ export default function LandingPage() {
               <CardTitle className="text-md font-medium mx-auto text-muted-foreground">Welcome back! Please enter your credentials to continue.</CardTitle>
             </CardHeader>
             <CardContent className="px-0">
+              {DEMO_MODE && (
+                <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2.5 text-sm">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
+                  <div className="leading-snug">
+                    <p className="font-medium text-orange-700 dark:text-orange-300">Demo mode</p>
+                    <p className="text-muted-foreground">
+                      Sign in with <span className="font-mono font-semibold text-foreground">admin</span> /{" "}
+                      <span className="font-mono font-semibold text-foreground">admin</span>. All data is simulated.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUsername("admin")
+                        setPassword("admin")
+                      }}
+                      className="mt-1 text-xs font-medium text-orange-600 hover:underline"
+                    >
+                      Fill credentials →
+                    </button>
+                  </div>
+                </div>
+              )}
               <form onSubmit={handleLogin} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="username">Username</Label>
